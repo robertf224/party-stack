@@ -9,6 +9,10 @@
         "./users": {
             "types": "./lib/users/index.d.ts",
             "default": "./lib/users/index.js"
+        },
+        "./objects": {
+            "types": "./lib/objects/index.d.ts",
+            "default": "./lib/objects/index.js"
         }
     },
     "scripts": {
@@ -21,7 +25,8 @@
         "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/osdk-utils": "workspace:*",
         "@osdk/foundry.admin": "^2.41.0",
-        "@osdk/foundry.ontologies": "^2.41.0"
+        "@osdk/foundry.ontologies": "^2.41.0",
+        "zod": "^4.1.12"
     },
     "devDependencies": {
         "typescript": "~5.8.3",

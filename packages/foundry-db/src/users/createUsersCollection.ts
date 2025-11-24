@@ -7,13 +7,13 @@ import * as AsyncIterable from "../AsyncIterable.js";
 
 type UsersQuery = { type: "getBatch"; ids: string[] }; // | { type: "search"; query: string };
 
-export interface CreateUsersCollectionOptions {
+export interface CreateUsersCollectionOpts {
     client: Client;
 }
 
-export function createUsersCollection({ client }: CreateUsersCollectionOptions) {
+export function createUsersCollection({ client }: CreateUsersCollectionOpts) {
     return createCollection(
-        queryCollectionOptions<User, string>({
+        queryCollectionOptions<User>({
             queryClient: new QueryClient(),
             getKey: (user) => user.id,
             queryKey: ["foundry", "users"],
