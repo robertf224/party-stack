@@ -2,7 +2,7 @@
 
 import { createUsersCollection } from "@bobbyfidz/foundry-db/users";
 import { createClient } from "@osdk/client";
-import { and, gt, ilike, or, useLiveSuspenseQuery } from "@tanstack/react-db";
+import { and, concat, gt, ilike, or, useLiveSuspenseQuery } from "@tanstack/react-db";
 import { useState } from "react";
 import { ClientOnly } from "./ClientOnly";
 import { createObjectsCollection } from "@bobbyfidz/foundry-db/objects";
@@ -19,6 +19,8 @@ const $contactResponses = createObjectsCollection({
     objectType: "ContactResponse",
 });
 
+//
+
 function Home() {
     const [query, setQuery] = useState("");
     const { data: users } = useLiveSuspenseQuery(
@@ -28,6 +30,10 @@ function Home() {
                 .where(({ $users }) =>
                     or(ilike($users.givenName, `${query}%`), ilike($users.familyName, `${query}%`))
                 )
+                .select(({ $users }) => ({
+                    name: concat($users.givenName, " ", $users.familyName),
+                    ...$users,
+                }))
                 .limit(10)
                 .orderBy(({ $users }) => $users.id, "asc"),
         [query]
@@ -51,7 +57,7 @@ function Home() {
                     <ul>
                         {users.map((user) => (
                             <li key={user.id}>
-                                {user.givenName} {user.familyName} - {user.email}
+                                {user.name} - {user.email}
                             </li>
                         ))}
                     </ul>

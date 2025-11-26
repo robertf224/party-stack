@@ -1,1 +1,1 @@
-# foundry-tanstack-db
+# foundry-db

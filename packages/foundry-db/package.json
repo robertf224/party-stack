@@ -3,7 +3,8 @@
     "version": "0.0.0",
     "type": "module",
     "files": [
-        "lib"
+        "lib",
+        "bin"
     ],
     "exports": {
         "./users": {
@@ -15,33 +16,48 @@
             "default": "./lib/objects/index.js"
         }
     },
+    "bin": {
+        "foundry-db": "./bin/run.js"
+    },
     "scripts": {
         "build": "tsc",
         "lint": "eslint",
         "test": "vitest run --pass-with-no-tests"
     },
+    "oclif": {
+        "bin": "foundry-db",
+        "commands": "./lib/cli/commands",
+        "dirname": "foundry-db",
+        "topicSeparator": " "
+    },
     "dependencies": {
-        "@osdk/client": "^2.5.2",
-        "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/osdk-utils": "workspace:*",
+        "@bobbyfidz/panic": "^0.1.0",
+        "@osdk/client": "^2.5.2",
         "@osdk/foundry.admin": "^2.41.0",
         "@osdk/foundry.ontologies": "^2.41.0",
+        "@oclif/core": "^4.8.0",
+        "isomorphic-ws": "^5.0.0",
+        "@next/env": "^16.0.3",
         "zod": "^4.1.12"
     },
     "devDependencies": {
-        "typescript": "~5.8.3",
-        "eslint": "^9.25.0",
-        "vitest": "^3.1.1",
         "@bobbyfidz/react-build-config": "^0.1.1",
-        "react": "^19.2.0",
-        "@types/react": "^19.2.6",
-        "@tanstack/db": "^0.5.5",
-        "@tanstack/query-db-collection": "^1.0.4"
-    },
-    "peerDependencies": {
-        "react": "^18.0.0 || ^19.0.0",
         "@tanstack/db": "^0.5.5",
         "@tanstack/query-db-collection": "^1.0.4",
-        "@tanstack/query-core": "^5.0.0"
+        "@bobbyfidz/local-oauth-flow": "^0.1.0",
+        "@types/react": "^19.2.6",
+        "@types/ws": "^8.18.1",
+        "eslint": "^9.25.0",
+        "react": "^19.2.0",
+        "typescript": "~5.8.3",
+        "ts-node": "^10.9.2",
+        "vitest": "^3.1.1"
+    },
+    "peerDependencies": {
+        "@tanstack/db": "^0.5.5",
+        "@tanstack/query-core": "^5.0.0",
+        "@tanstack/query-db-collection": "^1.0.4",
+        "react": "^18.0.0 || ^19.0.0"
     }
 }

@@ -6,11 +6,15 @@ import {
     PropertyApiName,
     StructFieldApiName,
     OntologyObjectV2,
+    SearchOrderByV2,
 } from "@osdk/foundry.ontologies";
-import { createCollection, FieldPath, parseWhereExpression } from "@tanstack/db";
+import { createCollection, FieldPath, parseOrderByExpression, parseWhereExpression } from "@tanstack/db";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
 import * as AsyncIterable from "../AsyncIterable.js";
+
+// queryBuilder wrapper that has type context of objects and relationships, and we add on
+// a .related()
 
 export interface CreateObjectsCollectionOpts {
     client: Client;
@@ -35,16 +39,17 @@ function fieldPathToPropertyIdentifier(fieldPath: FieldPath): PropertyIdentifier
 }
 
 export function createObjectsCollection({ client, ontologyRid, objectType }: CreateObjectsCollectionOpts) {
-    return createCollection(
+    const collection = createCollection(
         queryCollectionOptions<OntologyObjectV2>({
             queryClient: new QueryClient(),
             getKey: (object) => (object as { __primaryKey: string }).__primaryKey,
             queryKey: ["foundry", objectType],
             syncMode: "on-demand",
-            queryFn: async (ctx) => {
+            queryFn: (ctx) => {
                 const loadSubsetOptions = ctx.meta?.loadSubsetOptions;
 
                 let where: SearchJsonQueryV2 | undefined;
+                let orderBy: SearchOrderByV2 | undefined;
                 if (loadSubsetOptions) {
                     where =
                         parseWhereExpression<SearchJsonQueryV2>(loadSubsetOptions.where, {
@@ -97,6 +102,15 @@ export function createObjectsCollection({ client, ontologyRid, objectType }: Cre
                                 }),
                             },
                         }) ?? undefined;
+
+                    orderBy = loadSubsetOptions.orderBy
+                        ? {
+                              fields: parseOrderByExpression(loadSubsetOptions.orderBy).map((ordering) => ({
+                                  field: ordering.field[0]! as PropertyApiName,
+                                  direction: ordering.direction,
+                              })),
+                          }
+                        : undefined;
                 }
 
                 return AsyncIterable.toArray(
@@ -109,13 +123,16 @@ export function createObjectsCollection({ client, ontologyRid, objectType }: Cre
                                 // TODO: figure out property selection
                                 select: [],
                                 pageToken,
-                                // TODO: order by, page size
+                                orderBy,
                             }),
                         (page) => page.nextPageToken,
-                        (page) => page.data
+                        (page) => page.data,
+                        loadSubsetOptions?.limit
                     )
                 );
             },
         })
     );
+
+    return collection;
 }
