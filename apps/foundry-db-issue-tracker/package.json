@@ -14,7 +14,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "@osdk/client": "^2.5.2",
-    "@tanstack/react-db": "^0.1.49",
+    "@tanstack/react-db": "^0.1.52",
     "@bobbyfidz/foundry-db": "workspace:*",
     "zod": "^4.1.13"
   },
