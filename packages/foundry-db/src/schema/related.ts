@@ -39,9 +39,9 @@ type CollectionWithRelationshipUtils = Collection<any, any, { relationships: Rec
  *
  * @example
  * ```ts
- * const $taskWithRels = withRelationships($task, {
- *   project: { cardinality: "one", target: $project, sourceKey: "projectId", targetKey: "id" },
- * });
+ * const $taskWithRels = withRelationships($task, ({ one }) => ({
+ *   project: one({ sourceKey: "projectId", target: $project, targetKey: "id" }),
+ * }));
  *
  * // Basic usage - join alias defaults to relationship name
  * new Query()

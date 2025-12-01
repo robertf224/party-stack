@@ -8,7 +8,7 @@ import { ClientOnly } from "./ClientOnly";
 import { createObjectsCollection } from "@bobbyfidz/foundry-db/objects";
 import { StreamlineForm } from "@/__generated__/foundry-db/StreamlineForm";
 import { StreamlineFormRevision } from "@/__generated__/foundry-db/StreamlineFormRevision";
-import { withRelationships, related, relationshipQuery } from "@bobbyfidz/foundry-db/schema";
+import { withRelationships, related } from "@bobbyfidz/foundry-db/schema";
 
 const client = createClient(
     process.env.NEXT_PUBLIC_FOUNDRY_URL!,
@@ -28,13 +28,13 @@ const $formRevision = createObjectsCollection({
     objectType: "StreamlineFormRevision",
     schema: StreamlineFormRevision,
 });
-const $formWithRelationships = withRelationships($form, {
-    revisions: { cardinality: "many", target: $formRevision, sourceKey: "id", targetKey: "formId" },
-    liveRevision: { cardinality: "one", target: $formRevision, sourceKey: "liveRevisionId", targetKey: "id" },
-});
-const $formRevisionWithRelationships = withRelationships($formRevision, {
-    createdBy: { cardinality: "one", target: $user, sourceKey: "createdBy", targetKey: "id" },
-});
+const $formWithRelationships = withRelationships($form, ({ one, many }) => ({
+    revisions: many({ sourceKey: "id", target: $formRevision, targetKey: "formId" }),
+    liveRevision: one({ sourceKey: "liveRevisionId", target: $formRevision, targetKey: "id" }),
+}));
+const $formRevisionWithRelationships = withRelationships($formRevision, ({ one }) => ({
+    createdBy: one({ sourceKey: "createdBy", target: $user, targetKey: "id" }),
+}));
 
 new Query()
     .from({ $formWithRelationships })

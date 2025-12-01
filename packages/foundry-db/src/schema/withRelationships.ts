@@ -34,14 +34,44 @@ export type RelationshipsOf<Source extends Collection<any, any, any, any, any>> 
             : never
         : never;
 
+interface RelationshipHelpers<Source extends Collection<any, any, any, any, any>> {
+    one<Target extends Collection<any, any, any, any, any>>(
+        config: Omit<Relationship<Source, Target, "one">, "cardinality">
+    ): Relationship<Source, Target, "one">;
+
+    many<Target extends Collection<any, any, any, any, any>>(
+        config: Omit<Relationship<Source, Target, "many">, "cardinality">
+    ): Relationship<Source, Target, "many">;
+}
+
+type RelationshipsCallback<
+    Source extends Collection<any, any, any, any, any>,
+    SourceRelationships extends Relationships<Source>,
+> = (helpers: RelationshipHelpers<Source>) => SourceRelationships;
+
 export function withRelationships<
     Utils extends UtilsRecord,
     Source extends Collection<any, any, Utils, any, any>,
     SourceRelationships extends Relationships<Source>,
 >(
     source: Source,
-    relationships: SourceRelationships
+    callback: RelationshipsCallback<Source, SourceRelationships>
 ): CollectionWithRelationships<Source, SourceRelationships> {
+    const helpers: RelationshipHelpers<Source> = {
+        one<Target extends Collection<any, any, any, any, any>>(
+            config: Omit<Relationship<Source, Target, "one">, "cardinality">
+        ): Relationship<Source, Target, "one"> {
+            return { cardinality: "one", ...config } as Relationship<Source, Target, "one">;
+        },
+        many<Target extends Collection<any, any, any, any, any>>(
+            config: Omit<Relationship<Source, Target, "many">, "cardinality">
+        ): Relationship<Source, Target, "many"> {
+            return { cardinality: "many", ...config } as Relationship<Source, Target, "many">;
+        },
+    };
+
+    const relationships = callback(helpers);
+
     const extendedUtils = {
         ...source.utils,
         relationships,
