@@ -14,6 +14,10 @@
         "./objects": {
             "types": "./lib/objects/index.d.ts",
             "default": "./lib/objects/index.js"
+        },
+        "./schema": {
+            "types": "./lib/schema/index.d.ts",
+            "default": "./lib/schema/index.js"
         }
     },
     "bin": {
