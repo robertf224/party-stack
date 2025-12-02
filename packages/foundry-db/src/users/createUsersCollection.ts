@@ -5,7 +5,7 @@ import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
 import * as AsyncIterable from "../AsyncIterable.js";
 
-type UsersQuery = { type: "getBatch"; ids: string[] }; // | { type: "search"; query: string };
+type UsersQuery = { type: "getBatch"; ids: string[] };
 
 export interface CreateUsersCollectionOpts {
     client: Client;
@@ -17,6 +17,7 @@ export function createUsersCollection({ client }: CreateUsersCollectionOpts) {
             queryClient: new QueryClient(),
             getKey: (user) => user.id,
             queryKey: ["foundry", "users"],
+            refetchInterval: 60_000,
             queryFn: async (ctx) => {
                 const loadSubsetOptions = ctx.meta?.loadSubsetOptions;
 

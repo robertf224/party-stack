@@ -2,13 +2,12 @@
 
 import { createUsersCollection } from "@bobbyfidz/foundry-db/users";
 import { createClient } from "@osdk/client";
-import { concat, eq, ilike, Query, useLiveSuspenseQuery } from "@tanstack/react-db";
+import { concat, eq, ilike, useLiveSuspenseQuery } from "@tanstack/react-db";
 import { useState } from "react";
 import { ClientOnly } from "./ClientOnly";
 import { createObjectsCollection } from "@bobbyfidz/foundry-db/objects";
 import { StreamlineForm } from "@/__generated__/foundry-db/StreamlineForm";
 import { StreamlineFormRevision } from "@/__generated__/foundry-db/StreamlineFormRevision";
-import { withRelationships, related } from "@bobbyfidz/foundry-db/schema";
 
 const client = createClient(
     process.env.NEXT_PUBLIC_FOUNDRY_URL!,
@@ -21,26 +20,15 @@ const $form = createObjectsCollection({
     ontologyRid: process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
     objectType: "StreamlineForm",
     schema: StreamlineForm,
+    realTime: true,
 });
 const $formRevision = createObjectsCollection({
     client,
     ontologyRid: process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
     objectType: "StreamlineFormRevision",
     schema: StreamlineFormRevision,
+    realTime: true,
 });
-const $formWithRelationships = withRelationships($form, ({ one, many }) => ({
-    revisions: many({ sourceKey: "id", target: $formRevision, targetKey: "formId" }),
-    liveRevision: one({ sourceKey: "liveRevisionId", target: $formRevision, targetKey: "id" }),
-}));
-const $formRevisionWithRelationships = withRelationships($formRevision, ({ one }) => ({
-    createdBy: one({ sourceKey: "createdBy", target: $user, targetKey: "id" }),
-}));
-
-new Query()
-    .from({ $formWithRelationships })
-    .join(...related({ $formWithRelationships }, "liveRevision"))
-    .join(...related({ liveRevision: $formRevisionWithRelationships }, "createdBy"))
-    .select(({ $formWithRelationships, liveRevision, createdBy }) => ({}));
 
 function Home() {
     const [query, setQuery] = useState("");
