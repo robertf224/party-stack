@@ -37,25 +37,26 @@
     "dependencies": {
         "@bobbyfidz/osdk-utils": "workspace:*",
         "@bobbyfidz/panic": "^0.1.0",
+        "@bobbyfidz/urls": "^0.2.1",
+        "@next/env": "^16.0.3",
+        "@oclif/core": "^4.8.0",
         "@osdk/client": "^2.5.2",
         "@osdk/foundry.admin": "^2.41.0",
         "@osdk/foundry.ontologies": "^2.41.0",
-        "@oclif/core": "^4.8.0",
-        "isomorphic-ws": "^5.0.0",
-        "@next/env": "^16.0.3",
+        "effection": "^4.0.0-beta.3",
+        "@effectionx/websocket": "^2.1.0",
         "zod": "^4.1.12"
     },
     "devDependencies": {
+        "@bobbyfidz/local-oauth-flow": "^0.1.0",
         "@bobbyfidz/react-build-config": "^0.1.1",
         "@tanstack/db": "^0.5.8",
         "@tanstack/query-db-collection": "^1.0.4",
-        "@bobbyfidz/local-oauth-flow": "^0.1.0",
         "@types/react": "^19.2.6",
-        "@types/ws": "^8.18.1",
         "eslint": "^9.25.0",
         "react": "^19.2.0",
-        "typescript": "~5.8.3",
         "ts-node": "^10.9.2",
+        "typescript": "~5.8.3",
         "vitest": "^3.1.1"
     },
     "peerDependencies": {

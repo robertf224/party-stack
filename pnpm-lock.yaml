@@ -240,6 +240,12 @@ importers:
       '@bobbyfidz/panic':
         specifier: ^0.1.0
         version: 0.1.0
+      '@bobbyfidz/urls':
+        specifier: ^0.2.1
+        version: 0.2.1
+      '@effectionx/websocket':
+        specifier: ^2.1.0
+        version: 2.1.0
       '@next/env':
         specifier: ^16.0.3
         version: 16.0.3
@@ -258,9 +264,9 @@ importers:
       '@tanstack/query-core':
         specifier: ^5.0.0
         version: 5.90.10
-      isomorphic-ws:
-        specifier: ^5.0.0
-        version: 5.0.0(ws@8.18.3)
+      effection:
+        specifier: ^4.0.0-beta.3
+        version: 4.0.0-beta.3
       zod:
         specifier: ^4.1.12
         version: 4.1.12
@@ -280,9 +286,6 @@ importers:
       '@types/react':
         specifier: ^19.2.6
         version: 19.2.6
-      '@types/ws':
-        specifier: ^8.18.1
-        version: 8.18.1
       eslint:
         specifier: ^9.25.0
         version: 9.28.0(jiti@2.6.1)
@@ -677,6 +680,10 @@ packages:
   '@csstools/css-tokenizer@3.0.4':
     resolution: {integrity: sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==}
     engines: {node: '>=18'}
+
+  '@effectionx/websocket@2.1.0':
+    resolution: {integrity: sha512-m2YHW6WxVsGajpiL1ptxTIqXRNuai/N52uTam7COUn/NDU3Zh1b2HyMDicsRTcJXM1V29e7qG6OvQy/lQRXG+g==}
+    engines: {node: '>= 16'}
 
   '@emnapi/core@1.7.1':
     resolution: {integrity: sha512-o1uhUASyo921r2XtHYOHy7gdkGLge8ghBEQHMWmyJFoXlpU58kIrhhN3w26lpQb6dspetweapMn2CSNwQ8I4wg==}
@@ -1700,9 +1707,6 @@ packages:
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
 
-  '@types/ws@8.18.1':
-    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
-
   '@typescript-eslint/eslint-plugin@8.34.0':
     resolution: {integrity: sha512-QXwAlHlbcAwNlEEMKQS2RCgJsgXrTJdjXT08xEgbPFa2yYQgVjBymxP5DrfrE7X7iodSzd9qBUHUycdyVJTW1w==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
@@ -2512,6 +2516,14 @@ packages:
 
   effect@3.19.6:
     resolution: {integrity: sha512-Eh1E/CI+xCAcMSDC5DtyE29yWJINC0zwBbwHappQPorjKyS69rCA8qzpsHpfhKnPDYgxdg8zkknii8mZ+6YMQA==}
+
+  effection@4.0.0-beta.2:
+    resolution: {integrity: sha512-iqEBfInNx3rB2DhQYYu6LcJ7zRn4yFo+DjUntcWNZeYWh1LiucMXb2JMiD1OA8WPgc3KOwQBxXfOwby1v34WdQ==}
+    engines: {node: '>= 16'}
+
+  effection@4.0.0-beta.3:
+    resolution: {integrity: sha512-JGRphS7uB6cWKA5ih6OlmiYQQuruNcaOjXo0+ca88xCmbPpmdeohh1+pTmCnDF8PWy3WQMnly9eFEtRyfXaeAA==}
+    engines: {node: '>= 16'}
 
   ejs@3.1.10:
     resolution: {integrity: sha512-UeJmFfOrAQS8OJWPZ4qtgHyWExa088/MtK5UEyoJGFH67cDEXkZSviOiKRCZ4Xij0zxI3JECgYs3oKx+AizQBA==}
@@ -5471,6 +5483,10 @@ snapshots:
   '@csstools/css-tokenizer@3.0.4':
     optional: true
 
+  '@effectionx/websocket@2.1.0':
+    dependencies:
+      effection: 4.0.0-beta.2
+
   '@emnapi/core@1.7.1':
     dependencies:
       '@emnapi/wasi-threads': 1.1.0
@@ -6382,10 +6398,6 @@ snapshots:
 
   '@types/unist@3.0.3': {}
 
-  '@types/ws@8.18.1':
-    dependencies:
-      '@types/node': 24.10.1
-
   '@typescript-eslint/eslint-plugin@8.34.0(@typescript-eslint/parser@8.34.0(eslint@9.28.0(jiti@2.6.1))(typescript@5.8.3))(eslint@9.28.0(jiti@2.6.1))(typescript@5.8.3)':
     dependencies:
       '@eslint-community/regexpp': 4.12.1
@@ -7225,6 +7237,10 @@ snapshots:
     dependencies:
       '@standard-schema/spec': 1.0.0
       fast-check: 3.23.2
+
+  effection@4.0.0-beta.2: {}
+
+  effection@4.0.0-beta.3: {}
 
   ejs@3.1.10:
     dependencies:
