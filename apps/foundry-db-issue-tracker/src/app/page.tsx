@@ -20,14 +20,12 @@ const $form = createObjectsCollection({
     ontologyRid: process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
     objectType: "StreamlineForm",
     schema: StreamlineForm,
-    realTime: true,
 });
 const $formRevision = createObjectsCollection({
     client,
     ontologyRid: process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
     objectType: "StreamlineFormRevision",
     schema: StreamlineFormRevision,
-    realTime: true,
 });
 
 function Home() {
