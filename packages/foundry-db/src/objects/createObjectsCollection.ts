@@ -58,7 +58,6 @@ export function createObjectsCollection<T extends StandardSchema<OntologyObjectV
                         if (update.type === "object") {
                             switch (update.state) {
                                 case "ADDED_OR_UPDATED": {
-                                    console.log("update", update);
                                     collection.utils.writeUpsert(update.object as InferSchemaOutput<T>);
                                     break;
                                 }
@@ -73,7 +72,6 @@ export function createObjectsCollection<T extends StandardSchema<OntologyObjectV
                         }
                     }
                 });
-                console.log("collection now....", Array.from(collection.values()));
                 break;
             }
             case "refresh": {
