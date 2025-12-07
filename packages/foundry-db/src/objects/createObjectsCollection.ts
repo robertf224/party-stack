@@ -5,6 +5,7 @@ import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
 import * as AsyncIterable from "../AsyncIterable.js";
 import { convertLoadSubsetFilter, convertLoadSubsetOrderBy } from "./convertLoadSubsetOptions.js";
+import { getObjectSetWatcherManager } from "./sync/ObjectSetWatcherManager.js";
 
 export interface CreateObjectsCollectionOpts<T extends StandardSchema<OntologyObjectV2>> {
     client: Client;
@@ -21,7 +22,8 @@ export function createObjectsCollection<T extends StandardSchema<OntologyObjectV
 }: CreateObjectsCollectionOpts<T>): Collection<InferSchemaOutput<T>, string> {
     const collectionOptions = queryCollectionOptions({
         queryClient: new QueryClient(),
-        getKey: (object) => (object as unknown as { __primaryKey: string }).__primaryKey,
+        // TODO: fix this...
+        getKey: (object) => (object as unknown as { id: string }).id,
         queryKey: ["foundry", objectType],
         syncMode: "on-demand",
         schema,
@@ -47,6 +49,38 @@ export function createObjectsCollection<T extends StandardSchema<OntologyObjectV
         },
     });
     const collection = createCollection(collectionOptions);
+
+    const objectSetWatcherManager = getObjectSetWatcherManager(client);
+    const unsubscribe = objectSetWatcherManager.subscribe({ type: "base", objectType }, (message) => {
+        switch (message.type) {
+            case "change": {
+                collection.utils.writeBatch(() => {
+                    for (const update of message.updates) {
+                        if (update.type === "object") {
+                            switch (update.state) {
+                                case "ADDED_OR_UPDATED": {
+                                    collection.utils.writeUpsert(update.object as InferSchemaOutput<T>);
+                                    break;
+                                }
+                                case "REMOVED": {
+                                    collection.utils.writeDelete(
+                                        (update.object as unknown as { __primaryKey: string }).__primaryKey
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                });
+                break;
+            }
+            case "refresh": {
+                void collection.utils.refetch();
+                break;
+            }
+        }
+    });
+    collection.on("status:cleaned-up", unsubscribe);
 
     return collection;
 }

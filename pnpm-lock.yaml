@@ -283,6 +283,9 @@ importers:
       '@tanstack/query-db-collection':
         specifier: ^1.0.4
         version: 1.0.4(@tanstack/db@0.5.8(typescript@5.8.3))(@tanstack/query-core@5.90.10)(typescript@5.8.3)
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.1
       '@types/react':
         specifier: ^19.2.6
         version: 19.2.6

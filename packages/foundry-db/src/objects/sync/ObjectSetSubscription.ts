@@ -4,29 +4,36 @@ export interface ObjectSetSubscription extends ObjectSetStreamSubscribeRequest {
     id: string;
 }
 
-export interface ObjectSetSubscriptionStateUpdateMessage {
+export type ObjectSetSubscriptionStateUpdateStatus = "open" | "closed" | "qos" | "error";
+
+export interface ObjectSetSubscriptionsStateUpdateMessage {
     subscriptionId: string;
-    status: "open" | "closed" | "qos" | "error";
+    status: ObjectSetSubscriptionStateUpdateStatus;
 }
 
-export interface ObjectSetSubscriptionStateUpdateMessages {
+export interface ObjectSetSubscriptionsStateUpdateMessages {
     type: "state";
-    updates: ObjectSetSubscriptionStateUpdateMessage[];
+    updates: ObjectSetSubscriptionsStateUpdateMessage[];
 }
 
-export interface ObjectSetSubscriptionChangeMessage {
+export interface ObjectSetSubscriptionsChangeMessage {
     type: "change";
     subscriptionId: string;
     updates: ObjectSetUpdate[];
 }
 
-export interface ObjectSetSubscriptionRefreshMessage {
+export interface ObjectSetSubscriptionsRefreshMessage {
     type: "refresh";
     subscriptionId: string;
     objectType: string;
 }
 
+export type ObjectSetSubscriptionsMessage =
+    | ObjectSetSubscriptionsStateUpdateMessages
+    | ObjectSetSubscriptionsChangeMessage
+    | ObjectSetSubscriptionsRefreshMessage;
+
 export type ObjectSetSubscriptionMessage =
-    | ObjectSetSubscriptionStateUpdateMessages
-    | ObjectSetSubscriptionChangeMessage
-    | ObjectSetSubscriptionRefreshMessage;
+    | { type: "change"; updates: ObjectSetUpdate[] }
+    | { type: "refresh"; objectType: string }
+    | { type: "state"; status: ObjectSetSubscriptionStateUpdateStatus };
