@@ -19,11 +19,10 @@ export function createObjectsCollection<T extends StandardSchema<OntologyObjectV
     ontologyRid,
     objectType,
     schema,
-}: CreateObjectsCollectionOpts<T>): Collection<InferSchemaOutput<T>, string> {
+}: CreateObjectsCollectionOpts<T>): Collection<InferSchemaOutput<T>, string | number> {
     const collectionOptions = queryCollectionOptions({
         queryClient: new QueryClient(),
-        // TODO: fix this...
-        getKey: (object) => (object as unknown as { id: string }).id,
+        getKey: (object) => (object as unknown as { __primaryKey: string | number }).__primaryKey,
         queryKey: ["foundry", objectType],
         syncMode: "on-demand",
         schema,
@@ -59,12 +58,14 @@ export function createObjectsCollection<T extends StandardSchema<OntologyObjectV
                         if (update.type === "object") {
                             switch (update.state) {
                                 case "ADDED_OR_UPDATED": {
+                                    console.log("update", update);
                                     collection.utils.writeUpsert(update.object as InferSchemaOutput<T>);
                                     break;
                                 }
                                 case "REMOVED": {
                                     collection.utils.writeDelete(
-                                        (update.object as unknown as { __primaryKey: string }).__primaryKey
+                                        (update.object as unknown as { __primaryKey: string | number })
+                                            .__primaryKey
                                     );
                                     break;
                                 }
@@ -72,6 +73,7 @@ export function createObjectsCollection<T extends StandardSchema<OntologyObjectV
                         }
                     }
                 });
+                console.log("collection now....", Array.from(collection.values()));
                 break;
             }
             case "refresh": {

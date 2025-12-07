@@ -71,6 +71,13 @@ export function generateObjectTypeSchemaFileContent(objectType: ObjectTypeFullMe
         schemaFields.push(fieldCode);
     }
 
+    // Add __primaryKey property with the same type as the primary key
+    const primaryKeyProperty = properties[primaryKey];
+    if (primaryKeyProperty) {
+        const primaryKeyZodSchemaCode = getZodSchemaCodeForPropertyType(primaryKeyProperty.dataType);
+        schemaFields.push(`__primaryKey: ${primaryKeyZodSchemaCode}`);
+    }
+
     // Generate the file content
     const imports = `import { z } from "zod";`;
     const schemaDefinition = `export const ${apiName} = z.object({\n${schemaFields.map((field) => `    ${field}`).join(",\n")}\n});`;
