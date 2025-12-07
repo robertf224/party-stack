@@ -31,18 +31,14 @@ export class ObjectSetWatcherManager {
 
             for (const message of yield* each(messages)) {
                 if (message.type === "change" || message.type === "refresh") {
-                    try {
-                        const subscriptions = manager.#objectSetSubscriptions.get(message.subscriptionId);
-                        subscriptions?.forEach((sub) => {
-                            try {
-                                sub(message);
-                            } catch (error) {
-                                console.error("Error during subscription callback", error);
-                            }
-                        });
-                    } catch (error) {
-                        console.error("Some error in change propagation", error);
-                    }
+                    const subscriptions = manager.#objectSetSubscriptions.get(message.subscriptionId);
+                    subscriptions?.forEach((sub) => {
+                        try {
+                            sub(message);
+                        } catch (error) {
+                            console.error("Error during subscription callback", error);
+                        }
+                    });
                 } else {
                     for (const update of message.updates) {
                         const subscriptions = manager.#objectSetSubscriptions.get(update.subscriptionId);

@@ -4,7 +4,7 @@ import { invariant } from "@bobbyfidz/panic";
 import { Pathnames, Urls } from "@bobbyfidz/urls";
 import { useWebSocket } from "@effectionx/websocket";
 import { ObjectSetStreamSubscribeRequests, ObjectSetUpdate, StreamMessage } from "@osdk/foundry.ontologies";
-import { resource, spawn, race, sleep, Stream, Operation, createChannel, ensure } from "effection";
+import { resource, spawn, race, sleep, Stream, Operation, createChannel } from "effection";
 import { map } from "./effection-utils/stream-helpers";
 import { ValueSignal } from "./effection-utils/ValueSignal";
 import {
@@ -158,13 +158,11 @@ export function useObjectSetWatcherConnection(
 
             const desiredSubscriptionsUpdates = yield* desiredSubscriptions;
             while (true) {
-                console.log("Racing heartbeat and next subscription update...");
                 const nextEvent = yield* race([
                     desiredSubscriptionsUpdates.next(),
                     sleep(WEBSOCKET_HEARTBEAT_INTERVAL_MS),
                 ]);
                 if (nextEvent && nextEvent.done) {
-                    console.log("Subscription updates closed in connection.");
                     break;
                 }
                 // TODO: figure out if we can heartbeat with a smaller payload.
@@ -227,10 +225,6 @@ export function useObjectSetWatcherConnection(
             }
         }));
 
-        yield* ensure(function* () {
-            console.log("Cleaning up connection...");
-            yield* subscriptionMessages.close();
-        });
         yield* provide(subscriptionMessages);
     });
 }

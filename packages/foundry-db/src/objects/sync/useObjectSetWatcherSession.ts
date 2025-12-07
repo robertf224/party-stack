@@ -15,13 +15,13 @@ export function useObjectSetWatcherSession(
     desiredSubscriptions: ValueSignal<ObjectSetSubscription[]>
 ): Operation<Stream<ObjectSetSubscriptionsMessage, void>> {
     return resource(function* (provide) {
-        // TODO: turn off connection after a while if there are no object sets we want to subscribe to.
+        // TODO: turn off connection after a while if there are 0 object sets we are subscribed to.
 
         const subscriptionMessages = createChannel<ObjectSetSubscriptionsMessage>();
 
         void (yield* spawn(function* () {
             while (true) {
-                // TODO: yield until we have > 0 queries + auth.
+                // TODO: wait until we have > 0 object sets we are subscribed to and have auth.
                 try {
                     yield* scoped(function* () {
                         const connection = yield* useObjectSetWatcherConnection(
@@ -44,7 +44,6 @@ export function useObjectSetWatcherSession(
                                 break;
                             }
                             const message = nextMessage.value;
-                            console.log("message seen in session", message);
 
                             if (
                                 message.type === "state" &&
@@ -64,7 +63,7 @@ export function useObjectSetWatcherSession(
                         }
                     });
                 } catch (error) {
-                    console.error(error);
+                    console.error("Error in connection", error);
                     // TODO: capture error here and adjust behavior accordingly. it seems like browsers
                     // mostly just close rather than erroring, but Node.js might error before closing.
                     yield* subscriptionMessages.send({
@@ -75,13 +74,11 @@ export function useObjectSetWatcherSession(
                     });
                 }
 
-                console.log("Connection closed, sleeping and then starting a new one...");
-
-                // TODO: actual logic here
-                // if quit because disconnected from network, yield until we're back online
-                // if quit because of qos, yield w/ some jitter
-                // if quit because of auth we'll yield at top of loop for new token
-                // if quit because 0 queries we'll yield at top of loop for queries
+                // TODO: smart reconnection logic here:
+                // - if quit because disconnected from network, wait until we're back online
+                // - if quit because of qos, wait w/ some jitter so we don't overload the server
+                // - if quit because of auth we'll yield at top of loop for a new token
+                // - if quit because 0 queries we'll yield at top of loop for queries
                 yield* sleep(5_000);
             }
         }));
