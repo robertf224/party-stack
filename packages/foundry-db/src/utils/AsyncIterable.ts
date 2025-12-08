@@ -10,23 +10,24 @@ export async function toArray<T>(asyncIterable: AsyncIterable<T>): Promise<T[]> 
 }
 
 export async function* fromPagination<C extends string | number, P, T>(
-    getPage: (cursor?: C) => Promise<P>,
-    getCursor: (page: P) => C | undefined,
+    getPage: (pageSize: number, pageToken?: C) => Promise<P>,
+    getpageToken: (page: P) => C | undefined,
     getElements: (page: P) => T[] | Promise<T[]>,
+    defaultPageSize: number,
     limit: number = Infinity
 ): AsyncIterable<T> {
-    let cursor: C | undefined = undefined;
+    let pageToken: C | undefined = undefined;
     let hasMore = true;
     let count = 0;
     while (hasMore && count < limit) {
-        const page: P = await getPage(cursor);
+        const page = await getPage(Math.min(limit - count, defaultPageSize), pageToken);
         const elements = await getElements(page);
         for (const element of elements) {
             yield element;
         }
         count += elements.length;
-        cursor = getCursor(page);
-        if (cursor === undefined) {
+        pageToken = getpageToken(page);
+        if (pageToken === undefined) {
             hasMore = false;
         }
     }

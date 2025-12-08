@@ -1,10 +1,10 @@
 import { ObjectSet } from "@osdk/foundry.ontologies";
 import { run, Task, until } from "effection";
 import { each } from "effection";
+import { OntologyClient } from "../../utils/client.js";
 import { useValueSignal } from "./effection-utils/useValueSignal.js";
 import { ObjectSetSubscription, ObjectSetSubscriptionMessage } from "./ObjectSetSubscription.js";
 import { useObjectSetWatcherSession } from "./useObjectSetWatcherSession.js";
-import type { Client } from "@osdk/client";
 
 export class ObjectSetWatcherManager {
     #task: Task<void> | undefined;
@@ -13,7 +13,7 @@ export class ObjectSetWatcherManager {
         | ((updater: (state: ObjectSetSubscription[]) => ObjectSetSubscription[]) => void)
         | undefined;
 
-    constructor(client: Client) {
+    constructor(client: OntologyClient) {
         this.#objectSetSubscriptions = new Map();
 
         // eslint-disable-next-line @typescript-eslint/no-this-alias
@@ -23,9 +23,9 @@ export class ObjectSetWatcherManager {
             // eslint-disable-next-line @typescript-eslint/unbound-method
             manager.#updateDesiredSubscriptions = desiredSubscriptions.update;
             const messages = yield* useObjectSetWatcherSession(
-                client.__osdkClientContext.baseUrl,
-                () => until(client.__osdkClientContext.tokenProvider()),
-                (client.__osdkClientContext as unknown as { ontologyRid: string }).ontologyRid,
+                client.baseUrl,
+                () => until(client.tokenProvider()),
+                client.ontologyRid,
                 desiredSubscriptions
             );
 
@@ -91,8 +91,8 @@ export class ObjectSetWatcherManager {
     }
 }
 
-const cache = new WeakMap<Client, ObjectSetWatcherManager>();
-export function getObjectSetWatcherManager(client: Client): ObjectSetWatcherManager {
+const cache = new WeakMap<OntologyClient, ObjectSetWatcherManager>();
+export function getObjectSetWatcherManager(client: OntologyClient): ObjectSetWatcherManager {
     let manager = cache.get(client);
     if (!manager) {
         manager = new ObjectSetWatcherManager(client);

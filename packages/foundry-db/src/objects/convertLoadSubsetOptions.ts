@@ -75,6 +75,15 @@ export function convertLoadSubsetFilter(filter: LoadSubsetOptions["where"]): Sea
                               value: value.toLowerCase().replace("_", "?").replace("%", "*"),
                           }
                         : { type: "and", value: [] },
+                like: (field: FieldPath, value: string) =>
+                    // We can copy the ilike logic -- this will return slightly more results but still better than querying everything.
+                    value !== "%"
+                        ? {
+                              type: "wildcard",
+                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                              value: value.toLowerCase().replace("_", "?").replace("%", "*"),
+                          }
+                        : { type: "and", value: [] },
             },
         }) ?? undefined
     );

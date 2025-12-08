@@ -3,8 +3,8 @@ import path from "path";
 import { performLocalOAuthFlow } from "@bobbyfidz/local-oauth-flow";
 import env from "@next/env";
 import { Command, Flags } from "@oclif/core";
-import { createClient } from "@osdk/client";
 import { OntologiesV2 } from "@osdk/foundry.ontologies";
+import { createClient } from "../../utils/client.js";
 import { generateObjectTypeSchemaFileContent } from "../generateObjectTypeSchemaFileContent.js";
 
 env.loadEnvConfig(process.cwd(), true);
@@ -37,9 +37,10 @@ export default class Generate extends Command {
                 redirectUrl: flags.foundryRedirectUrl,
                 scopes: ["api:read-data", "offline_access"],
             });
-            const client = createClient(flags.foundryUrl, flags.foundryOntologyRid, () =>
-                Promise.resolve(accessToken)
-            );
+            const client = createClient({
+                baseUrl: flags.foundryUrl,
+                tokenProvider: () => Promise.resolve(accessToken),
+            });
             const ontology = await OntologiesV2.getFullMetadata(client, flags.foundryOntologyRid);
 
             // Create output directory if it doesn't exist

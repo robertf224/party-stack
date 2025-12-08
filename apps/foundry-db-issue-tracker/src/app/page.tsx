@@ -1,19 +1,19 @@
 "use client";
 
 import { createUsersCollection } from "@bobbyfidz/foundry-db/users";
-import { createClient } from "@osdk/client";
 import { concat, eq, ilike, useLiveSuspenseQuery } from "@tanstack/react-db";
 import { useState } from "react";
 import { ClientOnly } from "./ClientOnly";
 import { createObjectsCollection } from "@bobbyfidz/foundry-db/objects";
 import { StreamlineForm } from "@/__generated__/foundry-db/StreamlineForm";
 import { StreamlineFormRevision } from "@/__generated__/foundry-db/StreamlineFormRevision";
+import { createOntologyClient } from "@bobbyfidz/foundry-db";
 
-const client = createClient(
-    process.env.NEXT_PUBLIC_FOUNDRY_URL!,
-    process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
-    () => Promise.resolve(process.env.NEXT_PUBLIC_FOUNDRY_TOKEN!)
-);
+const client = createOntologyClient({
+    baseUrl: process.env.NEXT_PUBLIC_FOUNDRY_URL!,
+    ontologyRid: process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
+    tokenProvider: () => Promise.resolve(process.env.NEXT_PUBLIC_FOUNDRY_TOKEN!),
+});
 const $user = createUsersCollection({ client });
 const $form = createObjectsCollection({
     client,

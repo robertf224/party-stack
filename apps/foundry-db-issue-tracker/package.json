@@ -13,8 +13,7 @@
     "next": "16.0.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "@osdk/client": "^2.5.2",
-    "@tanstack/react-db": "^0.1.52",
+    "@tanstack/react-db": "^0.1.55",
     "@bobbyfidz/foundry-db": "workspace:*",
     "zod": "^4.1.13"
   },

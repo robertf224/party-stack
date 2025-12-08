@@ -1,14 +1,14 @@
-import { Client } from "@osdk/client";
 import { OntologyObjectsV2, OntologyObjectV2 } from "@osdk/foundry.ontologies";
 import { Collection, createCollection, InferSchemaOutput, StandardSchema } from "@tanstack/db";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
-import * as AsyncIterable from "../AsyncIterable.js";
+import * as AsyncIterable from "../utils/AsyncIterable.js";
+import { OntologyClient } from "../utils/client.js";
 import { convertLoadSubsetFilter, convertLoadSubsetOrderBy } from "./convertLoadSubsetOptions.js";
 import { getObjectSetWatcherManager } from "./sync/ObjectSetWatcherManager.js";
 
 export interface CreateObjectsCollectionOpts<T extends StandardSchema<OntologyObjectV2>> {
-    client: Client;
+    client: OntologyClient;
     ontologyRid: string;
     objectType: string;
     schema: T;
@@ -29,18 +29,20 @@ export function createObjectsCollection<T extends StandardSchema<OntologyObjectV
         queryFn: async (ctx) => {
             const results = await AsyncIterable.toArray(
                 AsyncIterable.fromPagination(
-                    (pageToken: string | undefined) =>
+                    (pageSize, pageToken: string | undefined) =>
                         OntologyObjectsV2.search(client, ontologyRid, objectType, {
                             snapshot: true,
                             where: convertLoadSubsetFilter(ctx.meta?.loadSubsetOptions.where),
                             excludeRid: true,
                             // We select all properties right now.
                             select: [],
+                            pageSize,
                             pageToken,
                             orderBy: convertLoadSubsetOrderBy(ctx.meta?.loadSubsetOptions.orderBy),
                         }),
                     (page) => page.nextPageToken,
                     (page) => page.data,
+                    10_000,
                     ctx.meta?.loadSubsetOptions.limit
                 )
             );
