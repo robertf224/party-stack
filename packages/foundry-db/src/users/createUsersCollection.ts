@@ -27,7 +27,6 @@ export function createUsersCollection({ client }: CreateUsersCollectionOpts) {
             syncMode: "on-demand",
             queryFn: async (ctx) => {
                 const loadSubsetOptions = ctx.meta?.loadSubsetOptions;
-                console.log("load subset options for users collection", loadSubsetOptions);
 
                 const query = convertQuery(loadSubsetOptions);
 

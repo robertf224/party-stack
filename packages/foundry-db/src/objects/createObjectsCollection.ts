@@ -27,12 +27,19 @@ export function createObjectsCollection<T extends StandardSchema<OntologyObjectV
         syncMode: "on-demand",
         schema,
         queryFn: async (ctx) => {
+            const where = convertLoadSubsetFilter(ctx.meta?.loadSubsetOptions.where);
+
+            // Short-circuit this case since it should be no results but Foundry returns everything.
+            if (where?.type === "in" && where.value.length === 0) {
+                return [];
+            }
+
             const results = await AsyncIterable.toArray(
                 AsyncIterable.fromPagination(
                     (pageSize, pageToken: string | undefined) =>
                         OntologyObjectsV2.search(client, ontologyRid, objectType, {
                             snapshot: true,
-                            where: convertLoadSubsetFilter(ctx.meta?.loadSubsetOptions.where),
+                            where,
                             excludeRid: true,
                             // We select all properties right now.
                             select: [],
