@@ -10,11 +10,12 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@bobbyfidz/foundry-db": "workspace:*",
+    "@tanstack/react-db": "^0.1.55",
+    "@tanstack/react-table": "^8.21.3",
     "next": "16.0.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "@tanstack/react-db": "^0.1.55",
-    "@bobbyfidz/foundry-db": "workspace:*",
     "zod": "^4.1.13"
   },
   "devDependencies": {
@@ -24,8 +25,8 @@
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.25.0",
     "eslint-config-next": "16.0.3",
-    "tailwindcss": "^4.0.6",
     "serve": "^14.2.5",
+    "tailwindcss": "^4.0.6",
     "typescript": "~5.8.3"
   }
 }

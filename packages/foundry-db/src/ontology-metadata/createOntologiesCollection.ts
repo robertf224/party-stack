@@ -14,6 +14,7 @@ export function createOntologiesCollection({ client }: CreateOntologiesCollectio
             queryClient: new QueryClient(),
             getKey: (ontology) => ontology.rid,
             queryKey: ["foundry", "ontologies"],
+            syncMode: "eager",
             queryFn: async () => {
                 const ontologies = await OntologiesV2.list(client);
                 return ontologies.data;
