@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@bobbyfidz/foundry-db": "workspace:*",
+    "@tanstack/db": "link:../db/packages/db",
     "@tanstack/react-db": "^0.1.55",
     "@tanstack/react-table": "^8.21.3",
     "next": "16.0.3",

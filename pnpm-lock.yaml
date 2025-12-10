@@ -41,6 +41,9 @@ importers:
       '@bobbyfidz/foundry-db':
         specifier: workspace:*
         version: link:../../packages/foundry-db
+      '@tanstack/db':
+        specifier: link:../db/packages/db
+        version: link:../db/packages/db
       '@tanstack/react-db':
         specifier: ^0.1.55
         version: 0.1.55(react@19.2.0)(typescript@5.8.3)
