@@ -18,7 +18,7 @@ import { getObjectSetWatcherManager } from "./sync/ObjectSetWatcherManager.js";
 
 type WithRequired<T, K extends keyof T> = T & { [P in K]-?: T[P] };
 
-export interface ObjectsCollectionConfig<TSchema extends StandardSchema<OntologyObject>>
+export interface ObjectCollectionConfig<TSchema extends StandardSchema<OntologyObject>>
     extends Omit<
         CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema>,
         "sync" | "syncMode" | "getKey" | "onInsert" | "onUpdate" | "onDelete"
@@ -29,12 +29,14 @@ export interface ObjectsCollectionConfig<TSchema extends StandardSchema<Ontology
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface ObjectsCollectionUtils extends UtilsRecord {}
+export interface ObjectCollectionUtils extends UtilsRecord {
+    _upsertObject: (object: OntologyObject) => void;
+}
 
-function objectsCollectionOptions<TSchema extends StandardSchema<OntologyObject>>(
-    config: ObjectsCollectionConfig<TSchema>
+function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>(
+    config: ObjectCollectionConfig<TSchema>
 ): WithRequired<
-    CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema, ObjectsCollectionUtils>,
+    CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema, ObjectCollectionUtils>,
     "schema"
 > {
     const { client, objectType, schema, ...rest } = config;
@@ -43,8 +45,8 @@ function objectsCollectionOptions<TSchema extends StandardSchema<OntologyObject>
         sync: (params) => {
             const { begin, write, commit, markReady, collection } = params;
 
-            const safeUpsert = (object: InferSchemaOutput<TSchema>) => {
-                const existingObject = collection.get(object.__primaryKey);
+            const upsertObject = (object: InferSchemaOutput<TSchema>) => {
+                const existingObject = collection._state.syncedData.get(object.__primaryKey);
                 if (existingObject) {
                     write({ type: "update", value: object, previousValue: existingObject });
                 } else {
@@ -52,8 +54,8 @@ function objectsCollectionOptions<TSchema extends StandardSchema<OntologyObject>
                 }
             };
 
-            const safeDelete = (object: InferSchemaOutput<TSchema>) => {
-                const existingObject = collection.get(object.__primaryKey);
+            const deleteObject = (object: InferSchemaOutput<TSchema>) => {
+                const existingObject = collection._state.syncedData.get(object.__primaryKey);
                 if (existingObject) {
                     write({ type: "delete", value: object, previousValue: existingObject });
                 }
@@ -94,7 +96,7 @@ function objectsCollectionOptions<TSchema extends StandardSchema<OntologyObject>
                 if (objects.length > 0) {
                     begin();
                     for (const object of objects) {
-                        safeUpsert(object);
+                        upsertObject(object);
                     }
                     commit();
                 }
@@ -111,11 +113,11 @@ function objectsCollectionOptions<TSchema extends StandardSchema<OntologyObject>
                                 const object = update.object as InferSchemaOutput<TSchema>;
                                 switch (update.state) {
                                     case "ADDED_OR_UPDATED": {
-                                        safeUpsert(object);
+                                        upsertObject(object);
                                         break;
                                     }
                                     case "REMOVED": {
-                                        safeDelete(object);
+                                        deleteObject(object);
                                         break;
                                     }
                                 }
@@ -149,8 +151,8 @@ function objectsCollectionOptions<TSchema extends StandardSchema<OntologyObject>
     };
 }
 
-export function createObjectsCollection<TSchema extends StandardSchema<OntologyObject>>(
-    config: ObjectsCollectionConfig<TSchema>
-): Collection<InferSchemaOutput<TSchema>, string | number, ObjectsCollectionUtils, TSchema> {
-    return createCollection(objectsCollectionOptions(config));
+export function createObjectCollection<TSchema extends StandardSchema<OntologyObject>>(
+    config: ObjectCollectionConfig<TSchema>
+): Collection<InferSchemaOutput<TSchema>, string | number, ObjectCollectionUtils, TSchema> {
+    return createCollection(objectCollectionOptions(config));
 }

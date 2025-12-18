@@ -57,12 +57,12 @@ export interface CreateOntologyMetadataCollectionsOpts {
 
 export function createOntologyMetadataCollections({ client }: CreateOntologyMetadataCollectionsOpts): {
     $ontology: Collection<OntologyMetadataCollectionEntry>;
-    $actionTypes: Collection<ActionTypeFullMetadata>;
-    $objectTypes: Collection<ObjectTypeFullMetadata>;
-    $valueTypes: Collection<OntologyValueType>;
-    $queryTypes: Collection<QueryTypeV2>;
-    $interfaceTypes: Collection<InterfaceType>;
-    $sharedPropertyTypes: Collection<SharedPropertyType>;
+    $actionType: Collection<ActionTypeFullMetadata>;
+    $objectType: Collection<ObjectTypeFullMetadata>;
+    $valueType: Collection<OntologyValueType>;
+    $queryType: Collection<QueryTypeV2>;
+    $interfaceType: Collection<InterfaceType>;
+    $sharedPropertyType: Collection<SharedPropertyType>;
 } {
     const $ontology = createCollection(
         queryCollectionOptions<OntologyMetadataCollectionEntry>({
@@ -194,11 +194,11 @@ export function createOntologyMetadataCollections({ client }: CreateOntologyMeta
 
     return {
         $ontology,
-        $actionTypes,
-        $objectTypes,
-        $valueTypes,
-        $queryTypes,
-        $interfaceTypes,
-        $sharedPropertyTypes,
+        $actionType: $actionTypes,
+        $objectType: $objectTypes,
+        $valueType: $valueTypes,
+        $queryType: $queryTypes,
+        $interfaceType: $interfaceTypes,
+        $sharedPropertyType: $sharedPropertyTypes,
     };
 }

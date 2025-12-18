@@ -1,9 +1,9 @@
 "use client";
 
 import { createOntologyClient } from "@bobbyfidz/foundry-db";
-import { createObjectsCollection } from "@bobbyfidz/foundry-db/objects";
+import { createObjectCollection } from "@bobbyfidz/foundry-db/objects";
 import { createOntologyMetadataCollections } from "@bobbyfidz/foundry-db/ontology-metadata";
-import { createUsersCollection } from "@bobbyfidz/foundry-db/users";
+import { createUserCollection } from "@bobbyfidz/foundry-db/users";
 import { StreamlineForm } from "@/__generated__/foundry-db/StreamlineForm";
 import { StreamlineFormRevision } from "@/__generated__/foundry-db/StreamlineFormRevision";
 
@@ -12,15 +12,15 @@ const client = createOntologyClient({
     ontologyRid: process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
     tokenProvider: () => Promise.resolve(process.env.NEXT_PUBLIC_FOUNDRY_TOKEN!),
 });
-export const $user = createUsersCollection({ client });
-export const $form = createObjectsCollection({
+export const $user = createUserCollection({ client });
+export const $form = createObjectCollection({
     client,
     objectType: "StreamlineForm",
     schema: StreamlineForm,
 });
-export const $formRevision = createObjectsCollection({
+export const $formRevision = createObjectCollection({
     client,
     objectType: "StreamlineFormRevision",
     schema: StreamlineFormRevision,
 });
-export const { $actionTypes } = createOntologyMetadataCollections({ client });
+export const { $actionType: $actionTypes } = createOntologyMetadataCollections({ client });

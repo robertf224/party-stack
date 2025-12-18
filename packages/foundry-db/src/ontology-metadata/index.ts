@@ -1,2 +1,2 @@
-export * from "./createOntologiesCollection.js";
+export * from "./createOntologyCollection.js";
 export * from "./createOntologyMetadataCollections.js";

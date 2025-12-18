@@ -14,11 +14,11 @@ import { Client } from "../utils/client.js";
 
 type UsersQuery = { type: "getBatch"; ids: string[] } | { type: "search"; query: string } | { type: "list" };
 
-export interface CreateUsersCollectionOpts {
+export interface CreateUserCollectionOpts {
     client: Client;
 }
 
-export function createUsersCollection({ client }: CreateUsersCollectionOpts) {
+export function createUserCollection({ client }: CreateUserCollectionOpts) {
     return createCollection(
         queryCollectionOptions<User>({
             queryClient: new QueryClient(),

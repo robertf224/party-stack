@@ -1,1 +1,1 @@
-export * from "./createUsersCollection.js";
+export * from "./createUserCollection.js";

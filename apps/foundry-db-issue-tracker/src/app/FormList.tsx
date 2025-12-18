@@ -1,12 +1,12 @@
 "use client";
 
-import { concat, eq, ilike, useLiveSuspenseQuery } from "@tanstack/react-db";
+import { concat, eq, ilike, useLiveInfiniteQuery, useLiveQuery } from "@tanstack/react-db";
 import React, { useState } from "react";
 import { $form, $formRevision, $user } from "./collections";
 
 export const FormList: React.FC = () => {
     const [query, setQuery] = useState("");
-    const { data: forms } = useLiveSuspenseQuery(
+    const { data: forms } = useLiveInfiniteQuery(
         (q) =>
             q
                 .from({ $form })
@@ -23,6 +23,9 @@ export const FormList: React.FC = () => {
                     lastPublishedAt: $formRevision?.createdAt,
                     lastPublishedBy: concat($user?.givenName, " ", $user?.familyName),
                 })),
+        {
+            getNextPageParam: (page) => page.length,
+        },
         [query]
     );
 
