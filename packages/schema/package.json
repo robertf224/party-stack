@@ -13,11 +13,18 @@
     ],
     "scripts": {
         "build": "tsc",
-        "lint": "eslint"
+        "lint": "eslint",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "ts-morph": "^25.0.1",
+        "zod": "^3.25.64",
+        "@standard-schema/spec": "^1.1.0"
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",
         "eslint": "^9.25.0",
-        "typescript": "~5.8.3"
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
     }
 }
