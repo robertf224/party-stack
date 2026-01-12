@@ -26,8 +26,16 @@ describe("Schema Validation", () => {
                     type: {
                         kind: "struct",
                         fields: [
-                            { apiName: "line1", displayName: "line1", type: { kind: "string", required: true } },
-                            { apiName: "city", displayName: "city", type: { kind: "string", required: true } },
+                            {
+                                apiName: "line1",
+                                displayName: "line1",
+                                type: { kind: "string", required: true },
+                            },
+                            {
+                                apiName: "city",
+                                displayName: "city",
+                                type: { kind: "string", required: true },
+                            },
                         ],
                     },
                 },
@@ -45,7 +53,11 @@ describe("Schema Validation", () => {
                     type: {
                         kind: "struct",
                         fields: [
-                            { apiName: "city", displayName: "city", type: { kind: "string", required: true } },
+                            {
+                                apiName: "city",
+                                displayName: "city",
+                                type: { kind: "string", required: true },
+                            },
                         ],
                     },
                 },
@@ -113,7 +125,11 @@ describe("Schema Validation", () => {
                     type: {
                         kind: "struct",
                         fields: [
-                            { apiName: "name", displayName: "name", type: { kind: "string", required: true } },
+                            {
+                                apiName: "name",
+                                displayName: "name",
+                                type: { kind: "string", required: true },
+                            },
                         ],
                     },
                 },
@@ -153,7 +169,11 @@ describe("Schema Validation", () => {
                                 type: {
                                     kind: "struct",
                                     fields: [
-                                        { apiName: "radius", displayName: "radius", type: { kind: "double", required: true } },
+                                        {
+                                            apiName: "radius",
+                                            displayName: "radius",
+                                            type: { kind: "double", required: true },
+                                        },
                                     ],
                                 },
                             },
@@ -162,8 +182,16 @@ describe("Schema Validation", () => {
                                 type: {
                                     kind: "struct",
                                     fields: [
-                                        { apiName: "width", displayName: "width", type: { kind: "double", required: true } },
-                                        { apiName: "height", displayName: "height", type: { kind: "double", required: true } },
+                                        {
+                                            apiName: "width",
+                                            displayName: "width",
+                                            type: { kind: "double", required: true },
+                                        },
+                                        {
+                                            apiName: "height",
+                                            displayName: "height",
+                                            type: { kind: "double", required: true },
+                                        },
                                     ],
                                 },
                             },

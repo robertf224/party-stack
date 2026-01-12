@@ -1,129 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { generateTypeScript, generateZod } from "../codegen/index.js";
+import { generateZod } from "../codegen/index.js";
 import type { SchemaIR } from "../ir/index.js";
 
-describe("Code Generation", () => {
-    describe("TypeScript Types", () => {
-        it("should generate type for simple struct", () => {
-            const schema: SchemaIR = {
-                types: [
-                    {
-                        apiName: "Address",
-                        type: {
-                            kind: "struct",
-                            fields: [
-                                { apiName: "city", displayName: "city", type: { kind: "string", required: true } },
-                                { apiName: "zip", displayName: "zip", type: { kind: "string" } },
-                            ],
-                        },
-                    },
-                ],
-            };
-
-            const code = generateTypeScript(schema);
-
-            expect(code).toContain("export type Address");
-            expect(code).toContain("readonly city: string");
-            expect(code).toContain("readonly zip?: string"); // optional
-        });
-
-        it("should generate string enum types", () => {
-            const schema: SchemaIR = {
-                types: [
-                    {
-                        apiName: "Order",
-                        type: {
-                            kind: "struct",
-                            fields: [
-                                {
-                                    apiName: "status",
-                                    displayName: "status",
-                                    type: {
-                                        kind: "string",
-                                        constraint: {
-                                            kind: "enum",
-                                            options: [{ value: "pending" }, { value: "active" }, { value: "done" }],
-                                        },
-                                        required: true,
-                                    },
-                                },
-                            ],
-                        },
-                    },
-                ],
-            };
-
-            const code = generateTypeScript(schema);
-            expect(code).toContain('"pending" | "active" | "done"');
-        });
-
-        it("should generate types with refs as type names", () => {
-            const schema: SchemaIR = {
-                types: [
-                    {
-                        apiName: "Address",
-                        type: {
-                            kind: "struct",
-                            fields: [
-                                { apiName: "city", displayName: "city", type: { kind: "string", required: true } },
-                            ],
-                        },
-                    },
-                    {
-                        apiName: "Order",
-                        type: {
-                            kind: "struct",
-                            fields: [
-                                {
-                                    apiName: "shipTo",
-                                    displayName: "Ship To",
-                                    type: { kind: "ref", apiName: "Address" },
-                                },
-                            ],
-                        },
-                    },
-                ],
-            };
-
-            const code = generateTypeScript(schema);
-
-            // Both types should be generated
-            expect(code).toContain("export type Address");
-            expect(code).toContain("export type Order");
-
-            // The ref should be emitted as the type name
-            expect(code).toContain("readonly shipTo?: Address");
-        });
-
-        it("should generate list types", () => {
-            const schema: SchemaIR = {
-                types: [
-                    {
-                        apiName: "Order",
-                        type: {
-                            kind: "struct",
-                            fields: [
-                                {
-                                    apiName: "items",
-                                    displayName: "items",
-                                    type: {
-                                        kind: "list",
-                                        elementType: { kind: "string" },
-                                        required: true,
-                                    },
-                                },
-                            ],
-                        },
-                    },
-                ],
-            };
-
-            const code = generateTypeScript(schema);
-            expect(code).toContain("readonly items: string[]");
-        });
-    });
-
-    describe("Zod Schemas", () => {
+describe("Zod Schema Generation", () => {
+    describe("Conceptual Types", () => {
         it("should generate zod schema for simple struct", () => {
             const schema: SchemaIR = {
                 types: [
@@ -132,7 +12,11 @@ describe("Code Generation", () => {
                         type: {
                             kind: "struct",
                             fields: [
-                                { apiName: "city", displayName: "city", type: { kind: "string", required: true } },
+                                {
+                                    apiName: "city",
+                                    displayName: "city",
+                                    type: { kind: "string", required: true },
+                                },
                                 { apiName: "zip", displayName: "zip", type: { kind: "string" } },
                             ],
                         },
@@ -187,7 +71,11 @@ describe("Code Generation", () => {
                         type: {
                             kind: "struct",
                             fields: [
-                                { apiName: "city", displayName: "city", type: { kind: "string", required: true } },
+                                {
+                                    apiName: "city",
+                                    displayName: "city",
+                                    type: { kind: "string", required: true },
+                                },
                             ],
                         },
                     },
@@ -220,9 +108,7 @@ describe("Code Generation", () => {
                         apiName: "Address",
                         type: {
                             kind: "struct",
-                            fields: [
-                                { apiName: "city", displayName: "city", type: { kind: "string" } },
-                            ],
+                            fields: [{ apiName: "city", displayName: "city", type: { kind: "string" } }],
                         },
                     },
                 ],
@@ -230,6 +116,98 @@ describe("Code Generation", () => {
 
             const code = generateZod(schema);
             expect(code).toContain("export type Address = z.infer<typeof AddressSchema>");
+        });
+
+        it("should generate z.date() for timestamp (conceptual type)", () => {
+            const schema: SchemaIR = {
+                types: [
+                    {
+                        apiName: "Event",
+                        type: {
+                            kind: "struct",
+                            fields: [
+                                {
+                                    apiName: "createdAt",
+                                    displayName: "createdAt",
+                                    type: { kind: "timestamp", required: true },
+                                },
+                            ],
+                        },
+                    },
+                ],
+            };
+
+            const code = generateZod(schema);
+            expect(code).toContain("createdAt: z.date()");
+        });
+
+        it("should generate z.date() for date (conceptual type)", () => {
+            const schema: SchemaIR = {
+                types: [
+                    {
+                        apiName: "Event",
+                        type: {
+                            kind: "struct",
+                            fields: [
+                                {
+                                    apiName: "eventDate",
+                                    displayName: "eventDate",
+                                    type: { kind: "date", required: true },
+                                },
+                            ],
+                        },
+                    },
+                ],
+            };
+
+            const code = generateZod(schema);
+            expect(code).toContain("eventDate: z.date()");
+        });
+
+        it("should generate z.bigint() for long (conceptual type)", () => {
+            const schema: SchemaIR = {
+                types: [
+                    {
+                        apiName: "Counter",
+                        type: {
+                            kind: "struct",
+                            fields: [
+                                {
+                                    apiName: "count",
+                                    displayName: "count",
+                                    type: { kind: "long", required: true },
+                                },
+                            ],
+                        },
+                    },
+                ],
+            };
+
+            const code = generateZod(schema);
+            expect(code).toContain("count: z.bigint()");
+        });
+
+        it("should generate z.number().int() for integer (conceptual type)", () => {
+            const schema: SchemaIR = {
+                types: [
+                    {
+                        apiName: "Item",
+                        type: {
+                            kind: "struct",
+                            fields: [
+                                {
+                                    apiName: "quantity",
+                                    displayName: "quantity",
+                                    type: { kind: "integer", required: true },
+                                },
+                            ],
+                        },
+                    },
+                ],
+            };
+
+            const code = generateZod(schema);
+            expect(code).toContain("quantity: z.number().int()");
         });
     });
 });

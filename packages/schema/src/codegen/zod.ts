@@ -1,23 +1,5 @@
-/**
- * Zod schema generator from Schema IR.
- *
- * Generates Zod validation schemas directly from the IR.
- * Type references are emitted as schema references.
- */
-
 import { Project, SourceFile } from "ts-morph";
-import type {
-    SchemaIR,
-    NamedTypeDef,
-    TypeDef,
-    VariantDef,
-    StructTypeDef,
-    UnionTypeDef,
-} from "../ir/ir.js";
-
-// ============================================================================
-// Zod Schema String Generation
-// ============================================================================
+import type { SchemaIR, NamedTypeDef, TypeDef, VariantDef, StructTypeDef, UnionTypeDef } from "../ir/ir.js";
 
 function typeDefToZod(type: TypeDef, wrapOptional = true): string {
     let base: string;
@@ -37,8 +19,11 @@ function typeDefToZod(type: TypeDef, wrapOptional = true): string {
             break;
 
         case "integer":
-        case "long":
             base = "z.number().int()";
+            break;
+
+        case "long":
+            base = "z.bigint()";
             break;
 
         case "float":
@@ -47,11 +32,8 @@ function typeDefToZod(type: TypeDef, wrapOptional = true): string {
             break;
 
         case "date":
-            base = "z.string().date()";
-            break;
-
         case "timestamp":
-            base = "z.string().datetime()";
+            base = "z.date()";
             break;
 
         case "geopoint":
@@ -143,31 +125,6 @@ export interface ZodCodegenOptions {
     inferTypes?: boolean;
 }
 
-/**
- * Generate Zod schemas for a schema.
- *
- * Each named type becomes a Zod schema variable.
- * References are emitted as schema references.
- */
-export function generateZod(schema: SchemaIR, options: ZodCodegenOptions = {}): string {
-    const { namedExports = true, inferTypes = true } = options;
-
-    const project = new Project({ useInMemoryFileSystem: true });
-    const sourceFile = project.createSourceFile("generated.ts", "");
-
-    // Add zod import
-    sourceFile.addImportDeclaration({
-        moduleSpecifier: "zod",
-        namedImports: ["z"],
-    });
-
-    for (const namedType of schema.types) {
-        addZodSchemaForType(sourceFile, namedType, { namedExports, inferTypes });
-    }
-
-    return sourceFile.getFullText().trim();
-}
-
 function addZodSchemaForType(
     sourceFile: SourceFile,
     namedType: NamedTypeDef,
@@ -218,4 +175,23 @@ export function generateZodSourceFile(
     }
 
     return sourceFile;
+}
+
+export function generateZod(schema: SchemaIR, options: ZodCodegenOptions = {}): string {
+    const { namedExports = true, inferTypes = true } = options;
+
+    const project = new Project({ useInMemoryFileSystem: true });
+    const sourceFile = project.createSourceFile("generated.ts", "");
+
+    // Add zod import
+    sourceFile.addImportDeclaration({
+        moduleSpecifier: "zod",
+        namedImports: ["z"],
+    });
+
+    for (const namedType of schema.types) {
+        addZodSchemaForType(sourceFile, namedType, { namedExports, inferTypes });
+    }
+
+    return sourceFile.getFullText().trim();
 }
