@@ -84,7 +84,7 @@ function typeDefToZod(type: TypeDef): string {
     }
 
     if (!type.required) {
-        output = `${output}.optional()`;
+        output = `z.optional(${output})`;
     }
 
     return output;
@@ -113,8 +113,7 @@ export function generateZod(schema: SchemaIR): string {
     const sourceFile = project.createSourceFile("schema.ts", "");
 
     sourceFile.addImportDeclaration({
-        // TODO: maybe use mini?
-        moduleSpecifier: "zod/v4",
+        moduleSpecifier: "zod/mini",
         namedImports: ["z"],
     });
 

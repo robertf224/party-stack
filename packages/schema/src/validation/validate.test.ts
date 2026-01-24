@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validate, ValidationResult } from "../validation/index.js";
+import { validate, ValidationResult } from "./index.js";
 import type { SchemaIR } from "../ir/index.js";
 
 function expectOk(result: ValidationResult): void {
