@@ -18,7 +18,6 @@ function validateTypeDef(
         case "string":
         case "boolean":
         case "integer":
-        case "long":
         case "float":
         case "double":
         case "date":
@@ -29,12 +28,20 @@ function validateTypeDef(
         case "list":
             return validateTypeDef(type.elementType, [...path, "elementType"], typeNames);
 
-        case "map":
+        case "map": {
+            const errors: ValidationError[] = [];
+            if (type.keyType.kind !== "string") {
+                errors.push({
+                    message: "Map key types must be string.",
+                    path: [...path, "keyType"],
+                });
+            }
             return [
+                ...errors,
                 ...validateTypeDef(type.keyType, [...path, "keyType"], typeNames),
                 ...validateTypeDef(type.valueType, [...path, "valueType"], typeNames),
             ];
-
+        }
         case "struct":
             return validateStructFields(type.fields, [...path, "fields"], typeNames);
 

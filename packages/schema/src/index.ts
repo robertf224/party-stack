@@ -21,4 +21,4 @@ export { s } from "./idl/index.js";
 export * from "./validation/index.js";
 
 // Code generation
-export * from "./codegen/index.js";
+export * from "./generate/index.js";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateZod } from "../codegen/index.js";
+import { generateZod } from "../generate/index.js";
 import type { SchemaIR } from "../ir/index.js";
 
 describe("Zod Schema Generation", () => {
@@ -164,28 +164,6 @@ describe("Zod Schema Generation", () => {
             expect(code).toContain("eventDate: z.date()");
         });
 
-        it("should generate z.bigint() for long (conceptual type)", () => {
-            const schema: SchemaIR = {
-                types: [
-                    {
-                        apiName: "Counter",
-                        type: {
-                            kind: "struct",
-                            fields: [
-                                {
-                                    apiName: "count",
-                                    displayName: "count",
-                                    type: { kind: "long", required: true },
-                                },
-                            ],
-                        },
-                    },
-                ],
-            };
-
-            const code = generateZod(schema);
-            expect(code).toContain("count: z.bigint()");
-        });
 
         it("should generate z.number().int() for integer (conceptual type)", () => {
             const schema: SchemaIR = {

@@ -203,4 +203,60 @@ describe("Schema Validation", () => {
 
         expectOk(validate(schema));
     });
+
+    it("should validate maps with string key types", () => {
+        const schema: SchemaIR = {
+            types: [
+                {
+                    apiName: "Metadata",
+                    type: {
+                        kind: "struct",
+                        fields: [
+                            {
+                                apiName: "tags",
+                                displayName: "Tags",
+                                type: {
+                                    kind: "map",
+                                    keyType: { kind: "string" },
+                                    valueType: { kind: "string" },
+                                    required: true,
+                                },
+                            },
+                        ],
+                    },
+                },
+            ],
+        };
+
+        expectOk(validate(schema));
+    });
+
+    it("should detect non-string map key types", () => {
+        const schema: SchemaIR = {
+            types: [
+                {
+                    apiName: "Metadata",
+                    type: {
+                        kind: "struct",
+                        fields: [
+                            {
+                                apiName: "scores",
+                                displayName: "Scores",
+                                type: {
+                                    kind: "map",
+                                    keyType: { kind: "integer" },
+                                    valueType: { kind: "double" },
+                                    required: true,
+                                },
+                            },
+                        ],
+                    },
+                },
+            ],
+        };
+
+        const result = validate(schema);
+        expectErr(result, 1);
+        expect(getErrors(result)).toContain("Map key types must be string.");
+    });
 });

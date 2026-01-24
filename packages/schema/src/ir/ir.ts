@@ -23,10 +23,6 @@ export interface IntegerTypeDef {
     kind: "integer";
 }
 
-export interface LongTypeDef {
-    kind: "long";
-}
-
 export interface FloatTypeDef {
     kind: "float";
 }
@@ -51,7 +47,6 @@ export type PrimitiveTypeDef =
     | StringTypeDef
     | BooleanTypeDef
     | IntegerTypeDef
-    | LongTypeDef
     | FloatTypeDef
     | DoubleTypeDef
     | DateTypeDef
@@ -90,7 +85,6 @@ export interface VariantDef {
 export interface UnionTypeDef {
     kind: "union";
     variants: VariantDef[];
-    compact?: boolean;
 }
 
 export interface ResultTypeDef {
