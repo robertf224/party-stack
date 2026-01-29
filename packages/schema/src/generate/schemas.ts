@@ -108,7 +108,7 @@ function resultTypeDefToZod(type: ResultTypeDef): string {
     return `z.discriminatedUnion("kind", [${okSchema}, ${errSchema}])`;
 }
 
-export function generateZod(schema: SchemaIR): string {
+export function generateSchemas(schema: SchemaIR): string {
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile("schema.ts", "");
 

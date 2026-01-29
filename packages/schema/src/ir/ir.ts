@@ -1,65 +1,46 @@
-// TODO: default values
-
+/* eslint-disable @typescript-eslint/no-empty-object-type */
 export interface StringEnumConstraint {
-    kind: "enum";
     options: Array<{
         value: string;
         label?: string;
     }>;
 }
 
-export type StringConstraint = StringEnumConstraint;
+export type StringConstraint = { kind: "enum"; value: StringEnumConstraint };
 
 export interface StringTypeDef {
-    kind: "string";
     constraint?: StringConstraint;
 }
 
-export interface BooleanTypeDef {
-    kind: "boolean";
-}
+export interface BooleanTypeDef {}
 
-export interface IntegerTypeDef {
-    kind: "integer";
-}
+export interface IntegerTypeDef {}
 
-export interface FloatTypeDef {
-    kind: "float";
-}
+export interface FloatTypeDef {}
 
-export interface DoubleTypeDef {
-    kind: "double";
-}
+export interface DoubleTypeDef {}
 
-export interface DateTypeDef {
-    kind: "date";
-}
+export interface DateTypeDef {}
 
-export interface TimestampTypeDef {
-    kind: "timestamp";
-}
+export interface TimestampTypeDef {}
 
-export interface GeopointTypeDef {
-    kind: "geopoint";
-}
+export interface GeopointTypeDef {}
 
 export type PrimitiveTypeDef =
-    | StringTypeDef
-    | BooleanTypeDef
-    | IntegerTypeDef
-    | FloatTypeDef
-    | DoubleTypeDef
-    | DateTypeDef
-    | TimestampTypeDef
-    | GeopointTypeDef;
+    | { kind: "string"; value: StringTypeDef }
+    | { kind: "boolean"; value: BooleanTypeDef }
+    | { kind: "integer"; value: IntegerTypeDef }
+    | { kind: "float"; value: FloatTypeDef }
+    | { kind: "double"; value: DoubleTypeDef }
+    | { kind: "date"; value: DateTypeDef }
+    | { kind: "timestamp"; value: TimestampTypeDef }
+    | { kind: "geopoint"; value: GeopointTypeDef };
 
 export interface ListTypeDef {
-    kind: "list";
     elementType: TypeDef;
 }
 
 export interface MapTypeDef {
-    kind: "map";
     keyType: TypeDef;
     valueType: TypeDef;
 }
@@ -73,7 +54,6 @@ export interface FieldDef {
 }
 
 export interface StructTypeDef {
-    kind: "struct";
     fields: FieldDef[];
 }
 
@@ -83,29 +63,26 @@ export interface VariantDef {
 }
 
 export interface UnionTypeDef {
-    kind: "union";
     variants: VariantDef[];
 }
 
 export interface ResultTypeDef {
-    kind: "result";
     okType: TypeDef;
     errType: TypeDef;
 }
 
 export interface TypeRef {
-    kind: "ref";
     apiName: string;
 }
 
 export type TypeDef = (
     | PrimitiveTypeDef
-    | ListTypeDef
-    | MapTypeDef
-    | StructTypeDef
-    | UnionTypeDef
-    | ResultTypeDef
-    | TypeRef
+    | { kind: "list"; value: ListTypeDef }
+    | { kind: "map"; value: MapTypeDef }
+    | { kind: "struct"; value: StructTypeDef }
+    | { kind: "union"; value: UnionTypeDef }
+    | { kind: "result"; value: ResultTypeDef }
+    | { kind: "ref"; value: TypeRef }
 ) & {
     required?: boolean;
 };

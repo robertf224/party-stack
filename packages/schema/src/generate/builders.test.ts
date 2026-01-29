@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { generateIDL } from "./index.js";
+import { generateBuilders } from "./index.js";
 import type { SchemaIR } from "../ir/index.js";
 
-describe("IDL Generation", () => {
+describe("Builders generation", () => {
     describe("Union Type Factories", () => {
         it("should generate factory functions for union variants", () => {
             const schema: SchemaIR = {
@@ -20,8 +20,8 @@ describe("IDL Generation", () => {
                 ],
             };
 
-            expect(generateIDL(schema, { exportName: "p" })).toMatchInlineSnapshot(`
-              "export const Shape = { circle: (value: Extract<Shape, { kind: circle}>["value"]) => ({ kind: "circle" as const, value }), square: (value: Extract<Shape, { kind: square}>["value"]) => ({ kind: "square" as const, value }) };
+            expect(generateBuilders(schema, { exportName: "p" })).toMatchInlineSnapshot(`
+              "export const Shape = { circle: (value: Extract<Shape, { kind: circle }>["value"]) => ({ kind: "circle" as const, value }), square: (value: Extract<Shape, { kind: square}>["value"]) => ({ kind: "square" as const, value }) };
               export const p = { Shape };"
             `);
         });
@@ -42,9 +42,9 @@ describe("IDL Generation", () => {
                 ],
             };
 
-            expect(generateIDL(schema, { exportName: "p", promoted: "Shape" })).toMatchInlineSnapshot(`
-              "export const circle = (value: Extract<Shape, { kind: circle}>["value"]) => ({ kind: "circle" as const, value });
-              export const square = (value: Extract<Shape, { kind: square}>["value"]) => ({ kind: "square" as const, value });
+            expect(generateBuilders(schema, { exportName: "p", promoted: "Shape" })).toMatchInlineSnapshot(`
+              "export const circle = (value: Extract<Shape, { kind: circle }>["value"]) => ({ kind: "circle" as const, value });
+              export const square = (value: Extract<Shape, { kind: square }>["value"]) => ({ kind: "square" as const, value });
               export const p = { circle, square };"
             `);
         });
@@ -66,19 +66,23 @@ describe("IDL Generation", () => {
                         apiName: "Constraint",
                         type: {
                             kind: "union",
-                            variants: [
-                                { apiName: "enum", type: { kind: "ref", apiName: "EnumConstraint" } },
-                            ],
+                            variants: [{ apiName: "enum", type: { kind: "ref", apiName: "EnumConstraint" } }],
                         },
                     },
                 ],
             };
 
-            const result = generateIDL(schema, { exportName: "p", promoted: "TypeDef" });
-            expect(result).toContain('export const string = (value: Extract<TypeDef, { kind: string}>["value"]) => ({ kind: "string" as const, value })');
-            expect(result).toContain('export const boolean = (value: Extract<TypeDef, { kind: boolean}>["value"]) => ({ kind: "boolean" as const, value })');
+            const result = generateBuilders(schema, { exportName: "p", promoted: "TypeDef" });
+            expect(result).toContain(
+                'export const string = (value: Extract<TypeDef, { kind: string }>["value"]) => ({ kind: "string" as const, value })'
+            );
+            expect(result).toContain(
+                'export const boolean = (value: Extract<TypeDef, { kind: boolean }>["value"]) => ({ kind: "boolean" as const, value })'
+            );
             expect(result).toContain("export const Constraint = {");
-            expect(result).toContain('enum: (value: Extract<Constraint, { kind: enum}>["value"]) => ({ kind: "enum" as const, value })');
+            expect(result).toContain(
+                'enum: (value: Extract<Constraint, { kind: enum }>["value"]) => ({ kind: "enum" as const, value })'
+            );
         });
 
         it("should use custom export name", () => {
@@ -88,21 +92,23 @@ describe("IDL Generation", () => {
                         apiName: "TypeDef",
                         type: {
                             kind: "union",
-                            variants: [{ apiName: "string", type: { kind: "ref", apiName: "StringTypeDef" } }],
+                            variants: [
+                                { apiName: "string", type: { kind: "ref", apiName: "StringTypeDef" } },
+                            ],
                         },
                     },
                 ],
             };
 
-            expect(generateIDL(schema, { exportName: "schema" })).toMatchInlineSnapshot(`
-              "export const TypeDef = { string: (value: Extract<TypeDef, { kind: string}>["value"]) => ({ kind: "string" as const, value }) };
+            expect(generateBuilders(schema, { exportName: "schema" })).toMatchInlineSnapshot(`
+              "export const TypeDef = { string: (value: Extract<TypeDef, { kind: string }>["value"]) => ({ kind: "string" as const, value }) };
               export const schema = { TypeDef };"
             `);
         });
     });
 
     describe("Self-describing IR", () => {
-        it("should generate IDL for a TypeDef-like union deriving types from Zod output", () => {
+        it("should generate builders for a TypeDef-like union deriving types from Zod output", () => {
             const schema: SchemaIR = {
                 types: [
                     {
@@ -123,13 +129,21 @@ describe("IDL Generation", () => {
                 ],
             };
 
-            const result = generateIDL(schema, { exportName: "p", promoted: "TypeDef" });
+            const result = generateBuilders(schema, { exportName: "p", promoted: "TypeDef" });
 
             // Factories derive types from the Zod-generated union using Extract
-            expect(result).toContain('export const string = (value: Extract<TypeDef, { kind: string}>["value"]) => ({ kind: "string" as const, value })');
-            expect(result).toContain('export const list = (value: Extract<TypeDef, { kind: list}>["value"]) => ({ kind: "list" as const, value })');
-            expect(result).toContain('export const struct = (value: Extract<TypeDef, { kind: struct}>["value"]) => ({ kind: "struct" as const, value })');
-            expect(result).toContain('export const ref = (value: Extract<TypeDef, { kind: ref}>["value"]) => ({ kind: "ref" as const, value })');
+            expect(result).toContain(
+                'export const string = (value: Extract<TypeDef, { kind: string }>["value"]) => ({ kind: "string" as const, value })'
+            );
+            expect(result).toContain(
+                'export const list = (value: Extract<TypeDef, { kind: list }>["value"]) => ({ kind: "list" as const, value })'
+            );
+            expect(result).toContain(
+                'export const struct = (value: Extract<TypeDef, { kind: struct }>["value"]) => ({ kind: "struct" as const, value })'
+            );
+            expect(result).toContain(
+                'export const ref = (value: Extract<TypeDef, { kind: ref }>["value"]) => ({ kind: "ref" as const, value })'
+            );
         });
     });
 });

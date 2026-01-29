@@ -1,7 +1,7 @@
 import { Project, VariableDeclarationKind } from "ts-morph";
 import type { NamedTypeDef, SchemaIR, UnionTypeDef } from "../ir/ir.js";
 
-export interface IDLOptions {
+export interface GenerateBuildersOpts {
     /** The name of the main export (e.g., "p" for `p.string()`). */
     exportName: string;
     /** If set, promotes this union type's variants to the top level of the export. */
@@ -14,16 +14,16 @@ function unionTypeToBuilders(
 ): Array<{ apiName: string; builder: string }> {
     return unionType.variants.map((variant) => ({
         apiName: variant.apiName,
-        builder: `(value: Extract<${apiName}, { kind: ${variant.apiName}}>["value"]) => ({ kind: "${variant.apiName}" as const, value })`,
+        builder: `(value: Extract<${apiName}, { kind: ${variant.apiName} }>["value"]) => ({ kind: "${variant.apiName}" as const, value })`,
     }));
 }
 
 /**
- * Generates TypeScript-based IDL helper functions for a schema.
+ * Generates TypeScript-based builder functions for a schema.
  *
  * The generated builders create discriminated union values from variant payloads.
  */
-export function generateIDL(schema: SchemaIR, options: IDLOptions): string {
+export function generateBuilders(schema: SchemaIR, opts: GenerateBuildersOpts): string {
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile("idl.ts", "");
 
@@ -33,10 +33,10 @@ export function generateIDL(schema: SchemaIR, options: IDLOptions): string {
         }
     >;
 
-    const promotedType = unionTypes.find((type) => type.apiName === options.promoted);
-    const promotedBuilders = promotedType ? unionTypeToBuilders(options.promoted!, promotedType.type) : [];
+    const promotedType = unionTypes.find((type) => type.apiName === opts.promoted);
+    const promotedBuilders = promotedType ? unionTypeToBuilders(opts.promoted!, promotedType.type) : [];
 
-    const nestedTypes = unionTypes.filter((type) => type.apiName !== options.promoted);
+    const nestedTypes = unionTypes.filter((type) => type.apiName !== opts.promoted);
     const nestedBuilders = nestedTypes.map((type) => ({
         apiName: type.apiName,
         builders: unionTypeToBuilders(type.apiName, type.type),
@@ -70,7 +70,7 @@ export function generateIDL(schema: SchemaIR, options: IDLOptions): string {
     sourceFile.addVariableStatement({
         isExported: true,
         declarationKind: VariableDeclarationKind.Const,
-        declarations: [{ name: options.exportName, initializer: `{ ${exportNames.join(", ")} }` }],
+        declarations: [{ name: opts.exportName, initializer: `{ ${exportNames.join(", ")} }` }],
     });
 
     return sourceFile.getFullText().trim();

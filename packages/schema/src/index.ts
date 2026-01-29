@@ -11,14 +11,8 @@
 // IR types
 export * from "./ir/index.js";
 
-// TypeScript IDL
-export * from "./idl/index.js";
-
-// Re-export the main IDL entry point for convenience
-export { s } from "./idl/index.js";
-
 // Validation
-export * from "./validation/index.js";
+export * from "./validate/index.js";
 
 // Code generation
 export * from "./generate/index.js";

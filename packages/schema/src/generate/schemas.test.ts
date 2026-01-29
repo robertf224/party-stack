@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateZod } from "./index.js";
+import { generateSchemas } from "./index.js";
 import type { SchemaIR } from "../ir/index.js";
 
 describe("Zod Schema Generation", () => {
@@ -24,7 +24,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Address = z.optional(z.object({ city: z.string(), zip: z.optional(z.string()) }));
@@ -59,7 +59,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Order = z.optional(z.object({ status: z.enum(["pending", "active"]) }));
@@ -100,7 +100,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Address = z.optional(z.object({ city: z.string() }));
@@ -126,7 +126,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Address = z.optional(z.object({ city: z.optional(z.string()) }));
@@ -154,7 +154,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Event = z.optional(z.object({ createdAt: z.instanceof(Temporal.Instant) }));
@@ -182,7 +182,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Event = z.optional(z.object({ eventDate: z.instanceof(Temporal.PlainDate) }));
@@ -210,7 +210,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Item = z.optional(z.object({ quantity: z.int32() }));
@@ -238,7 +238,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Measurement = z.optional(z.object({ value: z.float32() }));
@@ -266,7 +266,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Coordinate = z.optional(z.object({ latitude: z.float64() }));
@@ -294,7 +294,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Location = z.optional(z.object({ position: z.object({ lat: z.float64().min(-90).max(90), lon: z.float64().min(-180).max(180) }) }));
@@ -326,7 +326,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Cart = z.optional(z.object({ items: z.array(z.string()) }));
@@ -359,7 +359,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Config = z.optional(z.object({ settings: z.record(z.string(), z.string()) }));
@@ -411,7 +411,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Shape = z.discriminatedUnion("kind", [z.object({ kind: z.literal("circle"), value: z.object({ radius: z.float64() }) }), z.object({ kind: z.literal("square"), value: z.object({ side: z.float64() }) })]);
@@ -435,7 +435,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const ApiResponse = z.discriminatedUnion("kind", [z.object({ kind: z.literal("ok"), value: z.string() }), z.object({ kind: z.literal("err"), value: z.string() })]);
@@ -464,7 +464,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateZod(schema)).toMatchInlineSnapshot(`
+            expect(generateSchemas(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               /** Represents a user in the system */
