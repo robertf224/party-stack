@@ -1,7 +1,7 @@
 import { Project, VariableDeclarationKind } from "ts-morph";
 import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef, ResultTypeDef } from "../ir/ir.js";
 
-function typeDefToZod(type: TypeDef): string {
+function generateForTypeDef(type: TypeDef): string {
     switch (type.kind) {
         case "string": {
             if (type.value.constraint?.kind === "enum") {
@@ -43,31 +43,31 @@ function typeDefToZod(type: TypeDef): string {
         }
 
         case "list": {
-            const elementType = typeDefToZod(type.value.elementType);
+            const elementType = generateForTypeDef(type.value.elementType);
             return `z.array(${elementType})`;
         }
 
         case "map": {
-            const keyType = typeDefToZod(type.value.keyType);
-            const valueType = typeDefToZod(type.value.valueType);
+            const keyType = generateForTypeDef(type.value.keyType);
+            const valueType = generateForTypeDef(type.value.valueType);
             return `z.record(${keyType}, ${valueType})`;
         }
 
         case "struct": {
-            return structTypeDefToZod(type.value);
+            return generateForStructTypeDef(type.value);
         }
 
         case "union": {
-            return unionTypeDefToZod(type.value);
+            return generateForUnionTypeDef(type.value);
         }
 
         case "optional": {
-            const valueType = typeDefToZod(type.value.type);
+            const valueType = generateForTypeDef(type.value.type);
             return `z.optional(${valueType})`;
         }
 
         case "result": {
-            return resultTypeDefToZod(type.value);
+            return generateForResultTypeDef(type.value);
         }
 
         case "ref": {
@@ -76,50 +76,49 @@ function typeDefToZod(type: TypeDef): string {
     }
 }
 
-function structTypeDefToZod(type: StructTypeDef): string {
-    const fieldSchemas = type.fields.map((f) => `get ${f.name}() { return ${typeDefToZod(f.type)}; }`);
+function generateForStructTypeDef(type: StructTypeDef): string {
+    const fieldSchemas = type.fields.map((f) => `get ${f.name}() { return ${generateForTypeDef(f.type)}; }`);
     return `z.object({ ${fieldSchemas.join(", ")} })`;
 }
 
-function unionTypeDefToZod(type: UnionTypeDef): string {
+function generateForUnionTypeDef(type: UnionTypeDef): string {
     const variantSchemas = type.variants.map(
-        (v) => `z.object({ kind: z.literal("${v.name}"), value: ${typeDefToZod(v.type)} })`
+        (v) => `z.object({ kind: z.literal("${v.name}"), value: ${generateForTypeDef(v.type)} })`
     );
     return `z.discriminatedUnion("kind", [${variantSchemas.join(", ")}])`;
 }
 
-function resultTypeDefToZod(type: ResultTypeDef): string {
-    const okSchema = `z.object({ kind: z.literal("ok"), value: ${typeDefToZod(type.okType)} })`;
-    const errSchema = `z.object({ kind: z.literal("err"), value: ${typeDefToZod(type.errType)} })`;
+function generateForResultTypeDef(type: ResultTypeDef): string {
+    const okSchema = `z.object({ kind: z.literal("ok"), value: ${generateForTypeDef(type.okType)} })`;
+    const errSchema = `z.object({ kind: z.literal("err"), value: ${generateForTypeDef(type.errType)} })`;
     return `z.discriminatedUnion("kind", [${okSchema}, ${errSchema}])`;
 }
 
 export function generateSchema(schema: SchemaIR): string {
     const project = new Project({ useInMemoryFileSystem: true });
-    const sourceFile = project.createSourceFile("schema.ts", "");
+    const sourceFile = project.createSourceFile("validators.ts", "");
 
     sourceFile.addImportDeclaration({
         moduleSpecifier: "zod/mini",
         namedImports: ["z"],
     });
 
-    for (const namedType of schema.types) {
-        const variableName = namedType.name;
-        const zodCode = typeDefToZod(namedType.type);
+    sourceFile.addImportDeclaration({
+        moduleSpecifier: "./types.d.ts",
+        namespaceImport: "t",
+    });
 
+    for (const type of schema.types) {
         sourceFile.addVariableStatement({
             isExported: true,
             declarationKind: VariableDeclarationKind.Const,
-            declarations: [{ name: variableName, initializer: zodCode }],
-            ...(namedType.description && {
-                docs: [{ description: namedType.description }],
-            }),
-        });
-
-        sourceFile.addTypeAlias({
-            name: namedType.name,
-            isExported: true,
-            type: `z.infer<typeof ${variableName}>`,
+            declarations: [
+                {
+                    name: type.name,
+                    type: `z.ZodType<t.${type.name}>`,
+                    initializer: generateForTypeDef(type.type),
+                },
+            ],
         });
     }
 

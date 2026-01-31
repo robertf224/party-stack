@@ -4,8 +4,8 @@ import { join, resolve } from "node:path";
 import { Command } from "commander";
 import { createJiti } from "jiti";
 import { generateBuilders } from "./builders.js";
-import { generateSchema } from "./schema.js";
 import { generateTypes } from "./types.js";
+import { generateSchema } from "./validators.js";
 import type { SchemaIR } from "../ir/ir.js";
 
 const program = new Command();
@@ -16,10 +16,7 @@ program
     .requiredOption("--schema <path>", "Path to the schema IR file (default export should be SchemaIR)")
     .requiredOption("--exportName <name>", "Name of the main builder export (e.g., 'p' for p.string())")
     .option("--promoted <typeName>", "Union type to promote to top-level builders")
-    .requiredOption(
-        "--outDir <path>",
-        "Directory to write the generated output files (schema.ts and builders.ts)"
-    )
+    .requiredOption("--outDir <path>", "Directory to write the generated output files")
     .action(async (options: { schema: string; exportName: string; promoted?: string; outDir: string }) => {
         const schemaPath = resolve(process.cwd(), options.schema);
         const outDir = resolve(process.cwd(), options.outDir);
@@ -35,8 +32,8 @@ program
         }
 
         // Generate schema, types, and builders
-        const schemaOutput = generateSchema(schema);
         const typesOutput = generateTypes(schema);
+        const schemaOutput = generateSchema(schema);
         const buildersOutput = generateBuilders(schema, {
             exportName: options.exportName,
             promoted: options.promoted,
@@ -48,16 +45,16 @@ program
         const header = "// Auto-generated file - do not edit manually\n\n";
 
         // Write the output files
-        const schemaFilePath = join(outDir, "schema.ts");
         const typesFilePath = join(outDir, "types.ts");
+        const schemaFilePath = join(outDir, "schema.ts");
         const buildersFilePath = join(outDir, "builders.ts");
 
         writeFileSync(schemaFilePath, header + schemaOutput, "utf-8");
         writeFileSync(typesFilePath, header + typesOutput, "utf-8");
         writeFileSync(buildersFilePath, header + buildersOutput, "utf-8");
 
-        console.log(`Generated schema written to: ${schemaFilePath}`);
         console.log(`Generated types written to: ${typesFilePath}`);
+        console.log(`Generated schema written to: ${schemaFilePath}`);
         console.log(`Generated builders written to: ${buildersFilePath}`);
     });
 

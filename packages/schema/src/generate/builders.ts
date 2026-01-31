@@ -33,10 +33,9 @@ export function generateBuilders(schema: SchemaIR, opts: GenerateBuildersOpts): 
         }
     >;
 
-    // Add import for union types from the schema file
     if (unionTypes.length > 0) {
         sourceFile.addImportDeclaration({
-            moduleSpecifier: "./schema.js",
+            moduleSpecifier: "./types.d.ts",
             namedImports: unionTypes.map((type) => ({ name: type.name, isTypeOnly: true })),
         });
     }

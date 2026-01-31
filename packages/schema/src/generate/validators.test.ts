@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateSchema } from "./index.js";
+import { generateValidators } from "./index.js";
 import type { SchemaIR } from "../ir/index.js";
 
 describe("Zod Schema Generation", () => {
@@ -33,7 +33,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Address = z.object({ get city() { return z.string(); }, get zip() { return z.optional(z.string()); } });
@@ -73,7 +73,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Order = z.object({ get status() { return z.enum(["pending", "active"]); } });
@@ -121,7 +121,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Address = z.object({ get city() { return z.string(); } });
@@ -158,7 +158,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Address = z.object({ get city() { return z.optional(z.string()); } });
@@ -188,7 +188,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Event = z.object({ get createdAt() { return z.instanceof(Temporal.Instant); } });
@@ -218,7 +218,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Event = z.object({ get eventDate() { return z.instanceof(Temporal.PlainDate); } });
@@ -248,7 +248,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Item = z.object({ get quantity() { return z.int32(); } });
@@ -278,7 +278,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Measurement = z.object({ get value() { return z.float32(); } });
@@ -308,7 +308,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Coordinate = z.object({ get latitude() { return z.float64(); } });
@@ -338,7 +338,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Location = z.object({ get position() { return z.object({ lat: z.float64().min(-90).max(90), lon: z.float64().min(-180).max(180) }); } });
@@ -373,7 +373,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Cart = z.object({ get items() { return z.array(z.string()); } });
@@ -409,7 +409,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Config = z.object({ get settings() { return z.record(z.string(), z.string()); } });
@@ -464,7 +464,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const Shape = z.discriminatedUnion("kind", [z.object({ kind: z.literal("circle"), value: z.object({ get radius() { return z.float64(); } }) }), z.object({ kind: z.literal("square"), value: z.object({ get side() { return z.float64(); } }) })]);
@@ -489,7 +489,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               export const ApiResponse = z.discriminatedUnion("kind", [z.object({ kind: z.literal("ok"), value: z.string() }), z.object({ kind: z.literal("err"), value: z.string() })]);
@@ -520,7 +520,7 @@ describe("Zod Schema Generation", () => {
                 ],
             };
 
-            expect(generateSchema(schema)).toMatchInlineSnapshot(`
+            expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
 
               /** Represents a user in the system */
