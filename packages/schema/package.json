@@ -7,8 +7,8 @@
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
         },
-        "./types": {
-            "types": "./lib/types/index.d.t.s"
+        "./values": {
+            "types": "./src/utils/values.ts"
         }
     },
     "files": [

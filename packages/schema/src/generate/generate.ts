@@ -5,8 +5,8 @@ import { Command } from "commander";
 import { createJiti } from "jiti";
 import { generateBuilders } from "./builders.js";
 import { generateTypes } from "./types.js";
-import { generateSchema } from "./validators.js";
-import type { SchemaIR } from "../ir/ir.js";
+import { generateValidators } from "./validators.js";
+import type { SchemaIR } from "../ir/bootstrap-types.js";
 
 const program = new Command();
 
@@ -33,7 +33,7 @@ program
 
         // Generate schema, types, and builders
         const typesOutput = generateTypes(schema);
-        const schemaOutput = generateSchema(schema);
+        const validatorsOutput = generateValidators(schema);
         const buildersOutput = generateBuilders(schema, {
             exportName: options.exportName,
             promoted: options.promoted,
@@ -46,15 +46,15 @@ program
 
         // Write the output files
         const typesFilePath = join(outDir, "types.ts");
-        const schemaFilePath = join(outDir, "schema.ts");
+        const validatorsFilePath = join(outDir, "validators.ts");
         const buildersFilePath = join(outDir, "builders.ts");
 
-        writeFileSync(schemaFilePath, header + schemaOutput, "utf-8");
         writeFileSync(typesFilePath, header + typesOutput, "utf-8");
+        writeFileSync(validatorsFilePath, header + validatorsOutput, "utf-8");
         writeFileSync(buildersFilePath, header + buildersOutput, "utf-8");
 
         console.log(`Generated types written to: ${typesFilePath}`);
-        console.log(`Generated schema written to: ${schemaFilePath}`);
+        console.log(`Generated validators written to: ${validatorsFilePath}`);
         console.log(`Generated builders written to: ${buildersFilePath}`);
     });
 

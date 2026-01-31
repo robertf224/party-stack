@@ -1,6 +1,6 @@
 import { CodeBlockWriter, Project, Writers, WriterFunction } from "ts-morph";
 import { unwrapType } from "../utils/types.js";
-import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef } from "../ir/ir.js";
+import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef } from "../ir/bootstrap-types.js";
 
 function withWriter(fn: WriterFunction): string {
     const writer = new CodeBlockWriter();
@@ -32,22 +32,22 @@ function generateForTypeDef(type: TypeDef): string {
             return "boolean";
 
         case "integer":
-            return "integer";
+            return "v.integer";
 
         case "float":
-            return "float";
+            return "v.float";
 
         case "double":
-            return "double";
+            return "v.double";
 
         case "date":
-            return "date";
+            return "v.date";
 
         case "timestamp":
-            return "timestamp";
+            return "v.timestamp";
 
         case "geopoint":
-            return "geopoint";
+            return "v.geopoint";
 
         case "list":
             return `Array<${generateForTypeDef(type.value.elementType)}>`;
@@ -65,7 +65,7 @@ function generateForTypeDef(type: TypeDef): string {
             return union([generateForTypeDef(type.value.type), "undefined"]);
 
         case "result":
-            return `Result<${generateForTypeDef(type.value.okType)}, ${generateForTypeDef(type.value.errType)}>`;
+            return `v.Result<${generateForTypeDef(type.value.okType)}, ${generateForTypeDef(type.value.errType)}>`;
 
         case "ref":
             return type.value.name;
@@ -73,6 +73,10 @@ function generateForTypeDef(type: TypeDef): string {
 }
 
 function generateForStructTypeDef(type: StructTypeDef): string {
+    if (type.fields.length === 0) {
+        return "Record<never, never>";
+    }
+
     return withWriter(
         Writers.objectType({
             properties: type.fields.map((field) => {
@@ -99,17 +103,16 @@ function generateForUnionTypeDef(type: UnionTypeDef): string {
             }),
         })
     );
-    return `Union<${innerType}>`;
+    return `v.Union<${innerType}>`;
 }
 
 export function generateTypes(schema: SchemaIR): string {
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile("types.ts", "");
 
-    // TODO: filter imports
     sourceFile.addImportDeclaration({
-        moduleSpecifier: "@party-stack/schema/types",
-        namedImports: ["integer", "float", "double", "geopoint", "date", "timestamp", "Union", "Result"],
+        moduleSpecifier: "@party-stack/schema/values",
+        namespaceImport: "v",
     });
 
     for (const type of schema.types) {
@@ -119,6 +122,11 @@ export function generateTypes(schema: SchemaIR): string {
             type: generateForTypeDef(type.type),
             docs: type.description ? [{ description: type.description }] : undefined,
         });
+    }
+
+    const typeAliases = sourceFile.getTypeAliases();
+    for (const alias of typeAliases.slice(0, -1)) {
+        alias.appendWhitespace("\n");
     }
 
     return sourceFile.getFullText().trim();

@@ -1,5 +1,5 @@
 import { Project, VariableDeclarationKind } from "ts-morph";
-import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef, ResultTypeDef } from "../ir/ir.js";
+import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef, ResultTypeDef } from "../ir/bootstrap-types.js";
 
 function generateForTypeDef(type: TypeDef): string {
     switch (type.kind) {
@@ -71,13 +71,13 @@ function generateForTypeDef(type: TypeDef): string {
         }
 
         case "ref": {
-            return type.value.name;
+            return `z.lazy(() => ${type.value.name})`;
         }
     }
 }
 
 function generateForStructTypeDef(type: StructTypeDef): string {
-    const fieldSchemas = type.fields.map((f) => `get ${f.name}() { return ${generateForTypeDef(f.type)}; }`);
+    const fieldSchemas = type.fields.map((f) => `${f.name}: ${generateForTypeDef(f.type)}`);
     return `z.object({ ${fieldSchemas.join(", ")} })`;
 }
 
@@ -94,7 +94,7 @@ function generateForResultTypeDef(type: ResultTypeDef): string {
     return `z.discriminatedUnion("kind", [${okSchema}, ${errSchema}])`;
 }
 
-export function generateSchema(schema: SchemaIR): string {
+export function generateValidators(schema: SchemaIR): string {
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile("validators.ts", "");
 
@@ -104,7 +104,7 @@ export function generateSchema(schema: SchemaIR): string {
     });
 
     sourceFile.addImportDeclaration({
-        moduleSpecifier: "./types.d.ts",
+        moduleSpecifier: "./types.js",
         namespaceImport: "t",
     });
 
@@ -115,11 +115,16 @@ export function generateSchema(schema: SchemaIR): string {
             declarations: [
                 {
                     name: type.name,
-                    type: `z.ZodType<t.${type.name}>`,
+                    type: `z.ZodMiniType<t.${type.name}>`,
                     initializer: generateForTypeDef(type.type),
                 },
             ],
         });
+    }
+
+    const statements = sourceFile.getVariableStatements();
+    for (const statement of statements.slice(0, -1)) {
+        statement.appendWhitespace("\n");
     }
 
     return sourceFile.getFullText().trim();

@@ -1,4 +1,4 @@
-import { TypeDef } from "../ir/ir.js";
+import { TypeDef } from "../ir/bootstrap-types.js";
 
 export function unwrapType(type: TypeDef): { type: TypeDef; isOptional: boolean } {
     if (type.kind === "optional") {

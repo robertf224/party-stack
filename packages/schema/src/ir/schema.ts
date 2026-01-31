@@ -1,10 +1,4 @@
-/**
- * The IR format described in the IR format itself.
- *
- * This enables bootstrapping: we can use our own codegen to generate
- * Zod schemas and builders for the IR types.
- */
-import type { SchemaIR, TypeDef, UnionTypeDef } from "./ir.js";
+import type { SchemaIR, TypeDef, UnionTypeDef } from "./bootstrap-types.js";
 
 // Helper to create type defs more concisely
 const string = (): TypeDef => ({ kind: "string", value: {} });

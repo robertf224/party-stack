@@ -1,2 +1,1 @@
-export * from "./ir.js";
-export { irSchema } from "./bootstrap-schema.js";
+export * from "./bootstrap-types.js";

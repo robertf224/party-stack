@@ -1,5 +1,5 @@
 import { Project, VariableDeclarationKind } from "ts-morph";
-import type { NamedTypeDef, SchemaIR, UnionTypeDef } from "../ir/ir.js";
+import type { NamedTypeDef, SchemaIR, UnionTypeDef } from "../ir/bootstrap-types.js";
 
 export interface GenerateBuildersOpts {
     /** The name of the main export (e.g., "p" for `p.string()`). */
@@ -14,15 +14,10 @@ function unionTypeToBuilders(
 ): Array<{ name: string; builder: string }> {
     return unionType.variants.map((variant) => ({
         name: variant.name,
-        builder: `(value: Extract<${name}, { kind: "${variant.name}" }>["value"]) => ({ kind: "${variant.name}" as const, value })`,
+        builder: `(value: Extract<t.${name}, { kind: "${variant.name}" }>["value"]) => ({ kind: "${variant.name}" as const, value })`,
     }));
 }
 
-/**
- * Generates TypeScript-based builder functions for a schema.
- *
- * The generated builders create discriminated union values from variant payloads.
- */
 export function generateBuilders(schema: SchemaIR, opts: GenerateBuildersOpts): string {
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile("builders.ts", "");
@@ -33,12 +28,14 @@ export function generateBuilders(schema: SchemaIR, opts: GenerateBuildersOpts): 
         }
     >;
 
-    if (unionTypes.length > 0) {
-        sourceFile.addImportDeclaration({
-            moduleSpecifier: "./types.d.ts",
-            namedImports: unionTypes.map((type) => ({ name: type.name, isTypeOnly: true })),
-        });
+    if (unionTypes.length === 0) {
+        return "";
     }
+
+    sourceFile.addImportDeclaration({
+        moduleSpecifier: "./types.js",
+        namespaceImport: "t",
+    });
 
     const promotedType = unionTypes.find((type) => type.name === opts.promoted);
     const promotedBuilders = promotedType ? unionTypeToBuilders(opts.promoted!, promotedType.type.value) : [];
@@ -79,6 +76,11 @@ export function generateBuilders(schema: SchemaIR, opts: GenerateBuildersOpts): 
         declarationKind: VariableDeclarationKind.Const,
         declarations: [{ name: opts.exportName, initializer: `{ ${exportNames.join(", ")} }` }],
     });
+
+    const statements = sourceFile.getVariableStatements();
+    for (const statement of statements.slice(0, -1)) {
+        statement.appendWhitespace("\n");
+    }
 
     return sourceFile.getFullText().trim();
 }

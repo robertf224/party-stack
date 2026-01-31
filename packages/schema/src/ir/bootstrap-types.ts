@@ -1,3 +1,5 @@
+import { Union } from "../utils/index.js";
+
 /* eslint-disable @typescript-eslint/no-empty-object-type */
 export interface StringEnumConstraint {
     options: Array<{
@@ -10,9 +12,10 @@ export interface StringRegexConstraint {
     regex: string;
 }
 
-export type StringConstraint =
-    | { kind: "enum"; value: StringEnumConstraint }
-    | { kind: "regex"; value: StringRegexConstraint };
+export type StringConstraint = Union<{
+    enum: StringEnumConstraint;
+    regex: StringRegexConstraint;
+}>;
 
 export interface StringTypeDef {
     constraint?: StringConstraint;
@@ -31,16 +34,6 @@ export interface DateTypeDef {}
 export interface TimestampTypeDef {}
 
 export interface GeopointTypeDef {}
-
-export type PrimitiveTypeDef =
-    | { kind: "string"; value: StringTypeDef }
-    | { kind: "boolean"; value: BooleanTypeDef }
-    | { kind: "integer"; value: IntegerTypeDef }
-    | { kind: "float"; value: FloatTypeDef }
-    | { kind: "double"; value: DoubleTypeDef }
-    | { kind: "date"; value: DateTypeDef }
-    | { kind: "timestamp"; value: TimestampTypeDef }
-    | { kind: "geopoint"; value: GeopointTypeDef };
 
 export interface ListTypeDef {
     elementType: TypeDef;
@@ -85,15 +78,23 @@ export interface TypeRef {
     name: string;
 }
 
-export type TypeDef =
-    | PrimitiveTypeDef
-    | { kind: "list"; value: ListTypeDef }
-    | { kind: "map"; value: MapTypeDef }
-    | { kind: "struct"; value: StructTypeDef }
-    | { kind: "union"; value: UnionTypeDef }
-    | { kind: "optional"; value: OptionalTypeDef }
-    | { kind: "result"; value: ResultTypeDef }
-    | { kind: "ref"; value: TypeRef };
+export type TypeDef = Union<{
+    string: StringTypeDef;
+    boolean: BooleanTypeDef;
+    integer: IntegerTypeDef;
+    float: FloatTypeDef;
+    double: DoubleTypeDef;
+    date: DateTypeDef;
+    timestamp: TimestampTypeDef;
+    geopoint: GeopointTypeDef;
+    list: ListTypeDef;
+    map: MapTypeDef;
+    struct: StructTypeDef;
+    union: UnionTypeDef;
+    optional: OptionalTypeDef;
+    result: ResultTypeDef;
+    ref: TypeRef;
+}>;
 
 export interface NamedTypeDef {
     name: string;
