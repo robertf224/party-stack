@@ -6,7 +6,13 @@ export interface StringEnumConstraint {
     }>;
 }
 
-export type StringConstraint = { kind: "enum"; value: StringEnumConstraint };
+export interface StringRegexConstraint {
+    regex: string;
+}
+
+export type StringConstraint =
+    | { kind: "enum"; value: StringEnumConstraint }
+    | { kind: "regex"; value: StringRegexConstraint };
 
 export interface StringTypeDef {
     constraint?: StringConstraint;
@@ -47,7 +53,7 @@ export interface MapTypeDef {
 
 export interface FieldDef {
     id?: string;
-    apiName: string;
+    name: string;
     type: TypeDef;
     displayName: string;
     description?: string;
@@ -58,12 +64,16 @@ export interface StructTypeDef {
 }
 
 export interface VariantDef {
-    apiName: string;
+    name: string;
     type: TypeDef;
 }
 
 export interface UnionTypeDef {
     variants: VariantDef[];
+}
+
+export interface OptionalTypeDef {
+    type: TypeDef;
 }
 
 export interface ResultTypeDef {
@@ -72,23 +82,21 @@ export interface ResultTypeDef {
 }
 
 export interface TypeRef {
-    apiName: string;
+    name: string;
 }
 
-export type TypeDef = (
+export type TypeDef =
     | PrimitiveTypeDef
     | { kind: "list"; value: ListTypeDef }
     | { kind: "map"; value: MapTypeDef }
     | { kind: "struct"; value: StructTypeDef }
     | { kind: "union"; value: UnionTypeDef }
+    | { kind: "optional"; value: OptionalTypeDef }
     | { kind: "result"; value: ResultTypeDef }
-    | { kind: "ref"; value: TypeRef }
-) & {
-    required?: boolean;
-};
+    | { kind: "ref"; value: TypeRef };
 
 export interface NamedTypeDef {
-    apiName: string;
+    name: string;
     description?: string;
     type: TypeDef;
 }

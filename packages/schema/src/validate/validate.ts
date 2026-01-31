@@ -26,38 +26,41 @@ function validateTypeDef(
             return [];
 
         case "list":
-            return validateTypeDef(type.elementType, [...path, "elementType"], typeNames);
+            return validateTypeDef(type.value.elementType, [...path, "value", "elementType"], typeNames);
 
         case "map": {
             const errors: ValidationError[] = [];
-            if (type.keyType.kind !== "string") {
+            if (type.value.keyType.kind !== "string") {
                 errors.push({
                     message: "Map key types must be string.",
-                    path: [...path, "keyType"],
+                    path: [...path, "value", "keyType"],
                 });
             }
             return [
                 ...errors,
-                ...validateTypeDef(type.keyType, [...path, "keyType"], typeNames),
-                ...validateTypeDef(type.valueType, [...path, "valueType"], typeNames),
+                ...validateTypeDef(type.value.keyType, [...path, "value", "keyType"], typeNames),
+                ...validateTypeDef(type.value.valueType, [...path, "value", "valueType"], typeNames),
             ];
         }
         case "struct":
-            return validateStructFields(type.fields, [...path, "fields"], typeNames);
+            return validateStructFields(type.value.fields, [...path, "value", "fields"], typeNames);
 
         case "union":
-            return validateUnionVariants(type.variants, [...path, "variants"], typeNames);
+            return validateUnionVariants(type.value.variants, [...path, "value", "variants"], typeNames);
+
+        case "optional":
+            return validateTypeDef(type.value.type, [...path, "value", "type"], typeNames);
 
         case "result":
             return [
-                ...validateTypeDef(type.okType, [...path, "okType"], typeNames),
-                ...validateTypeDef(type.errType, [...path, "errType"], typeNames),
+                ...validateTypeDef(type.value.okType, [...path, "value", "okType"], typeNames),
+                ...validateTypeDef(type.value.errType, [...path, "value", "errType"], typeNames),
             ];
 
         case "ref":
-            return typeNames.has(type.apiName)
+            return typeNames.has(type.value.name)
                 ? []
-                : [{ message: "Unknown type reference.", path: [...path, "apiName"] }];
+                : [{ message: "Unknown type reference.", path: [...path, "value", "name"] }];
     }
 }
 
@@ -73,10 +76,10 @@ function validateStructFields(
         const field = fields[index]!;
         const fieldPath = [...path, index];
 
-        if (fieldNames.has(field.apiName)) {
-            errors.push({ message: "Duplicate field name.", path: [...fieldPath, "apiName"] });
+        if (fieldNames.has(field.name)) {
+            errors.push({ message: "Duplicate field name.", path: [...fieldPath, "name"] });
         }
-        fieldNames.add(field.apiName);
+        fieldNames.add(field.name);
 
         errors.push(...validateTypeDef(field.type, [...fieldPath, "type"], typeNames));
     }
@@ -96,10 +99,10 @@ function validateUnionVariants(
         const variant = variants[index]!;
         const variantPath = [...path, index];
 
-        if (seen.has(variant.apiName)) {
-            errors.push({ message: "Duplicate variant name.", path: [...variantPath, "apiName"] });
+        if (seen.has(variant.name)) {
+            errors.push({ message: "Duplicate variant name.", path: [...variantPath, "name"] });
         }
-        seen.add(variant.apiName);
+        seen.add(variant.name);
 
         errors.push(...validateTypeDef(variant.type, [...variantPath, "type"], typeNames));
     }
@@ -112,11 +115,11 @@ export function validate(schema: SchemaIR): ValidationResult {
     const errors: ValidationError[] = [];
 
     for (let index = 0; index < schema.types.length; index++) {
-        const typeName = schema.types[index]!.apiName;
+        const typeName = schema.types[index]!.name;
         if (typeNames.has(typeName)) {
             errors.push({
                 message: "Duplicate type name.",
-                path: ["types", index, "apiName"],
+                path: ["types", index, "name"],
             });
         }
         typeNames.add(typeName);

@@ -22,21 +22,23 @@ describe("Schema Validation", () => {
         const schema: SchemaIR = {
             types: [
                 {
-                    apiName: "Address",
+                    name: "Address",
                     type: {
                         kind: "struct",
-                        fields: [
-                            {
-                                apiName: "line1",
-                                displayName: "line1",
-                                type: { kind: "string", required: true },
-                            },
-                            {
-                                apiName: "city",
-                                displayName: "city",
-                                type: { kind: "string", required: true },
-                            },
-                        ],
+                        value: {
+                            fields: [
+                                {
+                                    name: "line1",
+                                    displayName: "line1",
+                                    type: { kind: "string", value: {} },
+                                },
+                                {
+                                    name: "city",
+                                    displayName: "city",
+                                    type: { kind: "string", value: {} },
+                                },
+                            ],
+                        },
                     },
                 },
             ],
@@ -49,29 +51,33 @@ describe("Schema Validation", () => {
         const schema: SchemaIR = {
             types: [
                 {
-                    apiName: "Address",
+                    name: "Address",
                     type: {
                         kind: "struct",
-                        fields: [
-                            {
-                                apiName: "city",
-                                displayName: "city",
-                                type: { kind: "string", required: true },
-                            },
-                        ],
+                        value: {
+                            fields: [
+                                {
+                                    name: "city",
+                                    displayName: "city",
+                                    type: { kind: "string", value: {} },
+                                },
+                            ],
+                        },
                     },
                 },
                 {
-                    apiName: "Order",
+                    name: "Order",
                     type: {
                         kind: "struct",
-                        fields: [
-                            {
-                                apiName: "shipTo",
-                                displayName: "Ship To",
-                                type: { kind: "ref", apiName: "Address" },
-                            },
-                        ],
+                        value: {
+                            fields: [
+                                {
+                                    name: "shipTo",
+                                    displayName: "Ship To",
+                                    type: { kind: "ref", value: { name: "Address" } },
+                                },
+                            ],
+                        },
                     },
                 },
             ],
@@ -84,16 +90,18 @@ describe("Schema Validation", () => {
         const schema: SchemaIR = {
             types: [
                 {
-                    apiName: "Order",
+                    name: "Order",
                     type: {
                         kind: "struct",
-                        fields: [
-                            {
-                                apiName: "shipTo",
-                                displayName: "Ship To",
-                                type: { kind: "ref", apiName: "Unknown" },
-                            },
-                        ],
+                        value: {
+                            fields: [
+                                {
+                                    name: "shipTo",
+                                    displayName: "Ship To",
+                                    type: { kind: "ref", value: { name: "Unknown" } },
+                                },
+                            ],
+                        },
                     },
                 },
             ],
@@ -107,8 +115,8 @@ describe("Schema Validation", () => {
     it("should detect duplicate type names", () => {
         const schema: SchemaIR = {
             types: [
-                { apiName: "Address", type: { kind: "struct", fields: [] } },
-                { apiName: "Address", type: { kind: "struct", fields: [] } },
+                { name: "Address", type: { kind: "struct", value: { fields: [] } } },
+                { name: "Address", type: { kind: "struct", value: { fields: [] } } },
             ],
         };
 
@@ -121,33 +129,38 @@ describe("Schema Validation", () => {
         const schema: SchemaIR = {
             types: [
                 {
-                    apiName: "Item",
+                    name: "Item",
                     type: {
                         kind: "struct",
-                        fields: [
-                            {
-                                apiName: "name",
-                                displayName: "name",
-                                type: { kind: "string", required: true },
-                            },
-                        ],
+                        value: {
+                            fields: [
+                                {
+                                    name: "name",
+                                    displayName: "name",
+                                    type: { kind: "string", value: {} },
+                                },
+                            ],
+                        },
                     },
                 },
                 {
-                    apiName: "Order",
+                    name: "Order",
                     type: {
                         kind: "struct",
-                        fields: [
-                            {
-                                apiName: "items",
-                                displayName: "Items",
-                                type: {
-                                    kind: "list",
-                                    elementType: { kind: "ref", apiName: "Item" },
-                                    required: true,
+                        value: {
+                            fields: [
+                                {
+                                    name: "items",
+                                    displayName: "Items",
+                                    type: {
+                                        kind: "list",
+                                        value: {
+                                            elementType: { kind: "ref", value: { name: "Item" } },
+                                        },
+                                    },
                                 },
-                            },
-                        ],
+                            ],
+                        },
                     },
                 },
             ],
@@ -160,42 +173,48 @@ describe("Schema Validation", () => {
         const schema: SchemaIR = {
             types: [
                 {
-                    apiName: "Shape",
+                    name: "Shape",
                     type: {
                         kind: "union",
-                        variants: [
-                            {
-                                apiName: "circle",
-                                type: {
-                                    kind: "struct",
-                                    fields: [
-                                        {
-                                            apiName: "radius",
-                                            displayName: "radius",
-                                            type: { kind: "double", required: true },
+                        value: {
+                            variants: [
+                                {
+                                    name: "circle",
+                                    type: {
+                                        kind: "struct",
+                                        value: {
+                                            fields: [
+                                                {
+                                                    name: "radius",
+                                                    displayName: "radius",
+                                                    type: { kind: "double", value: {} },
+                                                },
+                                            ],
                                         },
-                                    ],
+                                    },
                                 },
-                            },
-                            {
-                                apiName: "rectangle",
-                                type: {
-                                    kind: "struct",
-                                    fields: [
-                                        {
-                                            apiName: "width",
-                                            displayName: "width",
-                                            type: { kind: "double", required: true },
+                                {
+                                    name: "rectangle",
+                                    type: {
+                                        kind: "struct",
+                                        value: {
+                                            fields: [
+                                                {
+                                                    name: "width",
+                                                    displayName: "width",
+                                                    type: { kind: "double", value: {} },
+                                                },
+                                                {
+                                                    name: "height",
+                                                    displayName: "height",
+                                                    type: { kind: "double", value: {} },
+                                                },
+                                            ],
                                         },
-                                        {
-                                            apiName: "height",
-                                            displayName: "height",
-                                            type: { kind: "double", required: true },
-                                        },
-                                    ],
+                                    },
                                 },
-                            },
-                        ],
+                            ],
+                        },
                     },
                 },
             ],
@@ -208,21 +227,24 @@ describe("Schema Validation", () => {
         const schema: SchemaIR = {
             types: [
                 {
-                    apiName: "Metadata",
+                    name: "Metadata",
                     type: {
                         kind: "struct",
-                        fields: [
-                            {
-                                apiName: "tags",
-                                displayName: "Tags",
-                                type: {
-                                    kind: "map",
-                                    keyType: { kind: "string" },
-                                    valueType: { kind: "string" },
-                                    required: true,
+                        value: {
+                            fields: [
+                                {
+                                    name: "tags",
+                                    displayName: "Tags",
+                                    type: {
+                                        kind: "map",
+                                        value: {
+                                            keyType: { kind: "string", value: {} },
+                                            valueType: { kind: "string", value: {} },
+                                        },
+                                    },
                                 },
-                            },
-                        ],
+                            ],
+                        },
                     },
                 },
             ],
@@ -235,21 +257,24 @@ describe("Schema Validation", () => {
         const schema: SchemaIR = {
             types: [
                 {
-                    apiName: "Metadata",
+                    name: "Metadata",
                     type: {
                         kind: "struct",
-                        fields: [
-                            {
-                                apiName: "scores",
-                                displayName: "Scores",
-                                type: {
-                                    kind: "map",
-                                    keyType: { kind: "integer" },
-                                    valueType: { kind: "double" },
-                                    required: true,
+                        value: {
+                            fields: [
+                                {
+                                    name: "scores",
+                                    displayName: "Scores",
+                                    type: {
+                                        kind: "map",
+                                        value: {
+                                            keyType: { kind: "integer", value: {} },
+                                            valueType: { kind: "double", value: {} },
+                                        },
+                                    },
                                 },
-                            },
-                        ],
+                            ],
+                        },
                     },
                 },
             ],
@@ -258,5 +283,37 @@ describe("Schema Validation", () => {
         const result = validate(schema);
         expectErr(result, 1);
         expect(getErrors(result)).toContain("Map key types must be string.");
+    });
+
+    it("should validate optional wrapper types", () => {
+        const schema: SchemaIR = {
+            types: [
+                {
+                    name: "User",
+                    type: {
+                        kind: "struct",
+                        value: {
+                            fields: [
+                                {
+                                    name: "name",
+                                    displayName: "Name",
+                                    type: { kind: "string", value: {} },
+                                },
+                                {
+                                    name: "nickname",
+                                    displayName: "Nickname",
+                                    type: {
+                                        kind: "optional",
+                                        value: { type: { kind: "string", value: {} } },
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                },
+            ],
+        };
+
+        expectOk(validate(schema));
     });
 });

@@ -2,102 +2,88 @@ import { Project, VariableDeclarationKind } from "ts-morph";
 import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef, ResultTypeDef } from "../ir/ir.js";
 
 function typeDefToZod(type: TypeDef): string {
-    let output: string;
-
     switch (type.kind) {
         case "string": {
-            if (type.constraint?.kind === "enum") {
-                const variants = type.constraint.options.map((o) => `"${o.value}"`).join(", ");
-                output = `z.enum([${variants}])`;
+            if (type.value.constraint?.kind === "enum") {
+                const variants = type.value.constraint.value.options.map((o) => `"${o.value}"`).join(", ");
+                return `z.enum([${variants}])`;
+            } else if (type.value.constraint?.kind === "regex") {
+                return `z.string().check(z.regex(new RegExp("${type.value.constraint.value.regex}")))`;
             } else {
-                output = "z.string()";
+                return "z.string()";
             }
-            break;
         }
 
         case "boolean": {
-            output = "z.boolean()";
-            break;
+            return "z.boolean()";
         }
 
         case "integer": {
-            output = "z.int32()";
-            break;
+            return "z.int32()";
         }
 
         case "float": {
-            output = "z.float32()";
-            break;
+            return "z.float32()";
         }
 
         case "double": {
-            output = "z.float64()";
-            break;
+            return "z.float64()";
         }
 
         case "date": {
-            output = "z.instanceof(Temporal.PlainDate)";
-            break;
+            return "z.instanceof(Temporal.PlainDate)";
         }
 
         case "timestamp": {
-            output = "z.instanceof(Temporal.Instant)";
-            break;
+            return "z.instanceof(Temporal.Instant)";
         }
 
         case "geopoint": {
-            output = "z.object({ lat: z.float64().min(-90).max(90), lon: z.float64().min(-180).max(180) })";
-            break;
+            return "z.object({ lat: z.float64().min(-90).max(90), lon: z.float64().min(-180).max(180) })";
         }
 
         case "list": {
-            const elementType = typeDefToZod(type.elementType);
-            output = `z.array(${elementType})`;
-            break;
+            const elementType = typeDefToZod(type.value.elementType);
+            return `z.array(${elementType})`;
         }
 
         case "map": {
-            const keyType = typeDefToZod(type.valueType);
-            const valueType = typeDefToZod(type.valueType);
-            output = `z.record(${keyType}, ${valueType})`;
-            break;
+            const keyType = typeDefToZod(type.value.keyType);
+            const valueType = typeDefToZod(type.value.valueType);
+            return `z.record(${keyType}, ${valueType})`;
         }
 
         case "struct": {
-            output = structTypeDefToZod(type);
-            break;
+            return structTypeDefToZod(type.value);
         }
 
         case "union": {
-            output = unionTypeDefToZod(type);
-            break;
+            return unionTypeDefToZod(type.value);
+        }
+
+        case "optional": {
+            const valueType = typeDefToZod(type.value.type);
+            return `z.optional(${valueType})`;
         }
 
         case "result": {
-            return resultTypeDefToZod(type);
+            return resultTypeDefToZod(type.value);
         }
 
         case "ref": {
-            output = type.apiName;
-            break;
+            return type.value.name;
         }
     }
-
-    if (!type.required) {
-        output = `z.optional(${output})`;
-    }
-
-    return output;
 }
 
 function structTypeDefToZod(type: StructTypeDef): string {
-    const fieldSchemas = type.fields.map((f) => `${f.apiName}: ${typeDefToZod(f.type)}`);
+    const fieldSchemas = type.fields.map((f) => `get ${f.name}() { return ${typeDefToZod(f.type)}; }`);
     return `z.object({ ${fieldSchemas.join(", ")} })`;
 }
 
 function unionTypeDefToZod(type: UnionTypeDef): string {
     const variantSchemas = type.variants.map(
-        (v) => `z.object({ kind: z.literal("${v.apiName}"), value: ${typeDefToZod(v.type)} })`
+        (v) => `z.object({ kind: z.literal("${v.name}"), value: ${typeDefToZod(v.type)} })`
     );
     return `z.discriminatedUnion("kind", [${variantSchemas.join(", ")}])`;
 }
@@ -108,7 +94,7 @@ function resultTypeDefToZod(type: ResultTypeDef): string {
     return `z.discriminatedUnion("kind", [${okSchema}, ${errSchema}])`;
 }
 
-export function generateSchemas(schema: SchemaIR): string {
+export function generateSchema(schema: SchemaIR): string {
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile("schema.ts", "");
 
@@ -118,7 +104,7 @@ export function generateSchemas(schema: SchemaIR): string {
     });
 
     for (const namedType of schema.types) {
-        const variableName = namedType.apiName;
+        const variableName = namedType.name;
         const zodCode = typeDefToZod(namedType.type);
 
         sourceFile.addVariableStatement({
@@ -131,7 +117,7 @@ export function generateSchemas(schema: SchemaIR): string {
         });
 
         sourceFile.addTypeAlias({
-            name: namedType.apiName,
+            name: namedType.name,
             isExported: true,
             type: `z.infer<typeof ${variableName}>`,
         });

@@ -6,6 +6,9 @@
         ".": {
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
+        },
+        "./types": {
+            "types": "./lib/types/index.d.t.s"
         }
     },
     "files": [
@@ -18,7 +21,10 @@
     },
     "dependencies": {
         "@standard-schema/spec": "^1.1.0",
-        "ts-morph": "^25.0.1",
+        "commander": "^14.0.2",
+        "jiti": "^2.6.1",
+        "temporal-polyfill": "^0.3.0",
+        "ts-morph": "^27.0.2",
         "zod": "^4.1.13"
     },
     "devDependencies": {

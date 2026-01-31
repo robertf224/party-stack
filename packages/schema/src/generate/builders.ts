@@ -9,12 +9,12 @@ export interface GenerateBuildersOpts {
 }
 
 function unionTypeToBuilders(
-    apiName: string,
+    name: string,
     unionType: UnionTypeDef
-): Array<{ apiName: string; builder: string }> {
+): Array<{ name: string; builder: string }> {
     return unionType.variants.map((variant) => ({
-        apiName: variant.apiName,
-        builder: `(value: Extract<${apiName}, { kind: ${variant.apiName} }>["value"]) => ({ kind: "${variant.apiName}" as const, value })`,
+        name: variant.name,
+        builder: `(value: Extract<${name}, { kind: "${variant.name}" }>["value"]) => ({ kind: "${variant.name}" as const, value })`,
     }));
 }
 
@@ -25,28 +25,36 @@ function unionTypeToBuilders(
  */
 export function generateBuilders(schema: SchemaIR, opts: GenerateBuildersOpts): string {
     const project = new Project({ useInMemoryFileSystem: true });
-    const sourceFile = project.createSourceFile("idl.ts", "");
+    const sourceFile = project.createSourceFile("builders.ts", "");
 
     const unionTypes = schema.types.filter((type) => type.type.kind === "union") as Array<
         NamedTypeDef & {
-            type: UnionTypeDef;
+            type: { kind: "union"; value: UnionTypeDef };
         }
     >;
 
-    const promotedType = unionTypes.find((type) => type.apiName === opts.promoted);
-    const promotedBuilders = promotedType ? unionTypeToBuilders(opts.promoted!, promotedType.type) : [];
+    // Add import for union types from the schema file
+    if (unionTypes.length > 0) {
+        sourceFile.addImportDeclaration({
+            moduleSpecifier: "./schema.js",
+            namedImports: unionTypes.map((type) => ({ name: type.name, isTypeOnly: true })),
+        });
+    }
 
-    const nestedTypes = unionTypes.filter((type) => type.apiName !== opts.promoted);
+    const promotedType = unionTypes.find((type) => type.name === opts.promoted);
+    const promotedBuilders = promotedType ? unionTypeToBuilders(opts.promoted!, promotedType.type.value) : [];
+
+    const nestedTypes = unionTypes.filter((type) => type.name !== opts.promoted);
     const nestedBuilders = nestedTypes.map((type) => ({
-        apiName: type.apiName,
-        builders: unionTypeToBuilders(type.apiName, type.type),
+        name: type.name,
+        builders: unionTypeToBuilders(type.name, type.type.value),
     }));
 
     for (const builder of promotedBuilders) {
         sourceFile.addVariableStatement({
             isExported: true,
             declarationKind: VariableDeclarationKind.Const,
-            declarations: [{ name: builder.apiName, initializer: builder.builder }],
+            declarations: [{ name: builder.name, initializer: builder.builder }],
         });
     }
 
@@ -56,16 +64,16 @@ export function generateBuilders(schema: SchemaIR, opts: GenerateBuildersOpts): 
             declarationKind: VariableDeclarationKind.Const,
             declarations: [
                 {
-                    name: builders.apiName,
-                    initializer: `{ ${builders.builders.map((builder) => `${builder.apiName}: ${builder.builder}`).join(", ")} }`,
+                    name: builders.name,
+                    initializer: `{ ${builders.builders.map((builder) => `${builder.name}: ${builder.builder}`).join(", ")} }`,
                 },
             ],
         });
     }
 
     const exportNames = [
-        ...promotedBuilders.map((builder) => builder.apiName),
-        ...nestedBuilders.map((builder) => builder.apiName),
+        ...promotedBuilders.map((builder) => builder.name),
+        ...nestedBuilders.map((builder) => builder.name),
     ];
     sourceFile.addVariableStatement({
         isExported: true,
