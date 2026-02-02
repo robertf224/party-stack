@@ -1,4 +1,5 @@
 import { Project, VariableDeclarationKind } from "ts-morph";
+import { buildJsDocs } from "./utils/buildJsDocs.js";
 import type { NamedTypeDef, SchemaIR, UnionTypeDef } from "../ir/types.js";
 
 export interface GenerateBuildersOpts {
@@ -41,35 +42,34 @@ export function generateBuilders(schema: SchemaIR, opts: GenerateBuildersOpts): 
     const promotedBuilders = promotedType ? unionTypeToBuilders(opts.promoted!, promotedType.type.value) : [];
 
     const nestedTypes = unionTypes.filter((type) => type.name !== opts.promoted);
-    const nestedBuilders = nestedTypes.map((type) => ({
-        name: type.name,
-        builders: unionTypeToBuilders(type.name, type.type.value),
-    }));
 
     for (const builder of promotedBuilders) {
         sourceFile.addVariableStatement({
             isExported: true,
             declarationKind: VariableDeclarationKind.Const,
             declarations: [{ name: builder.name, initializer: builder.builder }],
+            docs: buildJsDocs({ deprecated: promotedType?.deprecated }),
         });
     }
 
-    for (const builders of nestedBuilders) {
+    for (const nestedType of nestedTypes) {
+        const builders = unionTypeToBuilders(nestedType.name, nestedType.type.value);
         sourceFile.addVariableStatement({
             isExported: true,
             declarationKind: VariableDeclarationKind.Const,
             declarations: [
                 {
-                    name: builders.name,
-                    initializer: `{ ${builders.builders.map((builder) => `${builder.name}: ${builder.builder}`).join(", ")} }`,
+                    name: nestedType.name,
+                    initializer: `{ ${builders.map((builder) => `${builder.name}: ${builder.builder}`).join(", ")} }`,
                 },
             ],
+            docs: buildJsDocs({ deprecated: nestedType.deprecated }),
         });
     }
 
     const exportNames = [
         ...promotedBuilders.map((builder) => builder.name),
-        ...nestedBuilders.map((builder) => builder.name),
+        ...nestedTypes.map((type) => type.name),
     ];
     sourceFile.addVariableStatement({
         isExported: true,

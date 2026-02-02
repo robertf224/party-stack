@@ -3,6 +3,20 @@ import type { SchemaIR, UnionTypeDef } from "./types.js";
 
 export default {
     types: [
+        // Utilities
+        {
+            name: "Deprecation",
+            type: s.struct({
+                fields: [
+                    {
+                        name: "message",
+                        displayName: "Message",
+                        type: s.string({}),
+                    },
+                ],
+            }),
+        },
+
         // String enum constraint
         {
             name: "StringEnumConstraint",
@@ -177,6 +191,11 @@ export default {
                         type: s.optional({ type: s.string({}) }),
                         description: "Optional description.",
                     },
+                    {
+                        name: "deprecated",
+                        displayName: "Deprecated?",
+                        type: s.optional({ type: s.ref({ name: "Deprecation" }) }),
+                    },
                 ],
             }),
         },
@@ -329,6 +348,11 @@ export default {
                         displayName: "Description",
                         type: s.optional({ type: s.string({}) }),
                         description: "Optional documentation for the type.",
+                    },
+                    {
+                        name: "deprecated",
+                        displayName: "Deprecated?",
+                        type: s.optional({ type: s.ref({ name: "Deprecation" }) }),
                     },
                     {
                         name: "type",

@@ -121,6 +121,86 @@ describe("TypeScript Type Generation", () => {
               }"
             `);
         });
+
+        it("should include @deprecated tag for deprecated types", () => {
+            const schema: SchemaIR = {
+                types: [
+                    {
+                        name: "LegacyUser",
+                        deprecated: { message: "Use User instead" },
+                        type: {
+                            kind: "struct",
+                            value: {
+                                fields: [
+                                    {
+                                        name: "name",
+                                        displayName: "name",
+                                        type: { kind: "string", value: {} },
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                ],
+            };
+
+            const result = generateTypes(schema);
+            expect(result).toContain("@deprecated Use User instead");
+        });
+
+        it("should include @deprecated tag for deprecated fields", () => {
+            const schema: SchemaIR = {
+                types: [
+                    {
+                        name: "User",
+                        type: {
+                            kind: "struct",
+                            value: {
+                                fields: [
+                                    {
+                                        name: "oldEmail",
+                                        displayName: "Old Email",
+                                        type: { kind: "string", value: {} },
+                                        deprecated: { message: "Use email instead" },
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                ],
+            };
+
+            const result = generateTypes(schema);
+            expect(result).toContain("@deprecated Use email instead");
+        });
+
+        it("should include both description and @deprecated tag", () => {
+            const schema: SchemaIR = {
+                types: [
+                    {
+                        name: "OldUser",
+                        description: "Represents a user in the old system",
+                        deprecated: { message: "Use NewUser instead" },
+                        type: {
+                            kind: "struct",
+                            value: {
+                                fields: [
+                                    {
+                                        name: "name",
+                                        displayName: "name",
+                                        type: { kind: "string", value: {} },
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                ],
+            };
+
+            const result = generateTypes(schema);
+            expect(result).toContain("Represents a user in the old system");
+            expect(result).toContain("@deprecated Use NewUser instead");
+        });
     });
 
     describe("Primitive Types", () => {

@@ -208,4 +208,62 @@ describe("Builders generation", () => {
             );
         });
     });
+
+    describe("Deprecation", () => {
+        it("should include @deprecated tag for deprecated union types", () => {
+            const schema: SchemaIR = {
+                types: [
+                    {
+                        name: "LegacyShape",
+                        deprecated: { message: "Use Shape instead" },
+                        type: {
+                            kind: "union",
+                            value: {
+                                variants: [
+                                    {
+                                        name: "circle",
+                                        type: { kind: "ref", value: { name: "CircleDef" } },
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                ],
+            };
+
+            const result = generateBuilders(schema, { exportName: "p" });
+            expect(result).toContain("@deprecated Use Shape instead");
+        });
+
+        it("should include @deprecated tag for promoted deprecated union type variants", () => {
+            const schema: SchemaIR = {
+                types: [
+                    {
+                        name: "Shape",
+                        deprecated: { message: "Use NewShape instead" },
+                        type: {
+                            kind: "union",
+                            value: {
+                                variants: [
+                                    {
+                                        name: "circle",
+                                        type: { kind: "ref", value: { name: "CircleDef" } },
+                                    },
+                                    {
+                                        name: "square",
+                                        type: { kind: "ref", value: { name: "SquareDef" } },
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                ],
+            };
+
+            const result = generateBuilders(schema, { exportName: "p", promoted: "Shape" });
+            expect(result).toContain("@deprecated Use NewShape instead");
+            // Each promoted variant should have the deprecation tag
+            expect(result.match(/@deprecated/g)?.length).toBe(2);
+        });
+    });
 });

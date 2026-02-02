@@ -1,5 +1,6 @@
 import { CodeBlockWriter, Project, Writers, WriterFunction } from "ts-morph";
 import { unwrapType } from "../utils/types.js";
+import { buildJsDocs } from "./utils/buildJsDocs.js";
 import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef } from "../ir/types.js";
 
 function withWriter(fn: WriterFunction): string {
@@ -85,7 +86,7 @@ function generateForStructTypeDef(type: StructTypeDef): string {
                     name: field.name,
                     type: generateForTypeDef(fieldType),
                     hasQuestionToken: isOptional,
-                    docs: field.description ? [{ description: field.description }] : undefined,
+                    docs: buildJsDocs({ description: field.description, deprecated: field.deprecated }),
                 };
             }),
         })
@@ -120,7 +121,7 @@ export function generateTypes(schema: SchemaIR): string {
             name: type.name,
             isExported: true,
             type: generateForTypeDef(type.type),
-            docs: type.description ? [{ description: type.description }] : undefined,
+            docs: buildJsDocs({ description: type.description, deprecated: type.deprecated }),
         });
     }
 

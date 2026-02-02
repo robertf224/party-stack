@@ -3,6 +3,8 @@
 import { z } from "zod/mini";
 import * as t from "./types.js";
 
+export const Deprecation: z.ZodMiniType<t.Deprecation> = z.object({ message: z.string() });
+
 export const StringEnumConstraint: z.ZodMiniType<t.StringEnumConstraint> = z.object({
     options: z.array(z.object({ value: z.string(), label: z.optional(z.string()) })),
 });
@@ -45,6 +47,7 @@ export const FieldDef: z.ZodMiniType<t.FieldDef> = z.object({
     displayName: z.string(),
     type: z.lazy(() => TypeDef),
     description: z.optional(z.string()),
+    deprecated: z.optional(z.lazy(() => Deprecation)),
 });
 
 export const StructTypeDef: z.ZodMiniType<t.StructTypeDef> = z.object({
@@ -90,6 +93,7 @@ export const TypeDef: z.ZodMiniType<t.TypeDef> = z.discriminatedUnion("kind", [
 export const NamedTypeDef: z.ZodMiniType<t.NamedTypeDef> = z.object({
     name: z.string(),
     description: z.optional(z.string()),
+    deprecated: z.optional(z.lazy(() => Deprecation)),
     type: z.lazy(() => TypeDef),
 });
 

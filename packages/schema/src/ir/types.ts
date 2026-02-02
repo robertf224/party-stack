@@ -2,6 +2,10 @@
 
 import * as v from "@party-stack/schema/values";
 
+export type Deprecation = {
+    message: string;
+};
+
 /** Constrains a string to a set of allowed values. */
 export type StringEnumConstraint = {
     options: Array<{
@@ -73,6 +77,7 @@ export type FieldDef = {
     type: TypeDef;
     /** Optional description. */
     description?: string;
+    deprecated?: Deprecation;
 };
 
 /** A struct type with named fields. */
@@ -138,6 +143,7 @@ export type NamedTypeDef = {
     name: string;
     /** Optional documentation for the type. */
     description?: string;
+    deprecated?: Deprecation;
     /** The type definition. */
     type: TypeDef;
 };
