@@ -3,10 +3,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 import { createJiti } from "jiti";
+import { format, resolveConfig } from "prettier";
 import { generateBuilders } from "./builders.js";
 import { generateTypes } from "./types.js";
 import { generateValidators } from "./validators.js";
-import type { SchemaIR } from "../ir/bootstrap-types.js";
+import type { SchemaIR } from "../ir/types.js";
 
 const program = new Command();
 
@@ -49,9 +50,23 @@ program
         const validatorsFilePath = join(outDir, "validators.ts");
         const buildersFilePath = join(outDir, "builders.ts");
 
-        writeFileSync(typesFilePath, header + typesOutput, "utf-8");
-        writeFileSync(validatorsFilePath, header + validatorsOutput, "utf-8");
-        writeFileSync(buildersFilePath, header + buildersOutput, "utf-8");
+        // Resolve prettier config from the output directory (uses consumer's config)
+        const prettierConfig = await resolveConfig(outDir);
+
+        // Format and write each file
+        const formatAndWrite = async (filePath: string, content: string) => {
+            const formatted = await format(header + content, {
+                ...prettierConfig,
+                filepath: filePath, // Helps prettier infer parser
+            });
+            writeFileSync(filePath, formatted, "utf-8");
+        };
+
+        await Promise.all([
+            formatAndWrite(typesFilePath, typesOutput),
+            formatAndWrite(validatorsFilePath, validatorsOutput),
+            formatAndWrite(buildersFilePath, buildersOutput),
+        ]);
 
         console.log(`Generated types written to: ${typesFilePath}`);
         console.log(`Generated validators written to: ${validatorsFilePath}`);

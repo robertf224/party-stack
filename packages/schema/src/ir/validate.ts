@@ -1,4 +1,4 @@
-import type { SchemaIR, TypeDef, FieldDef, VariantDef } from "./bootstrap-types.js";
+import type { SchemaIR, TypeDef, FieldDef, VariantDef } from "./types.js";
 
 export type ValidationPathElement = string | number;
 

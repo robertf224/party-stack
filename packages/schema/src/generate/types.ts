@@ -1,6 +1,6 @@
 import { CodeBlockWriter, Project, Writers, WriterFunction } from "ts-morph";
 import { unwrapType } from "../utils/types.js";
-import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef } from "../ir/bootstrap-types.js";
+import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef } from "../ir/types.js";
 
 function withWriter(fn: WriterFunction): string {
     const writer = new CodeBlockWriter();

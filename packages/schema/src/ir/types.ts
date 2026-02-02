@@ -10,9 +10,15 @@ export type StringEnumConstraint = {
     }>;
 };
 
+/** Constrains a string to a regex. */
+export type StringRegexConstraint = {
+    regex: string;
+};
+
 /** A constraint that can be applied to a string type. */
 export type StringConstraint = v.Union<{
     enum: StringEnumConstraint;
+    regex: StringRegexConstraint;
 }>;
 
 /** A string type with optional constraints. */

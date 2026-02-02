@@ -1,1 +1,1 @@
-export * from "./bootstrap-types.js";
+export * from "./types.js";

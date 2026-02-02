@@ -497,6 +497,9 @@ importers:
       jiti:
         specifier: ^2.6.1
         version: 2.6.1
+      prettier:
+        specifier: ^3.5.3
+        version: 3.6.2
       temporal-polyfill:
         specifier: ^0.3.0
         version: 0.3.0
@@ -513,6 +516,9 @@ importers:
       eslint:
         specifier: ^9.25.0
         version: 9.28.0(jiti@2.6.1)
+      tsx:
+        specifier: ^4.20.6
+        version: 4.20.6
       typescript:
         specifier: ~5.8.3
         version: 5.8.3

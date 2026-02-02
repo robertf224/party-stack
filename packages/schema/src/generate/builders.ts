@@ -1,5 +1,5 @@
 import { Project, VariableDeclarationKind } from "ts-morph";
-import type { NamedTypeDef, SchemaIR, UnionTypeDef } from "../ir/bootstrap-types.js";
+import type { NamedTypeDef, SchemaIR, UnionTypeDef } from "../ir/types.js";
 
 export interface GenerateBuildersOpts {
     /** The name of the main export (e.g., "p" for `p.string()`). */
