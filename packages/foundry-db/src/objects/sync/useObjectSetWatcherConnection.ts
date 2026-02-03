@@ -2,17 +2,17 @@
 /* eslint-disable react-hooks/rules-of-hooks */
 import { invariant } from "@bobbyfidz/panic";
 import { Pathnames, Urls } from "@bobbyfidz/urls";
+import { map } from "@effectionx/stream-helpers";
 import { useWebSocket } from "@effectionx/websocket";
 import { ObjectSetStreamSubscribeRequests, ObjectSetUpdate, StreamMessage } from "@osdk/foundry.ontologies";
 import { resource, spawn, race, sleep, Stream, Operation, createChannel } from "effection";
-import { map } from "./effection-utils/stream-helpers";
-import { ValueSignal } from "./effection-utils/ValueSignal";
 import {
     ObjectSetSubscription,
     ObjectSetSubscriptionsMessage,
     ObjectSetSubscriptionsStateUpdateMessage,
     ObjectSetSubscriptionsStateUpdateMessages,
 } from "./ObjectSetSubscription";
+import type { ValueSignal } from "@effectionx/signals";
 
 const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 45_000;
 
@@ -26,7 +26,7 @@ function uuidToBigInt(uuid: string): bigint {
     return BigInt(decimalString);
 }
 
-function serializeRequest(requestId: bigint, request: ObjectSetSubscription[]): string {
+function serializeRequest(requestId: bigint, request: readonly ObjectSetSubscription[]): string {
     return JSON.stringify({
         id: bigIntToUuid(requestId),
         // Strip out our internal subscription ids.
@@ -99,7 +99,7 @@ export function useObjectSetWatcherConnection(
         let latestRequestId = 0n;
         let externalSubscriptionIdsToInternal: Map<string, string> | undefined;
         function* sendSubscriptionRequest(
-            request: ObjectSetSubscription[]
+            request: readonly ObjectSetSubscription[]
         ): Operation<ObjectSetSubscriptionsStateUpdateMessages | undefined> {
             const requestId = latestRequestId + 1n;
             latestRequestId = requestId;

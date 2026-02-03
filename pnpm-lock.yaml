@@ -246,9 +246,15 @@ importers:
       '@bobbyfidz/urls':
         specifier: ^0.2.1
         version: 0.2.1
+      '@effectionx/signals':
+        specifier: ^0.5.0
+        version: 0.5.0(effection@4.0.2)
+      '@effectionx/stream-helpers':
+        specifier: ^0.7.1
+        version: 0.7.1(effection@4.0.2)
       '@effectionx/websocket':
-        specifier: ^2.1.0
-        version: 2.1.0
+        specifier: ^2.3.0
+        version: 2.3.0(effection@4.0.2)
       '@next/env':
         specifier: ^16.0.3
         version: 16.0.3
@@ -271,8 +277,8 @@ importers:
         specifier: ^5.0.0
         version: 5.90.10
       effection:
-        specifier: ^4.0.0-beta.3
-        version: 4.0.0-beta.3
+        specifier: ^4.0.2
+        version: 4.0.2
       zod:
         specifier: ^4.1.13
         version: 4.1.13
@@ -730,9 +736,29 @@ packages:
     resolution: {integrity: sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==}
     engines: {node: '>=18'}
 
-  '@effectionx/websocket@2.1.0':
-    resolution: {integrity: sha512-m2YHW6WxVsGajpiL1ptxTIqXRNuai/N52uTam7COUn/NDU3Zh1b2HyMDicsRTcJXM1V29e7qG6OvQy/lQRXG+g==}
-    engines: {node: '>= 16'}
+  '@effectionx/signals@0.5.0':
+    resolution: {integrity: sha512-lvS9D/+2YI0tpSqvYIZk4MrF5noV178iEk97zeD/nyPsQhkh06bsA0bIu6oa7Vf6IkJKOcs6qB3X0HwdSBWAsg==}
+    engines: {node: '>= 22'}
+    peerDependencies:
+      effection: ^3 || ^4
+
+  '@effectionx/stream-helpers@0.7.1':
+    resolution: {integrity: sha512-g1uQCD0MaPzXC0HSCcRMXWeiBVZSyR5FHarBul4c6gSL2hbgvjBxybWvw8SHwVVq9oSZED8XGnzenHnwo1o1Sg==}
+    engines: {node: '>= 22'}
+    peerDependencies:
+      effection: ^3 || ^4
+
+  '@effectionx/timebox@0.4.0':
+    resolution: {integrity: sha512-nLjQCKshBMyfmh/JAcQVwlyQEF9QvUmZIFunc3zGU92x9y5NJstwZ8/e/fid4Z8om3n6afFSOl89HoyW/1/uXA==}
+    engines: {node: '>= 22'}
+    peerDependencies:
+      effection: ^3 || ^4
+
+  '@effectionx/websocket@2.3.0':
+    resolution: {integrity: sha512-FpAptS5zvmw5jJVQp69BqPzAfgstaYKP/D+EThjaAsT/zxlfwqYnKeZNvgePxM3y8q/zmMrBi5QGud8CRkV5Yg==}
+    engines: {node: '>= 22'}
+    peerDependencies:
+      effection: ^3 || ^4
 
   '@emnapi/core@1.7.1':
     resolution: {integrity: sha512-o1uhUASyo921r2XtHYOHy7gdkGLge8ghBEQHMWmyJFoXlpU58kIrhhN3w26lpQb6dspetweapMn2CSNwQ8I4wg==}
@@ -2597,12 +2623,8 @@ packages:
   effect@3.19.6:
     resolution: {integrity: sha512-Eh1E/CI+xCAcMSDC5DtyE29yWJINC0zwBbwHappQPorjKyS69rCA8qzpsHpfhKnPDYgxdg8zkknii8mZ+6YMQA==}
 
-  effection@4.0.0-beta.2:
-    resolution: {integrity: sha512-iqEBfInNx3rB2DhQYYu6LcJ7zRn4yFo+DjUntcWNZeYWh1LiucMXb2JMiD1OA8WPgc3KOwQBxXfOwby1v34WdQ==}
-    engines: {node: '>= 16'}
-
-  effection@4.0.0-beta.3:
-    resolution: {integrity: sha512-JGRphS7uB6cWKA5ih6OlmiYQQuruNcaOjXo0+ca88xCmbPpmdeohh1+pTmCnDF8PWy3WQMnly9eFEtRyfXaeAA==}
+  effection@4.0.2:
+    resolution: {integrity: sha512-O8WMGP10nPuJDwbNGILcaCNWS+CvDYjcdsUSD79nWZ+WtUQ8h1MEV7JJwCSZCSeKx8+TdEaZ/8r6qPTR2o/o8w==}
     engines: {node: '>= 16'}
 
   ejs@3.1.10:
@@ -3245,6 +3267,9 @@ packages:
   ignore@7.0.5:
     resolution: {integrity: sha512-Hs59xBNfUIunMFgWAbGX5cq6893IbWg4KnrjbYwX3tx0ztorVgTDA6B2sxf8ejHJ4wz8BqGUMYlnzNBer5NvGg==}
     engines: {node: '>= 4'}
+
+  immutable@5.1.4:
+    resolution: {integrity: sha512-p6u1bG3YSnINT5RQmx/yRZBpenIl30kVxkTLDyHLIMk0gict704Q9n+thfDI7lTRm9vXdDYutVzXhzcThxTnXA==}
 
   import-fresh@3.3.0:
     resolution: {integrity: sha512-veYYhQa+D1QBKznvhUHxb8faxlrwUnxseDAbAp457E0wLNio2bOSKnjYDhMj+YiAq61xrMGhQk9iXVk5FzgQMw==}
@@ -4360,6 +4385,9 @@ packages:
 
   remark-rehype@11.1.2:
     resolution: {integrity: sha512-Dh7l57ianaEoIpzbp0PC9UKAdCSVklD8E5Rpw7ETfbTl3FqcOOgq5q2LVDhgGCkaBv7p24JXikPdvhhmHvKMsw==}
+
+  remeda@2.33.4:
+    resolution: {integrity: sha512-ygHswjlc/opg2VrtiYvUOPLjxjtdKvjGz1/plDhkG66hjNjFr1xmfrs2ClNFo/E6TyUFiwYNh53bKV26oBoMGQ==}
 
   require-directory@2.1.1:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
@@ -5577,9 +5605,26 @@ snapshots:
   '@csstools/css-tokenizer@3.0.4':
     optional: true
 
-  '@effectionx/websocket@2.1.0':
+  '@effectionx/signals@0.5.0(effection@4.0.2)':
     dependencies:
-      effection: 4.0.0-beta.2
+      effection: 4.0.2
+      immutable: 5.1.4
+
+  '@effectionx/stream-helpers@0.7.1(effection@4.0.2)':
+    dependencies:
+      '@effectionx/signals': 0.5.0(effection@4.0.2)
+      '@effectionx/timebox': 0.4.0(effection@4.0.2)
+      effection: 4.0.2
+      immutable: 5.1.4
+      remeda: 2.33.4
+
+  '@effectionx/timebox@0.4.0(effection@4.0.2)':
+    dependencies:
+      effection: 4.0.2
+
+  '@effectionx/websocket@2.3.0(effection@4.0.2)':
+    dependencies:
+      effection: 4.0.2
 
   '@emnapi/core@1.7.1':
     dependencies:
@@ -7358,9 +7403,7 @@ snapshots:
       '@standard-schema/spec': 1.1.0
       fast-check: 3.23.2
 
-  effection@4.0.0-beta.2: {}
-
-  effection@4.0.0-beta.3: {}
+  effection@4.0.2: {}
 
   ejs@3.1.10:
     dependencies:
@@ -8269,6 +8312,8 @@ snapshots:
   ignore@5.3.2: {}
 
   ignore@7.0.5: {}
+
+  immutable@5.1.4: {}
 
   import-fresh@3.3.0:
     dependencies:
@@ -9436,6 +9481,8 @@ snapshots:
       mdast-util-to-hast: 13.2.0
       unified: 11.0.5
       vfile: 6.0.3
+
+  remeda@2.33.4: {}
 
   require-directory@2.1.1: {}
 

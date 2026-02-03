@@ -1,5 +1,7 @@
 import { createSignal, type Operation, resource } from "effection";
-import type { ValueSignal } from "./ValueSignal";
+import type { ValueSignal } from "@effectionx/signals";
+
+// TODO: port this upstream.
 
 export function useValueSignal<T>(initial: T): Operation<ValueSignal<T>> {
     return resource(function* (provide) {

@@ -1,8 +1,8 @@
 /* eslint-disable react-hooks/rules-of-hooks */
 import { createChannel, Operation, resource, scoped, sleep, spawn, Stream } from "effection";
-import { ValueSignal } from "./effection-utils/ValueSignal";
 import { ObjectSetSubscription, ObjectSetSubscriptionsMessage } from "./ObjectSetSubscription";
 import { useObjectSetWatcherConnection } from "./useObjectSetWatcherConnection";
+import type { ValueSignal } from "@effectionx/signals";
 
 /**
  * Creates a resources that maintains a logical Object Set Watcher session regardless

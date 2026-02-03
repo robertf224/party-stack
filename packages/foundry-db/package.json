@@ -46,14 +46,16 @@
         "@bobbyfidz/osdk-utils": "workspace:*",
         "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/urls": "^0.2.1",
-        "@effectionx/websocket": "^2.1.0",
+        "@effectionx/signals": "^0.5.0",
+        "@effectionx/stream-helpers": "^0.7.1",
+        "@effectionx/websocket": "^2.3.0",
         "@next/env": "^16.0.3",
         "@oclif/core": "^4.8.0",
         "@osdk/foundry.admin": "^2.41.0",
         "@osdk/foundry.ontologies": "^2.41.0",
         "@osdk/shared.client.impl": "^1.5.0",
         "@osdk/shared.client2": "^1.0.0",
-        "effection": "^4.0.0-beta.3",
+        "effection": "^4.0.2",
         "zod": "^4.1.13"
     },
     "devDependencies": {
