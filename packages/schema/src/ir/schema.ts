@@ -143,7 +143,7 @@ export default {
                         name: "keyType",
                         displayName: "Key Type",
                         type: s.ref({ name: "TypeDef" }),
-                        description: "The type of keys (must be string).",
+                        description: "The type of keys (must be string right now).",
                     },
                     {
                         name: "valueType",

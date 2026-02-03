@@ -59,7 +59,7 @@ export type ListTypeDef = {
 
 /** A map/record type. */
 export type MapTypeDef = {
-    /** The type of keys (must be string). */
+    /** The type of keys (must be string right now). */
     keyType: TypeDef;
     /** The type of values. */
     valueType: TypeDef;

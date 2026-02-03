@@ -50,7 +50,7 @@ function generateForTypeDef(type: TypeDef): string {
         case "map": {
             const keyType = generateForTypeDef(type.value.keyType);
             const valueType = generateForTypeDef(type.value.valueType);
-            return `z.record(${keyType}, ${valueType})`;
+            return `z.map(${keyType}, ${valueType})`;
         }
 
         case "struct": {

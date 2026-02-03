@@ -552,7 +552,7 @@ describe("TypeScript Type Generation", () => {
             `);
         });
 
-        it("should generate Record type for map", () => {
+        it("should generate Map type for map", () => {
             const schema: SchemaIR = {
                 types: [
                     {
@@ -580,9 +580,11 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Config {
-                  settings: Record<string, string>;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Config = {
+                      settings: Map<string, string>;
+                  };"
             `);
         });
     });
