@@ -6,7 +6,9 @@ You start with a schema definition and generate Typescript types, Zod validators
 
 ### Roadmap
 
+- Array constraints + cleaner builders
 - Standard JSON encoding (+ codecs generally)
 - Default values
 - Possibly switching to a more rich Result type in IR (e.g. better-result, neverthrow)
 - Other schema definition front-ends besides our generated builders (e.g. Typescript!)
+- Export filtering

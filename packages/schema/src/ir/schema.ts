@@ -119,6 +119,9 @@ export default {
             type: s.struct({ fields: [] }),
         },
 
+        // list type constraint...
+        // primary key constraint
+
         // Collection type defs
         {
             name: "ListTypeDef",
