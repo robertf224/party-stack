@@ -55,21 +55,13 @@ export function updateAggregationQueries(queryClient: QueryClient, observation: 
         const [, , objectSet] = query.queryKey as [
             "osdk",
             "aggregations",
-            unknown,
+            ObjectSet<ObjectOrInterfaceDefinition>,
         ];
-
-        // Skip queries with unexpected key shapes (e.g. from other libraries
-        // that share the ["osdk", "aggregations"] prefix).
-        if (typeof objectSet !== "object" || objectSet === null || !("type" in objectSet)) {
-            return;
-        }
-
-        const { type } = objectSet as ObjectSet<ObjectOrInterfaceDefinition>;
 
         // TODO: do more fine-grained invalidation / updating + work for interfaces.
         if (
-            observation.knownObjects.some((object) => object.$objectType === type.apiName) ||
-            observation.deletedObjects.some((object) => object.objectType === type.apiName)
+            observation.knownObjects.some((object) => object.$objectType === objectSet.type.apiName) ||
+            observation.deletedObjects.some((object) => object.objectType === objectSet.type.apiName)
         ) {
             void queryClient.invalidateQueries({ queryKey: query.queryKey });
         }
