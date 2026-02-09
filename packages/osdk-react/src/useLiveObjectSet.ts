@@ -46,6 +46,7 @@ export function useLiveObjectSet<T extends ObjectOrInterfaceDefinition>(type: T)
                 };
                 updateObjectQueries(queryClient, ontologyObservation);
                 updateObjectsQueries(queryClient, ontologyObservation);
+                // Allow invalidation of aggregation queries
                 updateAggregationQueries(queryClient, ontologyObservation);
             },
         });
