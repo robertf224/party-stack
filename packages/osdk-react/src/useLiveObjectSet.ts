@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import React from "react";
 import { OntologyObservation } from "./ontology";
 import { useOsdkContext } from "./OsdkContext";
+import { updateAggregationQueries } from "./useAggregations";
 import { updateObjectQueries } from "./useObject";
 import { updateObjectsQueries } from "./useObjects";
 import type { ObjectOrInterfaceDefinition, ObjectSet } from "@osdk/api";
@@ -45,6 +46,7 @@ export function useLiveObjectSet<T extends ObjectOrInterfaceDefinition>(type: T)
                 };
                 updateObjectQueries(queryClient, ontologyObservation);
                 updateObjectsQueries(queryClient, ontologyObservation);
+                updateAggregationQueries(queryClient, ontologyObservation);
             },
         });
         return subscription.unsubscribe;
