@@ -52,11 +52,8 @@ export function useAggregations<
 export function updateAggregationQueries(queryClient: QueryClient, observation: OntologyObservation) {
     const queries = queryClient.getQueryCache().findAll({ queryKey: QUERY_KEY_PREFIX });
     queries.forEach((query) => {
-        const [, , objectSet] = query.queryKey as [
-            "osdk",
-            "aggregations",
-            ObjectSet<ObjectOrInterfaceDefinition> | unknown,
-        ];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const [, , objectSet] = query.queryKey as ["osdk", "aggregations", any];
 
         // Skip queries with unexpected key shapes (e.g. from other libraries
         // that share the ["osdk", "aggregations"] prefix).
