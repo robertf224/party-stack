@@ -52,8 +52,11 @@ export function useAggregations<
 export function updateAggregationQueries(queryClient: QueryClient, observation: OntologyObservation) {
     const queries = queryClient.getQueryCache().findAll({ queryKey: QUERY_KEY_PREFIX });
     queries.forEach((query) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const [, , objectSet] = query.queryKey as ["osdk", "aggregations", any];
+        const [, , objectSet] = query.queryKey as [
+            "osdk",
+            "aggregations",
+            unknown,
+        ];
 
         // Skip queries with unexpected key shapes (e.g. from other libraries
         // that share the ["osdk", "aggregations"] prefix).
@@ -61,12 +64,12 @@ export function updateAggregationQueries(queryClient: QueryClient, observation: 
             return;
         }
 
-        const apiName = (objectSet as ObjectSet<ObjectOrInterfaceDefinition>).type.apiName;
+        const { type } = objectSet as ObjectSet<ObjectOrInterfaceDefinition>;
 
         // TODO: do more fine-grained invalidation / updating + work for interfaces.
         if (
-            observation.knownObjects.some((object) => object.$objectType === apiName) ||
-            observation.deletedObjects.some((object) => object.objectType === apiName)
+            observation.knownObjects.some((object) => object.$objectType === type.apiName) ||
+            observation.deletedObjects.some((object) => object.objectType === type.apiName)
         ) {
             void queryClient.invalidateQueries({ queryKey: query.queryKey });
         }
