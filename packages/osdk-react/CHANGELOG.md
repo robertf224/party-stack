@@ -1,5 +1,12 @@
 # @bobbyfidz/osdk-react
 
+## 0.13.0
+
+### Minor Changes
+
+- 9808a6f: Add comments
+- 4c81a74: Fix query logic
+
 ## 0.12.3
 
 ### Patch Changes
