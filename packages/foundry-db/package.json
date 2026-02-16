@@ -51,8 +51,8 @@
         "@effectionx/websocket": "^2.3.0",
         "@next/env": "^16.0.3",
         "@oclif/core": "^4.8.0",
-        "@osdk/foundry.admin": "^2.41.0",
-        "@osdk/foundry.ontologies": "^2.41.0",
+        "@osdk/foundry.admin": "^2.47.0",
+        "@osdk/foundry.ontologies": "^2.47.0",
         "@osdk/shared.client.impl": "^1.5.0",
         "@osdk/shared.client2": "^1.0.0",
         "effection": "^4.0.2",
@@ -68,6 +68,7 @@
         "eslint": "^9.25.0",
         "react": "^19.2.0",
         "ts-node": "^10.9.2",
+        "tsx": "^4.20.6",
         "typescript": "~5.8.3",
         "vitest": "^3.1.1"
     },

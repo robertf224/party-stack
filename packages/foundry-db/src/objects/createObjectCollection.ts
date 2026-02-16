@@ -1,4 +1,4 @@
-import { OntologyObjectsV2 } from "@osdk/foundry.ontologies";
+import { ObjectTypesV2, OntologyObjectsV2 } from "@osdk/foundry.ontologies";
 import {
     Collection,
     CollectionConfig,
@@ -78,6 +78,7 @@ function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>
                                 excludeRid: true,
                                 // We select all properties right now
                                 select: [],
+                                selectV2: [],
                                 pageSize,
                                 pageToken,
                                 orderBy: convertLoadSubsetOrderBy(opts.orderBy),
