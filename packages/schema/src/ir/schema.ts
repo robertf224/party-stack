@@ -1,5 +1,5 @@
-import { s } from "./builders.js";
-import type { SchemaIR, UnionTypeDef } from "./types.js";
+import { s } from "./generated/builders.js";
+import type { SchemaIR, UnionTypeDef } from "./generated/types.js";
 
 export default {
     types: [
@@ -57,14 +57,13 @@ export default {
             }),
         },
 
-        // String constraint (currently only enum)
         {
             name: "StringConstraint",
             description: "A constraint that can be applied to a string type.",
             type: s.union({
                 variants: [
                     { name: "enum", type: s.ref({ name: "StringEnumConstraint" }) },
-                    { name: "regex", type: s.ref({ name: "StringRegexConstraint " }) },
+                    { name: "regex", type: s.ref({ name: "StringRegexConstraint" }) },
                 ],
             }),
         },
@@ -116,6 +115,11 @@ export default {
         {
             name: "GeopointTypeDef",
             description: "A geographic point (lat/lon).",
+            type: s.struct({ fields: [] }),
+        },
+        {
+            name: "FileTypeDef",
+            description: "A file handle.",
             type: s.struct({ fields: [] }),
         },
 
@@ -172,7 +176,7 @@ export default {
                     },
                     {
                         name: "name",
-                        displayName: "API Name",
+                        displayName: "Name",
                         type: s.string({}),
                         description: "The field name in code.",
                     },
@@ -224,7 +228,7 @@ export default {
                 fields: [
                     {
                         name: "name",
-                        displayName: "API Name",
+                        displayName: "Name",
                         type: s.string({}),
                         description: "The variant's discriminator value.",
                     },
@@ -297,7 +301,7 @@ export default {
                 fields: [
                     {
                         name: "name",
-                        displayName: "API Name",
+                        displayName: "Name",
                         type: s.string({}),
                         description: "The name of the referenced type.",
                     },
@@ -321,6 +325,7 @@ export default {
                     { name: "date", type: s.ref({ name: "DateTypeDef" }) },
                     { name: "timestamp", type: s.ref({ name: "TimestampTypeDef" }) },
                     { name: "geopoint", type: s.ref({ name: "GeopointTypeDef" }) },
+                    { name: "file", type: s.ref({ name: "FileTypeDef" }) },
                     // Collections
                     { name: "list", type: s.ref({ name: "ListTypeDef" }) },
                     { name: "map", type: s.ref({ name: "MapTypeDef" }) },
@@ -342,7 +347,7 @@ export default {
                 fields: [
                     {
                         name: "name",
-                        displayName: "API Name",
+                        displayName: "Name",
                         type: s.string({}),
                         description: "The type's name for use in code.",
                     },

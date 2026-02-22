@@ -51,6 +51,9 @@ export type TimestampTypeDef = Record<never, never>;
 /** A geographic point (lat/lon). */
 export type GeopointTypeDef = Record<never, never>;
 
+/** A file handle. */
+export type FileTypeDef = Record<never, never>;
+
 /** A list/array type. */
 export type ListTypeDef = {
     /** The type of elements in the list. */
@@ -128,6 +131,7 @@ export type TypeDef = v.Union<{
     date: DateTypeDef;
     timestamp: TimestampTypeDef;
     geopoint: GeopointTypeDef;
+    file: FileTypeDef;
     list: ListTypeDef;
     map: MapTypeDef;
     struct: StructTypeDef;

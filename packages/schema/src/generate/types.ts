@@ -1,7 +1,7 @@
 import { CodeBlockWriter, Project, Writers, WriterFunction } from "ts-morph";
 import { unwrapType } from "../utils/types.js";
 import { buildJsDocs } from "./utils/buildJsDocs.js";
-import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef } from "../ir/types.js";
+import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef } from "../ir/index.js";
 
 function withWriter(fn: WriterFunction): string {
     const writer = new CodeBlockWriter();
@@ -49,6 +49,9 @@ function generateForTypeDef(type: TypeDef): string {
 
         case "geopoint":
             return "v.geopoint";
+
+        case "file":
+            return "v.file";
 
         case "list":
             return `Array<${generateForTypeDef(type.value.elementType)}>`;

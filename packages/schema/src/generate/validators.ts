@@ -1,5 +1,5 @@
 import { Project, VariableDeclarationKind } from "ts-morph";
-import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef, ResultTypeDef } from "../ir/types.js";
+import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef, ResultTypeDef } from "../ir/index.js";
 
 function generateForTypeDef(type: TypeDef): string {
     switch (type.kind) {
@@ -40,6 +40,10 @@ function generateForTypeDef(type: TypeDef): string {
 
         case "geopoint": {
             return "z.object({ lat: z.float64().min(-90).max(90), lon: z.float64().min(-180).max(180) })";
+        }
+
+        case "file": {
+            return "z.file()";
         }
 
         case "list": {

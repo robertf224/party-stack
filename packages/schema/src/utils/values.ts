@@ -12,6 +12,8 @@ export type date = Temporal.PlainDate;
 
 export type timestamp = Temporal.Instant;
 
+export type file = File;
+
 export type Union<T extends Record<string, unknown>> = {
     [K in keyof T]: { kind: K; value: T[K] };
 }[keyof T];

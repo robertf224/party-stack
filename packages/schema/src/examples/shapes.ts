@@ -7,8 +7,7 @@
  * - Required vs optional fields
  */
 
-import { s } from "../ir/builders.js";
-import type { SchemaIR } from "../ir/types.js";
+import { s, SchemaIR } from "../ir/index.js";
 
 export const shapesSchema = {
     types: [

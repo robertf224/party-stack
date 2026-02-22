@@ -15,7 +15,7 @@
         "lib"
     ],
     "scripts": {
-        "bootstrap": "tsx src/generate/generate.ts --schema ./src/ir/schema.ts --exportName s --promoted TypeDef --outDir ./src/ir",
+        "bootstrap": "tsx src/generate/generate.ts --schema ./src/ir/schema.ts --exportName s --promoted TypeDef --outDir ./src/ir/generated",
         "build": "tsc",
         "lint": "eslint",
         "test": "vitest run"

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { validate, ValidationResult } from "./validate.js";
-import type { SchemaIR } from "./types.js";
+import type { SchemaIR } from "./generated/types.js";
 
 function expectOk(result: ValidationResult): void {
     expect(result.kind).toBe("ok");

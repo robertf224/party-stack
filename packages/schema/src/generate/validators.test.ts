@@ -35,10 +35,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const Address = z.object({ get city() { return z.string(); }, get zip() { return z.optional(z.string()); } });
-
-              export type Address = z.infer<typeof Address>;"
+              export const Address: z.ZodMiniType<t.Address> = z.object({ city: z.string(), zip: z.optional(z.string()) });"
             `);
         });
 
@@ -75,10 +74,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const Order = z.object({ get status() { return z.enum(["pending", "active"]); } });
-
-              export type Order = z.infer<typeof Order>;"
+              export const Order: z.ZodMiniType<t.Order> = z.object({ status: z.enum(["pending", "active"]) });"
             `);
         });
 
@@ -123,14 +121,11 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const Address = z.object({ get city() { return z.string(); } });
+              export const Address: z.ZodMiniType<t.Address> = z.object({ city: z.string() });
 
-              export type Address = z.infer<typeof Address>;
-
-              export const Order = z.object({ get shipTo() { return z.optional(Address); } });
-
-              export type Order = z.infer<typeof Order>;"
+              export const Order: z.ZodMiniType<t.Order> = z.object({ shipTo: z.optional(z.lazy(() => Address)) });"
             `);
         });
 
@@ -160,10 +155,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const Address = z.object({ get city() { return z.optional(z.string()); } });
-
-              export type Address = z.infer<typeof Address>;"
+              export const Address: z.ZodMiniType<t.Address> = z.object({ city: z.optional(z.string()) });"
             `);
         });
 
@@ -190,10 +184,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const Event = z.object({ get createdAt() { return z.instanceof(Temporal.Instant); } });
-
-              export type Event = z.infer<typeof Event>;"
+              export const Event: z.ZodMiniType<t.Event> = z.object({ createdAt: z.instanceof(Temporal.Instant) });"
             `);
         });
 
@@ -220,10 +213,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const Event = z.object({ get eventDate() { return z.instanceof(Temporal.PlainDate); } });
-
-              export type Event = z.infer<typeof Event>;"
+              export const Event: z.ZodMiniType<t.Event> = z.object({ eventDate: z.instanceof(Temporal.PlainDate) });"
             `);
         });
 
@@ -250,10 +242,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const Item = z.object({ get quantity() { return z.int32(); } });
-
-              export type Item = z.infer<typeof Item>;"
+              export const Item: z.ZodMiniType<t.Item> = z.object({ quantity: z.int32() });"
             `);
         });
 
@@ -280,10 +271,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const Measurement = z.object({ get value() { return z.float32(); } });
-
-              export type Measurement = z.infer<typeof Measurement>;"
+              export const Measurement: z.ZodMiniType<t.Measurement> = z.object({ value: z.float32() });"
             `);
         });
 
@@ -310,10 +300,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const Coordinate = z.object({ get latitude() { return z.float64(); } });
-
-              export type Coordinate = z.infer<typeof Coordinate>;"
+              export const Coordinate: z.ZodMiniType<t.Coordinate> = z.object({ latitude: z.float64() });"
             `);
         });
 
@@ -340,10 +329,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const Location = z.object({ get position() { return z.object({ lat: z.float64().min(-90).max(90), lon: z.float64().min(-180).max(180) }); } });
-
-              export type Location = z.infer<typeof Location>;"
+              export const Location: z.ZodMiniType<t.Location> = z.object({ position: z.object({ lat: z.float64().min(-90).max(90), lon: z.float64().min(-180).max(180) }) });"
             `);
         });
 
@@ -375,10 +363,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const Cart = z.object({ get items() { return z.array(z.string()); } });
-
-              export type Cart = z.infer<typeof Cart>;"
+              export const Cart: z.ZodMiniType<t.Cart> = z.object({ items: z.array(z.string()) });"
             `);
         });
 
@@ -465,10 +452,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const Shape = z.discriminatedUnion("kind", [z.object({ kind: z.literal("circle"), value: z.object({ get radius() { return z.float64(); } }) }), z.object({ kind: z.literal("square"), value: z.object({ get side() { return z.float64(); } }) })]);
-
-              export type Shape = z.infer<typeof Shape>;"
+              export const Shape: z.ZodMiniType<t.Shape> = z.discriminatedUnion("kind", [z.object({ kind: z.literal("circle"), value: z.object({ radius: z.float64() }) }), z.object({ kind: z.literal("square"), value: z.object({ side: z.float64() }) })]);"
             `);
         });
 
@@ -490,10 +476,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              export const ApiResponse = z.discriminatedUnion("kind", [z.object({ kind: z.literal("ok"), value: z.string() }), z.object({ kind: z.literal("err"), value: z.string() })]);
-
-              export type ApiResponse = z.infer<typeof ApiResponse>;"
+              export const ApiResponse: z.ZodMiniType<t.ApiResponse> = z.discriminatedUnion("kind", [z.object({ kind: z.literal("ok"), value: z.string() }), z.object({ kind: z.literal("err"), value: z.string() })]);"
             `);
         });
 
@@ -521,11 +506,9 @@ describe("Zod Schema Generation", () => {
 
             expect(generateValidators(schema)).toMatchInlineSnapshot(`
               "import { z } from "zod/mini";
+              import * as t from "./types.js";
 
-              /** Represents a user in the system */
-              export const User = z.object({ get name() { return z.string(); } });
-
-              export type User = z.infer<typeof User>;"
+              export const User: z.ZodMiniType<t.User> = z.object({ name: z.string() });"
             `);
         });
     });

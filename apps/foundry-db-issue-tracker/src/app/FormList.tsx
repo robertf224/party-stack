@@ -1,8 +1,17 @@
 "use client";
 
-import { concat, eq, ilike, useLiveInfiniteQuery, useLiveQuery } from "@tanstack/react-db";
+import { concat, eq, ilike, useLiveInfiniteQuery } from "@tanstack/react-db";
 import React, { useState } from "react";
 import { $form, $formRevision, $user } from "./collections";
+
+// pattern 1: start from existing object, rn in lieu of hierarchical joins
+// q.from({ formRevision })
+//  .where($formRevision.utils.linkedTo("form", "abc123"))
+// q.from({ form }).join(...form.related("liveRevision"))
+
+// pattern 2: join on n:1
+// q.from({ $formRevision })
+//  .join(...$formRevision.utils.related("form"))
 
 export const FormList: React.FC = () => {
     const [query, setQuery] = useState("");

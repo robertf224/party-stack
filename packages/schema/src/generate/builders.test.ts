@@ -29,9 +29,10 @@ describe("Builders generation", () => {
             };
 
             expect(generateBuilders(schema, { exportName: "p" })).toMatchInlineSnapshot(`
-              "import { type Shape } from "./schema.js";
+              "import * as t from "./types.js";
 
-              export const Shape = { circle: (value: Extract<Shape, { kind: "circle" }>["value"]) => ({ kind: "circle" as const, value }), square: (value: Extract<Shape, { kind: "square" }>["value"]) => ({ kind: "square" as const, value }) };
+              export const Shape = { circle: (value: Extract<t.Shape, { kind: "circle" }>["value"]) => ({ kind: "circle" as const, value }), square: (value: Extract<t.Shape, { kind: "square" }>["value"]) => ({ kind: "square" as const, value }) };
+
               export const p = { Shape };"
             `);
         });
@@ -61,10 +62,12 @@ describe("Builders generation", () => {
             };
 
             expect(generateBuilders(schema, { exportName: "p", promoted: "Shape" })).toMatchInlineSnapshot(`
-              "import { type Shape } from "./schema.js";
+              "import * as t from "./types.js";
 
-              export const circle = (value: Extract<Shape, { kind: "circle" }>["value"]) => ({ kind: "circle" as const, value });
-              export const square = (value: Extract<Shape, { kind: "square" }>["value"]) => ({ kind: "square" as const, value });
+              export const circle = (value: Extract<t.Shape, { kind: "circle" }>["value"]) => ({ kind: "circle" as const, value });
+
+              export const square = (value: Extract<t.Shape, { kind: "square" }>["value"]) => ({ kind: "square" as const, value });
+
               export const p = { circle, square };"
             `);
         });
@@ -109,14 +112,14 @@ describe("Builders generation", () => {
 
             const result = generateBuilders(schema, { exportName: "p", promoted: "TypeDef" });
             expect(result).toContain(
-                'export const string = (value: Extract<TypeDef, { kind: "string" }>["value"]) => ({ kind: "string" as const, value })'
+                'export const string = (value: Extract<t.TypeDef, { kind: "string" }>["value"]) => ({ kind: "string" as const, value })'
             );
             expect(result).toContain(
-                'export const boolean = (value: Extract<TypeDef, { kind: "boolean" }>["value"]) => ({ kind: "boolean" as const, value })'
+                'export const boolean = (value: Extract<t.TypeDef, { kind: "boolean" }>["value"]) => ({ kind: "boolean" as const, value })'
             );
             expect(result).toContain("export const Constraint = {");
             expect(result).toContain(
-                'enum: (value: Extract<Constraint, { kind: "enum" }>["value"]) => ({ kind: "enum" as const, value })'
+                'enum: (value: Extract<t.Constraint, { kind: "enum" }>["value"]) => ({ kind: "enum" as const, value })'
             );
         });
 
@@ -141,9 +144,10 @@ describe("Builders generation", () => {
             };
 
             expect(generateBuilders(schema, { exportName: "schema" })).toMatchInlineSnapshot(`
-              "import { type TypeDef } from "./schema.js";
+              "import * as t from "./types.js";
 
-              export const TypeDef = { string: (value: Extract<TypeDef, { kind: "string" }>["value"]) => ({ kind: "string" as const, value }) };
+              export const TypeDef = { string: (value: Extract<t.TypeDef, { kind: "string" }>["value"]) => ({ kind: "string" as const, value }) };
+
               export const schema = { TypeDef };"
             `);
         });
@@ -195,16 +199,16 @@ describe("Builders generation", () => {
 
             // Factories derive types from the Zod-generated union using Extract
             expect(result).toContain(
-                'export const string = (value: Extract<TypeDef, { kind: "string" }>["value"]) => ({ kind: "string" as const, value })'
+                'export const string = (value: Extract<t.TypeDef, { kind: "string" }>["value"]) => ({ kind: "string" as const, value })'
             );
             expect(result).toContain(
-                'export const list = (value: Extract<TypeDef, { kind: "list" }>["value"]) => ({ kind: "list" as const, value })'
+                'export const list = (value: Extract<t.TypeDef, { kind: "list" }>["value"]) => ({ kind: "list" as const, value })'
             );
             expect(result).toContain(
-                'export const struct = (value: Extract<TypeDef, { kind: "struct" }>["value"]) => ({ kind: "struct" as const, value })'
+                'export const struct = (value: Extract<t.TypeDef, { kind: "struct" }>["value"]) => ({ kind: "struct" as const, value })'
             );
             expect(result).toContain(
-                'export const ref = (value: Extract<TypeDef, { kind: "ref" }>["value"]) => ({ kind: "ref" as const, value })'
+                'export const ref = (value: Extract<t.TypeDef, { kind: "ref" }>["value"]) => ({ kind: "ref" as const, value })'
             );
         });
     });

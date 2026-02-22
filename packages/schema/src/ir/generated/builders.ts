@@ -42,6 +42,11 @@ export const geopoint = (value: Extract<t.TypeDef, { kind: "geopoint" }>["value"
     value,
 });
 
+export const file = (value: Extract<t.TypeDef, { kind: "file" }>["value"]) => ({
+    kind: "file" as const,
+    value,
+});
+
 export const list = (value: Extract<t.TypeDef, { kind: "list" }>["value"]) => ({
     kind: "list" as const,
     value,
@@ -91,6 +96,7 @@ export const s = {
     date,
     timestamp,
     geopoint,
+    file,
     list,
     map,
     struct,

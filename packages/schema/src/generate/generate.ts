@@ -7,7 +7,7 @@ import { format, resolveConfig } from "prettier";
 import { generateBuilders } from "./builders.js";
 import { generateTypes } from "./types.js";
 import { generateValidators } from "./validators.js";
-import type { SchemaIR } from "../ir/types.js";
+import type { SchemaIR } from "../ir/index.js";
 
 const program = new Command();
 

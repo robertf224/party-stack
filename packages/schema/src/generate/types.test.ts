@@ -34,10 +34,12 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Address {
-                  city: string;
-                  zip?: string;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Address = {
+                      city: string;
+                      zip?: string;
+                  };"
             `);
         });
 
@@ -57,8 +59,9 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface EmptyType {
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type EmptyType = Record<never, never>;"
             `);
         });
 
@@ -85,10 +88,12 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "/** Represents a user in the system */
-              export interface User {
-                  name: string;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              /** Represents a user in the system */
+              export type User = {
+                      name: string;
+                  };"
             `);
         });
 
@@ -115,10 +120,12 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface User {
-                  /** The user's email address */
-                  email: string;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type User = {
+                      /** The user's email address */
+                      email: string;
+                  };"
             `);
         });
 
@@ -226,9 +233,11 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Item {
-                  name: string;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Item = {
+                      name: string;
+                  };"
             `);
         });
 
@@ -254,9 +263,11 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Item {
-                  active: boolean;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Item = {
+                      active: boolean;
+                  };"
             `);
         });
 
@@ -282,9 +293,11 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Item {
-                  quantity: number;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Item = {
+                      quantity: v.integer;
+                  };"
             `);
         });
 
@@ -310,9 +323,11 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Measurement {
-                  value: number;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Measurement = {
+                      value: v.float;
+                  };"
             `);
         });
 
@@ -338,9 +353,11 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Coordinate {
-                  latitude: number;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Coordinate = {
+                      latitude: v.double;
+                  };"
             `);
         });
 
@@ -366,9 +383,11 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Event {
-                  eventDate: Temporal.PlainDate;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Event = {
+                      eventDate: v.date;
+                  };"
             `);
         });
 
@@ -394,9 +413,11 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Event {
-                  createdAt: Temporal.Instant;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Event = {
+                      createdAt: v.timestamp;
+                  };"
             `);
         });
 
@@ -422,12 +443,11 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Location {
-                  position: {
-                          lat: number;
-                          lon: number;
-                      };
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Location = {
+                      position: v.geopoint;
+                  };"
             `);
         });
     });
@@ -465,9 +485,11 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Order {
-                  status: "pending" | "active";
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Order = {
+                      status: "pending" | "active";
+                  };"
             `);
         });
     });
@@ -500,9 +522,11 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Cart {
-                  items: Array<string>;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Cart = {
+                      items: Array<string>;
+                  };"
             `);
         });
 
@@ -544,11 +568,13 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Cart {
-                  items: Array<{
-                          name: string;
-                      }>;
-              }"
+              "import * as v from "@party-stack/schema/values";
+
+              export type Cart = {
+                      items: Array<{
+                              name: string;
+                          }>;
+                  };"
             `);
         });
 
@@ -637,17 +663,16 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export type Shape = {
-                      kind: "circle";
-                      value: {
-                              radius: number;
+              "import * as v from "@party-stack/schema/values";
+
+              export type Shape = v.Union<{
+                      circle: {
+                              radius: v.double;
                           };
-                  } | {
-                      kind: "square";
-                      value: {
-                              side: number;
+                      square: {
+                              side: v.double;
                           };
-                  };"
+                  }>;"
             `);
         });
     });
@@ -670,13 +695,9 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export type ApiResponse = {
-                      kind: "ok";
-                      value: string;
-                  } | {
-                      kind: "err";
-                      value: string;
-                  };"
+              "import * as v from "@party-stack/schema/values";
+
+              export type ApiResponse = v.Result<string, string>;"
             `);
         });
     });
@@ -722,13 +743,15 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Address {
-                  city: string;
-              }
+              "import * as v from "@party-stack/schema/values";
 
-              export interface Order {
-                  shipTo?: Address;
-              }"
+              export type Address = {
+                      city: string;
+                  };
+
+              export type Order = {
+                      shipTo?: Address;
+                  };"
             `);
         });
 
@@ -772,13 +795,15 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "export interface Item {
-                  name: string;
-              }
+              "import * as v from "@party-stack/schema/values";
 
-              export interface Cart {
-                  items: Array<Item>;
-              }"
+              export type Item = {
+                      name: string;
+                  };
+
+              export type Cart = {
+                      items: Array<Item>;
+                  };"
             `);
         });
     });

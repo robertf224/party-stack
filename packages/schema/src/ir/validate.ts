@@ -1,4 +1,4 @@
-import type { SchemaIR, TypeDef, FieldDef, VariantDef } from "./types.js";
+import type { SchemaIR, TypeDef, FieldDef, VariantDef } from "./generated/types.js";
 
 export type ValidationPathElement = string | number;
 
@@ -23,6 +23,7 @@ function validateTypeDef(
         case "date":
         case "timestamp":
         case "geopoint":
+        case "file":
             return [];
 
         case "list":

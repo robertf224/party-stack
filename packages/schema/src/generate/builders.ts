@@ -1,6 +1,6 @@
 import { Project, VariableDeclarationKind } from "ts-morph";
 import { buildJsDocs } from "./utils/buildJsDocs.js";
-import type { NamedTypeDef, SchemaIR, UnionTypeDef } from "../ir/types.js";
+import type { NamedTypeDef, SchemaIR, UnionTypeDef } from "../ir/index.js";
 
 export interface GenerateBuildersOpts {
     /** The name of the main export (e.g., "p" for `p.string()`). */
