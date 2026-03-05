@@ -19,7 +19,7 @@ function getErrors(result: ValidationResult): string[] {
 }
 
 const emptyOntology: OntologyIR = {
-    valueTypes: [],
+    types: [],
     objectTypes: [],
     linkTypes: [],
 };
@@ -87,9 +87,9 @@ describe("Ontology Validation", () => {
         it("should detect duplicate value type names", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
-                valueTypes: [
-                    { name: "Address", displayName: "Address", type: o.struct({ fields: [] }) },
-                    { name: "Address", displayName: "Address", type: o.struct({ fields: [] }) },
+                types: [
+                    { name: "Address", type: o.struct({ fields: [] }) },
+                    { name: "Address", type: o.struct({ fields: [] }) },
                 ],
             };
 
@@ -98,7 +98,7 @@ describe("Ontology Validation", () => {
             expect(getErrors(result)).toContain('Duplicate value type name: "Address".');
         });
 
-        it("should detect duplicate link type source names for one source object", () => {
+        it("should detect duplicate link type target names for one source object", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
                 objectTypes: [minimalObjectType({ name: "A" }), minimalObjectType({ name: "B" })],
@@ -112,8 +112,8 @@ describe("Ontology Validation", () => {
                     },
                     {
                         id: "aToB2",
-                        source: { objectType: "A", name: "toB", displayName: "To B Again" },
-                        target: { objectType: "B", name: "fromA2", displayName: "From A Again" },
+                        source: { objectType: "A", name: "toB2", displayName: "To B Again" },
+                        target: { objectType: "B", name: "fromA", displayName: "From A Again" },
                         foreignKey: "employeeId",
                         cardinality: "one" as const,
                     },
@@ -122,7 +122,7 @@ describe("Ontology Validation", () => {
 
             const result = validate(ontology);
             expectErr(result, 1);
-            expect(getErrors(result)).toContain('Duplicate link type source name: "toB" on "A".');
+            expect(getErrors(result)).toContain('Duplicate link type target name: "fromA" on "A".');
         });
 
         it("should detect duplicate property names within an object type", () => {
@@ -208,10 +208,7 @@ describe("Ontology Validation", () => {
         it("should validate links with valid object type references", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
-                objectTypes: [
-                    minimalObjectType({ name: "Author" }),
-                    minimalObjectType({ name: "Post" }),
-                ],
+                objectTypes: [minimalObjectType({ name: "Author" }), minimalObjectType({ name: "Post" })],
                 linkTypes: [
                     {
                         id: "authorPosts",
@@ -265,10 +262,9 @@ describe("Ontology Validation", () => {
         it("should resolve refs to declared value types", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
-                valueTypes: [
+                types: [
                     {
                         name: "Address",
-                        displayName: "Address",
                         type: o.struct({
                             fields: [{ name: "city", displayName: "City", type: o.string({}) }],
                         }),
@@ -332,12 +328,12 @@ describe("Ontology Validation", () => {
 
     describe("Ontology Ontology", () => {
         it("should validate the ontology ontology (self-describing)", async () => {
-            const { ontologyOntology } = await import("./ontology.js");
+            const { default: ontologyOntology } = await import("./ontology.js");
             expectOk(validate(ontologyOntology));
         });
 
         it("should contain ObjectType, ValueType, and LinkType as object types", async () => {
-            const { ontologyOntology } = await import("./ontology.js");
+            const { default: ontologyOntology } = await import("./ontology.js");
             const objectTypeNames = ontologyOntology.objectTypes.map((ot) => ot.name);
             expect(objectTypeNames).toContain("ObjectType");
             expect(objectTypeNames).toContain("ValueType");
@@ -345,10 +341,14 @@ describe("Ontology Validation", () => {
         });
 
         it("should have links from LinkType to ObjectType for source and target metadata", async () => {
-            const { ontologyOntology } = await import("./ontology.js");
-            const linkNames = ontologyOntology.linkTypes.map((lt) => lt.source.name);
-            expect(linkNames).toContain("sourceObjectType");
-            expect(linkNames).toContain("targetObjectType");
+            const { default: ontologyOntology } = await import("./ontology.js");
+            const sourceNames = ontologyOntology.linkTypes.map((lt) => lt.source.name);
+            expect(sourceNames).toContain("sourceLinkTypes");
+            expect(sourceNames).toContain("targetLinkTypes");
+
+            const targetNames = ontologyOntology.linkTypes.map((lt) => lt.target.name);
+            expect(targetNames).toContain("source");
+            expect(targetNames).toContain("target");
         });
     });
 });

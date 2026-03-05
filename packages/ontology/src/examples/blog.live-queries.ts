@@ -3,7 +3,8 @@
  *
  * related(sourceAlias, relationshipName, joinAlias?): sourceAlias is the alias of this
  * collection in the query (e.g. .from({ post: $post }) → "post"); at runtime the context
- * is checked and available aliases are listed if wrong. relationshipName is autocompleted.
+ * is checked and available aliases are listed if wrong. relationshipName is autocompleted
+ * from the opposite side of the link (for Post -> Author, the name is "author").
  */
 import { concat, createCollection, eq, liveQueryCollectionOptions } from "@tanstack/db";
 import { createBlogLiveOntology } from "./generated/blog.live.js";
@@ -69,3 +70,4 @@ export const commentFeed = createCollection(
 export const postRelationships = blog.objectTypes.Post.links;
 export const commentRelationships = blog.objectTypes.Comment.links;
 export const authorRelationships = blog.objectTypes.Author.links;
+export const postAuthorLink = blog.objectTypes.Post.links.author;

@@ -46,20 +46,52 @@ export type Comment = {
 };
 
 export type OntologyObjectTypeName = "Author" | "Post" | "Comment";
+
 export type OntologyByObjectType = {
     Author: Author;
     Post: Post;
     Comment: Comment;
 };
+
 export type OntologyObject = OntologyByObjectType[OntologyObjectTypeName];
 
 export type BlogLinkMap = {
     Author: Record<string, never>;
     Post: {
-        posts: { target: Author; targetKey: Author["authorId"] };
+        author: {
+            source: {
+                object: Post;
+                name: "posts";
+            };
+            target: {
+                object: Author;
+                name: "author";
+            };
+            targetKey: Author["authorId"];
+        };
     };
     Comment: {
-        comments: { target: Post; targetKey: Post["postId"] };
-        comment: { target: Author; targetKey: Author["authorId"] };
+        post: {
+            source: {
+                object: Comment;
+                name: "comments";
+            };
+            target: {
+                object: Post;
+                name: "post";
+            };
+            targetKey: Post["postId"];
+        };
+        author: {
+            source: {
+                object: Comment;
+                name: "comment";
+            };
+            target: {
+                object: Author;
+                name: "author";
+            };
+            targetKey: Author["authorId"];
+        };
     };
 };

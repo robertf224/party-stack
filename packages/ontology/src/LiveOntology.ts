@@ -7,8 +7,19 @@ import type { OntologyAdapter } from "./OntologyAdapter.js";
 type OntologyObjectRecord = Record<string, unknown>;
 type OntologyObjectTypeMap = Record<string, OntologyObjectRecord>;
 
-/** One link: target row type and its primary key type. */
-export type OntologyLinkDef<TTarget = unknown, TKey = string | number> = {
+/** One link side: object row type and relationship name from the opposite side. */
+export type OntologyLinkSideDef<TObject = unknown, TName extends string = string> = {
+    object: TObject;
+    name: TName;
+};
+
+/** One link: both sides and target primary key type. */
+export type OntologyLinkDef<
+    TSource extends OntologyLinkSideDef = OntologyLinkSideDef,
+    TTarget extends OntologyLinkSideDef = OntologyLinkSideDef,
+    TKey = string | number,
+> = {
+    source: TSource;
     target: TTarget;
     targetKey: TKey;
 };
@@ -42,6 +53,12 @@ export type AliasesMatchingCollection<
     { [K in keyof TContext]: TContext[K] extends TObject ? K : never }[keyof TContext]
 >;
 
+type LinkTargetObject<TLink> = TLink extends { target: { object: infer TObject } }
+    ? TObject extends OntologyObjectRecord
+        ? TObject
+        : never
+    : never;
+
 /** Typed related: overloads for loose (string) and strict (TContext) sourceAlias. */
 export interface TypedRelated<
     TLinks extends OntologyLinksForObjectType,
@@ -51,12 +68,12 @@ export interface TypedRelated<
         sourceAlias: string,
         relationshipName: K,
         joinAlias?: A
-    ): OntologyRelatedResult<A, TLinks[K]["target"] extends OntologyObjectRecord ? TLinks[K]["target"] : never>;
+    ): OntologyRelatedResult<A, LinkTargetObject<TLinks[K]>>;
     <TContext extends Record<string, unknown>, K extends keyof TLinks & string, A extends string = K>(
         sourceAlias: AliasesMatchingCollection<TContext, TObject>,
         relationshipName: K,
         joinAlias?: A
-    ): OntologyRelatedResult<A, TLinks[K]["target"] extends OntologyObjectRecord ? TLinks[K]["target"] : never>;
+    ): OntologyRelatedResult<A, LinkTargetObject<TLinks[K]>>;
 }
 
 /** Utils type for a collection with typed related from TLinks. */
@@ -76,7 +93,12 @@ export type LiveOntologyObjectCollection<
 /** Link metadata (runtime only; for typed link names use TLinks). */
 export type LiveOntologyLinkMeta = Record<
     string,
-    { targetObjectType: string; foreignKey: string; cardinality: "one" | "many" }
+    {
+        source: { objectType: string; name: string };
+        target: { objectType: string; name: string };
+        foreignKey: string;
+        cardinality: "one" | "many";
+    }
 >;
 
 export interface LiveOntologyObjectTypeEntry<
@@ -167,6 +189,8 @@ export function createLiveOntology<
             string,
             {
                 targetObjectType: string;
+                sourceName: string;
+                targetName: string;
                 foreignKey: string;
                 targetPrimaryKey: string;
                 cardinality: "one" | "many";
@@ -180,8 +204,10 @@ export function createLiveOntology<
         }
 
         rawLinksBySource[linkType.source.objectType] ??= {};
-        rawLinksBySource[linkType.source.objectType]![linkType.source.name] = {
+        rawLinksBySource[linkType.source.objectType]![linkType.target.name] = {
             targetObjectType: linkType.target.objectType,
+            sourceName: linkType.source.name,
+            targetName: linkType.target.name,
             foreignKey: linkType.foreignKey,
             targetPrimaryKey: targetType.primaryKey,
             cardinality: linkType.cardinality,
@@ -237,7 +263,8 @@ export function createLiveOntology<
             Object.entries(sourceLinks).map(([name, link]) => [
                 name,
                 {
-                    targetObjectType: link.targetObjectType,
+                    source: { objectType: objectType.name, name: link.sourceName },
+                    target: { objectType: link.targetObjectType, name: link.targetName },
                     foreignKey: link.foreignKey,
                     cardinality: link.cardinality,
                 },

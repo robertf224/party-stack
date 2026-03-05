@@ -1,3 +1,4 @@
+import { Project, VariableDeclarationKind } from "ts-morph";
 import type { OntologyIR } from "../ir/generated/types.js";
 
 export interface GenerateLiveOpts {
@@ -14,9 +15,6 @@ export interface GenerateLiveOpts {
 }
 
 export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
-    const objectTypeNames =
-        ir.objectTypes.length === 0 ? "never[]" : `[${ir.objectTypes.map((type) => `"${type.name}"`).join(", ")}] as const`;
-
     const byObjectTypeTypeName = opts.ontologyByObjectTypeTypeName ?? "OntologyByObjectType";
     const linkMapTypeName = opts.linkMapTypeName;
     const liveOntologyImportPath = opts.liveOntologyImportPath ?? "../../LiveOntology.js";
@@ -24,21 +22,58 @@ export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
 
     const linkMapGeneric = linkMapTypeName ? `, ${linkMapTypeName}` : "";
     const typeParams = `${byObjectTypeTypeName}${linkMapGeneric}`;
+    const project = new Project({ useInMemoryFileSystem: true });
+    const sourceFile = project.createSourceFile("live.ts", "");
 
-    return `import { createLiveOntology, type LiveOntology } from "${liveOntologyImportPath}";
-import { ${opts.ontologyExportName} } from "${opts.ontologyImportPath}";
-import type { ${byObjectTypeTypeName}${linkMapTypeName ? `, ${linkMapTypeName}` : ""} } from "${opts.ontologyTypesImportPath}";
-import type { OntologyAdapter } from "${ontologyAdapterImportPath}";
-
-export const objectTypeNames = ${objectTypeNames};
-
-export type ${opts.outputTypeName} = LiveOntology<${typeParams}>;
-
-export function ${opts.outputFactoryName}(adapter: OntologyAdapter): ${opts.outputTypeName} {
-    return createLiveOntology<${typeParams}>({
-        ir: ${opts.ontologyExportName},
-        adapter,
+    sourceFile.addImportDeclaration({
+        moduleSpecifier: liveOntologyImportPath,
+        namedImports: [{ name: "createLiveOntology" }, { name: "LiveOntology", isTypeOnly: true }],
     });
-}
-`;
+    sourceFile.addImportDeclaration({
+        moduleSpecifier: opts.ontologyImportPath,
+        namedImports: [opts.ontologyExportName],
+    });
+    sourceFile.addImportDeclaration({
+        moduleSpecifier: opts.ontologyTypesImportPath,
+        namedImports: [byObjectTypeTypeName, ...(linkMapTypeName ? [linkMapTypeName] : [])],
+        isTypeOnly: true,
+    });
+    sourceFile.addImportDeclaration({
+        moduleSpecifier: ontologyAdapterImportPath,
+        namedImports: ["OntologyAdapter"],
+        isTypeOnly: true,
+    });
+
+    sourceFile.addVariableStatement({
+        declarationKind: VariableDeclarationKind.Const,
+        isExported: true,
+        declarations: [
+            {
+                name: "objectTypeNames",
+                initializer:
+                    ir.objectTypes.length === 0
+                        ? "[] as const"
+                        : `[${ir.objectTypes.map((type) => `"${type.name}"`).join(", ")}] as const`,
+            },
+        ],
+    });
+
+    sourceFile.addTypeAlias({
+        name: opts.outputTypeName,
+        isExported: true,
+        type: `LiveOntology<${typeParams}>`,
+    });
+
+    sourceFile.addFunction({
+        name: opts.outputFactoryName,
+        isExported: true,
+        parameters: [{ name: "adapter", type: "OntologyAdapter" }],
+        returnType: opts.outputTypeName,
+        statements: `return createLiveOntology<${typeParams}>({
+            ir: ${opts.ontologyExportName},
+            adapter,
+        });`,
+    });
+
+    return sourceFile.getFullText().trim();
 }

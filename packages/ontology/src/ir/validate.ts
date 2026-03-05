@@ -151,21 +151,21 @@ export function validate(ontology: OntologyIR): ValidationResult {
 
     // Collect value type names for ref resolution
     const valueTypeNames = new Set<string>();
-    for (let i = 0; i < ontology.valueTypes.length; i++) {
-        const vt = ontology.valueTypes[i]!;
+    for (let i = 0; i < ontology.types.length; i++) {
+        const vt = ontology.types[i]!;
         if (valueTypeNames.has(vt.name)) {
             errors.push({
                 message: `Duplicate value type name: "${vt.name}".`,
-                path: ["valueTypes", i, "name"],
+                path: ["types", i, "name"],
             });
         }
         valueTypeNames.add(vt.name);
     }
 
     // Validate value type definitions
-    for (let i = 0; i < ontology.valueTypes.length; i++) {
-        const vt = ontology.valueTypes[i]!;
-        errors.push(...validateTypeDef(vt.type, ["valueTypes", i, "type"], valueTypeNames));
+    for (let i = 0; i < ontology.types.length; i++) {
+        const vt = ontology.types[i]!;
+        errors.push(...validateTypeDef(vt.type, ["types", i, "type"], valueTypeNames));
     }
 
     // Collect object type names for link validation
@@ -214,11 +214,12 @@ export function validate(ontology: OntologyIR): ValidationResult {
         }
         linkIds.add(lt.id);
 
-        const linkName = `${lt.source.objectType}:${lt.source.name}`;
+        // Relationship names from a source object are keyed by target.name.
+        const linkName = `${lt.source.objectType}:${lt.target.name}`;
         if (linkNames.has(linkName)) {
             errors.push({
-                message: `Duplicate link type source name: "${lt.source.name}" on "${lt.source.objectType}".`,
-                path: [...ltPath, "source", "name"],
+                message: `Duplicate link type target name: "${lt.target.name}" on "${lt.source.objectType}".`,
+                path: [...ltPath, "target", "name"],
             });
         }
         linkNames.add(linkName);

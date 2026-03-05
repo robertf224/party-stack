@@ -57,7 +57,7 @@ export default {
     linkTypes: [
         {
             id: "LinkType:source",
-            source: { objectType: "LinkType", name: "sourceLinkTypes", displayName: "Source link types" },
+            source: { objectType: "LinkType", name: "outgoingLinkTypes", displayName: "Outgoing link types" },
             target: {
                 objectType: "ObjectType",
                 name: "source",
@@ -68,7 +68,7 @@ export default {
         },
         {
             id: "LinkType:target",
-            source: { objectType: "LinkType", name: "targetLinkTypes", displayName: "Target link types" },
+            source: { objectType: "LinkType", name: "incomingLinkTypes", displayName: "Incoming link types" },
             target: { objectType: "ObjectType", name: "target", displayName: "Target" },
             foreignKey: "target.objectType",
             cardinality: "many",

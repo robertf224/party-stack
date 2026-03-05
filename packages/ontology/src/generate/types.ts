@@ -1,4 +1,5 @@
 import { generateTypes as generateSchemaTypes, type SchemaIR } from "@party-stack/schema";
+import { CodeBlockWriter, Project, Writers, type WriterFunction } from "ts-morph";
 import type { OntologyIR } from "../ir/generated/types.js";
 
 function toSchemaIR(ir: OntologyIR): SchemaIR {
@@ -31,49 +32,125 @@ function toSchemaIR(ir: OntologyIR): SchemaIR {
     };
 }
 
+function withWriter(fn: WriterFunction): string {
+    const writer = new CodeBlockWriter();
+    fn(writer);
+    return writer.toString();
+}
+
+function union(options: string[]): string {
+    if (options.length === 0) {
+        return "never";
+    }
+    if (options.length === 1) {
+        return options[0]!;
+    }
+    return withWriter(Writers.unionType(options[0]!, options[1]!, ...options.slice(2)));
+}
+
 function objectTypeAggregateTypes(ir: OntologyIR): string {
     if (ir.objectTypes.length === 0) {
-        return [
-            "export type OntologyObjectTypeName = never;",
-            "export type OntologyByObjectType = Record<never, never>;",
-            "export type OntologyObject = never;",
-        ].join("\n");
+        return withWriter((writer) => {
+            writer.writeLine("export type OntologyObjectTypeName = never;");
+            writer.blankLine();
+            writer.writeLine("export type OntologyByObjectType = Record<never, never>;");
+            writer.blankLine();
+            writer.writeLine("export type OntologyObject = never;");
+        });
     }
 
-    const names = ir.objectTypes.map((objectType) => objectType.name);
-    return [
-        `export type OntologyObjectTypeName = ${names.map((name) => `"${name}"`).join(" | ")};`,
-        "export type OntologyByObjectType = {",
-        ...names.map((name) => `    ${name}: ${name};`),
-        "};",
-        "export type OntologyObject = OntologyByObjectType[OntologyObjectTypeName];",
-    ].join("\n");
+    const objectTypeNames = ir.objectTypes.map((objectType) => objectType.name);
+    const byObjectType = withWriter(
+        Writers.objectType({
+            properties: objectTypeNames.map((name) => ({
+                name,
+                type: name,
+            })),
+        })
+    );
+
+    return withWriter((writer) => {
+        writer.writeLine(
+            `export type OntologyObjectTypeName = ${union(objectTypeNames.map((name) => `"${name}"`))};`
+        );
+        writer.blankLine();
+        writer.writeLine(`export type OntologyByObjectType = ${byObjectType};`);
+        writer.blankLine();
+        writer.writeLine("export type OntologyObject = OntologyByObjectType[OntologyObjectTypeName];");
+    });
 }
 
 /** Generates OntologyLinkMap-alike type so related() gets typed link names and target row types. */
 export function generateLinkMapType(ir: OntologyIR, typeName = "OntologyLinkMap"): string {
-    /* eslint-disable @typescript-eslint/no-unsafe-member-access */
     const targetPrimaryKeyByType = new Map(ir.objectTypes.map((ot) => [ot.name, ot.primaryKey]));
-    const lines: string[] = [`export type ${typeName} = {`];
-    for (const ot of ir.objectTypes) {
-        const links = ir.linkTypes.filter((lt) => lt.source.objectType === ot.name);
+    const properties = ir.objectTypes.map((objectType) => {
+        const links = ir.linkTypes.filter((linkType) => linkType.source.objectType === objectType.name);
         if (links.length === 0) {
-            lines.push(`    ${ot.name}: Record<string, never>;`);
-        } else {
-            const linkEntries = links
-                .map((lt) => {
-                    const targetPk = targetPrimaryKeyByType.get(lt.target.objectType);
-                    if (!targetPk) return null;
-                    return `        ${lt.source.name}: { target: ${lt.target.objectType}; targetKey: ${lt.target.objectType}["${targetPk}"] };`;
-                })
-                .filter((line): line is string => line != null);
-            lines.push(`    ${ot.name}: {`);
-            lines.push(...linkEntries);
-            lines.push("    };");
+            return {
+                name: objectType.name,
+                type: "Record<string, never>",
+            };
         }
-    }
-    lines.push("};");
-    return lines.join("\n");
+
+        const linkProperties = links
+            .map((linkType) => {
+                const targetPrimaryKey = targetPrimaryKeyByType.get(linkType.target.objectType);
+                if (!targetPrimaryKey) {
+                    return null;
+                }
+
+                const linkDefinition = withWriter(
+                    Writers.objectType({
+                        properties: [
+                            {
+                                name: "source",
+                                type: withWriter(
+                                    Writers.objectType({
+                                        properties: [
+                                            { name: "object", type: linkType.source.objectType },
+                                            { name: "name", type: `"${linkType.source.name}"` },
+                                        ],
+                                    })
+                                ),
+                            },
+                            {
+                                name: "target",
+                                type: withWriter(
+                                    Writers.objectType({
+                                        properties: [
+                                            { name: "object", type: linkType.target.objectType },
+                                            { name: "name", type: `"${linkType.target.name}"` },
+                                        ],
+                                    })
+                                ),
+                            },
+                            {
+                                name: "targetKey",
+                                type: `${linkType.target.objectType}["${targetPrimaryKey}"]`,
+                            },
+                        ],
+                    })
+                );
+
+                return {
+                    // Relationship names on the source side are defined by how source refers to target.
+                    name: linkType.target.name,
+                    type: linkDefinition,
+                };
+            })
+            .filter((property): property is { name: string; type: string } => property != null);
+
+        return {
+            name: objectType.name,
+            type:
+                linkProperties.length === 0
+                    ? "Record<string, never>"
+                    : withWriter(Writers.objectType({ properties: linkProperties })),
+        };
+    });
+
+    const mapType = withWriter(Writers.objectType({ properties }));
+    return `export type ${typeName} = ${mapType};`;
 }
 
 export interface GenerateTypesOpts {
@@ -82,8 +159,12 @@ export interface GenerateTypesOpts {
 }
 
 export function generateTypes(ir: OntologyIR, opts: GenerateTypesOpts = {}): string {
+    const project = new Project({ useInMemoryFileSystem: true });
+    const sourceFile = project.createSourceFile("ontology-types.ts", "");
+
     const schemaTypes = generateSchemaTypes(toSchemaIR(ir));
     const aggregate = objectTypeAggregateTypes(ir);
     const linkMap = opts.linkMapTypeName ? "\n\n" + generateLinkMapType(ir, opts.linkMapTypeName) : "";
-    return `${schemaTypes}\n\n${aggregate}${linkMap}`;
+    sourceFile.replaceWithText(`${schemaTypes}\n\n${aggregate}${linkMap}`);
+    return sourceFile.getFullText().trim();
 }
