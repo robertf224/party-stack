@@ -47,13 +47,13 @@
         "@bobbyfidz/osdk-utils": "workspace:*",
         "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/urls": "^0.2.1",
-        "@effectionx/signals": "^0.5.0",
-        "@effectionx/stream-helpers": "^0.7.1",
-        "@effectionx/websocket": "^2.3.0",
+        "@effectionx/signals": "^0.5.2",
+        "@effectionx/stream-helpers": "^0.8.1",
+        "@effectionx/websocket": "^2.3.2",
         "@next/env": "^16.0.3",
         "@oclif/core": "^4.8.0",
         "@osdk/foundry.admin": "^2.47.0",
-        "@osdk/foundry.ontologies": "^2.47.0",
+        "@osdk/foundry.ontologies": "^2.49.0",
         "@osdk/shared.client.impl": "^1.5.0",
         "@osdk/shared.client2": "^1.0.0",
         "effection": "^4.0.2",
@@ -62,8 +62,8 @@
     "devDependencies": {
         "@bobbyfidz/local-oauth-flow": "^0.1.0",
         "@bobbyfidz/react-build-config": "^0.1.1",
-        "@tanstack/db": "^0.5.11",
-        "@tanstack/query-db-collection": "^1.0.6",
+        "@tanstack/db": "^0.5.30",
+        "@tanstack/query-db-collection": "^1.0.27",
         "@types/node": "^24.10.1",
         "@types/react": "^19.2.6",
         "eslint": "^9.25.0",
@@ -74,9 +74,9 @@
         "vitest": "^3.1.1"
     },
     "peerDependencies": {
-        "@tanstack/db": "^0.5.11",
+        "@tanstack/db": "^0.5.30",
         "@tanstack/query-core": "^5.0.0",
-        "@tanstack/query-db-collection": "^1.0.6",
+        "@tanstack/query-db-collection": "^1.0.27",
         "react": "^18.0.0 || ^19.0.0"
     }
 }

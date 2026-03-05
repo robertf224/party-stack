@@ -42,8 +42,8 @@ export const geopoint = (value: Extract<t.TypeDef, { kind: "geopoint" }>["value"
     value,
 });
 
-export const file = (value: Extract<t.TypeDef, { kind: "file" }>["value"]) => ({
-    kind: "file" as const,
+export const attachment = (value: Extract<t.TypeDef, { kind: "attachment" }>["value"]) => ({
+    kind: "attachment" as const,
     value,
 });
 
@@ -76,11 +76,6 @@ export const result = (value: Extract<t.TypeDef, { kind: "result" }>["value"]) =
 
 export const ref = (value: Extract<t.TypeDef, { kind: "ref" }>["value"]) => ({ kind: "ref" as const, value });
 
-export const attachment = (value: Extract<t.TypeDef, { kind: "attachment" }>["value"]) => ({
-    kind: "attachment" as const,
-    value,
-});
-
 export const StringConstraint = {
     enum: (value: Extract<t.StringConstraint, { kind: "enum" }>["value"]) => ({
         kind: "enum" as const,
@@ -101,7 +96,7 @@ export const o = {
     date,
     timestamp,
     geopoint,
-    file,
+    attachment,
     list,
     map,
     struct,
@@ -109,6 +104,5 @@ export const o = {
     optional,
     result,
     ref,
-    attachment,
     StringConstraint,
 };

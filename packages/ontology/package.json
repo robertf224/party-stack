@@ -14,10 +14,12 @@
     "scripts": {
         "bootstrap": "tsx ../schema/src/generate/generate.ts --schema ./src/ir/schema.ts --exportName o --promoted TypeDef --outDir ./src/ir/generated",
         "build": "tsc",
+        "generate:examples": "tsx ./src/examples/generate.ts",
         "lint": "eslint",
         "test": "vitest run"
     },
     "dependencies": {
+        "@bobbyfidz/panic": "^0.1.0",
         "@party-stack/schema": "workspace:*",
         "commander": "^14.0.2",
         "jiti": "^2.6.1",
@@ -26,13 +28,13 @@
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",
-        "@tanstack/db": "^0.5.11",
+        "@tanstack/db": "^0.5.30",
         "eslint": "^9.25.0",
         "tsx": "^4.20.6",
         "typescript": "~5.8.3",
         "vitest": "^3.1.1"
     },
     "peerDependencies": {
-        "@tanstack/db": "^0.5.11"
+        "@tanstack/db": "^0.5.30"
     }
 }

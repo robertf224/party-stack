@@ -34,7 +34,7 @@ export const TimestampTypeDef: z.ZodMiniType<t.TimestampTypeDef> = z.object({});
 
 export const GeopointTypeDef: z.ZodMiniType<t.GeopointTypeDef> = z.object({});
 
-export const FileTypeDef: z.ZodMiniType<t.FileTypeDef> = z.object({});
+export const AttachmentTypeDef: z.ZodMiniType<t.AttachmentTypeDef> = z.object({});
 
 export const ListTypeDef: z.ZodMiniType<t.ListTypeDef> = z.object({ elementType: z.lazy(() => TypeDef) });
 
@@ -44,7 +44,6 @@ export const MapTypeDef: z.ZodMiniType<t.MapTypeDef> = z.object({
 });
 
 export const FieldDef: z.ZodMiniType<t.FieldDef> = z.object({
-    id: z.optional(z.string()),
     name: z.string(),
     displayName: z.string(),
     type: z.lazy(() => TypeDef),
@@ -74,8 +73,6 @@ export const ResultTypeDef: z.ZodMiniType<t.ResultTypeDef> = z.object({
 
 export const TypeRef: z.ZodMiniType<t.TypeRef> = z.object({ name: z.string() });
 
-export const AttachmentTypeDef: z.ZodMiniType<t.AttachmentTypeDef> = z.object({});
-
 export const TypeDef: z.ZodMiniType<t.TypeDef> = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("string"), value: z.lazy(() => StringTypeDef) }),
     z.object({ kind: z.literal("boolean"), value: z.lazy(() => BooleanTypeDef) }),
@@ -85,7 +82,7 @@ export const TypeDef: z.ZodMiniType<t.TypeDef> = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("date"), value: z.lazy(() => DateTypeDef) }),
     z.object({ kind: z.literal("timestamp"), value: z.lazy(() => TimestampTypeDef) }),
     z.object({ kind: z.literal("geopoint"), value: z.lazy(() => GeopointTypeDef) }),
-    z.object({ kind: z.literal("file"), value: z.lazy(() => FileTypeDef) }),
+    z.object({ kind: z.literal("attachment"), value: z.lazy(() => AttachmentTypeDef) }),
     z.object({ kind: z.literal("list"), value: z.lazy(() => ListTypeDef) }),
     z.object({ kind: z.literal("map"), value: z.lazy(() => MapTypeDef) }),
     z.object({ kind: z.literal("struct"), value: z.lazy(() => StructTypeDef) }),
@@ -93,11 +90,17 @@ export const TypeDef: z.ZodMiniType<t.TypeDef> = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("optional"), value: z.lazy(() => OptionalTypeDef) }),
     z.object({ kind: z.literal("result"), value: z.lazy(() => ResultTypeDef) }),
     z.object({ kind: z.literal("ref"), value: z.lazy(() => TypeRef) }),
-    z.object({ kind: z.literal("attachment"), value: z.lazy(() => AttachmentTypeDef) }),
 ]);
 
+export const NamedTypeDef: z.ZodMiniType<t.NamedTypeDef> = z.object({
+    name: z.string(),
+    description: z.optional(z.string()),
+    deprecated: z.optional(z.lazy(() => Deprecation)),
+    type: z.lazy(() => TypeDef),
+});
+
 export const PropertyDef: z.ZodMiniType<t.PropertyDef> = z.object({
-    apiName: z.string(),
+    name: z.string(),
     displayName: z.string(),
     type: z.lazy(() => TypeDef),
     description: z.optional(z.string()),
@@ -105,36 +108,33 @@ export const PropertyDef: z.ZodMiniType<t.PropertyDef> = z.object({
 });
 
 export const ObjectTypeDef: z.ZodMiniType<t.ObjectTypeDef> = z.object({
-    apiName: z.string(),
+    name: z.string(),
     displayName: z.string(),
+    pluralDisplayName: z.string(),
     primaryKey: z.string(),
     properties: z.array(z.lazy(() => PropertyDef)),
     description: z.optional(z.string()),
     deprecated: z.optional(z.lazy(() => Deprecation)),
 });
 
-export const ValueTypeDef: z.ZodMiniType<t.ValueTypeDef> = z.object({
-    apiName: z.string(),
+export const LinkTypeSideDef: z.ZodMiniType<t.LinkTypeSideDef> = z.object({
+    objectType: z.string(),
+    name: z.string(),
     displayName: z.string(),
-    type: z.lazy(() => TypeDef),
-    description: z.optional(z.string()),
-    deprecated: z.optional(z.lazy(() => Deprecation)),
 });
 
 export const LinkCardinality: z.ZodMiniType<t.LinkCardinality> = z.enum(["one", "many"]);
 
 export const LinkTypeDef: z.ZodMiniType<t.LinkTypeDef> = z.object({
-    apiName: z.string(),
-    displayName: z.string(),
-    sourceObjectType: z.string(),
-    targetObjectType: z.string(),
-    cardinality: z.lazy(() => LinkCardinality),
-    description: z.optional(z.string()),
-    deprecated: z.optional(z.lazy(() => Deprecation)),
+    id: z.string(),
+    source: z.lazy(() => LinkTypeSideDef),
+    target: z.lazy(() => LinkTypeSideDef),
+    foreignKey: z.string(),
+    cardinality: z.enum(["one", "many"]),
 });
 
 export const OntologyIR: z.ZodMiniType<t.OntologyIR> = z.object({
-    valueTypes: z.array(z.lazy(() => ValueTypeDef)),
+    types: z.array(z.lazy(() => NamedTypeDef)),
     objectTypes: z.array(z.lazy(() => ObjectTypeDef)),
     linkTypes: z.array(z.lazy(() => LinkTypeDef)),
 });

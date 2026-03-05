@@ -1,4 +1,4 @@
-import { ObjectTypesV2, OntologyObjectsV2 } from "@osdk/foundry.ontologies";
+import { OntologyObjectsV2 } from "@osdk/foundry.ontologies";
 import {
     Collection,
     CollectionConfig,
@@ -29,9 +29,7 @@ export interface ObjectCollectionConfig<TSchema extends StandardSchema<OntologyO
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface ObjectCollectionUtils extends UtilsRecord {
-    _upsertObject: (object: OntologyObject) => void;
-}
+export interface ObjectCollectionUtils extends UtilsRecord {}
 
 function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>(
     config: ObjectCollectionConfig<TSchema>

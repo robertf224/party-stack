@@ -34,7 +34,7 @@ export const TimestampTypeDef: z.ZodMiniType<t.TimestampTypeDef> = z.object({});
 
 export const GeopointTypeDef: z.ZodMiniType<t.GeopointTypeDef> = z.object({});
 
-export const FileTypeDef: z.ZodMiniType<t.FileTypeDef> = z.object({});
+export const AttachmentTypeDef: z.ZodMiniType<t.AttachmentTypeDef> = z.object({});
 
 export const ListTypeDef: z.ZodMiniType<t.ListTypeDef> = z.object({ elementType: z.lazy(() => TypeDef) });
 
@@ -44,7 +44,6 @@ export const MapTypeDef: z.ZodMiniType<t.MapTypeDef> = z.object({
 });
 
 export const FieldDef: z.ZodMiniType<t.FieldDef> = z.object({
-    id: z.optional(z.string()),
     name: z.string(),
     displayName: z.string(),
     type: z.lazy(() => TypeDef),
@@ -83,7 +82,7 @@ export const TypeDef: z.ZodMiniType<t.TypeDef> = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("date"), value: z.lazy(() => DateTypeDef) }),
     z.object({ kind: z.literal("timestamp"), value: z.lazy(() => TimestampTypeDef) }),
     z.object({ kind: z.literal("geopoint"), value: z.lazy(() => GeopointTypeDef) }),
-    z.object({ kind: z.literal("file"), value: z.lazy(() => FileTypeDef) }),
+    z.object({ kind: z.literal("attachment"), value: z.lazy(() => AttachmentTypeDef) }),
     z.object({ kind: z.literal("list"), value: z.lazy(() => ListTypeDef) }),
     z.object({ kind: z.literal("map"), value: z.lazy(() => MapTypeDef) }),
     z.object({ kind: z.literal("struct"), value: z.lazy(() => StructTypeDef) }),

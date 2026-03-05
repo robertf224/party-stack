@@ -52,7 +52,7 @@ export type TimestampTypeDef = Record<never, never>;
 export type GeopointTypeDef = Record<never, never>;
 
 /** A file handle. */
-export type FileTypeDef = Record<never, never>;
+export type AttachmentTypeDef = Record<never, never>;
 
 /** A list/array type. */
 export type ListTypeDef = {
@@ -70,8 +70,6 @@ export type MapTypeDef = {
 
 /** Definition of a field in a struct. */
 export type FieldDef = {
-    /** Optional unique identifier. */
-    id?: string;
     /** The field name in code. */
     name: string;
     /** Human-readable name. */
@@ -131,7 +129,7 @@ export type TypeDef = v.Union<{
     date: DateTypeDef;
     timestamp: TimestampTypeDef;
     geopoint: GeopointTypeDef;
-    file: FileTypeDef;
+    attachment: AttachmentTypeDef;
     list: ListTypeDef;
     map: MapTypeDef;
     struct: StructTypeDef;

@@ -52,7 +52,7 @@ export type TimestampTypeDef = Record<never, never>;
 export type GeopointTypeDef = Record<never, never>;
 
 /** A file handle. */
-export type FileTypeDef = Record<never, never>;
+export type AttachmentTypeDef = Record<never, never>;
 
 /** A list/array type. */
 export type ListTypeDef = {
@@ -70,8 +70,6 @@ export type MapTypeDef = {
 
 /** Definition of a field in a struct. */
 export type FieldDef = {
-    /** Optional unique identifier. */
-    id?: string;
     /** The field name in code. */
     name: string;
     /** Human-readable name. */
@@ -121,10 +119,7 @@ export type TypeRef = {
     name: string;
 };
 
-/** An attachment (stored file reference). */
-export type AttachmentTypeDef = Record<never, never>;
-
-/** A type definition. Extends the schema type system with attachment support. */
+/** A type definition. Can be a primitive, collection, struct, union, optional, result, or reference. */
 export type TypeDef = v.Union<{
     string: StringTypeDef;
     boolean: BooleanTypeDef;
@@ -134,7 +129,7 @@ export type TypeDef = v.Union<{
     date: DateTypeDef;
     timestamp: TimestampTypeDef;
     geopoint: GeopointTypeDef;
-    file: FileTypeDef;
+    attachment: AttachmentTypeDef;
     list: ListTypeDef;
     map: MapTypeDef;
     struct: StructTypeDef;
@@ -142,13 +137,23 @@ export type TypeDef = v.Union<{
     optional: OptionalTypeDef;
     result: ResultTypeDef;
     ref: TypeRef;
-    attachment: AttachmentTypeDef;
 }>;
 
-/** A property on an object type. */
+/** A named type definition that can be referenced by other types. */
+export type NamedTypeDef = {
+    /** The type's name for use in code. */
+    name: string;
+    /** Optional documentation for the type. */
+    description?: string;
+    deprecated?: Deprecation;
+    /** The type definition. */
+    type: TypeDef;
+};
+
+/** A property on an Object type. */
 export type PropertyDef = {
-    /** The property's programmatic name. */
-    apiName: string;
+    /** The property's name. */
+    name: string;
     /** Human-readable name. */
     displayName: string;
     /** The property's type. */
@@ -161,10 +166,11 @@ export type PropertyDef = {
 /** An object type in the ontology. */
 export type ObjectTypeDef = {
     /** The object type's programmatic name. */
-    apiName: string;
+    name: string;
     /** Human-readable name. */
     displayName: string;
-    /** The apiName of the property that serves as primary key. */
+    pluralDisplayName: string;
+    /** The name of the property that serves as primary key. */
     primaryKey: string;
     /** The object type's properties. */
     properties: Array<PropertyDef>;
@@ -173,17 +179,10 @@ export type ObjectTypeDef = {
     deprecated?: Deprecation;
 };
 
-/** A named, reusable value type shared across object types. */
-export type ValueTypeDef = {
-    /** The value type's programmatic name. */
-    apiName: string;
-    /** Human-readable name. */
+export type LinkTypeSideDef = {
+    objectType: string;
+    name: string;
     displayName: string;
-    /** The value type's definition. */
-    type: TypeDef;
-    /** Optional description. */
-    description?: string;
-    deprecated?: Deprecation;
 };
 
 /** The cardinality of a link from the source's perspective. */
@@ -191,25 +190,19 @@ export type LinkCardinality = "one" | "many";
 
 /** A relationship between two object types. */
 export type LinkTypeDef = {
-    /** The link type's programmatic name (from source's perspective). */
-    apiName: string;
-    /** Human-readable name. */
-    displayName: string;
-    /** The apiName of the source object type. */
-    sourceObjectType: string;
-    /** The apiName of the target object type. */
-    targetObjectType: string;
-    /** The cardinality from the source's perspective. */
-    cardinality: LinkCardinality;
-    /** Optional description. */
-    description?: string;
-    deprecated?: Deprecation;
+    id: string;
+    source: LinkTypeSideDef;
+    target: LinkTypeSideDef;
+    /** The foreign key on the source. */
+    foreignKey: string;
+    /** How many sources are linked to the target. */
+    cardinality: "one" | "many";
 };
 
 /** The root ontology definition containing all type definitions. */
 export type OntologyIR = {
     /** Named, reusable value types. */
-    valueTypes: Array<ValueTypeDef>;
+    types: Array<NamedTypeDef>;
     /** Object type definitions. */
     objectTypes: Array<ObjectTypeDef>;
     /** Relationship definitions between object types. */

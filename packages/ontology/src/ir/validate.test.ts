@@ -25,12 +25,13 @@ const emptyOntology: OntologyIR = {
 };
 
 const minimalObjectType = (overrides?: Partial<OntologyIR["objectTypes"][number]>) => ({
-    apiName: "Employee",
+    name: "Employee",
     displayName: "Employee",
+    pluralDisplayName: "Employees",
     primaryKey: "employeeId",
     properties: [
-        { apiName: "employeeId", displayName: "Employee ID", type: o.string({}) },
-        { apiName: "name", displayName: "Name", type: o.string({}) },
+        { name: "employeeId", displayName: "Employee ID", type: o.string({}) },
+        { name: "name", displayName: "Name", type: o.string({}) },
     ],
     ...overrides,
 });
@@ -72,7 +73,7 @@ describe("Ontology Validation", () => {
     });
 
     describe("Duplicate Name Detection", () => {
-        it("should detect duplicate object type apiNames", () => {
+        it("should detect duplicate object type names", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
                 objectTypes: [minimalObjectType(), minimalObjectType()],
@@ -80,40 +81,40 @@ describe("Ontology Validation", () => {
 
             const result = validate(ontology);
             expectErr(result, 1);
-            expect(getErrors(result)).toContain('Duplicate object type apiName: "Employee".');
+            expect(getErrors(result)).toContain('Duplicate object type name: "Employee".');
         });
 
-        it("should detect duplicate value type apiNames", () => {
+        it("should detect duplicate value type names", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
                 valueTypes: [
-                    { apiName: "Address", displayName: "Address", type: o.struct({ fields: [] }) },
-                    { apiName: "Address", displayName: "Address", type: o.struct({ fields: [] }) },
+                    { name: "Address", displayName: "Address", type: o.struct({ fields: [] }) },
+                    { name: "Address", displayName: "Address", type: o.struct({ fields: [] }) },
                 ],
             };
 
             const result = validate(ontology);
             expectErr(result, 1);
-            expect(getErrors(result)).toContain('Duplicate value type apiName: "Address".');
+            expect(getErrors(result)).toContain('Duplicate value type name: "Address".');
         });
 
-        it("should detect duplicate link type apiNames", () => {
+        it("should detect duplicate link type source names for one source object", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
-                objectTypes: [minimalObjectType({ apiName: "A" }), minimalObjectType({ apiName: "B" })],
+                objectTypes: [minimalObjectType({ name: "A" }), minimalObjectType({ name: "B" })],
                 linkTypes: [
                     {
-                        apiName: "aToB",
-                        displayName: "A to B",
-                        sourceObjectType: "A",
-                        targetObjectType: "B",
+                        id: "aToB1",
+                        source: { objectType: "A", name: "toB", displayName: "To B" },
+                        target: { objectType: "B", name: "fromA", displayName: "From A" },
+                        foreignKey: "employeeId",
                         cardinality: "many" as const,
                     },
                     {
-                        apiName: "aToB",
-                        displayName: "A to B again",
-                        sourceObjectType: "A",
-                        targetObjectType: "B",
+                        id: "aToB2",
+                        source: { objectType: "A", name: "toB", displayName: "To B Again" },
+                        target: { objectType: "B", name: "fromA2", displayName: "From A Again" },
+                        foreignKey: "employeeId",
                         cardinality: "one" as const,
                     },
                 ],
@@ -121,20 +122,21 @@ describe("Ontology Validation", () => {
 
             const result = validate(ontology);
             expectErr(result, 1);
-            expect(getErrors(result)).toContain('Duplicate link type apiName: "aToB".');
+            expect(getErrors(result)).toContain('Duplicate link type source name: "toB" on "A".');
         });
 
-        it("should detect duplicate property apiNames within an object type", () => {
+        it("should detect duplicate property names within an object type", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
                 objectTypes: [
                     {
-                        apiName: "Employee",
+                        name: "Employee",
                         displayName: "Employee",
+                        pluralDisplayName: "Employees",
                         primaryKey: "id",
                         properties: [
-                            { apiName: "id", displayName: "ID", type: o.string({}) },
-                            { apiName: "id", displayName: "ID Duplicate", type: o.string({}) },
+                            { name: "id", displayName: "ID", type: o.string({}) },
+                            { name: "id", displayName: "ID Duplicate", type: o.string({}) },
                         ],
                     },
                 ],
@@ -142,7 +144,7 @@ describe("Ontology Validation", () => {
 
             const result = validate(ontology);
             expectErr(result, 1);
-            expect(getErrors(result)).toContain('Duplicate property apiName: "id".');
+            expect(getErrors(result)).toContain('Duplicate property name: "id".');
         });
     });
 
@@ -153,10 +155,18 @@ describe("Ontology Validation", () => {
                 objectTypes: [minimalObjectType()],
                 linkTypes: [
                     {
-                        apiName: "badLink",
-                        displayName: "Bad Link",
-                        sourceObjectType: "NonExistent",
-                        targetObjectType: "Employee",
+                        id: "badLinkSource",
+                        source: {
+                            objectType: "NonExistent",
+                            name: "missingSource",
+                            displayName: "Missing Source",
+                        },
+                        target: {
+                            objectType: "Employee",
+                            name: "employee",
+                            displayName: "Employee",
+                        },
+                        foreignKey: "employeeId",
                         cardinality: "one" as const,
                     },
                 ],
@@ -173,10 +183,18 @@ describe("Ontology Validation", () => {
                 objectTypes: [minimalObjectType()],
                 linkTypes: [
                     {
-                        apiName: "badLink",
-                        displayName: "Bad Link",
-                        sourceObjectType: "Employee",
-                        targetObjectType: "NonExistent",
+                        id: "badLinkTarget",
+                        source: {
+                            objectType: "Employee",
+                            name: "missingTarget",
+                            displayName: "Missing Target",
+                        },
+                        target: {
+                            objectType: "NonExistent",
+                            name: "unknown",
+                            displayName: "Unknown",
+                        },
+                        foreignKey: "employeeId",
                         cardinality: "many" as const,
                     },
                 ],
@@ -191,15 +209,23 @@ describe("Ontology Validation", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
                 objectTypes: [
-                    minimalObjectType({ apiName: "Author" }),
-                    minimalObjectType({ apiName: "Post" }),
+                    minimalObjectType({ name: "Author" }),
+                    minimalObjectType({ name: "Post" }),
                 ],
                 linkTypes: [
                     {
-                        apiName: "authorPosts",
-                        displayName: "Author Posts",
-                        sourceObjectType: "Author",
-                        targetObjectType: "Post",
+                        id: "authorPosts",
+                        source: {
+                            objectType: "Author",
+                            name: "posts",
+                            displayName: "Posts",
+                        },
+                        target: {
+                            objectType: "Post",
+                            name: "author",
+                            displayName: "Author",
+                        },
+                        foreignKey: "employeeId",
                         cardinality: "many" as const,
                     },
                 ],
@@ -215,13 +241,14 @@ describe("Ontology Validation", () => {
                 ...emptyOntology,
                 objectTypes: [
                     {
-                        apiName: "Employee",
+                        name: "Employee",
                         displayName: "Employee",
+                        pluralDisplayName: "Employees",
                         primaryKey: "id",
                         properties: [
-                            { apiName: "id", displayName: "ID", type: o.string({}) },
+                            { name: "id", displayName: "ID", type: o.string({}) },
                             {
-                                apiName: "address",
+                                name: "address",
                                 displayName: "Address",
                                 type: o.ref({ name: "UnknownType" }),
                             },
@@ -240,7 +267,7 @@ describe("Ontology Validation", () => {
                 ...emptyOntology,
                 valueTypes: [
                     {
-                        apiName: "Address",
+                        name: "Address",
                         displayName: "Address",
                         type: o.struct({
                             fields: [{ name: "city", displayName: "City", type: o.string({}) }],
@@ -249,13 +276,14 @@ describe("Ontology Validation", () => {
                 ],
                 objectTypes: [
                     {
-                        apiName: "Employee",
+                        name: "Employee",
                         displayName: "Employee",
+                        pluralDisplayName: "Employees",
                         primaryKey: "id",
                         properties: [
-                            { apiName: "id", displayName: "ID", type: o.string({}) },
+                            { name: "id", displayName: "ID", type: o.string({}) },
                             {
-                                apiName: "address",
+                                name: "address",
                                 displayName: "Address",
                                 type: o.ref({ name: "Address" }),
                             },
@@ -274,14 +302,15 @@ describe("Ontology Validation", () => {
                 ...emptyOntology,
                 objectTypes: [
                     {
-                        apiName: "Document",
+                        name: "Document",
                         displayName: "Document",
+                        pluralDisplayName: "Documents",
                         primaryKey: "docId",
                         properties: [
-                            { apiName: "docId", displayName: "Doc ID", type: o.string({}) },
-                            { apiName: "file", displayName: "File", type: o.attachment({}) },
+                            { name: "docId", displayName: "Doc ID", type: o.string({}) },
+                            { name: "file", displayName: "File", type: o.attachment({}) },
                             {
-                                apiName: "thumbnail",
+                                name: "thumbnail",
                                 displayName: "Thumbnail",
                                 type: o.optional({ type: o.attachment({}) }),
                             },
@@ -309,17 +338,17 @@ describe("Ontology Validation", () => {
 
         it("should contain ObjectType, ValueType, and LinkType as object types", async () => {
             const { ontologyOntology } = await import("./ontology.js");
-            const objectTypeNames = ontologyOntology.objectTypes.map((ot) => ot.apiName);
+            const objectTypeNames = ontologyOntology.objectTypes.map((ot) => ot.name);
             expect(objectTypeNames).toContain("ObjectType");
             expect(objectTypeNames).toContain("ValueType");
             expect(objectTypeNames).toContain("LinkType");
         });
 
-        it("should have links from LinkType to ObjectType for source and target", async () => {
+        it("should have links from LinkType to ObjectType for source and target metadata", async () => {
             const { ontologyOntology } = await import("./ontology.js");
-            const linkNames = ontologyOntology.linkTypes.map((lt) => lt.apiName);
-            expect(linkNames).toContain("linkTypeSource");
-            expect(linkNames).toContain("linkTypeTarget");
+            const linkNames = ontologyOntology.linkTypes.map((lt) => lt.source.name);
+            expect(linkNames).toContain("sourceObjectType");
+            expect(linkNames).toContain("targetObjectType");
         });
     });
 });

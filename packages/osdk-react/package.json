@@ -35,7 +35,7 @@
         "@osdk/client": "^2.5.2",
         "@osdk/foundry.admin": "^2.47.0",
         "@osdk/foundry.aipagents": "^2.47.0",
-        "@osdk/foundry.ontologies": "^2.47.0",
+        "@osdk/foundry.ontologies": "^2.49.0",
         "@yornaath/batshit": "^0.10.1"
     },
     "devDependencies": {

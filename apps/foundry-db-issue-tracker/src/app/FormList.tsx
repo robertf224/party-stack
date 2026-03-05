@@ -4,6 +4,10 @@ import { concat, eq, ilike, useLiveInfiniteQuery } from "@tanstack/react-db";
 import React, { useState } from "react";
 import { $form, $formRevision, $user } from "./collections";
 
+// q.from({ posts })
+//  .
+//
+
 // pattern 1: start from existing object, rn in lieu of hierarchical joins
 // q.from({ formRevision })
 //  .where($formRevision.utils.linkedTo("form", "abc123"))

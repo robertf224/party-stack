@@ -10,14 +10,13 @@
  * - Optional properties and timestamps
  */
 
-import { o } from "../ir/builders.js";
-import type { OntologyIR } from "../ir/types.js";
+import { o } from "../ir/generated/builders.js";
+import type { OntologyIR } from "../ir/generated/types.js";
 
 export const blogOntology = {
-    valueTypes: [
+    types: [
         {
-            apiName: "Address",
-            displayName: "Address",
+            name: "Address",
             description: "A mailing address.",
             type: o.struct({
                 fields: [
@@ -37,72 +36,79 @@ export const blogOntology = {
 
     objectTypes: [
         {
-            apiName: "Author",
+            name: "Author",
             displayName: "Author",
+            pluralDisplayName: "Authors",
             description: "A blog author.",
             primaryKey: "authorId",
             properties: [
                 {
-                    apiName: "authorId",
+                    name: "authorId",
                     displayName: "Author ID",
                     type: o.string({}),
                 },
                 {
-                    apiName: "name",
+                    name: "name",
                     displayName: "Name",
                     type: o.string({}),
                 },
                 {
-                    apiName: "email",
+                    name: "email",
                     displayName: "Email",
                     type: o.string({}),
                 },
                 {
-                    apiName: "bio",
+                    name: "bio",
                     displayName: "Bio",
                     type: o.optional({ type: o.string({}) }),
                 },
                 {
-                    apiName: "avatar",
+                    name: "avatar",
                     displayName: "Avatar",
                     description: "The author's profile picture.",
                     type: o.optional({ type: o.attachment({}) }),
                 },
                 {
-                    apiName: "address",
+                    name: "address",
                     displayName: "Address",
                     type: o.optional({ type: o.ref({ name: "Address" }) }),
                 },
                 {
-                    apiName: "createdAt",
+                    name: "createdAt",
                     displayName: "Created At",
                     type: o.timestamp({}),
                 },
             ],
         },
         {
-            apiName: "Post",
+            name: "Post",
             displayName: "Blog Post",
+            pluralDisplayName: "Posts",
             description: "A blog post.",
             primaryKey: "postId",
             properties: [
                 {
-                    apiName: "postId",
+                    name: "postId",
                     displayName: "Post ID",
                     type: o.string({}),
                 },
                 {
-                    apiName: "title",
+                    name: "title",
                     displayName: "Title",
                     type: o.string({}),
                 },
                 {
-                    apiName: "body",
+                    name: "body",
                     displayName: "Body",
                     type: o.string({}),
                 },
                 {
-                    apiName: "status",
+                    name: "authorId",
+                    displayName: "Author ID",
+                    type: o.string({}),
+                },
+                {
+                    name: "status",
                     displayName: "Status",
                     type: o.string({
                         constraint: o.StringConstraint.enum({
@@ -115,45 +121,56 @@ export const blogOntology = {
                     }),
                 },
                 {
-                    apiName: "coverImage",
+                    name: "coverImage",
                     displayName: "Cover Image",
                     type: o.optional({ type: o.attachment({}) }),
                 },
                 {
-                    apiName: "tags",
+                    name: "tags",
                     displayName: "Tags",
                     type: o.list({ elementType: o.string({}) }),
                 },
                 {
-                    apiName: "createdAt",
+                    name: "createdAt",
                     displayName: "Created At",
                     type: o.timestamp({}),
                 },
                 {
-                    apiName: "publishedAt",
+                    name: "publishedAt",
                     displayName: "Published At",
                     type: o.optional({ type: o.timestamp({}) }),
                 },
             ],
         },
         {
-            apiName: "Comment",
+            name: "Comment",
             displayName: "Comment",
+            pluralDisplayName: "Comments",
             description: "A comment on a blog post.",
             primaryKey: "commentId",
             properties: [
                 {
-                    apiName: "commentId",
+                    name: "commentId",
                     displayName: "Comment ID",
                     type: o.string({}),
                 },
                 {
-                    apiName: "body",
+                    name: "body",
                     displayName: "Body",
                     type: o.string({}),
                 },
                 {
-                    apiName: "createdAt",
+                    name: "postId",
+                    displayName: "Post ID",
+                    type: o.string({}),
+                },
+                {
+                    name: "authorId",
+                    displayName: "Author ID",
+                    type: o.string({}),
+                },
+                {
+                    name: "createdAt",
                     displayName: "Created At",
                     type: o.timestamp({}),
                 },
@@ -163,28 +180,49 @@ export const blogOntology = {
 
     linkTypes: [
         {
-            apiName: "authorPosts",
-            displayName: "Author Posts",
-            description: "Posts written by an author.",
-            sourceObjectType: "Author",
-            targetObjectType: "Post",
-            cardinality: "many" as const,
+            id: "Post:author",
+            source: {
+                objectType: "Post",
+                name: "posts",
+                displayName: "Posts",
+            },
+            target: {
+                objectType: "Author",
+                name: "author",
+                displayName: "Author",
+            },
+            foreignKey: "authorId",
+            cardinality: "many",
         },
         {
-            apiName: "postComments",
-            displayName: "Post Comments",
-            description: "Comments on a post.",
-            sourceObjectType: "Post",
-            targetObjectType: "Comment",
-            cardinality: "many" as const,
+            id: "Comment:post",
+            source: {
+                objectType: "Comment",
+                name: "comments",
+                displayName: "Comments",
+            },
+            target: {
+                objectType: "Post",
+                name: "post",
+                displayName: "Post",
+            },
+            foreignKey: "postId",
+            cardinality: "many",
         },
         {
-            apiName: "commentAuthor",
-            displayName: "Comment Author",
-            description: "The author of a comment.",
-            sourceObjectType: "Comment",
-            targetObjectType: "Author",
-            cardinality: "one" as const,
+            id: "Comment:author",
+            source: {
+                objectType: "Comment",
+                name: "comment",
+                displayName: "Comment",
+            },
+            target: {
+                objectType: "Author",
+                name: "author",
+                displayName: "Author",
+            },
+            foreignKey: "authorId",
+            cardinality: "one",
         },
     ],
 } satisfies OntologyIR;

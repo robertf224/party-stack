@@ -1,46 +1,9 @@
 import { s, SchemaIRSchema } from "@party-stack/schema";
-import type { SchemaIR, UnionTypeDef } from "@party-stack/schema";
-
-// TODO: just export some of these definitions directly for easier manipulation.
-const schemaTypeDef = SchemaIRSchema.types.find((t) => t.name === "TypeDef")!;
-const schemaTypeDefVariants = (schemaTypeDef.type as { kind: "union"; value: UnionTypeDef }).value.variants;
-const excludedSchemaTypes = new Set(["TypeDef", "NamedTypeDef", "SchemaIR", "TypeRef"]);
+import type { SchemaIR } from "@party-stack/schema";
 
 export default {
     types: [
-        ...SchemaIRSchema.types.filter((t) => !excludedSchemaTypes.has(t.name)),
-        {
-            name: "AttachmentTypeDef",
-            description: "An attachment (stored file reference).",
-            type: s.struct({ fields: [] }),
-        },
-
-        {
-            name: "ValueTypeRef",
-            type: s.struct({
-                fields: [
-                    {
-                        name: "name",
-                        displayName: "Name",
-                        type: s.string({}),
-                    },
-                ],
-            }),
-        },
-
-        {
-            name: "TypeDef",
-            description: "A type definition.",
-            type: s.union({
-                variants: [
-                    ...schemaTypeDefVariants.filter((t) => !["file", "ref"].includes(t.name)),
-                    { name: "attachment", type: s.ref({ name: "AttachmentTypeDef" }) },
-                    { name: "ref", type: s.ref({ name: "ValueTypeRef" }) },
-                ],
-            }),
-        },
-
-        // --- Ontology constructs ---
+        ...SchemaIRSchema.types.filter((type) => type.name !== "SchemaIR"),
         {
             name: "PropertyDef",
             description: "A property on an Object type.",
@@ -78,7 +41,6 @@ export default {
                 ],
             }),
         },
-
         {
             name: "ObjectTypeDef",
             description: "An object type in the ontology.",
@@ -127,45 +89,6 @@ export default {
                 ],
             }),
         },
-
-        {
-            name: "ValueTypeDef",
-            description: "A named, reusable value type shared across object types.",
-            type: s.struct({
-                fields: [
-                    {
-                        name: "name",
-                        displayName: "Name",
-                        type: s.string({}),
-                        description: "The value type's programmatic name.",
-                    },
-                    {
-                        name: "displayName",
-                        displayName: "Display Name",
-                        type: s.string({}),
-                        description: "Human-readable name.",
-                    },
-                    {
-                        name: "type",
-                        displayName: "Type",
-                        type: s.ref({ name: "TypeDef" }),
-                        description: "The value type's definition.",
-                    },
-                    {
-                        name: "description",
-                        displayName: "Description",
-                        type: s.optional({ type: s.string({}) }),
-                        description: "Optional description.",
-                    },
-                    {
-                        name: "deprecated",
-                        displayName: "Deprecated?",
-                        type: s.optional({ type: s.ref({ name: "Deprecation" }) }),
-                    },
-                ],
-            }),
-        },
-
         {
             name: "LinkTypeSideDef",
             type: s.struct({
@@ -188,7 +111,6 @@ export default {
                 ],
             }),
         },
-
         {
             name: "LinkCardinality",
             description: "The cardinality of a link from the source's perspective.",
@@ -201,12 +123,16 @@ export default {
                 }),
             }),
         },
-
         {
             name: "LinkTypeDef",
             description: "A relationship between two object types.",
             type: s.struct({
                 fields: [
+                    {
+                        name: "id",
+                        displayName: "ID",
+                        type: s.string({}),
+                    },
                     {
                         name: "source",
                         displayName: "Source",
@@ -239,16 +165,15 @@ export default {
                 ],
             }),
         },
-
         {
             name: "OntologyIR",
             description: "The root ontology definition containing all type definitions.",
             type: s.struct({
                 fields: [
                     {
-                        name: "valueTypes",
-                        displayName: "Value types",
-                        type: s.list({ elementType: s.ref({ name: "ValueTypeDef" }) }),
+                        name: "types",
+                        displayName: "Named types",
+                        type: s.list({ elementType: s.ref({ name: "NamedTypeDef" }) }),
                         description: "Named, reusable value types.",
                     },
                     {

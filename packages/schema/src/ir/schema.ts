@@ -1,9 +1,8 @@
 import { s } from "./generated/builders.js";
-import type { SchemaIR, UnionTypeDef } from "./generated/types.js";
+import type { SchemaIR } from "./generated/types.js";
 
 export default {
     types: [
-        // Utilities
         {
             name: "Deprecation",
             type: s.struct({
@@ -16,8 +15,6 @@ export default {
                 ],
             }),
         },
-
-        // String enum constraint
         {
             name: "StringEnumConstraint",
             description: "Constrains a string to a set of allowed values.",
@@ -42,7 +39,6 @@ export default {
                 ],
             }),
         },
-
         {
             name: "StringRegexConstraint",
             description: "Constrains a string to a regex.",
@@ -56,7 +52,6 @@ export default {
                 ],
             }),
         },
-
         {
             name: "StringConstraint",
             description: "A constraint that can be applied to a string type.",
@@ -67,8 +62,6 @@ export default {
                 ],
             }),
         },
-
-        // Primitive type defs
         {
             name: "StringTypeDef",
             description: "A string type with optional constraints.",
@@ -118,15 +111,10 @@ export default {
             type: s.struct({ fields: [] }),
         },
         {
-            name: "FileTypeDef",
+            name: "AttachmentTypeDef",
             description: "A file handle.",
             type: s.struct({ fields: [] }),
         },
-
-        // list type constraint...
-        // primary key constraint
-
-        // Collection type defs
         {
             name: "ListTypeDef",
             description: "A list/array type.",
@@ -161,19 +149,11 @@ export default {
                 ],
             }),
         },
-
-        // Struct-related definitions
         {
             name: "FieldDef",
             description: "Definition of a field in a struct.",
             type: s.struct({
                 fields: [
-                    {
-                        name: "id",
-                        displayName: "ID",
-                        type: s.optional({ type: s.string({}) }),
-                        description: "Optional unique identifier.",
-                    },
                     {
                         name: "name",
                         displayName: "Name",
@@ -219,8 +199,6 @@ export default {
                 ],
             }),
         },
-
-        // Union-related definitions
         {
             name: "VariantDef",
             description: "Definition of a variant in a discriminated union.",
@@ -254,8 +232,6 @@ export default {
                 ],
             }),
         },
-
-        // Optional wrapper
         {
             name: "OptionalTypeDef",
             description: "Wraps a type to make it optional.",
@@ -270,8 +246,6 @@ export default {
                 ],
             }),
         },
-
-        // Result type
         {
             name: "ResultTypeDef",
             description: "A result type (ok or error).",
@@ -292,8 +266,6 @@ export default {
                 ],
             }),
         },
-
-        // Type reference
         {
             name: "TypeRef",
             description: "A reference to a named type.",
@@ -308,15 +280,12 @@ export default {
                 ],
             }),
         },
-
-        // The main TypeDef union
         {
             name: "TypeDef",
             description:
                 "A type definition. Can be a primitive, collection, struct, union, optional, result, or reference.",
             type: s.union({
                 variants: [
-                    // Primitives
                     { name: "string", type: s.ref({ name: "StringTypeDef" }) },
                     { name: "boolean", type: s.ref({ name: "BooleanTypeDef" }) },
                     { name: "integer", type: s.ref({ name: "IntegerTypeDef" }) },
@@ -325,21 +294,17 @@ export default {
                     { name: "date", type: s.ref({ name: "DateTypeDef" }) },
                     { name: "timestamp", type: s.ref({ name: "TimestampTypeDef" }) },
                     { name: "geopoint", type: s.ref({ name: "GeopointTypeDef" }) },
-                    { name: "file", type: s.ref({ name: "FileTypeDef" }) },
-                    // Collections
+                    { name: "attachment", type: s.ref({ name: "AttachmentTypeDef" }) },
                     { name: "list", type: s.ref({ name: "ListTypeDef" }) },
                     { name: "map", type: s.ref({ name: "MapTypeDef" }) },
-                    // Complex types
                     { name: "struct", type: s.ref({ name: "StructTypeDef" }) },
                     { name: "union", type: s.ref({ name: "UnionTypeDef" }) },
                     { name: "optional", type: s.ref({ name: "OptionalTypeDef" }) },
                     { name: "result", type: s.ref({ name: "ResultTypeDef" }) },
                     { name: "ref", type: s.ref({ name: "TypeRef" }) },
-                ] satisfies UnionTypeDef["variants"],
+                ],
             }),
         },
-
-        // Named type definition (top-level type with name)
         {
             name: "NamedTypeDef",
             description: "A named type definition that can be referenced by other types.",
@@ -371,8 +336,6 @@ export default {
                 ],
             }),
         },
-
-        // The root schema type
         {
             name: "SchemaIR",
             description: "The root schema containing all type definitions.",

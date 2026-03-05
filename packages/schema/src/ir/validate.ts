@@ -23,7 +23,7 @@ function validateTypeDef(
         case "date":
         case "timestamp":
         case "geopoint":
-        case "file":
+        case "attachment":
             return [];
 
         case "list":

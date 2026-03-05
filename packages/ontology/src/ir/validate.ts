@@ -23,7 +23,6 @@ function validateTypeDef(
         case "date":
         case "timestamp":
         case "geopoint":
-        case "file":
         case "attachment":
             return [];
 
@@ -126,20 +125,20 @@ function validateProperties(
     path: ValidationPathElement[],
     valueTypeNames: Set<string>
 ): ValidationError[] {
-    const apiNames = new Set<string>();
+    const names = new Set<string>();
     const errors: ValidationError[] = [];
 
     for (let i = 0; i < properties.length; i++) {
         const prop = properties[i]!;
         const propPath = [...path, i];
 
-        if (apiNames.has(prop.apiName)) {
+        if (names.has(prop.name)) {
             errors.push({
-                message: `Duplicate property apiName: "${prop.apiName}".`,
-                path: [...propPath, "apiName"],
+                message: `Duplicate property name: "${prop.name}".`,
+                path: [...propPath, "name"],
             });
         }
-        apiNames.add(prop.apiName);
+        names.add(prop.name);
 
         errors.push(...validateTypeDef(prop.type, [...propPath, "type"], valueTypeNames));
     }
@@ -154,13 +153,13 @@ export function validate(ontology: OntologyIR): ValidationResult {
     const valueTypeNames = new Set<string>();
     for (let i = 0; i < ontology.valueTypes.length; i++) {
         const vt = ontology.valueTypes[i]!;
-        if (valueTypeNames.has(vt.apiName)) {
+        if (valueTypeNames.has(vt.name)) {
             errors.push({
-                message: `Duplicate value type apiName: "${vt.apiName}".`,
-                path: ["valueTypes", i, "apiName"],
+                message: `Duplicate value type name: "${vt.name}".`,
+                path: ["valueTypes", i, "name"],
             });
         }
-        valueTypeNames.add(vt.apiName);
+        valueTypeNames.add(vt.name);
     }
 
     // Validate value type definitions
@@ -173,13 +172,13 @@ export function validate(ontology: OntologyIR): ValidationResult {
     const objectTypeNames = new Set<string>();
     for (let i = 0; i < ontology.objectTypes.length; i++) {
         const ot = ontology.objectTypes[i]!;
-        if (objectTypeNames.has(ot.apiName)) {
+        if (objectTypeNames.has(ot.name)) {
             errors.push({
-                message: `Duplicate object type apiName: "${ot.apiName}".`,
-                path: ["objectTypes", i, "apiName"],
+                message: `Duplicate object type name: "${ot.name}".`,
+                path: ["objectTypes", i, "name"],
             });
         }
-        objectTypeNames.add(ot.apiName);
+        objectTypeNames.add(ot.name);
     }
 
     // Validate object types
@@ -191,7 +190,7 @@ export function validate(ontology: OntologyIR): ValidationResult {
         errors.push(...validateProperties(ot.properties, [...otPath, "properties"], valueTypeNames));
 
         // Validate primary key references a valid property
-        const propertyNames = new Set(ot.properties.map((p) => p.apiName));
+        const propertyNames = new Set(ot.properties.map((p) => p.name));
         if (!propertyNames.has(ot.primaryKey)) {
             errors.push({
                 message: `Primary key "${ot.primaryKey}" does not reference a valid property.`,
@@ -201,30 +200,40 @@ export function validate(ontology: OntologyIR): ValidationResult {
     }
 
     // Validate link types
-    const linkApiNames = new Set<string>();
+    const linkIds = new Set<string>();
+    const linkNames = new Set<string>();
     for (let i = 0; i < ontology.linkTypes.length; i++) {
         const lt = ontology.linkTypes[i]!;
         const ltPath = ["linkTypes", i] as ValidationPathElement[];
 
-        if (linkApiNames.has(lt.apiName)) {
+        if (linkIds.has(lt.id)) {
             errors.push({
-                message: `Duplicate link type apiName: "${lt.apiName}".`,
-                path: [...ltPath, "apiName"],
+                message: `Duplicate link type id: "${lt.id}".`,
+                path: [...ltPath, "id"],
             });
         }
-        linkApiNames.add(lt.apiName);
+        linkIds.add(lt.id);
 
-        if (!objectTypeNames.has(lt.sourceObjectType)) {
+        const linkName = `${lt.source.objectType}:${lt.source.name}`;
+        if (linkNames.has(linkName)) {
             errors.push({
-                message: `Source object type "${lt.sourceObjectType}" does not exist.`,
-                path: [...ltPath, "sourceObjectType"],
+                message: `Duplicate link type source name: "${lt.source.name}" on "${lt.source.objectType}".`,
+                path: [...ltPath, "source", "name"],
+            });
+        }
+        linkNames.add(linkName);
+
+        if (!objectTypeNames.has(lt.source.objectType)) {
+            errors.push({
+                message: `Source object type "${lt.source.objectType}" does not exist.`,
+                path: [...ltPath, "source", "objectType"],
             });
         }
 
-        if (!objectTypeNames.has(lt.targetObjectType)) {
+        if (!objectTypeNames.has(lt.target.objectType)) {
             errors.push({
-                message: `Target object type "${lt.targetObjectType}" does not exist.`,
-                path: [...ltPath, "targetObjectType"],
+                message: `Target object type "${lt.target.objectType}" does not exist.`,
+                path: [...ltPath, "target", "objectType"],
             });
         }
     }

@@ -50,8 +50,8 @@ function generateForTypeDef(type: TypeDef): string {
         case "geopoint":
             return "v.geopoint";
 
-        case "file":
-            return "v.file";
+        case "attachment":
+            return "v.attachment";
 
         case "list":
             return `Array<${generateForTypeDef(type.value.elementType)}>`;
