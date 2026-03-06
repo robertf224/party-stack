@@ -1,6 +1,20 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-return */
-import { Collection, createCollection, eq, type UtilsRecord } from "@tanstack/db";
+import {
+    Collection,
+    Query,
+    createCollection,
+    eq,
+    type Context,
+    type InitialQueryBuilder,
+    type MergeContextWithJoinType,
+    type QueryBuilder,
+    type Source,
+    type UtilsRecord,
+} from "@tanstack/db";
 import type { OntologyIR } from "./ir/index.js";
 import type { OntologyAdapter } from "./OntologyAdapter.js";
 
@@ -122,6 +136,11 @@ export interface LiveOntology<
     TObjectTypes extends OntologyObjectTypeMap = OntologyObjectTypeMap,
     TLinkMap extends OntologyLinkMap = OntologyLinkMap,
 > {
+    query(): LiveOntologyInitialQueryBuilder<TObjectTypes, TLinkMap>;
+    query(builder: InitialQueryBuilder): LiveOntologyInitialQueryBuilder<TObjectTypes, TLinkMap>;
+    query<TContext extends Context>(
+        builder: QueryBuilder<TContext>
+    ): LiveOntologyQueryBuilder<TContext, TObjectTypes, TLinkMap>;
     objectTypes: {
         [ObjectTypeName in keyof TObjectTypes & string]: LiveOntologyObjectTypeEntry<
             TObjectTypes[ObjectTypeName],
@@ -136,6 +155,99 @@ export interface LiveOntologyOpts {
 }
 
 type AnyCollection = Collection<any, any, any, any, any>;
+type AnyQueryBuilder = InitialQueryBuilder | QueryBuilder<any>;
+
+type ContextSchema<TContext extends Context> = TContext["schema"];
+type ObjectTypeNameForRow<
+    TObjectTypes extends OntologyObjectTypeMap,
+    TRow,
+> = {
+    [ObjectTypeName in keyof TObjectTypes & string]: TRow extends TObjectTypes[ObjectTypeName]
+        ? ObjectTypeName
+        : never;
+}[keyof TObjectTypes & string];
+type RelatedLinksForAlias<
+    TContext extends Context,
+    TObjectTypes extends OntologyObjectTypeMap,
+    TLinkMap extends OntologyLinkMap,
+    TSourceAlias extends keyof ContextSchema<TContext> & string,
+> = LinksForObject<TLinkMap, ObjectTypeNameForRow<TObjectTypes, ContextSchema<TContext>[TSourceAlias]>>;
+type RelatedTargetRow<TLink extends OntologyLinkDef> = TLink["target"]["object"] extends OntologyObjectRecord
+    ? TLink["target"]["object"]
+    : never;
+type RelatedJoinSource<TJoinAlias extends string, TTarget extends OntologyObjectRecord> = Record<
+    TJoinAlias,
+    Collection<TTarget, string | number, any, any, any>
+>;
+type RelatedContext<
+    TContext extends Context,
+    TJoinAlias extends string,
+    TLink extends OntologyLinkDef,
+> = MergeContextWithJoinType<TContext, SchemaFromSource<RelatedJoinSource<TJoinAlias, RelatedTargetRow<TLink>>>, "left">;
+type FromContextForObjectType<
+    TObjectTypes extends OntologyObjectTypeMap,
+    TObjectTypeName extends keyof TObjectTypes & string,
+    TAlias extends string,
+> = {
+    baseSchema: Record<TAlias, TObjectTypes[TObjectTypeName]>;
+    schema: Record<TAlias, TObjectTypes[TObjectTypeName]>;
+    fromSourceName: TAlias;
+    hasJoins: false;
+};
+
+export type LiveOntologyInitialQueryBuilder<
+    TObjectTypes extends OntologyObjectTypeMap = OntologyObjectTypeMap,
+    TLinkMap extends OntologyLinkMap = OntologyLinkMap,
+> = Omit<InitialQueryBuilder, "from"> & {
+    from<TSource extends Source>(source: TSource): LiveOntologyQueryBuilder<
+        {
+            baseSchema: SchemaFromSource<TSource>;
+            schema: SchemaFromSource<TSource>;
+            fromSourceName: keyof TSource & string;
+            hasJoins: false;
+        },
+        TObjectTypes,
+        TLinkMap
+    >;
+    from<
+        TObjectTypeName extends keyof TObjectTypes & string,
+        TAlias extends string = Uncapitalize<TObjectTypeName>,
+    >(
+        objectTypeName: TObjectTypeName,
+        alias?: TAlias
+    ): LiveOntologyQueryBuilder<FromContextForObjectType<TObjectTypes, TObjectTypeName, TAlias>, TObjectTypes, TLinkMap>;
+};
+
+export type LiveOntologyQueryBuilder<
+    TContext extends Context,
+    TObjectTypes extends OntologyObjectTypeMap = OntologyObjectTypeMap,
+    TLinkMap extends OntologyLinkMap = OntologyLinkMap,
+> = QueryBuilder<TContext> & {
+    related<
+        TSourceAlias extends keyof ContextSchema<TContext> & string,
+        TRelationshipName extends keyof RelatedLinksForAlias<TContext, TObjectTypes, TLinkMap, TSourceAlias> & string,
+        TJoinAlias extends string = TRelationshipName,
+        TLink extends OntologyLinkDef = RelatedLinksForAlias<
+            TContext,
+            TObjectTypes,
+            TLinkMap,
+            TSourceAlias
+        >[TRelationshipName] extends OntologyLinkDef
+            ? RelatedLinksForAlias<TContext, TObjectTypes, TLinkMap, TSourceAlias>[TRelationshipName]
+            : never,
+    >(
+        sourceAlias: TSourceAlias,
+        relationshipName: TRelationshipName,
+        joinAlias?: TJoinAlias
+    ): LiveOntologyQueryBuilder<RelatedContext<TContext, TJoinAlias, TLink>, TObjectTypes, TLinkMap>;
+};
+
+type WrappedQueryReturn<TBuilder extends AnyQueryBuilder, TObjectTypes extends OntologyObjectTypeMap, TLinkMap extends OntologyLinkMap> =
+    TBuilder extends InitialQueryBuilder
+    ? LiveOntologyInitialQueryBuilder<TObjectTypes, TLinkMap>
+    : TBuilder extends QueryBuilder<infer TContext>
+      ? LiveOntologyQueryBuilder<TContext, TObjectTypes, TLinkMap>
+      : never;
 
 function withCollectionUtils<TCollection extends AnyCollection, TExtraUtils extends UtilsRecord>(
     collection: TCollection,
@@ -156,6 +268,148 @@ function withCollectionUtils<TCollection extends AnyCollection, TExtraUtils exte
             return target[prop as keyof typeof target];
         },
     }) as Collection<any, any, any, any, any>;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function isQueryBuilderLike(value: unknown): value is AnyQueryBuilder {
+    return isObject(value) && typeof value.join === "function" && typeof value.where === "function";
+}
+
+function wrapLiveOntologyQueryBuilder<
+    TObjectTypes extends OntologyObjectTypeMap,
+    TLinkMap extends OntologyLinkMap,
+    TBuilder extends AnyQueryBuilder,
+>(
+    ontology: LiveOntology<TObjectTypes, TLinkMap>,
+    builder: TBuilder,
+    collectionToObjectTypeName: Map<AnyCollection, string>,
+    aliasToObjectTypeName: Record<string, string> = {}
+): WrappedQueryReturn<TBuilder, TObjectTypes, TLinkMap> {
+    const captureAliasesFromSource = (source: unknown, currentAliases: Record<string, string>) => {
+        if (!isObject(source)) {
+            return currentAliases;
+        }
+        const nextAliases = { ...currentAliases };
+        for (const [alias, maybeCollection] of Object.entries(source)) {
+            if (isObject(maybeCollection)) {
+                const objectTypeName = collectionToObjectTypeName.get(maybeCollection as unknown as AnyCollection);
+                if (objectTypeName) {
+                    nextAliases[alias] = objectTypeName;
+                }
+            }
+        }
+        return nextAliases;
+    };
+
+    const wrapResult = (result: unknown, aliases: Record<string, string>) => {
+        if (!isQueryBuilderLike(result)) {
+            return result;
+        }
+        return wrapLiveOntologyQueryBuilder(ontology, result, collectionToObjectTypeName, aliases);
+    };
+
+    const proxy = new Proxy(builder as object, {
+        get(target, prop, receiver) {
+            if (prop === "related") {
+                return (sourceAlias: string, relationshipName: string, joinAlias?: string) => {
+                    const sourceObjectTypeName = aliasToObjectTypeName[sourceAlias];
+                    if (!sourceObjectTypeName) {
+                        const available = Object.keys(aliasToObjectTypeName).join(", ") || "(none)";
+                        throw new Error(
+                            `related("${sourceAlias}", "${relationshipName}"): unknown source alias "${sourceAlias}". ` +
+                                `Available aliases: ${available}.`
+                        );
+                    }
+
+                    const sourceEntry = ontology.objectTypes[sourceObjectTypeName];
+                    if (!sourceEntry) {
+                        throw new Error(
+                            `related("${sourceAlias}", "${relationshipName}"): unknown object type "${sourceObjectTypeName}".`
+                        );
+                    }
+
+                    const [joinCollection, joinCondition] = sourceEntry.related(
+                        sourceAlias,
+                        relationshipName,
+                        joinAlias
+                    );
+                    const effectiveJoinAlias = joinAlias ?? relationshipName;
+                    const link = sourceEntry.links[relationshipName];
+                    if (!link) {
+                        const availableRelationships = Object.keys(sourceEntry.links).join(", ") || "(none)";
+                        throw new Error(
+                            `related("${sourceAlias}", "${relationshipName}"): unknown relationship. ` +
+                                `Available relationships on "${sourceObjectTypeName}": ${availableRelationships}.`
+                        );
+                    }
+
+                    const joined = (target as QueryBuilder<any>).join(joinCollection, joinCondition);
+                    return wrapLiveOntologyQueryBuilder(ontology, joined, collectionToObjectTypeName, {
+                        ...aliasToObjectTypeName,
+                        [effectiveJoinAlias]: link.target.objectType,
+                    });
+                };
+            }
+
+            const value = Reflect.get(target, prop, receiver);
+            if (typeof value !== "function") {
+                if (prop === "fn" && isObject(value)) {
+                    return new Proxy(value, {
+                        get(fnTarget, fnProp, fnReceiver) {
+                            const fnValue = Reflect.get(fnTarget, fnProp, fnReceiver);
+                            if (typeof fnValue !== "function") {
+                                return fnValue;
+                            }
+                            return (...args: unknown[]) => wrapResult(fnValue.apply(fnTarget, args), aliasToObjectTypeName);
+                        },
+                    });
+                }
+                return value;
+            }
+
+            return (...args: unknown[]) => {
+                if (prop === "from" && typeof args[0] === "string") {
+                    const objectTypeName = args[0];
+                    const aliasArg = args[1];
+                    const sourceEntry = ontology.objectTypes[objectTypeName];
+                    if (!sourceEntry) {
+                        const available = Object.keys(ontology.objectTypes).join(", ") || "(none)";
+                        throw new Error(
+                            `from("${objectTypeName}"): unknown object type. Available object types: ${available}.`
+                        );
+                    }
+                    const inferredAlias =
+                        typeof aliasArg === "string" && aliasArg.length > 0
+                            ? aliasArg
+                            : objectTypeName.charAt(0).toLowerCase() + objectTypeName.slice(1);
+                    const source = { [inferredAlias]: sourceEntry.collection };
+                    const result = value.apply(target, [source]);
+                    return wrapResult(result, {
+                        ...aliasToObjectTypeName,
+                        [inferredAlias]: objectTypeName,
+                    });
+                }
+
+                const result = value.apply(target, args);
+                const shouldCaptureSource =
+                    prop === "from" ||
+                    prop === "join" ||
+                    prop === "leftJoin" ||
+                    prop === "rightJoin" ||
+                    prop === "innerJoin" ||
+                    prop === "fullJoin";
+                const nextAliases = shouldCaptureSource
+                    ? captureAliasesFromSource(args[0], aliasToObjectTypeName)
+                    : aliasToObjectTypeName;
+                return wrapResult(result, nextAliases);
+            };
+        },
+    });
+
+    return proxy as WrappedQueryReturn<TBuilder, TObjectTypes, TLinkMap>;
 }
 
 export function createLiveOntology<
@@ -191,15 +445,16 @@ export function createLiveOntology<
                 targetObjectType: string;
                 sourceName: string;
                 targetName: string;
-                foreignKey: string;
-                targetPrimaryKey: string;
+                sourceField: string;
+                targetField: string;
                 cardinality: "one" | "many";
             }
         >
     > = {};
     for (const linkType of opts.ir.linkTypes) {
+        const sourceType = objectTypesByName.get(linkType.source.objectType);
         const targetType = objectTypesByName.get(linkType.target.objectType);
-        if (!targetType) {
+        if (!sourceType || !targetType) {
             continue;
         }
 
@@ -208,8 +463,19 @@ export function createLiveOntology<
             targetObjectType: linkType.target.objectType,
             sourceName: linkType.source.name,
             targetName: linkType.target.name,
-            foreignKey: linkType.foreignKey,
-            targetPrimaryKey: targetType.primaryKey,
+            sourceField: linkType.foreignKey,
+            targetField: targetType.primaryKey,
+            cardinality: linkType.cardinality,
+        };
+
+        // Also materialize reverse relationship on the target object type.
+        rawLinksBySource[linkType.target.objectType] ??= {};
+        rawLinksBySource[linkType.target.objectType]![linkType.source.name] = {
+            targetObjectType: linkType.source.objectType,
+            sourceName: linkType.target.name,
+            targetName: linkType.source.name,
+            sourceField: targetType.primaryKey,
+            targetField: linkType.foreignKey,
             cardinality: linkType.cardinality,
         };
     }
@@ -253,8 +519,8 @@ export function createLiveOntology<
                     );
                 }
                 const targetPk =
-                    targetRow && typeof targetRow === "object" ? targetRow[link.targetPrimaryKey] : undefined;
-                return eq(sourceRow[link.foreignKey], targetPk);
+                    targetRow && typeof targetRow === "object" ? targetRow[link.targetField] : undefined;
+                return eq(sourceRow[link.sourceField], targetPk);
             };
             return [joinCollection, joinCondition];
         };
@@ -265,7 +531,7 @@ export function createLiveOntology<
                 {
                     source: { objectType: objectType.name, name: link.sourceName },
                     target: { objectType: link.targetObjectType, name: link.targetName },
-                    foreignKey: link.foreignKey,
+                    foreignKey: link.sourceField,
                     cardinality: link.cardinality,
                 },
             ])
@@ -282,5 +548,15 @@ export function createLiveOntology<
         } as unknown as LiveOntologyObjectTypeEntry<OntologyObjectRecord, OntologyLinksForObjectType>;
     }
 
-    return { objectTypes } as unknown as LiveOntology<TObjectTypes, TLinkMap>;
+    const ontology = { objectTypes } as unknown as LiveOntology<TObjectTypes, TLinkMap>;
+    const collectionToObjectTypeName = new Map<AnyCollection, string>(
+        Object.entries(objectTypes).map(([name, entry]) => [entry.collection as AnyCollection, name])
+    );
+    ontology.query = ((builder?: InitialQueryBuilder | QueryBuilder<any>) =>
+        wrapLiveOntologyQueryBuilder(
+            ontology,
+            builder ?? new Query(),
+            collectionToObjectTypeName
+        )) as LiveOntology<TObjectTypes, TLinkMap>["query"];
+    return ontology;
 }

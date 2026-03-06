@@ -56,7 +56,30 @@ export type OntologyByObjectType = {
 export type OntologyObject = OntologyByObjectType[OntologyObjectTypeName];
 
 export type BlogLinkMap = {
-    Author: Record<string, never>;
+    Author: {
+        posts: {
+            source: {
+                object: Author;
+                name: "author";
+            };
+            target: {
+                object: Post;
+                name: "posts";
+            };
+            targetKey: Post["postId"];
+        };
+        comment: {
+            source: {
+                object: Author;
+                name: "author";
+            };
+            target: {
+                object: Comment;
+                name: "comment";
+            };
+            targetKey: Comment["commentId"];
+        };
+    };
     Post: {
         author: {
             source: {
@@ -68,6 +91,17 @@ export type BlogLinkMap = {
                 name: "author";
             };
             targetKey: Author["authorId"];
+        };
+        comments: {
+            source: {
+                object: Post;
+                name: "post";
+            };
+            target: {
+                object: Comment;
+                name: "comments";
+            };
+            targetKey: Comment["commentId"];
         };
     };
     Comment: {

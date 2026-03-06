@@ -82,9 +82,54 @@ function objectTypeAggregateTypes(ir: OntologyIR): string {
 
 /** Generates OntologyLinkMap-alike type so related() gets typed link names and target row types. */
 export function generateLinkMapType(ir: OntologyIR, typeName = "OntologyLinkMap"): string {
-    const targetPrimaryKeyByType = new Map(ir.objectTypes.map((ot) => [ot.name, ot.primaryKey]));
+    const primaryKeyByType = new Map(ir.objectTypes.map((ot) => [ot.name, ot.primaryKey]));
+    type LinkEntry = {
+        relationshipName: string;
+        sourceObjectType: string;
+        sourceName: string;
+        targetObjectType: string;
+        targetName: string;
+        targetPrimaryKey: string;
+    };
+    const linksByObjectType = new Map<string, LinkEntry[]>();
+    const addLink = (objectTypeName: string, link: LinkEntry) => {
+        const existing = linksByObjectType.get(objectTypeName);
+        if (existing) {
+            existing.push(link);
+            return;
+        }
+        linksByObjectType.set(objectTypeName, [link]);
+    };
+    for (const linkType of ir.linkTypes) {
+        const sourcePrimaryKey = primaryKeyByType.get(linkType.source.objectType);
+        const targetPrimaryKey = primaryKeyByType.get(linkType.target.objectType);
+        if (!sourcePrimaryKey || !targetPrimaryKey) {
+            continue;
+        }
+
+        // Forward edge: source object chooses target side name.
+        addLink(linkType.source.objectType, {
+            relationshipName: linkType.target.name,
+            sourceObjectType: linkType.source.objectType,
+            sourceName: linkType.source.name,
+            targetObjectType: linkType.target.objectType,
+            targetName: linkType.target.name,
+            targetPrimaryKey,
+        });
+
+        // Reverse edge: target object chooses source side name.
+        addLink(linkType.target.objectType, {
+            relationshipName: linkType.source.name,
+            sourceObjectType: linkType.target.objectType,
+            sourceName: linkType.target.name,
+            targetObjectType: linkType.source.objectType,
+            targetName: linkType.source.name,
+            targetPrimaryKey: sourcePrimaryKey,
+        });
+    }
+
     const properties = ir.objectTypes.map((objectType) => {
-        const links = ir.linkTypes.filter((linkType) => linkType.source.objectType === objectType.name);
+        const links = linksByObjectType.get(objectType.name) ?? [];
         if (links.length === 0) {
             return {
                 name: objectType.name,
@@ -94,11 +139,6 @@ export function generateLinkMapType(ir: OntologyIR, typeName = "OntologyLinkMap"
 
         const linkProperties = links
             .map((linkType) => {
-                const targetPrimaryKey = targetPrimaryKeyByType.get(linkType.target.objectType);
-                if (!targetPrimaryKey) {
-                    return null;
-                }
-
                 const linkDefinition = withWriter(
                     Writers.objectType({
                         properties: [
@@ -107,8 +147,8 @@ export function generateLinkMapType(ir: OntologyIR, typeName = "OntologyLinkMap"
                                 type: withWriter(
                                     Writers.objectType({
                                         properties: [
-                                            { name: "object", type: linkType.source.objectType },
-                                            { name: "name", type: `"${linkType.source.name}"` },
+                                            { name: "object", type: linkType.sourceObjectType },
+                                            { name: "name", type: `"${linkType.sourceName}"` },
                                         ],
                                     })
                                 ),
@@ -118,23 +158,22 @@ export function generateLinkMapType(ir: OntologyIR, typeName = "OntologyLinkMap"
                                 type: withWriter(
                                     Writers.objectType({
                                         properties: [
-                                            { name: "object", type: linkType.target.objectType },
-                                            { name: "name", type: `"${linkType.target.name}"` },
+                                            { name: "object", type: linkType.targetObjectType },
+                                            { name: "name", type: `"${linkType.targetName}"` },
                                         ],
                                     })
                                 ),
                             },
                             {
                                 name: "targetKey",
-                                type: `${linkType.target.objectType}["${targetPrimaryKey}"]`,
+                                type: `${linkType.targetObjectType}["${linkType.targetPrimaryKey}"]`,
                             },
                         ],
                     })
                 );
 
                 return {
-                    // Relationship names on the source side are defined by how source refers to target.
-                    name: linkType.target.name,
+                    name: linkType.relationshipName,
                     type: linkDefinition,
                 };
             })

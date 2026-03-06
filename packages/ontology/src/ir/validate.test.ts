@@ -343,8 +343,8 @@ describe("Ontology Validation", () => {
         it("should have links from LinkType to ObjectType for source and target metadata", async () => {
             const { default: ontologyOntology } = await import("./ontology.js");
             const sourceNames = ontologyOntology.linkTypes.map((lt) => lt.source.name);
-            expect(sourceNames).toContain("sourceLinkTypes");
-            expect(sourceNames).toContain("targetLinkTypes");
+            expect(sourceNames).toContain("outgoingLinkTypes");
+            expect(sourceNames).toContain("incomingLinkTypes");
 
             const targetNames = ontologyOntology.linkTypes.map((lt) => lt.target.name);
             expect(targetNames).toContain("source");
