@@ -14,7 +14,9 @@
     "scripts": {
         "bootstrap": "tsx ../schema/src/generate/generate.ts --schema ./src/ir/schema.ts --exportName o --promoted TypeDef --outDir ./src/ir/generated",
         "build": "tsc",
-        "generate:examples": "tsx ./src/examples/generate.ts",
+        "generate:examples": "tsx ./src/cli/generate.ts --ontology ./src/examples/blog.ts --outDir ./src/examples/generated",
+        "generate:meta": "tsx ./src/cli/generate.ts --ontology ./src/meta/ontology.ts --outDir ./src/meta/generated",
+        "pull:ontology": "tsx ./src/cli/pull.ts",
         "lint": "eslint",
         "test": "vitest run"
     },

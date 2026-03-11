@@ -13,7 +13,7 @@
 import { o } from "../ir/generated/builders.js";
 import type { OntologyIR } from "../ir/generated/types.js";
 
-export const blogOntology = {
+export default {
     types: [
         {
             name: "Address",

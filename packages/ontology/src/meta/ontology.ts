@@ -1,7 +1,7 @@
 import { invariant } from "@bobbyfidz/panic";
 import { SchemaIR } from "@party-stack/schema";
-import OntologyIRSchema from "./schema.js";
-import type { OntologyIR } from "./generated/types.js";
+import OntologyIRSchema from "../ir/schema.js";
+import type { OntologyIR } from "../ir/generated/types.js";
 
 function lift(
     schema: SchemaIR,

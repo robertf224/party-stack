@@ -4,9 +4,9 @@ import { join, resolve } from "node:path";
 import { Command } from "commander";
 import { createJiti } from "jiti";
 import { format, resolveConfig } from "prettier";
-import { generateBuilders } from "./builders.js";
-import { generateTypes } from "./types.js";
-import { generateValidators } from "./validators.js";
+import { generateBuilders } from "../generate/builders.js";
+import { generateTypes } from "../generate/types.js";
+import { generateValidators } from "../generate/validators.js";
 import type { SchemaIR } from "../ir/index.js";
 
 const program = new Command();

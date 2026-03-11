@@ -321,19 +321,19 @@ describe("Ontology Validation", () => {
 
     describe("Blog Example", () => {
         it("should validate the blog example ontology", async () => {
-            const { blogOntology } = await import("../examples/blog.js");
+            const { default: blogOntology } = await import("../examples/blog.js");
             expectOk(validate(blogOntology));
         });
     });
 
     describe("Ontology Ontology", () => {
         it("should validate the ontology ontology (self-describing)", async () => {
-            const { default: ontologyOntology } = await import("./ontology.js");
+            const { default: ontologyOntology } = await import("../meta/ontology.js");
             expectOk(validate(ontologyOntology));
         });
 
         it("should contain ObjectType, ValueType, and LinkType as object types", async () => {
-            const { default: ontologyOntology } = await import("./ontology.js");
+            const { default: ontologyOntology } = await import("../meta/ontology.js");
             const objectTypeNames = ontologyOntology.objectTypes.map((ot) => ot.name);
             expect(objectTypeNames).toContain("ObjectType");
             expect(objectTypeNames).toContain("ValueType");
@@ -341,7 +341,7 @@ describe("Ontology Validation", () => {
         });
 
         it("should have links from LinkType to ObjectType for source and target metadata", async () => {
-            const { default: ontologyOntology } = await import("./ontology.js");
+            const { default: ontologyOntology } = await import("../meta/ontology.js");
             const sourceNames = ontologyOntology.linkTypes.map((lt) => lt.source.name);
             expect(sourceNames).toContain("outgoingLinkTypes");
             expect(sourceNames).toContain("incomingLinkTypes");
