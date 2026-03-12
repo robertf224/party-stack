@@ -1,6 +1,6 @@
-# foundry-tools
+# party-stack
 
-Tools for building applications on top of Foundry.
+Tools for building applications on top of structured ontologies.
 
 ### Projects
 
