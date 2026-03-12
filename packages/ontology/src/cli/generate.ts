@@ -33,6 +33,7 @@ export interface GenerateFilesOpts {
     ontology: string;
     outDir: string;
     namespace?: string;
+    jsExtensions?: boolean;
 }
 
 function readPackageName(cwd: string): string | null {
@@ -61,18 +62,19 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
     const slug = ontologyFileName === "ontology" ? basename(dirname(ontologyPath)) : ontologyFileName;
     const namespace = options.namespace ?? pascalCase(slug);
     const generatedOntologyTypeName = ontologyTypeName(namespace);
-    const ontologyRuntimeImportPath =
-        readPackageName(process.cwd()) === "@party-stack/ontology"
-            ? "../../index.js"
-            : "@party-stack/ontology";
+    const jsExtensions = options.jsExtensions ?? true;
+    const ontologyRuntimeImportPath = maybeStripJsExtension(
+        readPackageName(process.cwd()) === "@party-stack/ontology" ? "../../index.js" : "@party-stack/ontology",
+        jsExtensions
+    );
 
-    const ontologyImportPath = toModuleSpecifier(relative(outDir, ontologyPath).replace(/\.ts$/, ".js"));
+    const ontologyImportPath = formatImportSpecifier(relative(outDir, ontologyPath), jsExtensions);
     const typesOutput = generateTypes(ontology, {
         outputTypeName: generatedOntologyTypeName,
     });
     const liveOutput = generateLive(ontology, {
         ontologyImportPath,
-        ontologyTypesImportPath: "./types.js",
+        ontologyTypesImportPath: maybeStripJsExtension("./types.js", jsExtensions),
         ontologyRuntimeImportPath,
         ontologyTypeName: generatedOntologyTypeName,
         outputFactoryName: `create${namespace}LiveOntology`,
@@ -99,6 +101,21 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
     console.log(`Generated live helpers written to: ${liveFilePath}`);
 }
 
+function formatImportSpecifier(path: string, jsExtensions: boolean): string {
+    const specifier = toModuleSpecifier(path);
+    if (jsExtensions) {
+        return specifier.replace(/\.[cm]?tsx?$/, ".js");
+    }
+    return maybeStripJsExtension(specifier, false);
+}
+
+function maybeStripJsExtension(specifier: string, jsExtensions: boolean): string {
+    if (jsExtensions || !specifier.startsWith(".")) {
+        return specifier;
+    }
+    return specifier.replace(/\.(?:[cm]?jsx?|[cm]?tsx?)$/, "");
+}
+
 const program = new Command();
 
 program
@@ -107,6 +124,7 @@ program
     .requiredOption("--ontology <path>", "Path to the ontology module (must export an OntologyIR)")
     .requiredOption("--outDir <path>", "Directory to write generated files")
     .option("--namespace <name>", "Namespace for generated ontology types/factories")
+    .option("--no-js-extensions", "Omit .js extensions from generated relative imports")
     .action(async (options: GenerateFilesOpts) => {
         try {
             await generateFiles(options);

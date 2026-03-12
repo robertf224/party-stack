@@ -13,16 +13,6 @@ const nextConfig: NextConfig = {
         "@effectionx/timebox",
         "@effectionx/websocket",
     ],
-    webpack: (config) => {
-        config.resolve ??= {};
-        config.resolve.extensionAlias = {
-            ...(config.resolve.extensionAlias ?? {}),
-            ".js": [".ts", ".tsx", ".js", ".jsx"],
-            ".mjs": [".mts", ".mjs"],
-            ".cjs": [".cts", ".cjs"],
-        };
-        return config;
-    },
 };
 
 export default nextConfig;

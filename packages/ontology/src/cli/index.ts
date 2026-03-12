@@ -50,11 +50,13 @@ async function main(): Promise<void> {
     program
         .command("generate")
         .description("Generate typed live ontology helpers from src/ontology/ontology.ts")
-        .action(async () => {
+        .option("--no-js-extensions", "Omit .js extensions from generated relative imports")
+        .action(async (options: { jsExtensions?: boolean }) => {
             await generateFiles({
                 ontology: ontologyPath,
                 outDir: generatedDir,
                 namespace: readPackageNamespace(cwd),
+                jsExtensions: options.jsExtensions,
             });
         });
 

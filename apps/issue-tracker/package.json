@@ -4,10 +4,10 @@
     "private": true,
     "scripts": {
         "build": "tsc",
-        "dev": "next dev --webpack",
+        "dev": "next dev",
         "dist": "next build",
         "lint": "eslint",
-        "ontology:generate": "ontology generate",
+        "ontology:generate": "ontology generate --no-js-extensions",
         "ontology:pull": "ontology pull",
         "start": "serve out"
     },

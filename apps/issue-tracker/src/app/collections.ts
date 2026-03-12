@@ -2,8 +2,8 @@
 
 import { createOntologyClient, createFoundryOntologyAdapter } from "@party-stack/foundry-ontology";
 import { createUserCollection } from "@party-stack/foundry-ontology/users";
-import ontology from "../ontology/ontology.js";
-import { createIssueTrackerLiveOntology } from "../ontology/generated/live.js";
+import ontology from "../ontology/ontology";
+import { createIssueTrackerLiveOntology } from "../ontology/generated/live";
 
 const client = createOntologyClient({
     baseUrl: process.env.NEXT_PUBLIC_FOUNDRY_URL!,
