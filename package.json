@@ -1,5 +1,5 @@
 {
-    "name": "@bobbyfidz/foundry-tools-monorepo",
+    "name": "@party-stack/monorepo",
     "private": true,
     "scripts": {
         "fix-versions": "syncpack set-semver-ranges && syncpack fix-mismatches",
@@ -7,6 +7,7 @@
         "upgrade-versions": "syncpack update && syncpack set-semver-ranges && syncpack fix-mismatches"
     },
     "devDependencies": {
+        "@changesets/cli": "^2.29.7",
         "husky": "^9.1.7",
         "lint-staged": "^15.5.2",
         "prettier": "^3.5.3",
@@ -14,8 +15,7 @@
         "prettier-plugin-tailwindcss": "^0.6.12",
         "syncpack": "^13.0.4",
         "turbo": "2.5.1",
-        "typescript": "~5.8.3",
-        "@changesets/cli": "^2.29.7"
+        "typescript": "~5.8.3"
     },
     "packageManager": "pnpm@9.6.0",
     "engines": {

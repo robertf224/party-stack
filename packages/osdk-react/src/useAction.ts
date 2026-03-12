@@ -48,7 +48,7 @@ export function useAction<T extends ActionDefinition<any>>(
                 deletedObjects: result.deletedObjects ?? [],
             };
         },
-        onSuccess: (data, variables, context) => {
+        onSuccess: (data, variables, onMutateResult, context) => {
             const observation: OntologyObservation = {
                 knownObjects: [...data.createdObjects, ...data.modifiedObjects],
                 deletedObjects: data.deletedObjects,
@@ -56,7 +56,7 @@ export function useAction<T extends ActionDefinition<any>>(
             updateObjectQueries(queryClient, observation);
             updateObjectsQueries(queryClient, observation);
             updateAggregationQueries(queryClient, observation);
-            mutationOpts?.onSuccess?.(data, variables, context);
+            mutationOpts?.onSuccess?.(data, variables, onMutateResult, context);
         },
     });
 }

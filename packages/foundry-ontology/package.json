@@ -1,0 +1,67 @@
+{
+    "name": "@party-stack/foundry-ontology",
+    "version": "0.0.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./users": {
+            "types": "./lib/users/index.d.ts",
+            "default": "./lib/users/index.js"
+        },
+        "./meta": {
+            "types": "./lib/meta/index.d.ts",
+            "default": "./lib/meta/index.js"
+        },
+        "./config": {
+            "types": "./lib/config/index.d.ts",
+            "default": "./lib/config/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run --pass-with-no-tests"
+    },
+    "dependencies": {
+        "@bobbyfidz/local-oauth-flow": "^0.1.0",
+        "@bobbyfidz/osdk-utils": "workspace:*",
+        "@bobbyfidz/panic": "^0.1.0",
+        "@bobbyfidz/urls": "^0.2.1",
+        "@effectionx/signals": "^0.5.2",
+        "@effectionx/stream-helpers": "^0.8.1",
+        "@effectionx/websocket": "^2.3.2",
+        "@osdk/foundry.admin": "^2.47.0",
+        "@osdk/foundry.ontologies": "^2.49.0",
+        "@osdk/shared.client.impl": "^1.5.0",
+        "@osdk/shared.client2": "^1.0.0",
+        "@party-stack/ontology": "workspace:*",
+        "effection": "^4.0.2",
+        "temporal-polyfill": "^0.3.0",
+        "zod": "^4.1.13"
+    },
+    "devDependencies": {
+        "@bobbyfidz/react-build-config": "^0.1.1",
+        "@tanstack/db": "^0.5.32",
+        "@tanstack/query-db-collection": "^1.0.29",
+        "@types/node": "^24.10.1",
+        "@types/react": "^19.2.6",
+        "eslint": "^9.25.0",
+        "react": "^19.2.0",
+        "ts-node": "^10.9.2",
+        "tsx": "^4.20.6",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    },
+    "peerDependencies": {
+        "@tanstack/db": "^0.5.32",
+        "@tanstack/query-core": "^5.0.0",
+        "@tanstack/query-db-collection": "^1.0.29",
+        "react": "^18.0.0 || ^19.0.0"
+    }
+}
