@@ -3,6 +3,10 @@ import { unwrapType } from "../utils/types.js";
 import { buildJsDocs } from "./utils/buildJsDocs.js";
 import type { SchemaIR, TypeDef, StructTypeDef, UnionTypeDef } from "../ir/index.js";
 
+export interface GenerateTypesOpts {
+    valuesImportPath?: string;
+}
+
 function withWriter(fn: WriterFunction): string {
     const writer = new CodeBlockWriter();
     fn(writer);
@@ -110,12 +114,12 @@ function generateForUnionTypeDef(type: UnionTypeDef): string {
     return `v.Union<${innerType}>`;
 }
 
-export function generateTypes(schema: SchemaIR): string {
+export function generateTypes(schema: SchemaIR, opts: GenerateTypesOpts = {}): string {
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile("types.ts", "");
 
     sourceFile.addImportDeclaration({
-        moduleSpecifier: "@party-stack/schema/values",
+        moduleSpecifier: opts.valuesImportPath ?? "@party-stack/schema/values",
         namespaceImport: "v",
     });
 

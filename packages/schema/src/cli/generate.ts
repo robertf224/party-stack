@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { createJiti } from "jiti";
 import { format, resolveConfig } from "prettier";
@@ -8,6 +9,26 @@ import { generateBuilders } from "../generate/builders.js";
 import { generateTypes } from "../generate/types.js";
 import { generateValidators } from "../generate/validators.js";
 import type { SchemaIR } from "../ir/index.js";
+
+function toModuleSpecifier(path: string): string {
+    const normalized = path.replaceAll("\\", "/");
+    if (normalized.startsWith(".")) {
+        return normalized;
+    }
+    return `./${normalized}`;
+}
+
+function formatImportSpecifier(path: string): string {
+    return toModuleSpecifier(path).replace(/\.[cm]?tsx?$/, ".js");
+}
+
+function resolveValuesImportPath(outDir: string): string {
+    const workspaceValuesPath = fileURLToPath(new URL("../../src/utils/values.ts", import.meta.url));
+    if (!existsSync(workspaceValuesPath)) {
+        return "@party-stack/schema/values";
+    }
+    return formatImportSpecifier(relative(outDir, workspaceValuesPath));
+}
 
 const program = new Command();
 
@@ -33,7 +54,9 @@ program
         }
 
         // Generate schema, types, and builders
-        const typesOutput = generateTypes(schema);
+        const typesOutput = generateTypes(schema, {
+            valuesImportPath: resolveValuesImportPath(outDir),
+        });
         const validatorsOutput = generateValidators(schema);
         const buildersOutput = generateBuilders(schema, {
             exportName: options.exportName,

@@ -4,6 +4,30 @@ import type { SchemaIR } from "../ir/index.js";
 
 describe("TypeScript Type Generation", () => {
     describe("Struct Types", () => {
+        it("should support overriding the values import path", () => {
+            const schema: SchemaIR = {
+                types: [
+                    {
+                        name: "IntegerValue",
+                        type: {
+                            kind: "integer",
+                            value: {},
+                        },
+                    },
+                ],
+            };
+
+            expect(
+                generateTypes(schema, {
+                    valuesImportPath: "../../utils/values.js",
+                })
+            ).toMatchInlineSnapshot(`
+              "import * as v from "../../utils/values.js";
+
+              export type IntegerValue = v.integer;"
+            `);
+        });
+
         it("should generate interface for simple struct", () => {
             const schema: SchemaIR = {
                 types: [
