@@ -179,7 +179,7 @@ export function useObjectSetWatcherConnection(
             while (true) {
                 const nextMessage = yield* messages.next();
                 if (nextMessage.done) {
-                    yield* subscriptionMessages.close(nextMessage.value as CloseEvent);
+                    yield* subscriptionMessages.close(nextMessage.value);
                     break;
                 }
                 const message = nextMessage.value;

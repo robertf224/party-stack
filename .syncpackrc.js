@@ -8,7 +8,7 @@ const config = {
         },
         {
             range: "",
-            dependencies: ["next", "eslint-config-next", "@next/*", "turbo"],
+            dependencies: ["next", "eslint-config-next", "turbo"],
         },
         {
             specifierTypes: ["workspace-protocol", "file"],

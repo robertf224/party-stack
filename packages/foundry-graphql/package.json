@@ -39,8 +39,8 @@
         "@bobbyfidz/universal-build-config": "^0.1.1",
         "@types/node": "^24.10.1",
         "@types/relay-runtime": "^19.0.3",
-        "eslint": "^9.21.0",
-        "typescript": "~5.8.2"
+        "eslint": "^9.25.0",
+        "typescript": "~5.8.3"
     },
     "peerDependencies": {
         "relay-runtime": "^18.0.0 || ^19.0.0"

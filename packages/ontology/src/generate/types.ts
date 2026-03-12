@@ -1,6 +1,6 @@
 import { generateTypes as generateSchemaTypes } from "@party-stack/schema/generate";
-import type { SchemaIR } from "@party-stack/schema";
 import { Project, Writers, type SourceFile } from "ts-morph";
+import type { SchemaIR } from "@party-stack/schema";
 import type { OntologyIR } from "../ir/generated/types.js";
 
 function toSchemaIR(ir: OntologyIR): SchemaIR {
