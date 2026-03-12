@@ -10,11 +10,14 @@ import {
     type ValueTypeConstraint,
     type ValueTypeFieldType,
 } from "@osdk/foundry.ontologies";
-import { type Collection, createCollection, type SyncConfig } from "@tanstack/db";
+import { createCollection, eq, liveQueryCollectionOptions, Query } from "@tanstack/db";
+import { QueryClient } from "@tanstack/query-core";
+import { queryCollectionOptions } from "@tanstack/query-db-collection";
 import type {
     MetaLinkType,
     MetaObjectType,
     OntologyAdapter,
+    OntologyCollectionOptions,
     PropertyDef,
     StringConstraint,
     TypeDef,
@@ -26,58 +29,73 @@ export interface CreateOntologyMetadataCollectionsOpts {
     client: OntologyClient;
 }
 
-type MetaCollections = {
-    $objectType: Collection<MetaObjectType, string>;
-    $valueType: Collection<MetaValueType, string>;
-    $linkType: Collection<MetaLinkType, string>;
-};
+type MetaEntity =
+    | { entityType: "ObjectType"; entity: MetaObjectType }
+    | { entityType: "ValueType"; entity: MetaValueType }
+    | { entityType: "LinkType"; entity: MetaLinkType };
 
 export function createFoundryMetaOntologyAdapter(
     opts: CreateOntologyMetadataCollectionsOpts
 ): OntologyAdapter {
-    const metadata = loadMetaOntologyObjects(opts.client);
+    const metadata = createCollection(
+        queryCollectionOptions<MetaEntity>({
+            queryClient: new QueryClient(),
+            getKey: (row) => {
+                switch (row.entityType) {
+                    case "ObjectType":
+                    case "ValueType":
+                        return `${row.entityType}:${row.entity.name}`;
+                    case "LinkType":
+                        return `${row.entityType}:${row.entity.id}`;
+                }
+            },
+            queryKey: ["foundry", "ontology", "metadata"],
+            syncMode: "eager",
+            queryFn: async () => {
+                const loaded = await loadMetaOntologyObjects(opts.client);
+                return [
+                    ...loaded.objectTypes.map((entity) => ({
+                        entityType: "ObjectType" as const,
+                        entity,
+                        ...entity,
+                    })),
+                    ...loaded.valueTypes.map((entity) => ({
+                        entityType: "ValueType" as const,
+                        entity,
+                        ...entity,
+                    })),
+                    ...loaded.linkTypes.map((entity) => ({
+                        entityType: "LinkType" as const,
+                        entity,
+                        ...entity,
+                    })),
+                ];
+            },
+        })
+    );
+
+    function createEntityCollectionOptions(entityType: MetaEntity["entityType"]): OntologyCollectionOptions {
+        return liveQueryCollectionOptions({
+            query: new Query()
+                .from({ metadata })
+                .where(({ metadata }) => eq(metadata.entityType, entityType)),
+        }) as unknown as OntologyCollectionOptions;
+    }
 
     return {
         name: "foundry-metadata",
-        getSyncConfig: (objectType: string) => {
+        getCollectionOptions: (objectType: string) => {
             switch (objectType) {
                 case "ObjectType":
-                    return createStaticSyncConfig<MetaObjectType, string>(
-                        async () => (await metadata).objectTypes
-                    ) as SyncConfig<Record<string, unknown>, string | number>;
+                    return createEntityCollectionOptions("ObjectType");
                 case "ValueType":
-                    return createStaticSyncConfig<MetaValueType, string>(
-                        async () => (await metadata).valueTypes
-                    ) as SyncConfig<Record<string, unknown>, string | number>;
+                    return createEntityCollectionOptions("ValueType");
                 case "LinkType":
-                    return createStaticSyncConfig<MetaLinkType, string>(
-                        async () => (await metadata).linkTypes
-                    ) as SyncConfig<Record<string, unknown>, string | number>;
+                    return createEntityCollectionOptions("LinkType");
                 default:
                     throw new Error(`Unsupported Foundry metadata object type "${objectType}".`);
             }
         },
-    };
-}
-
-export function createOntologyMetadataCollections({
-    client,
-}: CreateOntologyMetadataCollectionsOpts): MetaCollections {
-    const metadata = loadMetaOntologyObjects(client);
-
-    return {
-        $objectType: createCollection<MetaObjectType, string>({
-            getKey: (objectType) => objectType.name,
-            sync: createStaticSyncConfig<MetaObjectType, string>(async () => (await metadata).objectTypes),
-        }),
-        $valueType: createCollection<MetaValueType, string>({
-            getKey: (valueType) => valueType.name,
-            sync: createStaticSyncConfig<MetaValueType, string>(async () => (await metadata).valueTypes),
-        }),
-        $linkType: createCollection<MetaLinkType, string>({
-            getKey: (linkType) => linkType.id,
-            sync: createStaticSyncConfig<MetaLinkType, string>(async () => (await metadata).linkTypes),
-        }),
     };
 }
 
@@ -93,41 +111,6 @@ async function loadMetaOntologyObjects(client: OntologyClient): Promise<{
         objectTypes: objectTypes.map(convertObjectType),
         valueTypes: Object.values(ontology.valueTypes).map(convertValueType),
         linkTypes: convertLinkTypes(objectTypes),
-    };
-}
-
-function createStaticSyncConfig<T extends Record<string, unknown>, TKey extends string | number>(
-    load: () => Promise<T[]>
-): SyncConfig<T, TKey> {
-    return {
-        sync: ({ begin, write, commit, markReady, collection }) => {
-            let cancelled = false;
-
-            void load().then((rows) => {
-                if (cancelled) {
-                    return;
-                }
-
-                begin();
-                for (const row of rows) {
-                    const key = collection.config.getKey(row);
-                    const previousValue = collection._state.syncedData.get(key);
-                    if (previousValue) {
-                        write({ type: "update", value: row, previousValue });
-                    } else {
-                        write({ type: "insert", value: row });
-                    }
-                }
-                commit();
-                markReady();
-            });
-
-            return {
-                cleanup: () => {
-                    cancelled = true;
-                },
-            };
-        },
     };
 }
 

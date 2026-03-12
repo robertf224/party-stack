@@ -153,10 +153,12 @@ export function createFoundryOntologyAdapter(opts: {
 
     return {
         name: "foundry",
-        getSyncConfig: (objectType: string) =>
-            createFoundryObjectSyncConfig(opts.client, objectType, (object) =>
+        getCollectionOptions: (objectType: string) => ({
+            syncMode: "on-demand",
+            sync: createFoundryObjectSyncConfig(opts.client, objectType, (object) =>
                 decoder ? (decoder.decodeObject(objectType, object) as FoundryObject) : object
             ),
+        }),
     };
 }
 
