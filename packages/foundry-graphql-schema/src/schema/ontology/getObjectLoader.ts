@@ -1,4 +1,9 @@
-import { OntologyObjectsV2, PropertyApiName, ObjectTypeV2 } from "@osdk/foundry.ontologies";
+import {
+    OntologyObjectsV2,
+    PropertyApiName,
+    ObjectTypeV2,
+    SearchObjectsRequestV2,
+} from "@osdk/foundry.ontologies";
 import { LoadOneCallback, loadOneCallback } from "grafast";
 import { FoundryContext } from "../context.js";
 import { PrimaryKeyValue, TypedOntologyObject } from "../utils/TypedOntologyObject.js";
@@ -29,7 +34,8 @@ export function getObjectLoader(objectType: ObjectTypeV2): ObjectLoader {
                     pageSize: ids.length,
                     select: attributes as PropertyApiName[],
                     excludeRid: true,
-                }
+                    // Leaving out selectV2
+                } as SearchObjectsRequestV2
             );
             const objectsMap = Object.fromEntries(
                 (data as TypedOntologyObject[]).map((object) => [object.__primaryKey, object])

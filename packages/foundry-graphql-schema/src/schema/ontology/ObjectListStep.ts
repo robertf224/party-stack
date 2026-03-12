@@ -1,5 +1,6 @@
 import { invariant } from "@bobbyfidz/panic";
 import {
+    LoadObjectSetRequestV2,
     ObjectSet,
     OntologyObjectSets,
     PropertyApiName,
@@ -101,7 +102,8 @@ class ObjectListStep extends Step<ObjectListStepData> {
                     pageToken,
                     excludeRid: true,
                     orderBy,
-                }
+                    // Leaving out selectV2
+                } as LoadObjectSetRequestV2
             );
 
             return {
