@@ -1,204 +1,378 @@
 import {
-    ActionTypeFullMetadata,
-    ActionTypesFullMetadata,
-    InterfaceType,
-    ObjectTypeFullMetadata,
+    type LinkTypeSideCardinality,
+    type LinkTypeSideV2,
+    type ObjectPropertyType,
+    type ObjectTypeFullMetadata,
     OntologiesV2,
-    OntologyValueType,
-    QueryTypeV2,
-    SharedPropertyType,
+    type OntologyValueType,
+    type PropertyV2,
+    type StructFieldType,
+    type ValueTypeConstraint,
+    type ValueTypeFieldType,
 } from "@osdk/foundry.ontologies";
-import { Collection, createCollection, eq, liveQueryCollectionOptions, Ref } from "@tanstack/db";
-import { QueryClient } from "@tanstack/query-core";
-import { queryCollectionOptions } from "@tanstack/query-db-collection";
-import * as AsyncIterable from "../utils/AsyncIterable.js";
-import { OntologyClient } from "../utils/client";
-
-interface ObjectTypeEntry {
-    type: "object-type";
-    rid: string;
-    objectType: ObjectTypeFullMetadata;
-}
-
-interface ValueTypeEntry {
-    type: "value-type";
-    rid: string;
-    valueType: OntologyValueType;
-}
-
-interface QueryTypeEntry {
-    type: "query-type";
-    rid: string;
-    queryType: QueryTypeV2;
-}
-
-interface InterfaceTypeEntry {
-    type: "interface-type";
-    rid: string;
-    interfaceType: InterfaceType;
-}
-
-interface SharedPropertyTypeEntry {
-    type: "shared-property-type";
-    rid: string;
-    sharedPropertyType: SharedPropertyType;
-}
-
-type OntologyMetadataCollectionEntry =
-    | ObjectTypeEntry
-    | ValueTypeEntry
-    | QueryTypeEntry
-    | InterfaceTypeEntry
-    | SharedPropertyTypeEntry;
+import { type Collection, createCollection, type SyncConfig } from "@tanstack/db";
+import type { OntologyClient } from "../utils/client.js";
+import type {
+    MetaLinkType,
+    MetaObjectType,
+    OntologyAdapter,
+    PropertyDef,
+    StringConstraint,
+    TypeDef,
+    MetaValueType,
+} from "@party-stack/ontology";
 
 export interface CreateOntologyMetadataCollectionsOpts {
     client: OntologyClient;
 }
 
-export function createOntologyMetadataCollections({ client }: CreateOntologyMetadataCollectionsOpts): {
-    $ontology: Collection<OntologyMetadataCollectionEntry>;
-    $actionType: Collection<ActionTypeFullMetadata>;
-    $objectType: Collection<ObjectTypeFullMetadata>;
-    $valueType: Collection<OntologyValueType>;
-    $queryType: Collection<QueryTypeV2>;
-    $interfaceType: Collection<InterfaceType>;
-    $sharedPropertyType: Collection<SharedPropertyType>;
-} {
-    const $ontology = createCollection(
-        queryCollectionOptions<OntologyMetadataCollectionEntry>({
-            queryClient: new QueryClient(),
-            getKey: (entry) => entry.rid,
-            queryKey: ["foundry", "ontology-metadata"],
-            syncMode: "eager",
-            queryFn: async () => {
-                const ontology = await OntologiesV2.getFullMetadata(client, client.ontologyRid);
-                return [
-                    ...Object.values(ontology.objectTypes).map(
-                        (objectType): ObjectTypeEntry => ({
-                            type: "object-type",
-                            rid: objectType.objectType.rid,
-                            objectType,
-                        })
-                    ),
-                    ...Object.values(ontology.valueTypes).map(
-                        (valueType): ValueTypeEntry => ({
-                            type: "value-type",
-                            rid: valueType.rid,
-                            valueType,
-                        })
-                    ),
-                    ...Object.values(ontology.queryTypes).map(
-                        (queryType): QueryTypeEntry => ({
-                            type: "query-type",
-                            rid: queryType.rid,
-                            queryType,
-                        })
-                    ),
-                    ...Object.values(ontology.interfaceTypes).map(
-                        (interfaceType): InterfaceTypeEntry => ({
-                            type: "interface-type",
-                            rid: interfaceType.rid,
-                            interfaceType,
-                        })
-                    ),
-                    ...Object.values(ontology.sharedPropertyTypes).map(
-                        (sharedPropertyType): SharedPropertyTypeEntry => ({
-                            type: "shared-property-type",
-                            rid: sharedPropertyType.rid,
-                            sharedPropertyType,
-                        })
-                    ),
-                ];
-            },
-        })
-    );
+type MetaCollections = {
+    $objectType: Collection<MetaObjectType, string>;
+    $valueType: Collection<MetaValueType, string>;
+    $linkType: Collection<MetaLinkType, string>;
+};
 
-    const $actionTypes = createCollection(
-        queryCollectionOptions<ActionTypeFullMetadata>({
-            queryClient: new QueryClient(),
-            getKey: (actionType) => actionType.actionType.rid,
-            queryKey: ["foundry", "action-types"],
-            syncMode: "eager",
-            queryFn: async () => {
-                const actionTypes = AsyncIterable.toArray(
-                    AsyncIterable.fromPagination(
-                        (pageSize, pageToken: string | undefined) =>
-                            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-                            ActionTypesFullMetadata.list(client, client.ontologyRid, {
-                                pageToken,
-                                pageSize,
-                                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                ...({ preview: true } as any),
-                            }),
-                        (page) => page.nextPageToken,
-                        (page) => page.data,
-                        500
-                    )
-                );
-                return actionTypes;
-            },
-        })
-    );
-
-    const $objectTypes = createCollection(
-        liveQueryCollectionOptions({
-            query: (q) =>
-                q
-                    .from({ $ontology })
-                    .where(({ $ontology }) => eq($ontology.type, "object-type"))
-                    .select(({ $ontology }) => ({ ...($ontology as Ref<ObjectTypeEntry>).objectType })),
-        })
-    );
-
-    const $valueTypes = createCollection(
-        liveQueryCollectionOptions({
-            query: (q) =>
-                q
-                    .from({ $ontology })
-                    .where(({ $ontology }) => eq($ontology.type, "value-type"))
-                    .select(({ $ontology }) => ({ ...($ontology as Ref<ValueTypeEntry>).valueType })),
-        })
-    );
-
-    const $queryTypes = createCollection(
-        liveQueryCollectionOptions({
-            query: (q) =>
-                q
-                    .from({ $ontology })
-                    .where(({ $ontology }) => eq($ontology.type, "query-type"))
-                    .select(({ $ontology }) => ({ ...($ontology as Ref<QueryTypeEntry>).queryType })),
-        })
-    );
-
-    const $interfaceTypes = createCollection(
-        liveQueryCollectionOptions({
-            query: (q) =>
-                q
-                    .from({ $ontology })
-                    .where(({ $ontology }) => eq($ontology.type, "interface-type"))
-                    .select(({ $ontology }) => ({ ...($ontology as Ref<InterfaceTypeEntry>).interfaceType })),
-        })
-    );
-
-    const $sharedPropertyTypes = createCollection(
-        liveQueryCollectionOptions({
-            query: (q) =>
-                q
-                    .from({ $ontology })
-                    .where(({ $ontology }) => eq($ontology.type, "shared-property-type"))
-                    .select(({ $ontology }) => ({
-                        ...($ontology as Ref<SharedPropertyTypeEntry>).sharedPropertyType,
-                    })),
-        })
-    );
+export function createFoundryMetadataOntologyAdapter(
+    opts: CreateOntologyMetadataCollectionsOpts
+): OntologyAdapter {
+    const metadata = loadMetaOntologyObjects(opts.client);
 
     return {
-        $ontology,
-        $actionType: $actionTypes,
-        $objectType: $objectTypes,
-        $valueType: $valueTypes,
-        $queryType: $queryTypes,
-        $interfaceType: $interfaceTypes,
-        $sharedPropertyType: $sharedPropertyTypes,
+        name: "foundry-metadata",
+        getSyncConfig: (objectType: string) => {
+            switch (objectType) {
+                case "ObjectType":
+                    return createStaticSyncConfig<MetaObjectType, string>(
+                        async () => (await metadata).objectTypes
+                    ) as SyncConfig<Record<string, unknown>, string | number>;
+                case "ValueType":
+                    return createStaticSyncConfig<MetaValueType, string>(
+                        async () => (await metadata).valueTypes
+                    ) as SyncConfig<Record<string, unknown>, string | number>;
+                case "LinkType":
+                    return createStaticSyncConfig<MetaLinkType, string>(
+                        async () => (await metadata).linkTypes
+                    ) as SyncConfig<Record<string, unknown>, string | number>;
+                default:
+                    throw new Error(`Unsupported Foundry metadata object type "${objectType}".`);
+            }
+        },
     };
+}
+
+export function createOntologyMetadataCollections({ client }: CreateOntologyMetadataCollectionsOpts): MetaCollections {
+    const metadata = loadMetaOntologyObjects(client);
+
+    return {
+        $objectType: createCollection<MetaObjectType, string>({
+            getKey: (objectType) => objectType.name,
+            sync: createStaticSyncConfig<MetaObjectType, string>(async () => (await metadata).objectTypes),
+        }),
+        $valueType: createCollection<MetaValueType, string>({
+            getKey: (valueType) => valueType.name,
+            sync: createStaticSyncConfig<MetaValueType, string>(async () => (await metadata).valueTypes),
+        }),
+        $linkType: createCollection<MetaLinkType, string>({
+            getKey: (linkType) => linkType.id,
+            sync: createStaticSyncConfig<MetaLinkType, string>(async () => (await metadata).linkTypes),
+        }),
+    };
+}
+
+async function loadMetaOntologyObjects(client: OntologyClient): Promise<{
+    objectTypes: MetaObjectType[];
+    valueTypes: MetaValueType[];
+    linkTypes: MetaLinkType[];
+}> {
+    const ontology = await OntologiesV2.getFullMetadata(client, client.ontologyRid);
+    const objectTypes = Object.values(ontology.objectTypes);
+
+    return {
+        objectTypes: objectTypes.map(convertObjectType),
+        valueTypes: Object.values(ontology.valueTypes).map(convertValueType),
+        linkTypes: convertLinkTypes(objectTypes),
+    };
+}
+
+function createStaticSyncConfig<T extends Record<string, unknown>, TKey extends string | number>(
+    load: () => Promise<T[]>
+): SyncConfig<T, TKey> {
+    return {
+        sync: ({ begin, write, commit, markReady, collection }) => {
+            let cancelled = false;
+
+            void load().then((rows) => {
+                if (cancelled) {
+                    return;
+                }
+
+                begin();
+                for (const row of rows) {
+                    const key = collection.config.getKey(row);
+                    const previousValue = collection._state.syncedData.get(key);
+                    if (previousValue) {
+                        write({ type: "update", value: row, previousValue });
+                    } else {
+                        write({ type: "insert", value: row });
+                    }
+                }
+                commit();
+                markReady();
+            });
+
+            return {
+                cleanup: () => {
+                    cancelled = true;
+                },
+            };
+        },
+    };
+}
+
+function convertObjectType(objectType: ObjectTypeFullMetadata): MetaObjectType {
+    return {
+        name: objectType.objectType.apiName,
+        displayName: objectType.objectType.displayName,
+        pluralDisplayName: objectType.objectType.pluralDisplayName,
+        primaryKey: objectType.objectType.primaryKey,
+        description: objectType.objectType.description,
+        properties: Object.entries(objectType.objectType.properties).map(([name, property]) =>
+            convertProperty(name, property)
+        ),
+    };
+}
+
+function convertProperty(name: string, property: PropertyV2): PropertyDef {
+    return {
+        name,
+        displayName: property.displayName ?? name,
+        description: property.description,
+        type: property.valueTypeApiName
+            ? { kind: "ref", value: { name: property.valueTypeApiName } }
+            : convertObjectPropertyType(property.dataType),
+    };
+}
+
+function convertValueType(valueType: OntologyValueType): MetaValueType {
+    return {
+        name: valueType.apiName,
+        description: valueType.description,
+        deprecated: valueType.status === "DEPRECATED" ? { message: "Deprecated in Foundry." } : undefined,
+        type: convertValueTypeFieldType(valueType.fieldType, valueType.constraints),
+    };
+}
+
+function convertValueTypeFieldType(type: ValueTypeFieldType, constraints: ValueTypeConstraint[] = []): TypeDef {
+    switch (type.type) {
+        case "string":
+            return { kind: "string", value: { constraint: extractStringConstraint(constraints) } };
+        case "boolean":
+            return { kind: "boolean", value: {} };
+        case "byte":
+        case "short":
+        case "integer":
+        case "long":
+            return { kind: "integer", value: {} };
+        case "float":
+            return { kind: "float", value: {} };
+        case "double":
+        case "decimal":
+            return { kind: "double", value: {} };
+        case "date":
+            return { kind: "date", value: {} };
+        case "timestamp":
+            return { kind: "timestamp", value: {} };
+        case "array":
+            return {
+                kind: "list",
+                value: { elementType: convertValueTypeFieldType(requireValue(type.subType, "array subtype")) },
+            };
+        case "optional":
+            return {
+                kind: "optional",
+                value: { type: convertValueTypeFieldType(requireValue(type.wrappedType, "optional type")) },
+            };
+        case "map":
+            return {
+                kind: "map",
+                value: {
+                    keyType: convertValueTypeFieldType(requireValue(type.keyType, "map key type")),
+                    valueType: convertValueTypeFieldType(requireValue(type.valueType, "map value type")),
+                },
+            };
+        case "struct":
+            return {
+                kind: "struct",
+                value: {
+                    fields: type.fields.map((field, index) => ({
+                        name: field.name ?? `field${index + 1}`,
+                        displayName: field.name ?? `Field ${index + 1}`,
+                        type: convertValueTypeFieldType(
+                            requireValue(field.fieldType, `struct field "${field.name ?? index}" type`)
+                        ),
+                    })),
+                },
+            };
+        case "union":
+            return {
+                kind: "union",
+                value: {
+                    variants: type.memberTypes.map((memberType, index) => ({
+                        name: `variant${index + 1}`,
+                        type: convertValueTypeFieldType(memberType),
+                    })),
+                },
+            };
+        default:
+            throw new Error(`Unsupported Foundry value type "${type.type}".`);
+    }
+}
+
+function convertObjectPropertyType(type: ObjectPropertyType): TypeDef {
+    switch (type.type) {
+        case "string":
+            return { kind: "string", value: {} };
+        case "boolean":
+            return { kind: "boolean", value: {} };
+        case "byte":
+        case "short":
+        case "integer":
+        case "long":
+            return { kind: "integer", value: {} };
+        case "float":
+            return { kind: "float", value: {} };
+        case "double":
+        case "decimal":
+            return { kind: "double", value: {} };
+        case "date":
+            return { kind: "date", value: {} };
+        case "timestamp":
+            return { kind: "timestamp", value: {} };
+        case "geopoint":
+            return { kind: "geopoint", value: {} };
+        case "cipherText":
+        case "geoshape":
+        case "geotimeSeriesReference":
+        case "marking":
+        case "timeseries":
+            // These Foundry-specific runtime payloads do not have a first-class IR representation yet.
+            return { kind: "string", value: {} };
+        case "attachment":
+        case "mediaReference":
+            return { kind: "attachment", value: {} };
+        case "vector":
+            return {
+                kind: "list",
+                value: {
+                    elementType: { kind: "double", value: {} },
+                },
+            };
+        case "array":
+            return {
+                kind: "list",
+                value: { elementType: convertObjectPropertyType(requireValue(type.subType, "array subtype")) },
+            };
+        case "struct":
+            return {
+                kind: "struct",
+                value: {
+                    fields: type.structFieldTypes.map(convertStructField),
+                },
+            };
+    }
+
+}
+
+function convertStructField(field: StructFieldType): PropertyDef {
+    return {
+        name: field.apiName,
+        displayName: field.apiName,
+        type: convertObjectPropertyType(field.dataType),
+    };
+}
+
+function extractStringConstraint(constraints: ValueTypeConstraint[]): StringConstraint | undefined {
+    const enumConstraint = constraints.find((constraint) => constraint.type === "enum");
+    if (enumConstraint) {
+        const options = enumConstraint.options
+            .filter((option): option is string => typeof option === "string")
+            .map((value) => ({ value }));
+        if (options.length > 0) {
+            return {
+                kind: "enum",
+                value: { options },
+            };
+        }
+    }
+
+    const regexConstraint = constraints.find((constraint) => constraint.type === "regex");
+    if (regexConstraint) {
+        return {
+            kind: "regex",
+            value: { regex: regexConstraint.pattern },
+        };
+    }
+
+    return undefined;
+}
+
+function convertLinkTypes(objectTypes: ObjectTypeFullMetadata[]): MetaLinkType[] {
+    const sidesByRid = new Map<string, LinkTypeSideV2[]>();
+
+    for (const objectType of objectTypes) {
+        for (const linkType of objectType.linkTypes) {
+            const key = linkType.linkTypeRid;
+            const sides = sidesByRid.get(key) ?? [];
+            sides.push(linkType);
+            sidesByRid.set(key, sides);
+        }
+    }
+
+    return Array.from(sidesByRid.entries())
+        .map(([id, sides]) => convertLinkType(id, sides))
+        .filter((linkType): linkType is MetaLinkType => linkType !== null);
+}
+
+function convertLinkType(id: string, sides: LinkTypeSideV2[]): MetaLinkType | null {
+    if (sides.length !== 2) {
+        return null;
+    }
+
+    const source = sides.find((side) => side.foreignKeyPropertyApiName);
+    if (!source) {
+        return null;
+    }
+
+    const target = sides.find((side) => side !== source);
+    if (!target) {
+        return null;
+    }
+
+    return {
+        id,
+        source: {
+            objectType: source.objectTypeApiName,
+            name: source.apiName,
+            displayName: source.displayName,
+        },
+        target: {
+            objectType: target.objectTypeApiName,
+            name: target.apiName,
+            displayName: target.displayName,
+        },
+        foreignKey: requireValue(source.foreignKeyPropertyApiName, "link foreign key"),
+        cardinality: convertCardinality(source.cardinality),
+    };
+}
+
+function convertCardinality(cardinality: LinkTypeSideCardinality): MetaLinkType["cardinality"] {
+    return cardinality === "ONE" ? "one" : "many";
+}
+
+function requireValue<T>(value: T | undefined, label: string): T {
+    if (value === undefined) {
+        throw new Error(`Expected Foundry ${label}.`);
+    }
+
+    return value;
 }

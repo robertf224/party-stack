@@ -1,81 +1,73 @@
-#!/usr/bin/env node
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { Command } from "commander";
+import nextEnv from "@next/env";
 import { createJiti } from "jiti";
 import { format, resolveConfig } from "prettier";
 import { generateOntology } from "../generate/ontology.js";
-import { createMetaLiveOntology } from "../meta/generated/live.js";
 import { pull } from "../meta/pull.js";
-import type { OntologyAdapter } from "../OntologyAdapter.js";
+import { createMetaLiveOntology } from "../ontology/generated/live.js";
+import type { OntologyAdapterModule, OntologyConfig } from "../OntologyConfig.js";
 
-type AdapterModule = Record<string, unknown> & { default?: unknown };
+const { loadEnvConfig } = nextEnv;
 
-const program = new Command();
+export const ONTOLOGY_CONFIG_PATH = "src/ontology/config.ts";
+export const ONTOLOGY_IR_PATH = "src/ontology/ontology.ts";
 
-function isOntologyAdapter(value: unknown): value is OntologyAdapter {
+type ConfigModule = Record<string, unknown> & { default?: unknown };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function isOntologyAdapterModule(value: unknown): value is OntologyAdapterModule {
+    return isRecord(value) && typeof value.createAdapter === "function";
+}
+
+function isOntologyConfig(value: unknown): value is OntologyConfig {
     return (
-        typeof value === "object" &&
-        value !== null &&
-        "name" in value &&
-        typeof value.name === "string" &&
-        "getSyncConfig" in value &&
-        typeof value.getSyncConfig === "function"
+        isRecord(value) &&
+        isOntologyAdapterModule(value.adapter) &&
+        Array.isArray(value.objectTypeNames) &&
+        value.objectTypeNames.every((entry) => typeof entry === "string") &&
+        "config" in value
     );
 }
 
-program
-    .name("pull")
-    .description("Pull ontology metadata through an adapter and generate an ontology.ts file")
-    .requiredOption("--adapter <path>", "Path to module exporting an OntologyAdapter")
-    .option("--adapterExport <name>", "Export name to load from the adapter module", "default")
-    .requiredOption("--objectTypes <names...>", "Object type names to pull")
-    .requiredOption("--out <path>", "Path to write the generated ontology file")
-    .option(
-        "--ontologyImportPath <path>",
-        "Module specifier to import `o` and `OntologyIR` from",
-        "@party-stack/ontology"
-    )
-    .action(
-        async (options: {
-            adapter: string;
-            adapterExport: string;
-            objectTypes: string[];
-            out: string;
-            ontologyImportPath: string;
-        }) => {
-            const adapterPath = resolve(process.cwd(), options.adapter);
-            const outPath = resolve(process.cwd(), options.out);
-            const jiti = createJiti(import.meta.url);
-            const adapterModule: AdapterModule = await jiti.import(adapterPath);
-            const adapterExport =
-                options.adapterExport === "default"
-                    ? adapterModule.default
-                    : adapterModule[options.adapterExport];
+export function discoverOntologyConfigPath(cwd: string): string | null {
+    const configPath = resolve(cwd, ONTOLOGY_CONFIG_PATH);
+    return existsSync(configPath) ? configPath : null;
+}
 
-            if (!isOntologyAdapter(adapterExport)) {
-                console.error(
-                    `Error: Adapter export "${options.adapterExport}" from "${options.adapter}" must be an OntologyAdapter`
-                );
-                process.exit(1);
-            }
+export async function loadOntologyConfig(configPath: string): Promise<OntologyConfig> {
+    loadEnvConfig(resolve(dirname(configPath), "../.."));
 
-            const ontology = await pull(createMetaLiveOntology(adapterExport), options.objectTypes);
-            const output = generateOntology(ontology, {
-                ontologyImportPath: options.ontologyImportPath,
-            });
+    const jiti = createJiti(import.meta.url);
+    const configModule: ConfigModule = await jiti.import(configPath);
+    const config = configModule.default;
 
-            mkdirSync(dirname(outPath), { recursive: true });
+    if (!isOntologyConfig(config)) {
+        throw new Error(`Config file "${configPath}" must default export an OntologyConfig value.`);
+    }
 
-            const prettierConfig = await resolveConfig(dirname(outPath));
-            const formatted = await format(`// Auto-generated file - do not edit manually\n\n${output}`, {
-                ...prettierConfig,
-                filepath: outPath,
-            });
+    return config;
+}
 
-            writeFileSync(outPath, formatted, "utf-8");
-            console.log(`Generated ontology written to: ${outPath}`);
-        }
-    );
+export async function writePulledOntology(
+    config: OntologyConfig,
+    outPath: string,
+    ontologyImportPath = "@party-stack/ontology"
+): Promise<void> {
+    const adapter = await config.adapter.createAdapter(config.config);
+    const ontology = await pull(createMetaLiveOntology(adapter), config.objectTypeNames);
+    const output = generateOntology(ontology, { ontologyImportPath });
 
-program.parse();
+    mkdirSync(dirname(outPath), { recursive: true });
+
+    const prettierConfig = await resolveConfig(dirname(outPath));
+    const formatted = await format(`// Auto-generated file - do not edit manually\n\n${output}`, {
+        ...prettierConfig,
+        filepath: outPath,
+    });
+
+    writeFileSync(outPath, formatted, "utf-8");
+}

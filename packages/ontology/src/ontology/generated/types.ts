@@ -198,7 +198,6 @@ export type LinkType = {
     /** How many sources are linked to the target. */
     cardinality: "one" | "many";
 };
-
 export type MetaOntology = {
     objectTypes: {
         ValueType: ValueType;

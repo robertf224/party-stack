@@ -28,6 +28,7 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
     const objects = Object.fromEntries(
         opts.ir.objectTypes.map((objectType) => {
             const collection = createCollection({
+                syncMode: "on-demand",
                 sync: opts.adapter.getSyncConfig(objectType.name),
                 getKey: (object) => {
                     const key = (object as Record<string, string | number | undefined>)[

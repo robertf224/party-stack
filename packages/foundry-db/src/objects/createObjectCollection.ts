@@ -13,10 +13,14 @@ import {
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import { OntologyClient } from "../utils/client.js";
 import { convertLoadSubsetFilter, convertLoadSubsetOrderBy } from "./convertLoadSubsetOptions.js";
+import { createFoundryObjectDecoder } from "./foundryCodec.js";
 import { OntologyObject } from "./OntologyObject.js";
 import { getObjectSetWatcherManager } from "./sync/ObjectSetWatcherManager.js";
+import type { OntologyAdapter, OntologyIR } from "@party-stack/ontology";
 
 type WithRequired<T, K extends keyof T> = T & { [P in K]-?: T[P] };
+
+type FoundryObject = OntologyObject & Record<string, unknown>;
 
 export interface ObjectCollectionConfig<TSchema extends StandardSchema<OntologyObject>>
     extends Omit<
@@ -31,19 +35,16 @@ export interface ObjectCollectionConfig<TSchema extends StandardSchema<OntologyO
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface ObjectCollectionUtils extends UtilsRecord {}
 
-function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>(
-    config: ObjectCollectionConfig<TSchema>
-): WithRequired<
-    CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema, ObjectCollectionUtils>,
-    "schema"
-> {
-    const { client, objectType, schema, ...rest } = config;
-
-    const sync: SyncConfig<InferSchemaOutput<TSchema>, string | number> = {
+export function createFoundryObjectSyncConfig(
+    client: OntologyClient,
+    objectType: string,
+    decodeObject: (object: FoundryObject) => FoundryObject = (object) => object
+): SyncConfig<Record<string, unknown>, string | number> {
+    return {
         sync: (params) => {
             const { begin, write, commit, markReady, collection } = params;
 
-            const upsertObject = (object: InferSchemaOutput<TSchema>) => {
+            const upsertObject = (object: FoundryObject) => {
                 const existingObject = collection._state.syncedData.get(object.__primaryKey);
                 if (existingObject) {
                     write({ type: "update", value: object, previousValue: existingObject });
@@ -52,14 +53,14 @@ function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>
                 }
             };
 
-            const deleteObject = (object: InferSchemaOutput<TSchema>) => {
+            const deleteObject = (object: FoundryObject) => {
                 const existingObject = collection._state.syncedData.get(object.__primaryKey);
                 if (existingObject) {
                     write({ type: "delete", value: object, previousValue: existingObject });
                 }
             };
 
-            const fetchObjects = async (opts: LoadSubsetOptions): Promise<InferSchemaOutput<TSchema>[]> => {
+            const fetchObjects = async (opts: LoadSubsetOptions): Promise<FoundryObject[]> => {
                 const where = convertLoadSubsetFilter(opts.where);
 
                 // Short-circuit this case since it should be no results but Foundry returns everything.
@@ -74,7 +75,7 @@ function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>
                                 snapshot: true,
                                 where,
                                 excludeRid: true,
-                                // We select all properties right now
+                                // We select all properties right now.
                                 select: [],
                                 selectV2: [],
                                 pageSize,
@@ -88,7 +89,7 @@ function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>
                     )
                 );
 
-                return results as InferSchemaOutput<TSchema>[];
+                return (results as FoundryObject[]).map(decodeObject);
             };
             const loadSubset = async (opts: LoadSubsetOptions): Promise<void> => {
                 const objects = await fetchObjects(opts);
@@ -101,7 +102,6 @@ function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>
                 }
             };
             const loadSubsetDedupe = new DeduplicatedLoadSubset({ loadSubset });
-
             const objectSetWatcherManager = getObjectSetWatcherManager(client);
             const unsubscribe = objectSetWatcherManager.subscribe({ type: "base", objectType }, (message) => {
                 switch (message.type) {
@@ -109,7 +109,7 @@ function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>
                         begin();
                         for (const update of message.updates) {
                             if (update.type === "object") {
-                                const object = update.object as InferSchemaOutput<TSchema>;
+                                const object = decodeObject(update.object as FoundryObject);
                                 switch (update.state) {
                                     case "ADDED_OR_UPDATED": {
                                         upsertObject(object);
@@ -140,6 +140,34 @@ function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>
             };
         },
     };
+}
+
+export function createFoundryOntologyAdapter(opts: {
+    client: OntologyClient;
+    ir?: OntologyIR;
+}): OntologyAdapter {
+    const decoder = opts.ir ? createFoundryObjectDecoder(opts.ir) : null;
+
+    return {
+        name: "foundry",
+        getSyncConfig: (objectType: string) =>
+            createFoundryObjectSyncConfig(opts.client, objectType, (object) =>
+                decoder ? (decoder.decodeObject(objectType, object) as FoundryObject) : object
+            ),
+    };
+}
+
+function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>(
+    config: ObjectCollectionConfig<TSchema>
+): WithRequired<
+    CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema, ObjectCollectionUtils>,
+    "schema"
+> {
+    const { client, objectType, schema, ...rest } = config;
+    const sync = createFoundryObjectSyncConfig(client, objectType) as unknown as SyncConfig<
+        InferSchemaOutput<TSchema>,
+        string | number
+    >;
 
     return {
         ...rest,
@@ -149,7 +177,9 @@ function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>
         sync,
     };
 }
-
+export function createObjectCollection<TSchema extends StandardSchema<OntologyObject>>(
+    config: ObjectCollectionConfig<TSchema>
+): Collection<InferSchemaOutput<TSchema>, string | number, ObjectCollectionUtils, TSchema>;
 export function createObjectCollection<TSchema extends StandardSchema<OntologyObject>>(
     config: ObjectCollectionConfig<TSchema>
 ): Collection<InferSchemaOutput<TSchema>, string | number, ObjectCollectionUtils, TSchema> {

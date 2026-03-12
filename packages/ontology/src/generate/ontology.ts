@@ -49,7 +49,10 @@ function writeArray(writer: CodeBlockWriter, values: string[]): void {
     writer.write("]");
 }
 
-function writeObject(writer: CodeBlockWriter, entries: Array<{ name: string; value: string | undefined }>): void {
+function writeObject(
+    writer: CodeBlockWriter,
+    entries: Array<{ name: string; value: string | undefined }>
+): void {
     const definedEntries = entries.filter((entry) => entry.value !== undefined);
     if (definedEntries.length === 0) {
         writer.write("{}");
@@ -95,7 +98,10 @@ function writePlainValue(writer: CodeBlockWriter, value: unknown): void {
     }
 
     if (Array.isArray(value)) {
-        writeArray(writer, value.map((entry) => renderPlainValue(entry)));
+        writeArray(
+            writer,
+            value.map((entry) => renderPlainValue(entry))
+        );
         return;
     }
 
@@ -158,7 +164,10 @@ function renderType(type: TypeDef): string {
                 {
                     name: "fields",
                     value: withWriter((writer) =>
-                        writeArray(writer, type.value.fields.map((field) => renderField(field)))
+                        writeArray(
+                            writer,
+                            type.value.fields.map((field) => renderField(field))
+                        )
                     ),
                 },
             ])})`;
@@ -167,7 +176,10 @@ function renderType(type: TypeDef): string {
                 {
                     name: "variants",
                     value: withWriter((writer) =>
-                        writeArray(writer, type.value.variants.map((variant) => renderVariant(variant)))
+                        writeArray(
+                            writer,
+                            type.value.variants.map((variant) => renderVariant(variant))
+                        )
                     ),
                 },
             ])})`;
@@ -214,7 +226,10 @@ function renderProperty(property: PropertyDef): string {
         { name: "name", value: renderPlainValue(property.name) },
         { name: "displayName", value: renderPlainValue(property.displayName) },
         { name: "type", value: renderType(property.type) },
-        { name: "description", value: property.description ? renderPlainValue(property.description) : undefined },
+        {
+            name: "description",
+            value: property.description ? renderPlainValue(property.description) : undefined,
+        },
         { name: "deprecated", value: renderDeprecation(property.deprecated) },
     ]);
 }
@@ -228,10 +243,16 @@ function renderObjectType(objectType: ObjectTypeDef): string {
         {
             name: "properties",
             value: withWriter((writer) =>
-                writeArray(writer, objectType.properties.map((property) => renderProperty(property)))
+                writeArray(
+                    writer,
+                    objectType.properties.map((property) => renderProperty(property))
+                )
             ),
         },
-        { name: "description", value: objectType.description ? renderPlainValue(objectType.description) : undefined },
+        {
+            name: "description",
+            value: objectType.description ? renderPlainValue(objectType.description) : undefined,
+        },
         { name: "deprecated", value: renderDeprecation(objectType.deprecated) },
     ]);
 }
@@ -275,19 +296,28 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
             {
                 name: "types",
                 value: withWriter((arrayWriter) =>
-                    writeArray(arrayWriter, ir.types.map((type) => renderNamedType(type)))
+                    writeArray(
+                        arrayWriter,
+                        ir.types.map((type) => renderNamedType(type))
+                    )
                 ),
             },
             {
                 name: "objectTypes",
                 value: withWriter((arrayWriter) =>
-                    writeArray(arrayWriter, ir.objectTypes.map((objectType) => renderObjectType(objectType)))
+                    writeArray(
+                        arrayWriter,
+                        ir.objectTypes.map((objectType) => renderObjectType(objectType))
+                    )
                 ),
             },
             {
                 name: "linkTypes",
                 value: withWriter((arrayWriter) =>
-                    writeArray(arrayWriter, ir.linkTypes.map((linkType) => renderLinkType(linkType)))
+                    writeArray(
+                        arrayWriter,
+                        ir.linkTypes.map((linkType) => renderLinkType(linkType))
+                    )
                 ),
             },
         ]);

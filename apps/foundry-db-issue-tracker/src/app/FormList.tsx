@@ -4,19 +4,6 @@ import { concat, eq, ilike, useLiveInfiniteQuery } from "@tanstack/react-db";
 import React, { useState } from "react";
 import { $form, $formRevision, $user } from "./collections";
 
-// q.from({ posts })
-//  .
-//
-
-// pattern 1: start from existing object, rn in lieu of hierarchical joins
-// q.from({ formRevision })
-//  .where($formRevision.utils.linkedTo("form", "abc123"))
-// q.from({ form }).join(...form.related("liveRevision"))
-
-// pattern 2: join on n:1
-// q.from({ $formRevision })
-//  .join(...$formRevision.utils.related("form"))
-
 export const FormList: React.FC = () => {
     const [query, setQuery] = useState("");
     const { data: forms } = useLiveInfiniteQuery(
@@ -49,7 +36,8 @@ export const FormList: React.FC = () => {
                 <ul className="flex flex-col gap-5">
                     {forms.map((form) => (
                         <li key={form.id}>
-                            {form.title} - {form.lastPublishedAt} - {form.lastPublishedBy}
+                            {form.title} - {form.lastPublishedAt ? String(form.lastPublishedAt) : ""} -{" "}
+                            {form.lastPublishedBy}
                         </li>
                     ))}
                 </ul>

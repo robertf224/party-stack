@@ -1,14 +1,13 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { createJiti } from "jiti";
 import { format, resolveConfig } from "prettier";
 import { generateLive } from "../generate/live.js";
 import { generateTypes } from "../generate/types.js";
 import type { OntologyIR } from "../ir/generated/types.js";
-
-const program = new Command();
 
 function toModuleSpecifier(path: string): string {
     const normalized = path.replaceAll("\\", "/");
@@ -26,64 +25,100 @@ function pascalCase(value: string): string {
         .join("");
 }
 
+function ontologyTypeName(namespace: string): string {
+    return namespace.endsWith("Ontology") ? namespace : `${namespace}Ontology`;
+}
+
+export interface GenerateFilesOpts {
+    ontology: string;
+    outDir: string;
+    namespace?: string;
+}
+
+function readPackageName(cwd: string): string | null {
+    try {
+        const packageJson = JSON.parse(readFileSync(resolve(cwd, "package.json"), "utf-8")) as {
+            name?: string;
+        };
+        return packageJson.name ?? null;
+    } catch {
+        return null;
+    }
+}
+
+export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
+    const ontologyPath = resolve(process.cwd(), options.ontology);
+    const outDir = resolve(process.cwd(), options.outDir);
+    const jiti = createJiti(import.meta.url);
+    const ontologyModule = await jiti.import(ontologyPath);
+    const ontology = (ontologyModule as { default: OntologyIR }).default;
+
+    if (!ontology || !Array.isArray(ontology.types) || !Array.isArray(ontology.objectTypes)) {
+        throw new Error(`Ontology export from "${options.ontology}" must be an OntologyIR value`);
+    }
+
+    const ontologyFileName = basename(ontologyPath, extname(ontologyPath));
+    const slug = ontologyFileName === "ontology" ? basename(dirname(ontologyPath)) : ontologyFileName;
+    const namespace = options.namespace ?? pascalCase(slug);
+    const generatedOntologyTypeName = ontologyTypeName(namespace);
+    const ontologyRuntimeImportPath =
+        readPackageName(process.cwd()) === "@party-stack/ontology"
+            ? "../../runtime.js"
+            : "@party-stack/ontology/runtime";
+
+    const ontologyImportPath = toModuleSpecifier(relative(outDir, ontologyPath).replace(/\.ts$/, ".js"));
+    const typesOutput = generateTypes(ontology, {
+        outputTypeName: generatedOntologyTypeName,
+    });
+    const liveOutput = generateLive(ontology, {
+        ontologyImportPath,
+        ontologyTypesImportPath: "./types.js",
+        ontologyRuntimeImportPath,
+        ontologyTypeName: generatedOntologyTypeName,
+        outputFactoryName: `create${namespace}LiveOntology`,
+    });
+
+    mkdirSync(outDir, { recursive: true });
+
+    const typesFilePath = join(outDir, "types.ts");
+    const liveFilePath = join(outDir, "live.ts");
+    const header = "// Auto-generated file - do not edit manually\n\n";
+    const prettierConfig = await resolveConfig(outDir);
+
+    const formatAndWrite = async (filePath: string, content: string) => {
+        const formatted = await format(header + content, {
+            ...prettierConfig,
+            filepath: filePath,
+        });
+        writeFileSync(filePath, formatted, "utf-8");
+    };
+
+    await Promise.all([
+        formatAndWrite(typesFilePath, typesOutput),
+        formatAndWrite(liveFilePath, liveOutput),
+    ]);
+
+    console.log(`Generated types written to: ${typesFilePath}`);
+    console.log(`Generated live helpers written to: ${liveFilePath}`);
+}
+
+const program = new Command();
+
 program
     .name("generate")
     .description("Generate ontology types and live helpers from an OntologyIR file")
     .requiredOption("--ontology <path>", "Path to the ontology module (must export an OntologyIR)")
     .requiredOption("--outDir <path>", "Directory to write generated files")
-    .action(async (options: { ontology: string; outDir: string }) => {
-        const ontologyPath = resolve(process.cwd(), options.ontology);
-        const outDir = resolve(process.cwd(), options.outDir);
-        const jiti = createJiti(import.meta.url);
-        const ontologyModule = await jiti.import(ontologyPath);
-        const ontology = (ontologyModule as { default: OntologyIR }).default;
-
-        if (!ontology || !Array.isArray(ontology.types) || !Array.isArray(ontology.objectTypes)) {
-            console.error(`Error: Ontology export from "${options.ontology}" must be an OntologyIR value`);
+    .option("--namespace <name>", "Namespace for generated ontology types/factories")
+    .action(async (options: GenerateFilesOpts) => {
+        try {
+            await generateFiles(options);
+        } catch (error) {
+            console.error(error instanceof Error ? error.message : String(error));
             process.exit(1);
         }
-
-        const ontologyFileName = basename(ontologyPath, extname(ontologyPath));
-        const slug = ontologyFileName === "ontology" ? basename(dirname(ontologyPath)) : ontologyFileName;
-        const namespace = pascalCase(slug);
-        const ontologyTypeName = `${namespace}Ontology`;
-
-        const typesFile = "types.ts";
-        const liveFile = "live.ts";
-        const ontologyImportPath = toModuleSpecifier(relative(outDir, ontologyPath).replace(/\.ts$/, ".js"));
-
-        const typesOutput = generateTypes(ontology, {
-            outputTypeName: ontologyTypeName,
-        });
-        const liveOutput = generateLive(ontology, {
-            ontologyImportPath,
-            ontologyTypesImportPath: "./types.js",
-            ontologyTypeName,
-            outputFactoryName: `create${namespace}LiveOntology`,
-        });
-
-        mkdirSync(outDir, { recursive: true });
-
-        const typesFilePath = join(outDir, typesFile);
-        const liveFilePath = join(outDir, liveFile);
-        const header = "// Auto-generated file - do not edit manually\n\n";
-        const prettierConfig = await resolveConfig(outDir);
-
-        const formatAndWrite = async (filePath: string, content: string) => {
-            const formatted = await format(header + content, {
-                ...prettierConfig,
-                filepath: filePath,
-            });
-            writeFileSync(filePath, formatted, "utf-8");
-        };
-
-        await Promise.all([
-            formatAndWrite(typesFilePath, typesOutput),
-            formatAndWrite(liveFilePath, liveOutput),
-        ]);
-
-        console.log(`Generated types written to: ${typesFilePath}`);
-        console.log(`Generated live helpers written to: ${liveFilePath}`);
     });
 
-program.parse();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    program.parse();
+}

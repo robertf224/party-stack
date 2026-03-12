@@ -4,6 +4,7 @@ import type { OntologyIR } from "../ir/generated/types.js";
 export interface GenerateLiveOpts {
     ontologyImportPath: string;
     ontologyTypesImportPath: string;
+    ontologyRuntimeImportPath: string;
     ontologyTypeName: string;
     outputFactoryName: string;
 }
@@ -14,7 +15,7 @@ export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
     const sourceFile = project.createSourceFile("live.ts", "");
 
     sourceFile.addImportDeclaration({
-        moduleSpecifier: "../../LiveOntology.js",
+        moduleSpecifier: opts.ontologyRuntimeImportPath,
         namedImports: [{ name: "createLiveOntology" }, { name: "LiveOntology", isTypeOnly: true }],
     });
     sourceFile.addImportDeclaration({
@@ -27,7 +28,7 @@ export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
         isTypeOnly: true,
     });
     sourceFile.addImportDeclaration({
-        moduleSpecifier: "../../OntologyAdapter.js",
+        moduleSpecifier: opts.ontologyRuntimeImportPath,
         namedImports: ["OntologyAdapter"],
         isTypeOnly: true,
     });

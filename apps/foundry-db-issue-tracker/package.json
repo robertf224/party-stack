@@ -7,12 +7,16 @@
         "dev": "next dev",
         "dist": "next build",
         "lint": "eslint",
+        "ontology:generate": "ontology generate",
+        "ontology:pull": "ontology pull",
         "start": "serve out"
     },
     "dependencies": {
         "@bobbyfidz/foundry-db": "workspace:*",
-        "@tanstack/db": "^0.5.30",
-        "@tanstack/react-db": "^0.1.74",
+        "@party-stack/ontology": "workspace:*",
+        "@party-stack/schema": "workspace:*",
+        "@tanstack/db": "^0.5.32",
+        "@tanstack/react-db": "^0.1.76",
         "@tanstack/react-table": "^8.21.3",
         "next": "16.1.6",
         "react": "^19.2.0",
