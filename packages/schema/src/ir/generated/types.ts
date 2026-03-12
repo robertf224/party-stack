@@ -1,6 +1,6 @@
 // Auto-generated file - do not edit manually
 
-import * as v from "@party-stack/schema/values";
+import * as v from "../../utils/values.js";
 
 export type Deprecation = {
     message: string;

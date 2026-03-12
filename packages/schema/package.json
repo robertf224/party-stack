@@ -12,7 +12,7 @@
             "default": "./lib/generate/index.js"
         },
         "./values": {
-            "types": "./src/utils/values.ts"
+            "types": "./lib/utils/values.d.ts"
         }
     },
     "files": [
