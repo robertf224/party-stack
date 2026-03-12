@@ -57,16 +57,22 @@ export async function writePulledOntology(
     ontologyImportPath = "@party-stack/ontology"
 ): Promise<void> {
     const adapter = await config.adapter.createAdapter(config.opts);
-    const ontology = await pull(createMetaLiveOntology(adapter), config.objectTypeNames);
-    const output = generateOntology(ontology, { ontologyImportPath });
+    const liveOntology = createMetaLiveOntology(adapter);
 
-    mkdirSync(dirname(outPath), { recursive: true });
+    try {
+        const ontology = await pull(liveOntology, config.objectTypeNames);
+        const output = generateOntology(ontology, { ontologyImportPath });
 
-    const prettierConfig = await resolveConfig(dirname(outPath));
-    const formatted = await format(`// Auto-generated file - do not edit manually\n\n${output}`, {
-        ...prettierConfig,
-        filepath: outPath,
-    });
+        mkdirSync(dirname(outPath), { recursive: true });
 
-    writeFileSync(outPath, formatted, "utf-8");
+        const prettierConfig = await resolveConfig(dirname(outPath));
+        const formatted = await format(`// Auto-generated file - do not edit manually\n\n${output}`, {
+            ...prettierConfig,
+            filepath: outPath,
+        });
+
+        writeFileSync(outPath, formatted, "utf-8");
+    } finally {
+        await liveOntology.cleanup();
+    }
 }

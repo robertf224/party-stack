@@ -10,4 +10,5 @@ export interface OntologyAdapter {
     getCollectionOptions: (objectType: string) => OntologyCollectionOptions;
     // TODO: actions
     // TODO: install/destroy
+    cleanup?: () => void | Promise<void>;
 }

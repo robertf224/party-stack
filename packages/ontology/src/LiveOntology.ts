@@ -15,6 +15,7 @@ export type LiveOntologyObjects<ObjectTypes extends OntologyDefinition["objectTy
 
 export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefinition> {
     objects: LiveOntologyObjects<Ontology["objectTypes"]>;
+    cleanup: () => Promise<void>;
 }
 
 export interface LiveOntologyOpts {
@@ -49,5 +50,9 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
 
     return {
         objects: objects as unknown as LiveOntologyObjects<Ontology["objectTypes"]>,
+        cleanup: async () => {
+            await Promise.all(Object.values(objects).map((collection) => collection.cleanup()));
+            await opts.adapter.cleanup?.();
+        },
     };
 }

@@ -37,9 +37,10 @@ type MetaEntity =
 export function createFoundryMetaOntologyAdapter(
     opts: CreateOntologyMetadataCollectionsOpts
 ): OntologyAdapter {
+    const queryClient = new QueryClient();
     const metadata = createCollection(
         queryCollectionOptions<MetaEntity>({
-            queryClient: new QueryClient(),
+            queryClient,
             getKey: (row) => {
                 switch (row.entityType) {
                     case "ObjectType":
@@ -95,6 +96,9 @@ export function createFoundryMetaOntologyAdapter(
                 default:
                     throw new Error(`Unsupported Foundry metadata object type "${objectType}".`);
             }
+        },
+        cleanup: async () => {
+            await metadata.cleanup();
         },
     };
 }
