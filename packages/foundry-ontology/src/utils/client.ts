@@ -12,7 +12,12 @@ export interface OntologyClient extends Client {
 
 export const createClient = (context: Optional<Client, "fetch">): Client => {
     // TODO: remove this dep and implement our own network setup here.
-    return createSharedClientContext(context.baseUrl, context.tokenProvider, "foundry-db", context.fetch);
+    return createSharedClientContext(
+        context.baseUrl,
+        context.tokenProvider,
+        "foundry-ontology",
+        context.fetch
+    );
 };
 
 export function createOntologyClient(context: Optional<OntologyClient, "fetch">): OntologyClient {

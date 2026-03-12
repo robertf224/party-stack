@@ -1,5 +1,5 @@
 {
-    "name": "@bobbyfidz/foundry-db-issue-tracker",
+    "name": "@party-stack/issue-tracker",
     "version": "0.0.0",
     "private": true,
     "scripts": {
@@ -12,7 +12,7 @@
         "start": "serve out"
     },
     "dependencies": {
-        "@bobbyfidz/foundry-db": "workspace:*",
+        "@party-stack/foundry-ontology": "workspace:*",
         "@party-stack/ontology": "workspace:*",
         "@party-stack/schema": "workspace:*",
         "@tanstack/db": "^0.5.32",

@@ -11,7 +11,6 @@ import {
     type ValueTypeFieldType,
 } from "@osdk/foundry.ontologies";
 import { type Collection, createCollection, type SyncConfig } from "@tanstack/db";
-import type { OntologyClient } from "../utils/client.js";
 import type {
     MetaLinkType,
     MetaObjectType,
@@ -21,6 +20,7 @@ import type {
     TypeDef,
     MetaValueType,
 } from "@party-stack/ontology";
+import type { OntologyClient } from "../utils/client.js";
 
 export interface CreateOntologyMetadataCollectionsOpts {
     client: OntologyClient;
@@ -32,7 +32,7 @@ type MetaCollections = {
     $linkType: Collection<MetaLinkType, string>;
 };
 
-export function createFoundryMetadataOntologyAdapter(
+export function createFoundryMetaOntologyAdapter(
     opts: CreateOntologyMetadataCollectionsOpts
 ): OntologyAdapter {
     const metadata = loadMetaOntologyObjects(opts.client);
@@ -60,7 +60,9 @@ export function createFoundryMetadataOntologyAdapter(
     };
 }
 
-export function createOntologyMetadataCollections({ client }: CreateOntologyMetadataCollectionsOpts): MetaCollections {
+export function createOntologyMetadataCollections({
+    client,
+}: CreateOntologyMetadataCollectionsOpts): MetaCollections {
     const metadata = loadMetaOntologyObjects(client);
 
     return {
@@ -162,7 +164,10 @@ function convertValueType(valueType: OntologyValueType): MetaValueType {
     };
 }
 
-function convertValueTypeFieldType(type: ValueTypeFieldType, constraints: ValueTypeConstraint[] = []): TypeDef {
+function convertValueTypeFieldType(
+    type: ValueTypeFieldType,
+    constraints: ValueTypeConstraint[] = []
+): TypeDef {
     switch (type.type) {
         case "string":
             return { kind: "string", value: { constraint: extractStringConstraint(constraints) } };
@@ -185,7 +190,9 @@ function convertValueTypeFieldType(type: ValueTypeFieldType, constraints: ValueT
         case "array":
             return {
                 kind: "list",
-                value: { elementType: convertValueTypeFieldType(requireValue(type.subType, "array subtype")) },
+                value: {
+                    elementType: convertValueTypeFieldType(requireValue(type.subType, "array subtype")),
+                },
             };
         case "optional":
             return {
@@ -270,7 +277,9 @@ function convertObjectPropertyType(type: ObjectPropertyType): TypeDef {
         case "array":
             return {
                 kind: "list",
-                value: { elementType: convertObjectPropertyType(requireValue(type.subType, "array subtype")) },
+                value: {
+                    elementType: convertObjectPropertyType(requireValue(type.subType, "array subtype")),
+                },
             };
         case "struct":
             return {
@@ -280,7 +289,6 @@ function convertObjectPropertyType(type: ObjectPropertyType): TypeDef {
                 },
             };
     }
-
 }
 
 function convertStructField(field: StructFieldType): PropertyDef {

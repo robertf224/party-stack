@@ -1,4 +1,4 @@
-import { OntologyObjectsV2 } from "@osdk/foundry.ontologies";
+import { OntologyObjectsV2, OntologyObjectV2 } from "@osdk/foundry.ontologies";
 import {
     Collection,
     CollectionConfig,
@@ -10,15 +10,18 @@ import {
     SyncConfig,
     UtilsRecord,
 } from "@tanstack/db";
+import type { OntologyAdapter, OntologyIR } from "@party-stack/ontology";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import { OntologyClient } from "../utils/client.js";
 import { convertLoadSubsetFilter, convertLoadSubsetOrderBy } from "./convertLoadSubsetOptions.js";
 import { createFoundryObjectDecoder } from "./foundryCodec.js";
-import { OntologyObject } from "./OntologyObject.js";
 import { getObjectSetWatcherManager } from "./sync/ObjectSetWatcherManager.js";
-import type { OntologyAdapter, OntologyIR } from "@party-stack/ontology";
 
 type WithRequired<T, K extends keyof T> = T & { [P in K]-?: T[P] };
+
+interface OntologyObject extends OntologyObjectV2 {
+    __primaryKey: string | number;
+}
 
 type FoundryObject = OntologyObject & Record<string, unknown>;
 

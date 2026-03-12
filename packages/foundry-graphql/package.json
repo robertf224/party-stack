@@ -29,7 +29,7 @@
         "@bobbyfidz/foundry-graphql-schema": "workspace:*",
         "@bobbyfidz/local-oauth-flow": "^0.1.0",
         "@bobbyfidz/panic": "^0.1.0",
-        "@next/env": "^16.0.3",
+        "@next/env": "^16.1.6",
         "@oclif/core": "^4.8.0",
         "@osdk/client": "^2.5.2",
         "graphql": "^16.10.0",

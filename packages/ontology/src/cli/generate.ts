@@ -63,8 +63,8 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
     const generatedOntologyTypeName = ontologyTypeName(namespace);
     const ontologyRuntimeImportPath =
         readPackageName(process.cwd()) === "@party-stack/ontology"
-            ? "../../runtime.js"
-            : "@party-stack/ontology/runtime";
+            ? "../../index.js"
+            : "@party-stack/ontology";
 
     const ontologyImportPath = toModuleSpecifier(relative(outDir, ontologyPath).replace(/\.ts$/, ".js"));
     const typesOutput = generateTypes(ontology, {
@@ -93,10 +93,7 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
         writeFileSync(filePath, formatted, "utf-8");
     };
 
-    await Promise.all([
-        formatAndWrite(typesFilePath, typesOutput),
-        formatAndWrite(liveFilePath, liveOutput),
-    ]);
+    await Promise.all([formatAndWrite(typesFilePath, typesOutput), formatAndWrite(liveFilePath, liveOutput)]);
 
     console.log(`Generated types written to: ${typesFilePath}`);
     console.log(`Generated live helpers written to: ${liveFilePath}`);

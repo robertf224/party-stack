@@ -1,5 +1,5 @@
 {
-    "name": "@bobbyfidz/foundry-db",
+    "name": "@party-stack/foundry-ontology",
     "version": "0.0.0",
     "type": "module",
     "exports": {
@@ -11,57 +11,36 @@
             "types": "./lib/users/index.d.ts",
             "default": "./lib/users/index.js"
         },
-        "./objects": {
-            "types": "./lib/objects/index.d.ts",
-            "default": "./lib/objects/index.js"
+        "./meta": {
+            "types": "./lib/meta/index.d.ts",
+            "default": "./lib/meta/index.js"
         },
-        "./ontology-metadata": {
-            "types": "./lib/ontology-metadata/index.d.ts",
-            "default": "./lib/ontology-metadata/index.js"
-        },
-        "./ontology": {
-            "types": "./lib/ontology/index.d.ts",
-            "default": "./lib/ontology/index.js"
-        },
-        "./schema": {
-            "types": "./lib/schema/index.d.ts",
-            "default": "./lib/schema/index.js"
+        "./config": {
+            "types": "./lib/config/index.d.ts",
+            "default": "./lib/config/index.js"
         }
     },
-    "bin": {
-        "foundry-db": "./bin/run.js"
-    },
     "files": [
-        "lib",
-        "bin"
+        "lib"
     ],
     "scripts": {
         "build": "tsc",
         "lint": "eslint",
-        "test": "vitest run --pass-with-no-tests",
-        "test-history": "tsx src/objects/lib/getObjectEditHistory.ts"
-    },
-    "oclif": {
-        "bin": "foundry-db",
-        "commands": "./lib/cli/commands",
-        "dirname": "foundry-db",
-        "topicSeparator": " "
+        "test": "vitest run --pass-with-no-tests"
     },
     "dependencies": {
         "@bobbyfidz/local-oauth-flow": "^0.1.0",
         "@bobbyfidz/osdk-utils": "workspace:*",
         "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/urls": "^0.2.1",
-        "@party-stack/ontology": "workspace:*",
         "@effectionx/signals": "^0.5.2",
         "@effectionx/stream-helpers": "^0.8.1",
         "@effectionx/websocket": "^2.3.2",
-        "@next/env": "^16.0.3",
-        "@oclif/core": "^4.8.0",
         "@osdk/foundry.admin": "^2.47.0",
         "@osdk/foundry.ontologies": "^2.49.0",
         "@osdk/shared.client.impl": "^1.5.0",
         "@osdk/shared.client2": "^1.0.0",
+        "@party-stack/ontology": "workspace:*",
         "effection": "^4.0.2",
         "temporal-polyfill": "^0.3.0",
         "zod": "^4.1.13"

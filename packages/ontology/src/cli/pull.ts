@@ -6,7 +6,7 @@ import { format, resolveConfig } from "prettier";
 import { generateOntology } from "../generate/ontology.js";
 import { pull } from "../meta/pull.js";
 import { createMetaLiveOntology } from "../ontology/generated/live.js";
-import type { OntologyAdapterModule, OntologyConfig } from "../OntologyConfig.js";
+import type { OntologyConfigAdapter, OntologyConfig } from "../OntologyConfig.js";
 
 const { loadEnvConfig } = nextEnv;
 
@@ -19,17 +19,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
 
-function isOntologyAdapterModule(value: unknown): value is OntologyAdapterModule {
+function isOntologyConfigAdapter(value: unknown): value is OntologyConfigAdapter {
     return isRecord(value) && typeof value.createAdapter === "function";
 }
 
 function isOntologyConfig(value: unknown): value is OntologyConfig {
     return (
         isRecord(value) &&
-        isOntologyAdapterModule(value.adapter) &&
+        isOntologyConfigAdapter(value.adapter) &&
         Array.isArray(value.objectTypeNames) &&
-        value.objectTypeNames.every((entry) => typeof entry === "string") &&
-        "config" in value
+        value.objectTypeNames.every((entry) => typeof entry === "string")
     );
 }
 
@@ -57,7 +56,7 @@ export async function writePulledOntology(
     outPath: string,
     ontologyImportPath = "@party-stack/ontology"
 ): Promise<void> {
-    const adapter = await config.adapter.createAdapter(config.config);
+    const adapter = await config.adapter.createAdapter(config.opts);
     const ontology = await pull(createMetaLiveOntology(adapter), config.objectTypeNames);
     const output = generateOntology(ontology, { ontologyImportPath });
 

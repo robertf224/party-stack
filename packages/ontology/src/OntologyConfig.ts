@@ -1,11 +1,11 @@
 import type { OntologyAdapter } from "./OntologyAdapter.js";
 
-export interface OntologyAdapterModule<TConfig = unknown> {
-    createAdapter: (config: TConfig) => OntologyAdapter | Promise<OntologyAdapter>;
+export interface OntologyConfigAdapter<Opts = unknown> {
+    createAdapter: (opts: Opts) => OntologyAdapter | Promise<OntologyAdapter>;
 }
 
-export interface OntologyConfig<TConfig = unknown> {
-    adapter: OntologyAdapterModule<TConfig>;
+export interface OntologyConfig<Opts = unknown> {
+    adapter: OntologyConfigAdapter<Opts>;
     objectTypeNames: string[];
-    config: TConfig;
+    opts?: Opts;
 }

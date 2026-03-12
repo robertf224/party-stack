@@ -1,8 +1,8 @@
 "use client";
 
-import { createOntologyClient } from "@bobbyfidz/foundry-db";
-import { createFoundryOntologyAdapter } from "@bobbyfidz/foundry-db/objects";
-import { createUserCollection } from "@bobbyfidz/foundry-db/users";
+import { createOntologyClient } from "../../../../packages/foundry-ontology/lib";
+import { createFoundryOntologyAdapter } from "../../../../packages/foundry-ontology/lib/adapter";
+import { createUserCollection } from "@party-stack/foundry-ontology/users";
 import ontology from "../ontology/ontology";
 import { createFoundryDbIssueTrackerLiveOntology } from "../ontology/generated/live";
 
