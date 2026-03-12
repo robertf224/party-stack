@@ -2,5 +2,5 @@ import { foundryOntologyConfigAdapter, FoundryOntologyConfig } from "@party-stac
 
 export default {
     adapter: foundryOntologyConfigAdapter,
-    objectTypeNames: ["StreamlineForm", "StreamlineFormRevision"],
+    objectTypeNames: ["Task"],
 } satisfies FoundryOntologyConfig;

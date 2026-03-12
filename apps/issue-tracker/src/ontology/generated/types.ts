@@ -2,36 +2,15 @@
 
 import * as v from "@party-stack/schema/values";
 
-export type StreamlineForm = {
-    liveRevisionId: string;
+export type Task = {
     id: string;
-    isPublicSubmissionAllowed: boolean;
-    updatedAt: v.timestamp;
-    observabilityEnabled: boolean;
-    actionTypeRid: string;
-    title: string;
-    createdAt: v.timestamp;
-    allowedImageSources: Array<string>;
-    spec: string;
-    theme: string;
-    publicSecurityPoliciesEnabled: boolean;
-    media: Array<v.attachment>;
-};
-
-export type StreamlineFormRevision = {
-    id: string;
-    formId: string;
-    theme: string;
-    spec: string;
+    location: v.geopoint;
     createdBy: string;
-    actionTypeRid: string;
-    media: Array<v.attachment>;
-    createdAt: v.timestamp;
-    allowedImageSources: Array<string>;
+    title: string;
+    completedAt: v.timestamp;
 };
-export type FoundryDbIssueTrackerOntology = {
+export type IssueTrackerOntology = {
     objectTypes: {
-        StreamlineForm: StreamlineForm;
-        StreamlineFormRevision: StreamlineFormRevision;
+        Task: Task;
     };
 };

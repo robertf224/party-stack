@@ -7,6 +7,10 @@
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
         },
+        "./generate": {
+            "types": "./lib/generate/index.d.ts",
+            "default": "./lib/generate/index.js"
+        },
         "./values": {
             "types": "./src/utils/values.ts"
         }

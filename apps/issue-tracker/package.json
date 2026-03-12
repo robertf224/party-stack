@@ -4,7 +4,7 @@
     "private": true,
     "scripts": {
         "build": "tsc",
-        "dev": "next dev",
+        "dev": "next dev --webpack",
         "dist": "next build",
         "lint": "eslint",
         "ontology:generate": "ontology generate",

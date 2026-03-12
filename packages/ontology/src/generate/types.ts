@@ -1,4 +1,5 @@
-import { generateTypes as generateSchemaTypes, type SchemaIR } from "@party-stack/schema";
+import { generateTypes as generateSchemaTypes } from "@party-stack/schema/generate";
+import type { SchemaIR } from "@party-stack/schema";
 import { Project, Writers, type SourceFile } from "ts-morph";
 import type { OntologyIR } from "../ir/generated/types.js";
 

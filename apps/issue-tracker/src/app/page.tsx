@@ -1,10 +1,10 @@
 "use client";
 
 import { ClientOnly } from "./ClientOnly";
-import { FormList } from "./FormList";
+import { TaskList } from "./TaskList";
 
 function Home() {
-    return <FormList />;
+    return <TaskList />;
 }
 
 export default ClientOnly(Home);

@@ -1,10 +1,9 @@
 "use client";
 
-import { createOntologyClient } from "../../../../packages/foundry-ontology/lib";
-import { createFoundryOntologyAdapter } from "../../../../packages/foundry-ontology/lib/adapter";
+import { createOntologyClient, createFoundryOntologyAdapter } from "@party-stack/foundry-ontology";
 import { createUserCollection } from "@party-stack/foundry-ontology/users";
-import ontology from "../ontology/ontology";
-import { createFoundryDbIssueTrackerLiveOntology } from "../ontology/generated/live";
+import ontology from "../ontology/ontology.js";
+import { createIssueTrackerLiveOntology } from "../ontology/generated/live.js";
 
 const client = createOntologyClient({
     baseUrl: process.env.NEXT_PUBLIC_FOUNDRY_URL!,
@@ -12,9 +11,6 @@ const client = createOntologyClient({
     tokenProvider: () => Promise.resolve(process.env.NEXT_PUBLIC_FOUNDRY_TOKEN!),
 });
 const adapter = createFoundryOntologyAdapter({ client, ir: ontology });
-const liveOntology = createFoundryDbIssueTrackerLiveOntology(adapter);
-const { StreamlineForm, StreamlineFormRevision } = liveOntology.objects;
-
-export const $user = createUserCollection({ client });
-export const $form = StreamlineForm;
-export const $formRevision = StreamlineFormRevision;
+const liveOntology = createIssueTrackerLiveOntology(adapter);
+export const { Task } = liveOntology.objects;
+export const User = createUserCollection({ client });
