@@ -79,4 +79,4 @@ export default App;
 
 Turn Foundry + your Ontology into a fully typed GraphQL schema.
 
-![Foundry GraphQL screenshot](/assets/foundry-graphql.png)
+![Foundry GraphQL screenshot](./assets/foundry-graphql.png)
