@@ -1,3 +1,4 @@
+import { notImplemented } from "@bobbyfidz/panic";
 import {
     type LinkTypeSideCardinality,
     type LinkTypeSideV2,
@@ -96,6 +97,9 @@ export function createFoundryMetaOntologyAdapter(
                 default:
                     throw new Error(`Unsupported Foundry metadata object type "${objectType}".`);
             }
+        },
+        applyAction: () => {
+            notImplemented();
         },
         cleanup: async () => {
             await metadata.cleanup();

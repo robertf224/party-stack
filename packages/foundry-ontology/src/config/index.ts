@@ -13,7 +13,7 @@ export interface FoundryOntologyConfigAdapterOpts {
     foundryRedirectUrl: string;
 }
 
-async function createFoundryOntologyClient(
+export async function createFoundryOntologyClient(
     config: FoundryOntologyConfigAdapterOpts
 ): Promise<OntologyClient> {
     const { accessToken } = await performLocalOAuthFlow({

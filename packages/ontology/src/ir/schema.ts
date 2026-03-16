@@ -1,9 +1,24 @@
 import { s, SchemaIRSchema } from "@party-stack/schema";
-import type { SchemaIR } from "@party-stack/schema";
+import type { SchemaIR, UnionTypeDef } from "@party-stack/schema";
+
+const schemaTypes = SchemaIRSchema.types.filter((type) => type.name !== "SchemaIR");
+const typeDef = schemaTypes.find((type) => type.name === "TypeDef")!;
+(typeDef.type.value as UnionTypeDef).variants.push({
+    name: "objectReference",
+    type: s.struct({
+        fields: [
+            {
+                name: "objectType",
+                displayName: "Object type",
+                type: s.string({}),
+            },
+        ],
+    }),
+});
 
 export default {
     types: [
-        ...SchemaIRSchema.types.filter((type) => type.name !== "SchemaIR"),
+        ...schemaTypes,
         {
             name: "PropertyDef",
             description: "A property on an Object type.",
@@ -161,6 +176,86 @@ export default {
                             }),
                         }),
                         description: "How many sources are linked to the target.",
+                    },
+                ],
+            }),
+        },
+        {
+            name: "ActionParameterDef",
+            description: "A parameter of an Action type.",
+            type: s.struct({
+                fields: [
+                    {
+                        name: "name",
+                        displayName: "Name",
+                        type: s.string({}),
+                        description: "The parameter's name.",
+                    },
+                    {
+                        name: "displayName",
+                        displayName: "Display name",
+                        type: s.string({}),
+                        description: "Human-readable name.",
+                    },
+                    {
+                        name: "type",
+                        displayName: "Type",
+                        type: s.ref({ name: "TypeDef" }),
+                        description: "The parameter's type.",
+                    },
+                    {
+                        name: "description",
+                        displayName: "Description",
+                        type: s.optional({ type: s.string({}) }),
+                        description: "Optional description.",
+                    },
+                    {
+                        name: "deprecated",
+                        displayName: "Deprecated?",
+                        type: s.optional({ type: s.ref({ name: "Deprecation" }) }),
+                    },
+                    // params default values...
+                    // expression = ref | value | func
+                    // - another parameter ref (can be nested into object)
+                    // - static value
+                    // - func: unique id, current time
+                    // https://github.com/TanStack/db/blob/5f0a0b8a9952f0a69345d8d520f658f5c1a9b420/packages/db/src/query/ir.ts#L123
+                ],
+            }),
+        },
+        {
+            name: "ActionTypeDef",
+            description: "An action type in the ontology.",
+            type: s.struct({
+                fields: [
+                    {
+                        name: "name",
+                        displayName: "Name",
+                        type: s.string({}),
+                        description: "The object type's programmatic name.",
+                    },
+                    {
+                        name: "displayName",
+                        displayName: "Display name",
+                        type: s.string({}),
+                        description: "Human-readable name.",
+                    },
+                    {
+                        name: "parameters",
+                        displayName: "Parameters",
+                        type: s.list({ elementType: s.ref({ name: "ActionParameterDef" }) }),
+                        description: "The action type's parameters.",
+                    },
+                    {
+                        name: "description",
+                        displayName: "Description",
+                        type: s.optional({ type: s.string({}) }),
+                        description: "Optional description.",
+                    },
+                    {
+                        name: "deprecated",
+                        displayName: "Deprecated?",
+                        type: s.optional({ type: s.ref({ name: "Deprecation" }) }),
                     },
                 ],
             }),

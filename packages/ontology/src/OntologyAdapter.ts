@@ -8,7 +8,8 @@ export type OntologyCollectionOptions = Omit<
 export interface OntologyAdapter {
     name: string;
     getCollectionOptions: (objectType: string) => OntologyCollectionOptions;
-    // TODO: actions
+    // TODO: improve this interface
+    applyAction: (name: string, parameters: Record<string, unknown>) => Promise<void>;
     // TODO: install/destroy
     cleanup?: () => void | Promise<void>;
 }

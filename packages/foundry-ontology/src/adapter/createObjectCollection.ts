@@ -1,4 +1,4 @@
-import { OntologyObjectsV2, OntologyObjectV2 } from "@osdk/foundry.ontologies";
+import { Actions, OntologyObjectsV2, OntologyObjectV2 } from "@osdk/foundry.ontologies";
 import {
     Collection,
     CollectionConfig,
@@ -6,6 +6,7 @@ import {
     DeduplicatedLoadSubset,
     InferSchemaOutput,
     LoadSubsetOptions,
+    NonRetriableError,
     StandardSchema,
     SyncConfig,
     UtilsRecord,
@@ -159,6 +160,25 @@ export function createFoundryOntologyAdapter(opts: {
                 decoder ? (decoder.decodeObject(objectType, object) as FoundryObject) : object
             ),
         }),
+        applyAction: async (name, parameters) => {
+            // TODO: look at params
+            const result = await Actions.applyWithOverrides(opts.client, opts.client.ontologyRid, name, {
+                request: {
+                    options: {
+                        mode: "VALIDATE_AND_EXECUTE",
+                        returnEdits: "ALL_V2_WITH_DELETIONS",
+                    },
+                    parameters,
+                },
+                overrides: {
+                    uniqueIdentifierLinkIdValues: {},
+                    // time param
+                },
+            });
+            if (result.validation?.result === "INVALID") {
+                throw new NonRetriableError("Invalid Action arguments.");
+            }
+        },
     };
 }
 
