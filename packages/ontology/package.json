@@ -15,7 +15,7 @@
         "lib"
     ],
     "scripts": {
-        "bootstrap": "tsx ../schema/src/generate/generate.ts --schema ./src/ir/schema.ts --exportName o --promoted TypeDef --outDir ./src/ir/generated",
+        "bootstrap": "tsx ../schema/src/cli/generate.ts --schema ./src/ir/schema.ts --exportName o --promoted TypeDef --outDir ./src/ir/generated",
         "build": "tsc",
         "generate:examples": "tsx ./src/cli/generate.ts --ontology ./src/examples/blog.ts --outDir ./src/examples/generated --namespace Blog",
         "generate:meta": "tsx ./src/cli/generate.ts --ontology ./src/ontology/ontology.ts --outDir ./src/ontology/generated --namespace Meta",

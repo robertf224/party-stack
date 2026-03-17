@@ -137,6 +137,7 @@ export type TypeDef = v.Union<{
     optional: OptionalTypeDef;
     result: ResultTypeDef;
     ref: TypeRef;
+    objectReference: ObjectReferenceTypeDef;
 }>;
 
 /** A named type definition that can be referenced by other types. */
@@ -148,6 +149,12 @@ export type NamedTypeDef = {
     deprecated?: Deprecation;
     /** The type definition. */
     type: TypeDef;
+};
+
+/** A reference to an ontology object type. */
+export type ObjectReferenceTypeDef = {
+    /** The referenced object type name. */
+    objectType: string;
 };
 
 /** A property on an Object type. */
@@ -197,6 +204,32 @@ export type LinkTypeDef = {
     foreignKey: string;
     /** How many sources are linked to the target. */
     cardinality: "one" | "many";
+};
+
+/** A parameter of an Action type. */
+export type ActionParameterDef = {
+    /** The parameter's name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    /** The parameter's type. */
+    type: TypeDef;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
+/** An action type in the ontology. */
+export type ActionTypeDef = {
+    /** The object type's programmatic name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    /** The action type's parameters. */
+    parameters: Array<ActionParameterDef>;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
 };
 
 /** The root ontology definition containing all type definitions. */

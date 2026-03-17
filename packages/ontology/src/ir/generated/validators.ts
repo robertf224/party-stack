@@ -90,6 +90,7 @@ export const TypeDef: z.ZodMiniType<t.TypeDef> = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("optional"), value: z.lazy(() => OptionalTypeDef) }),
     z.object({ kind: z.literal("result"), value: z.lazy(() => ResultTypeDef) }),
     z.object({ kind: z.literal("ref"), value: z.lazy(() => TypeRef) }),
+    z.object({ kind: z.literal("objectReference"), value: z.lazy(() => ObjectReferenceTypeDef) }),
 ]);
 
 export const NamedTypeDef: z.ZodMiniType<t.NamedTypeDef> = z.object({
@@ -97,6 +98,10 @@ export const NamedTypeDef: z.ZodMiniType<t.NamedTypeDef> = z.object({
     description: z.optional(z.string()),
     deprecated: z.optional(z.lazy(() => Deprecation)),
     type: z.lazy(() => TypeDef),
+});
+
+export const ObjectReferenceTypeDef: z.ZodMiniType<t.ObjectReferenceTypeDef> = z.object({
+    objectType: z.string(),
 });
 
 export const PropertyDef: z.ZodMiniType<t.PropertyDef> = z.object({
@@ -131,6 +136,22 @@ export const LinkTypeDef: z.ZodMiniType<t.LinkTypeDef> = z.object({
     target: z.lazy(() => LinkTypeSideDef),
     foreignKey: z.string(),
     cardinality: z.enum(["one", "many"]),
+});
+
+export const ActionParameterDef: z.ZodMiniType<t.ActionParameterDef> = z.object({
+    name: z.string(),
+    displayName: z.string(),
+    type: z.lazy(() => TypeDef),
+    description: z.optional(z.string()),
+    deprecated: z.optional(z.lazy(() => Deprecation)),
+});
+
+export const ActionTypeDef: z.ZodMiniType<t.ActionTypeDef> = z.object({
+    name: z.string(),
+    displayName: z.string(),
+    parameters: z.array(z.lazy(() => ActionParameterDef)),
+    description: z.optional(z.string()),
+    deprecated: z.optional(z.lazy(() => Deprecation)),
 });
 
 export const OntologyIR: z.ZodMiniType<t.OntologyIR> = z.object({

@@ -290,6 +290,63 @@ describe("Ontology Validation", () => {
 
             expectOk(validate(ontology));
         });
+
+        it("should detect unknown object type references", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [
+                    {
+                        name: "Employee",
+                        displayName: "Employee",
+                        pluralDisplayName: "Employees",
+                        primaryKey: "id",
+                        properties: [
+                            { name: "id", displayName: "ID", type: o.string({}) },
+                            {
+                                name: "managerId",
+                                displayName: "Manager ID",
+                                type: o.objectReference({ objectType: "Manager" }),
+                            },
+                        ],
+                    },
+                ],
+            };
+
+            const result = validate(ontology);
+            expectErr(result, 1);
+            expect(getErrors(result)).toContain('Unknown object type reference: "Manager".');
+        });
+
+        it("should resolve object references to declared object types", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [
+                    {
+                        name: "Manager",
+                        displayName: "Manager",
+                        pluralDisplayName: "Managers",
+                        primaryKey: "id",
+                        properties: [{ name: "id", displayName: "ID", type: o.string({}) }],
+                    },
+                    {
+                        name: "Employee",
+                        displayName: "Employee",
+                        pluralDisplayName: "Employees",
+                        primaryKey: "id",
+                        properties: [
+                            { name: "id", displayName: "ID", type: o.string({}) },
+                            {
+                                name: "managerId",
+                                displayName: "Manager ID",
+                                type: o.objectReference({ objectType: "Manager" }),
+                            },
+                        ],
+                    },
+                ],
+            };
+
+            expectOk(validate(ontology));
+        });
     });
 
     describe("Attachment Type", () => {

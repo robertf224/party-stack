@@ -56,6 +56,8 @@ export function createFoundryObjectDecoder(ir: OntologyIR): FoundryObjectDecoder
                 return decodeGeoPoint(value);
             case "attachment":
                 return value;
+            case "objectReference":
+                return value;
             case "list":
                 return Array.isArray(value)
                     ? value.map((item) => decodeValue(resolvedType.value.elementType, item))
@@ -90,7 +92,10 @@ export function createFoundryObjectDecoder(ir: OntologyIR): FoundryObjectDecoder
         }
     };
 
-    const decodeObjectType = (objectType: ObjectTypeDef, object: FoundryObjectRecord): FoundryObjectRecord => {
+    const decodeObjectType = (
+        objectType: ObjectTypeDef,
+        object: FoundryObjectRecord
+    ): FoundryObjectRecord => {
         return Object.fromEntries(
             Object.entries(object).map(([key, value]) => {
                 const property = objectType.properties.find((candidate) => candidate.name === key);
@@ -121,11 +126,7 @@ function decodeGeoPoint(value: unknown): unknown {
         }
     }
 
-    if (
-        isPlainObject(value) &&
-        typeof value.lat === "number" &&
-        typeof value.lon === "number"
-    ) {
+    if (isPlainObject(value) && typeof value.lat === "number" && typeof value.lon === "number") {
         return value;
     }
 

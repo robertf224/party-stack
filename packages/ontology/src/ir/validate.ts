@@ -1,4 +1,4 @@
-import type { OntologyIR, TypeDef, PropertyDef } from "./generated/types.js";
+import type { OntologyIR, PropertyDef, TypeDef } from "./generated/types.js";
 
 export type ValidationPathElement = string | number;
 
@@ -12,7 +12,8 @@ export type ValidationResult = { kind: "ok" } | { kind: "err"; errors: Validatio
 function validateTypeDef(
     type: TypeDef,
     path: ValidationPathElement[],
-    valueTypeNames: Set<string>
+    valueTypeNames: Set<string>,
+    objectTypeNames: Set<string>
 ): ValidationError[] {
     switch (type.kind) {
         case "string":
@@ -26,8 +27,18 @@ function validateTypeDef(
         case "attachment":
             return [];
 
+        case "objectReference":
+            return objectTypeNames.has(type.value.objectType)
+                ? []
+                : [
+                      {
+                          message: `Unknown object type reference: "${type.value.objectType}".`,
+                          path: [...path, "objectType"],
+                      },
+                  ];
+
         case "list":
-            return validateTypeDef(type.value.elementType, [...path, "elementType"], valueTypeNames);
+            return validateTypeDef(type.value.elementType, [...path, "elementType"], valueTypeNames, objectTypeNames);
 
         case "map": {
             const errors: ValidationError[] = [];
@@ -39,24 +50,24 @@ function validateTypeDef(
             }
             return [
                 ...errors,
-                ...validateTypeDef(type.value.keyType, [...path, "keyType"], valueTypeNames),
-                ...validateTypeDef(type.value.valueType, [...path, "valueType"], valueTypeNames),
+                ...validateTypeDef(type.value.keyType, [...path, "keyType"], valueTypeNames, objectTypeNames),
+                ...validateTypeDef(type.value.valueType, [...path, "valueType"], valueTypeNames, objectTypeNames),
             ];
         }
 
         case "struct":
-            return validateStructFields(type.value.fields, [...path, "fields"], valueTypeNames);
+            return validateStructFields(type.value.fields, [...path, "fields"], valueTypeNames, objectTypeNames);
 
         case "union":
-            return validateUnionVariants(type.value.variants, [...path, "variants"], valueTypeNames);
+            return validateUnionVariants(type.value.variants, [...path, "variants"], valueTypeNames, objectTypeNames);
 
         case "optional":
-            return validateTypeDef(type.value.type, [...path, "type"], valueTypeNames);
+            return validateTypeDef(type.value.type, [...path, "type"], valueTypeNames, objectTypeNames);
 
         case "result":
             return [
-                ...validateTypeDef(type.value.okType, [...path, "okType"], valueTypeNames),
-                ...validateTypeDef(type.value.errType, [...path, "errType"], valueTypeNames),
+                ...validateTypeDef(type.value.okType, [...path, "okType"], valueTypeNames, objectTypeNames),
+                ...validateTypeDef(type.value.errType, [...path, "errType"], valueTypeNames, objectTypeNames),
             ];
 
         case "ref":
@@ -74,7 +85,8 @@ function validateTypeDef(
 function validateStructFields(
     fields: Array<{ name: string; displayName: string; type: TypeDef }>,
     path: ValidationPathElement[],
-    valueTypeNames: Set<string>
+    valueTypeNames: Set<string>,
+    objectTypeNames: Set<string>
 ): ValidationError[] {
     const fieldNames = new Set<string>();
     const errors: ValidationError[] = [];
@@ -88,7 +100,7 @@ function validateStructFields(
         }
         fieldNames.add(field.name);
 
-        errors.push(...validateTypeDef(field.type, [...fieldPath, "type"], valueTypeNames));
+        errors.push(...validateTypeDef(field.type, [...fieldPath, "type"], valueTypeNames, objectTypeNames));
     }
 
     return errors;
@@ -97,7 +109,8 @@ function validateStructFields(
 function validateUnionVariants(
     variants: Array<{ name: string; type: TypeDef }>,
     path: ValidationPathElement[],
-    valueTypeNames: Set<string>
+    valueTypeNames: Set<string>,
+    objectTypeNames: Set<string>
 ): ValidationError[] {
     const seen = new Set<string>();
     const errors: ValidationError[] = [];
@@ -114,7 +127,7 @@ function validateUnionVariants(
         }
         seen.add(variant.name);
 
-        errors.push(...validateTypeDef(variant.type, [...variantPath, "type"], valueTypeNames));
+        errors.push(...validateTypeDef(variant.type, [...variantPath, "type"], valueTypeNames, objectTypeNames));
     }
 
     return errors;
@@ -123,7 +136,8 @@ function validateUnionVariants(
 function validateProperties(
     properties: PropertyDef[],
     path: ValidationPathElement[],
-    valueTypeNames: Set<string>
+    valueTypeNames: Set<string>,
+    objectTypeNames: Set<string>
 ): ValidationError[] {
     const names = new Set<string>();
     const errors: ValidationError[] = [];
@@ -140,7 +154,7 @@ function validateProperties(
         }
         names.add(prop.name);
 
-        errors.push(...validateTypeDef(prop.type, [...propPath, "type"], valueTypeNames));
+        errors.push(...validateTypeDef(prop.type, [...propPath, "type"], valueTypeNames, objectTypeNames));
     }
 
     return errors;
@@ -162,13 +176,6 @@ export function validate(ontology: OntologyIR): ValidationResult {
         valueTypeNames.add(vt.name);
     }
 
-    // Validate value type definitions
-    for (let i = 0; i < ontology.types.length; i++) {
-        const vt = ontology.types[i]!;
-        errors.push(...validateTypeDef(vt.type, ["types", i, "type"], valueTypeNames));
-    }
-
-    // Collect object type names for link validation
     const objectTypeNames = new Set<string>();
     for (let i = 0; i < ontology.objectTypes.length; i++) {
         const ot = ontology.objectTypes[i]!;
@@ -181,13 +188,19 @@ export function validate(ontology: OntologyIR): ValidationResult {
         objectTypeNames.add(ot.name);
     }
 
+    // Validate value type definitions once both namespaces are known.
+    for (let i = 0; i < ontology.types.length; i++) {
+        const vt = ontology.types[i]!;
+        errors.push(...validateTypeDef(vt.type, ["types", i, "type"], valueTypeNames, objectTypeNames));
+    }
+
     // Validate object types
     for (let i = 0; i < ontology.objectTypes.length; i++) {
         const ot = ontology.objectTypes[i]!;
         const otPath = ["objectTypes", i] as ValidationPathElement[];
 
         // Validate properties
-        errors.push(...validateProperties(ot.properties, [...otPath, "properties"], valueTypeNames));
+        errors.push(...validateProperties(ot.properties, [...otPath, "properties"], valueTypeNames, objectTypeNames));
 
         // Validate primary key references a valid property
         const propertyNames = new Set(ot.properties.map((p) => p.name));

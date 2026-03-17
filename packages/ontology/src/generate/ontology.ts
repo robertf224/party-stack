@@ -152,6 +152,8 @@ function renderType(type: TypeDef): string {
             return `o.geopoint(${renderPlainValue(type.value)})`;
         case "attachment":
             return `o.attachment(${renderPlainValue(type.value)})`;
+        case "objectReference":
+            return `o.objectReference(${renderPlainValue(type.value)})`;
         case "list":
             return `o.list(${renderObject([{ name: "elementType", value: renderType(type.value.elementType) }])})`;
         case "map":

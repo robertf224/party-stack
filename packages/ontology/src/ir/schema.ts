@@ -5,20 +5,26 @@ const schemaTypes = SchemaIRSchema.types.filter((type) => type.name !== "SchemaI
 const typeDef = schemaTypes.find((type) => type.name === "TypeDef")!;
 (typeDef.type.value as UnionTypeDef).variants.push({
     name: "objectReference",
-    type: s.struct({
-        fields: [
-            {
-                name: "objectType",
-                displayName: "Object type",
-                type: s.string({}),
-            },
-        ],
-    }),
+    type: s.ref({ name: "ObjectReferenceTypeDef" }),
 });
 
 export default {
     types: [
         ...schemaTypes,
+        {
+            name: "ObjectReferenceTypeDef",
+            description: "A reference to an ontology object type.",
+            type: s.struct({
+                fields: [
+                    {
+                        name: "objectType",
+                        displayName: "Object type",
+                        type: s.string({}),
+                        description: "The referenced object type name.",
+                    },
+                ],
+            }),
+        },
         {
             name: "PropertyDef",
             description: "A property on an Object type.",
