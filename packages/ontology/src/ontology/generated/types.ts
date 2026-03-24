@@ -179,20 +179,68 @@ export type ActionParameterDef = {
     /** Optional description. */
     description?: string;
     deprecated?: Deprecation;
+    /** The expression used when the caller does not provide a value. */
+    defaultValue?: Expression;
 };
 
-/** An action type in the ontology. */
-export type ActionTypeDef = {
-    /** The object type's programmatic name. */
-    name: string;
-    /** Human-readable name. */
-    displayName: string;
-    /** The action type's parameters. */
-    parameters: Array<ActionParameterDef>;
-    /** Optional description. */
-    description?: string;
-    deprecated?: Deprecation;
+/** Reads a value from scope by path. */
+export type ValueReferenceExpression = {
+    path: Array<string>;
 };
+
+/** Reads a value from context by path. */
+export type ContextReferenceExpression = {
+    path: Array<string>;
+};
+
+/** Generates a UUID value. */
+export type UuidFunctionCall = Record<never, never>;
+
+/** Returns the current timestamp. */
+export type NowFunctionCall = Record<never, never>;
+
+/** Calls a function within an expression. */
+export type FunctionCallExpression = v.Union<{
+    uuid: UuidFunctionCall;
+    now: NowFunctionCall;
+}>;
+
+/** An expression that resolves to a value. */
+export type Expression = v.Union<{
+    valueReference: ValueReferenceExpression;
+    contextReference: ContextReferenceExpression;
+    functionCall: FunctionCallExpression;
+}>;
+
+/** Assigns an expression to a property path on an object written by an action. */
+export type PropertyAssignment = {
+    property: Array<string>;
+    value: Expression;
+};
+
+/** Creates an object and assigns property values. */
+export type CreateObjectActionLogicStep = {
+    objectType: string;
+    values: Array<PropertyAssignment>;
+};
+
+/** Updates a referenced object and assigns property values. */
+export type UpdateObjectActionLogicStep = {
+    object: ValueReferenceExpression;
+    values: Array<PropertyAssignment>;
+};
+
+/** Deletes a referenced object. */
+export type DeleteObjectActionLogicStep = {
+    object: ValueReferenceExpression;
+};
+
+/** A logic step performed by an action. */
+export type ActionLogicStep = v.Union<{
+    createObject: CreateObjectActionLogicStep;
+    updateObject: UpdateObjectActionLogicStep;
+    deleteObject: DeleteObjectActionLogicStep;
+}>;
 
 /** A named type definition that can be referenced by other types. */
 export type ValueType = {
@@ -231,10 +279,28 @@ export type LinkType = {
     /** How many sources are linked to the target. */
     cardinality: "one" | "many";
 };
+
+/** An action type in the ontology. */
+export type ActionType = {
+    /** The object type's programmatic name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    /** The action type's parameters. */
+    parameters: Array<ActionParameterDef>;
+    /** The action type's local logic steps. */
+    logic: Array<ActionLogicStep>;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
 export type MetaOntology = {
     objectTypes: {
         ValueType: ValueType;
         ObjectType: ObjectType;
         LinkType: LinkType;
+        ActionType: ActionType;
     };
+    actionTypes: Record<never, never>;
 };

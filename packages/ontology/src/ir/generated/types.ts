@@ -217,7 +217,68 @@ export type ActionParameterDef = {
     /** Optional description. */
     description?: string;
     deprecated?: Deprecation;
+    /** The expression used when the caller does not provide a value. */
+    defaultValue?: Expression;
 };
+
+/** Reads a value from scope by path. */
+export type ValueReferenceExpression = {
+    path: Array<string>;
+};
+
+/** Reads a value from context by path. */
+export type ContextReferenceExpression = {
+    path: Array<string>;
+};
+
+/** Generates a UUID value. */
+export type UuidFunctionCall = Record<never, never>;
+
+/** Returns the current timestamp. */
+export type NowFunctionCall = Record<never, never>;
+
+/** Calls a function within an expression. */
+export type FunctionCallExpression = v.Union<{
+    uuid: UuidFunctionCall;
+    now: NowFunctionCall;
+}>;
+
+/** An expression that resolves to a value. */
+export type Expression = v.Union<{
+    valueReference: ValueReferenceExpression;
+    contextReference: ContextReferenceExpression;
+    functionCall: FunctionCallExpression;
+}>;
+
+/** Assigns an expression to a property path on an object written by an action. */
+export type PropertyAssignment = {
+    property: Array<string>;
+    value: Expression;
+};
+
+/** Creates an object and assigns property values. */
+export type CreateObjectActionLogicStep = {
+    objectType: string;
+    values: Array<PropertyAssignment>;
+};
+
+/** Updates a referenced object and assigns property values. */
+export type UpdateObjectActionLogicStep = {
+    object: ValueReferenceExpression;
+    values: Array<PropertyAssignment>;
+};
+
+/** Deletes a referenced object. */
+export type DeleteObjectActionLogicStep = {
+    object: ValueReferenceExpression;
+};
+
+/** A logic step performed by an action. */
+export type ActionLogicStep = v.Union<{
+    createObject: CreateObjectActionLogicStep;
+    updateObject: UpdateObjectActionLogicStep;
+    deleteObject: DeleteObjectActionLogicStep;
+}>;
 
 /** An action type in the ontology. */
 export type ActionTypeDef = {
@@ -227,6 +288,8 @@ export type ActionTypeDef = {
     displayName: string;
     /** The action type's parameters. */
     parameters: Array<ActionParameterDef>;
+    /** The action type's local logic steps. */
+    logic: Array<ActionLogicStep>;
     /** Optional description. */
     description?: string;
     deprecated?: Deprecation;
@@ -240,4 +303,6 @@ export type OntologyIR = {
     objectTypes: Array<ObjectTypeDef>;
     /** Relationship definitions between object types. */
     linkTypes: Array<LinkTypeDef>;
+    /** Action type definitions. */
+    actionTypes: Array<ActionTypeDef>;
 };

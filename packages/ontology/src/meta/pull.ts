@@ -1,6 +1,6 @@
 import { and, inArray, Query, queryOnce } from "@tanstack/db";
 import type { OntologyIR } from "../ir/generated/types.js";
-import type { LiveOntology } from "../LiveOntology.js";
+import type { LiveOntology } from "../live/LiveOntology.js";
 import type { MetaOntology, ObjectType, TypeDef } from "../ontology/generated/types.js";
 
 function getValueTypes(type: TypeDef): string[] {
@@ -28,11 +28,17 @@ function getObjectTypeValueTypes(objectType: ObjectType): string[] {
 
 // TODO: port this to pure queries once we can do some sort of explode operation.
 
+export interface PullOptions {
+    objectTypeNames: string[];
+    actionTypeNames: string[];
+}
+
 export async function pull(
     ontology: LiveOntology<MetaOntology>,
-    objectTypeNames: string[]
+    options: PullOptions
 ): Promise<OntologyIR> {
-    const { ValueType, ObjectType, LinkType } = ontology.objects;
+    const { ValueType, ObjectType, LinkType, ActionType } = ontology.objects;
+    const { objectTypeNames, actionTypeNames } = options;
 
     const objectTypesQuery = new Query()
         .from({ ObjectType })
@@ -42,7 +48,7 @@ export async function pull(
 
     const valueTypeNames = Array.from(new Set(objectTypes.flatMap(getObjectTypeValueTypes)));
 
-    const [types, linkTypes] = await Promise.all([
+    const [types, linkTypes, actionTypes] = await Promise.all([
         queryOnce((q) =>
             q.from({ ValueType }).where(({ ValueType }) => inArray(ValueType.name, valueTypeNames))
         ),
@@ -56,11 +62,13 @@ export async function pull(
                     )
                 )
         ),
+        queryOnce((q) => q.from({ ActionType }).where(({ ActionType }) => inArray(ActionType.name, actionTypeNames))),
     ]);
 
     return {
         types,
         objectTypes,
         linkTypes,
+        actionTypes,
     };
 }

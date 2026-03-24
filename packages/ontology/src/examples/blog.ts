@@ -225,4 +225,93 @@ export default {
             cardinality: "one",
         },
     ],
+    actionTypes: [
+        {
+            name: "createPost",
+            displayName: "Create Post",
+            description: "Create a new blog post.",
+            parameters: [
+                {
+                    name: "postId",
+                    displayName: "Post ID",
+                    type: o.string({}),
+                    defaultValue: o.Expression.functionCall(o.FunctionCallExpression.uuid({})),
+                },
+                {
+                    name: "author",
+                    displayName: "Author",
+                    type: o.objectReference({ objectType: "Author" }),
+                },
+                {
+                    name: "title",
+                    displayName: "Title",
+                    type: o.string({}),
+                },
+                {
+                    name: "body",
+                    displayName: "Body",
+                    type: o.string({}),
+                },
+                {
+                    name: "status",
+                    displayName: "Status",
+                    type: o.string({
+                        constraint: o.StringConstraint.enum({
+                            options: [
+                                { value: "draft", label: "Draft" },
+                                { value: "published", label: "Published" },
+                                { value: "archived", label: "Archived" },
+                            ],
+                        }),
+                    }),
+                },
+                {
+                    name: "tags",
+                    displayName: "Tags",
+                    type: o.list({ elementType: o.string({}) }),
+                },
+                {
+                    name: "createdAt",
+                    displayName: "Created At",
+                    type: o.timestamp({}),
+                    defaultValue: o.Expression.functionCall(o.FunctionCallExpression.now({})),
+                },
+            ],
+            logic: [
+                o.ActionLogicStep.createObject({
+                    objectType: "Post",
+                    values: [
+                        {
+                            property: ["postId"],
+                            value: o.Expression.valueReference({ path: ["postId"] }),
+                        },
+                        {
+                            property: ["title"],
+                            value: o.Expression.valueReference({ path: ["title"] }),
+                        },
+                        {
+                            property: ["body"],
+                            value: o.Expression.valueReference({ path: ["body"] }),
+                        },
+                        {
+                            property: ["authorId"],
+                            value: o.Expression.valueReference({ path: ["author", "authorId"] }),
+                        },
+                        {
+                            property: ["status"],
+                            value: o.Expression.valueReference({ path: ["status"] }),
+                        },
+                        {
+                            property: ["tags"],
+                            value: o.Expression.valueReference({ path: ["tags"] }),
+                        },
+                        {
+                            property: ["createdAt"],
+                            value: o.Expression.valueReference({ path: ["createdAt"] }),
+                        },
+                    ],
+                }),
+            ],
+        },
+    ],
 } satisfies OntologyIR;

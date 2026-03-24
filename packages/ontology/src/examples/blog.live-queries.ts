@@ -3,7 +3,7 @@
  */
 import { Query, concat, createCollection, eq, liveQueryCollectionOptions } from "@tanstack/db";
 import { createBlogLiveOntology } from "./generated/live.js";
-import type { OntologyAdapter } from "../OntologyAdapter.js";
+import type { OntologyAdapter } from "../live/OntologyAdapter.js";
 
 declare const adapter: OntologyAdapter;
 

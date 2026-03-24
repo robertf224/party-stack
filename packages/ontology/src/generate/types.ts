@@ -1,4 +1,5 @@
 import { generateTypes as generateSchemaTypes } from "@party-stack/schema/generate";
+import { pascalCase } from "change-case";
 import { Project, Writers } from "ts-morph";
 import type {
     FieldDef as SchemaFieldDef,
@@ -6,7 +7,11 @@ import type {
     TypeDef as SchemaTypeDef,
     VariantDef as SchemaVariantDef,
 } from "@party-stack/schema";
-import type { OntologyIR, ObjectTypeDef, PropertyDef, TypeDef } from "../ir/generated/types.js";
+import type { ActionParameterDef, OntologyIR, ObjectTypeDef, PropertyDef, TypeDef } from "../ir/generated/types.js";
+
+function renderPropertyName(name: string): string {
+    return /^[$A-Z_][0-9A-Z_$]*$/i.test(name) ? name : JSON.stringify(name);
+}
 
 function lowerObjectReferenceType(
     objectTypeName: string,
@@ -17,7 +22,10 @@ function lowerObjectReferenceType(
     return lowerType(primaryKey.type, objectTypes);
 }
 
-function lowerType(type: TypeDef, objectTypes: ReadonlyMap<string, ObjectTypeDef>): SchemaTypeDef {
+function lowerType(
+    type: TypeDef,
+    objectTypes: ReadonlyMap<string, ObjectTypeDef>
+): SchemaTypeDef {
     switch (type.kind) {
         case "string":
         case "boolean":
@@ -31,8 +39,7 @@ function lowerType(type: TypeDef, objectTypes: ReadonlyMap<string, ObjectTypeDef
         case "ref":
             return type;
         case "objectReference": {
-            const { objectType } = type.value;
-            return lowerObjectReferenceType(objectType, objectTypes);
+            return lowerObjectReferenceType(type.value.objectType, objectTypes);
         }
         case "list":
             return {
@@ -102,6 +109,27 @@ function lowerProperty(
     };
 }
 
+function lowerActionParameter(
+    parameter: ActionParameterDef,
+    objectTypes: ReadonlyMap<string, ObjectTypeDef>
+): SchemaFieldDef {
+    const loweredType = lowerType(parameter.type, objectTypes);
+
+    return {
+        name: parameter.name,
+        displayName: parameter.displayName,
+        description: parameter.description,
+        deprecated: parameter.deprecated,
+        type:
+            parameter.defaultValue !== undefined && loweredType.kind !== "optional"
+                ? {
+                      kind: "optional",
+                      value: { type: loweredType },
+                  }
+                : loweredType,
+    };
+}
+
 function toSchemaIR(ir: OntologyIR): SchemaIR {
     const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
 
@@ -124,6 +152,19 @@ function toSchemaIR(ir: OntologyIR): SchemaIR {
                     },
                 },
             })),
+            ...ir.actionTypes.map((actionType) => ({
+                name: `${pascalCase(actionType.name)}Parameters`,
+                description: actionType.description,
+                deprecated: actionType.deprecated,
+                type: {
+                    kind: "struct" as const,
+                    value: {
+                        fields: actionType.parameters.map((parameter) =>
+                            lowerActionParameter(parameter, objectTypes)
+                        ),
+                    },
+                },
+            })),
         ],
     };
 }
@@ -137,34 +178,53 @@ function addOntologyAggregateType(
     ir: OntologyIR,
     outputTypeName: string
 ): void {
+    const properties = [
+        {
+            name: "objectTypes",
+            type:
+                ir.objectTypes.length === 0
+                    ? "Record<never, never>"
+                    : Writers.objectType({
+                          properties: ir.objectTypes.map((objectType) => ({
+                              name: renderPropertyName(objectType.name),
+                              type: objectType.name,
+                          })),
+                      }),
+        },
+    ];
+
+    properties.push({
+        name: "actionTypes",
+        type:
+            ir.actionTypes.length === 0
+                ? "Record<never, never>"
+                : Writers.objectType({
+                      properties: ir.actionTypes.map((action) => ({
+                          name: renderPropertyName(action.name),
+                          type: Writers.objectType({
+                              properties: [
+                                  {
+                                      name: "parameters",
+                                      type: `${pascalCase(action.name)}Parameters`,
+                                  },
+                              ],
+                          }),
+                      })),
+                  }),
+    });
+
     sourceFile.addTypeAlias({
         name: outputTypeName,
         isExported: true,
-        type: Writers.objectType({
-            properties: [
-                {
-                    name: "objectTypes",
-                    type:
-                        ir.objectTypes.length === 0
-                            ? "Record<never, never>"
-                            : Writers.objectType({
-                                  properties: ir.objectTypes.map((objectType) => ({
-                                      name: objectType.name,
-                                      type: objectType.name,
-                                  })),
-                              }),
-                },
-            ],
-        }),
+        type: Writers.objectType({ properties }),
     });
 }
 
 export function generateTypes(ir: OntologyIR, opts: GenerateTypesOpts = {}): string {
     const outputTypeName = opts.outputTypeName ?? "GeneratedOntology";
-    const project = new Project({ useInMemoryFileSystem: true });
     const schemaTypes = generateSchemaTypes(toSchemaIR(ir));
-    const sourceFile = project.createSourceFile("ontology-types.ts", schemaTypes);
-
-    addOntologyAggregateType(sourceFile, ir, outputTypeName);
-    return sourceFile.getFullText().trim();
+    const project = new Project({ useInMemoryFileSystem: true });
+    const aggregateFile = project.createSourceFile("ontology-aggregate.ts", "");
+    addOntologyAggregateType(aggregateFile, ir, outputTypeName);
+    return `${schemaTypes}\n\n${aggregateFile.getFullText().trim()}`.trim();
 }

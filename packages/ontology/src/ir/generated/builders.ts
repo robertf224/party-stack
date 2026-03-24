@@ -92,6 +92,47 @@ export const StringConstraint = {
     }),
 };
 
+export const FunctionCallExpression = {
+    uuid: (value: Extract<t.FunctionCallExpression, { kind: "uuid" }>["value"]) => ({
+        kind: "uuid" as const,
+        value,
+    }),
+    now: (value: Extract<t.FunctionCallExpression, { kind: "now" }>["value"]) => ({
+        kind: "now" as const,
+        value,
+    }),
+};
+
+export const Expression = {
+    valueReference: (value: Extract<t.Expression, { kind: "valueReference" }>["value"]) => ({
+        kind: "valueReference" as const,
+        value,
+    }),
+    contextReference: (value: Extract<t.Expression, { kind: "contextReference" }>["value"]) => ({
+        kind: "contextReference" as const,
+        value,
+    }),
+    functionCall: (value: Extract<t.Expression, { kind: "functionCall" }>["value"]) => ({
+        kind: "functionCall" as const,
+        value,
+    }),
+};
+
+export const ActionLogicStep = {
+    createObject: (value: Extract<t.ActionLogicStep, { kind: "createObject" }>["value"]) => ({
+        kind: "createObject" as const,
+        value,
+    }),
+    updateObject: (value: Extract<t.ActionLogicStep, { kind: "updateObject" }>["value"]) => ({
+        kind: "updateObject" as const,
+        value,
+    }),
+    deleteObject: (value: Extract<t.ActionLogicStep, { kind: "deleteObject" }>["value"]) => ({
+        kind: "deleteObject" as const,
+        value,
+    }),
+};
+
 export const o = {
     string,
     boolean,
@@ -111,4 +152,7 @@ export const o = {
     ref,
     objectReference,
     StringConstraint,
+    FunctionCallExpression,
+    Expression,
+    ActionLogicStep,
 };

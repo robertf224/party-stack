@@ -41,6 +41,7 @@
         "@osdk/shared.client.impl": "^1.5.0",
         "@osdk/shared.client2": "^1.0.0",
         "@party-stack/ontology": "workspace:*",
+        "change-case": "^5.4.4",
         "effection": "^4.0.2",
         "temporal-polyfill": "^0.3.0",
         "zod": "^4.1.13"

@@ -46,6 +46,12 @@ export default {
                 displayName: "Link type",
                 pluralDisplayName: "Link types",
             },
+            ActionTypeDef: {
+                name: "ActionType",
+                primaryKey: "name",
+                displayName: "Action type",
+                pluralDisplayName: "Action types",
+            },
             NamedTypeDef: {
                 name: "ValueType",
                 primaryKey: "name",
@@ -74,4 +80,5 @@ export default {
             cardinality: "many",
         },
     ],
+    actionTypes: [],
 } satisfies OntologyIR;

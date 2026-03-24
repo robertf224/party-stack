@@ -23,6 +23,10 @@ function formatImportSpecifier(path: string): string {
 }
 
 function resolveValuesImportPath(outDir: string): string {
+    const schemaPackageRoot = fileURLToPath(new URL("../../", import.meta.url));
+    if (!resolve(outDir).startsWith(resolve(schemaPackageRoot))) {
+        return "@party-stack/schema/values";
+    }
     const workspaceValuesPath = fileURLToPath(new URL("../../src/utils/values.ts", import.meta.url));
     if (!existsSync(workspaceValuesPath)) {
         return "@party-stack/schema/values";

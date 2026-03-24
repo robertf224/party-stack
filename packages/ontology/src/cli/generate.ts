@@ -2,6 +2,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pascalCase } from "change-case";
 import { Command } from "commander";
 import { createJiti } from "jiti";
 import { format, resolveConfig } from "prettier";
@@ -15,14 +16,6 @@ function toModuleSpecifier(path: string): string {
         return normalized;
     }
     return `./${normalized}`;
-}
-
-function pascalCase(value: string): string {
-    return value
-        .split(/[^a-zA-Z0-9]+/)
-        .filter(Boolean)
-        .map((part) => part[0]!.toUpperCase() + part.slice(1))
-        .join("");
 }
 
 function ontologyTypeName(namespace: string): string {

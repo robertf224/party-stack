@@ -1,11 +1,14 @@
 import { CodeBlockWriter, Project, type WriterFunction } from "ts-morph";
 import type {
+    ActionTypeDef,
     Deprecation,
+    Expression,
     FieldDef,
     LinkTypeDef,
     LinkTypeSideDef,
     NamedTypeDef,
     ObjectTypeDef,
+    PropertyAssignment,
     PropertyDef,
     StringConstraint,
     TypeDef,
@@ -277,6 +280,92 @@ function renderLinkType(linkType: LinkTypeDef): string {
     ]);
 }
 
+function renderExpression(expression: Expression): string {
+    return `o.Expression.${expression.kind}(${renderPlainValue(expression.value)})`;
+}
+
+function renderActionPropertyAssignment(assignment: PropertyAssignment): string {
+    return renderObject([
+        { name: "property", value: renderPlainValue(assignment.property) },
+        { name: "value", value: renderExpression(assignment.value) },
+    ]);
+}
+
+function renderActionType(actionType: ActionTypeDef): string {
+    return renderObject([
+        { name: "name", value: renderPlainValue(actionType.name) },
+        { name: "displayName", value: renderPlainValue(actionType.displayName) },
+        {
+            name: "parameters",
+            value: withWriter((writer) =>
+                writeArray(
+                    writer,
+                    actionType.parameters.map((parameter) =>
+                        renderObject([
+                            { name: "name", value: renderPlainValue(parameter.name) },
+                            { name: "displayName", value: renderPlainValue(parameter.displayName) },
+                            { name: "type", value: renderType(parameter.type) },
+                            {
+                                name: "description",
+                                value: parameter.description ? renderPlainValue(parameter.description) : undefined,
+                            },
+                            { name: "deprecated", value: renderDeprecation(parameter.deprecated) },
+                            {
+                                name: "defaultValue",
+                                value: parameter.defaultValue
+                                    ? renderExpression(parameter.defaultValue)
+                                    : undefined,
+                            },
+                        ])
+                    )
+                )
+            ),
+        },
+        {
+            name: "logic",
+            value: withWriter((writer) =>
+                writeArray(
+                    writer,
+                    actionType.logic.map((step) =>
+                        `o.ActionLogicStep.${step.kind}(${renderObject([
+                            {
+                                name: "objectType",
+                                value:
+                                    "objectType" in step.value
+                                        ? renderPlainValue(step.value.objectType)
+                                        : undefined,
+                            },
+                            {
+                                name: "object",
+                                value:
+                                    "object" in step.value
+                                        ? renderPlainValue(step.value.object)
+                                        : undefined,
+                            },
+                            {
+                                name: "values",
+                                value:
+                                    "values" in step.value
+                                        ? withWriter((arrayWriter) =>
+                                              writeArray(
+                                                  arrayWriter,
+                                                  ("values" in step.value ? step.value.values : []).map((value) =>
+                                                      renderActionPropertyAssignment(value)
+                                                  )
+                                              )
+                                          )
+                                        : undefined,
+                            },
+                        ])})`
+                    )
+                )
+            ),
+        },
+        { name: "description", value: actionType.description ? renderPlainValue(actionType.description) : undefined },
+        { name: "deprecated", value: renderDeprecation(actionType.deprecated) },
+    ]);
+}
+
 export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}): string {
     const ontologyImportPath = opts.ontologyImportPath ?? "@party-stack/ontology";
     const project = new Project({ useInMemoryFileSystem: true });
@@ -319,6 +408,15 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
                     writeArray(
                         arrayWriter,
                         ir.linkTypes.map((linkType) => renderLinkType(linkType))
+                    )
+                ),
+            },
+            {
+                name: "actionTypes",
+                value: withWriter((arrayWriter) =>
+                    writeArray(
+                        arrayWriter,
+                        ir.actionTypes.map((actionType) => renderActionType(actionType))
                     )
                 ),
             },

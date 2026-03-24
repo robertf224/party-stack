@@ -7,6 +7,10 @@ export interface GenerateTypesOpts {
     valuesImportPath?: string;
 }
 
+function renderPropertyName(name: string): string {
+    return /^[$A-Z_][0-9A-Z_$]*$/i.test(name) ? name : JSON.stringify(name);
+}
+
 function withWriter(fn: WriterFunction): string {
     const writer = new CodeBlockWriter();
     fn(writer);
@@ -90,7 +94,7 @@ function generateForStructTypeDef(type: StructTypeDef): string {
             properties: type.fields.map((field) => {
                 const { type: fieldType, isOptional } = unwrapType(field.type);
                 return {
-                    name: field.name,
+                    name: renderPropertyName(field.name),
                     type: generateForTypeDef(fieldType),
                     hasQuestionToken: isOptional,
                     docs: buildJsDocs({ description: field.description, deprecated: field.deprecated }),
@@ -105,7 +109,7 @@ function generateForUnionTypeDef(type: UnionTypeDef): string {
         Writers.objectType({
             properties: type.variants.map((variant) => {
                 return {
-                    name: variant.name,
+                    name: renderPropertyName(variant.name),
                     type: generateForTypeDef(variant.type),
                 };
             }),
