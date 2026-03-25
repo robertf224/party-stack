@@ -168,5 +168,40 @@ export default {
                 }),
             ],
         },
+        {
+            name: "reopenTask",
+            displayName: "Reopen task",
+            parameters: [
+                {
+                    name: "completedAt",
+                    displayName: "Completed at",
+                    type: o.optional({
+                        type: o.timestamp({}),
+                    }),
+                },
+                {
+                    name: "task",
+                    displayName: "Task",
+                    type: o.objectReference({
+                        objectType: "Task",
+                    }),
+                },
+            ],
+            logic: [
+                o.ActionLogicStep.updateObject({
+                    object: {
+                        path: ["task"],
+                    },
+                    values: [
+                        {
+                            property: ["completedAt"],
+                            value: o.Expression.valueReference({
+                                path: ["completedAt"],
+                            }),
+                        },
+                    ],
+                }),
+            ],
+        },
     ],
 } satisfies OntologyIR;

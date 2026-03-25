@@ -3,5 +3,5 @@ import { foundryOntologyConfigAdapter, FoundryOntologyConfig } from "@party-stac
 export default {
     adapter: foundryOntologyConfigAdapter,
     objectTypeNames: ["Task"],
-    actionTypeNames: ["createTask", "completeTask", "deleteTask"],
+    actionTypeNames: ["createTask", "completeTask", "reopenTask", "deleteTask"],
 } satisfies FoundryOntologyConfig;

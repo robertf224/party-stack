@@ -47,101 +47,147 @@ type ManualSyncController = {
 };
 
 const manualSyncControllers = new WeakMap<Collection, ManualSyncController>();
+const COLLECTION_SYNC_TIMEOUT_MS = 5_000;
 
-type BufferedObjectUpdate = {
-    state: "ADDED_OR_UPDATED" | "REMOVED";
-    object: FoundryObject;
+type CollectionSyncEvent = "upsert" | "delete";
+
+type CollectionSyncWaiter = {
+    afterVersion: number;
+    event: CollectionSyncEvent;
+    resolve: () => void;
+    timeoutId: ReturnType<typeof setTimeout>;
 };
 
-type CollectionSyncState = {
-    pendingKeyCounts: Map<string | number, number>;
-    bufferedObjectUpdates: Map<string | number, BufferedObjectUpdate>;
-    needsRefresh: boolean;
-    resetLoadSubsetDedupe?: () => void;
+type CollectionSyncTracker = {
+    versions: Map<string | number, number>;
+    lastEvents: Map<string | number, CollectionSyncEvent>;
+    waiters: Map<string | number, Set<CollectionSyncWaiter>>;
 };
 
-const collectionSyncStates = new WeakMap<Collection, CollectionSyncState>();
+const collectionSyncTrackers = new WeakMap<Collection, CollectionSyncTracker>();
 
-function createCollectionSyncState(): CollectionSyncState {
-    return {
-        pendingKeyCounts: new Map(),
-        bufferedObjectUpdates: new Map(),
-        needsRefresh: false,
-    };
-}
-
-function getCollectionSyncState(collection: Collection): CollectionSyncState {
-    let state = collectionSyncStates.get(collection);
-    if (!state) {
-        state = createCollectionSyncState();
-        collectionSyncStates.set(collection, state);
+function getCollectionSyncTracker(collection: Collection): CollectionSyncTracker {
+    let tracker = collectionSyncTrackers.get(collection);
+    if (!tracker) {
+        tracker = {
+            versions: new Map(),
+            lastEvents: new Map(),
+            waiters: new Map(),
+        };
+        collectionSyncTrackers.set(collection, tracker);
     }
-    return state;
+    return tracker;
 }
 
-function markPendingKeys(
-    state: CollectionSyncState,
-    keys: Iterable<string | number>
+function getCollectionSyncVersion(collection: Collection, key: string | number): number {
+    return getCollectionSyncTracker(collection).versions.get(key) ?? 0;
+}
+
+function recordCollectionSyncEvent(
+    collection: Collection,
+    key: string | number,
+    event: CollectionSyncEvent
 ): void {
-    for (const key of keys) {
-        state.pendingKeyCounts.set(key, (state.pendingKeyCounts.get(key) ?? 0) + 1);
-    }
-}
+    const tracker = getCollectionSyncTracker(collection);
+    const version = (tracker.versions.get(key) ?? 0) + 1;
+    tracker.versions.set(key, version);
+    tracker.lastEvents.set(key, event);
 
-function releasePendingKeys(
-    state: CollectionSyncState,
-    keys: Iterable<string | number>
-): void {
-    for (const key of keys) {
-        const nextCount = (state.pendingKeyCounts.get(key) ?? 0) - 1;
-        if (nextCount > 0) {
-            state.pendingKeyCounts.set(key, nextCount);
-        } else {
-            state.pendingKeyCounts.delete(key);
-        }
-    }
-}
-
-function isPendingKey(state: CollectionSyncState, key: string | number): boolean {
-    return (state.pendingKeyCounts.get(key) ?? 0) > 0;
-}
-
-function applyBufferedObjectUpdates(opts: {
-    collection: Collection<Record<string, unknown>>;
-    controller: ManualSyncController;
-    state: CollectionSyncState;
-}): void {
-    const readyUpdates = Array.from(opts.state.bufferedObjectUpdates.entries()).filter(
-        ([key]) => !isPendingKey(opts.state, key)
-    );
-    if (readyUpdates.length === 0 && !opts.state.needsRefresh) {
+    const waiters = tracker.waiters.get(key);
+    if (!waiters) {
         return;
     }
 
-    if (readyUpdates.length > 0) {
-        opts.controller.begin({ immediate: true });
-        for (const [key, update] of readyUpdates) {
-            opts.state.bufferedObjectUpdates.delete(key);
-            const previousValue = opts.collection.get(key);
-            if (update.state === "REMOVED") {
-                if (previousValue) {
-                    opts.controller.write({ type: "delete", key, previousValue });
-                }
-                continue;
-            }
-            opts.controller.write({
-                type: previousValue ? "update" : "insert",
-                value: update.object,
-                previousValue,
-            });
+    for (const waiter of Array.from(waiters)) {
+        if (version > waiter.afterVersion && waiter.event === event) {
+            clearTimeout(waiter.timeoutId);
+            waiters.delete(waiter);
+            waiter.resolve();
         }
-        opts.controller.commit();
     }
 
-    if (opts.state.needsRefresh) {
-        opts.state.resetLoadSubsetDedupe?.();
-        opts.state.needsRefresh = false;
+    if (waiters.size === 0) {
+        tracker.waiters.delete(key);
     }
+}
+
+function waitForCollectionSyncEvent(opts: {
+    collection: Collection;
+    key: string | number;
+    event: CollectionSyncEvent;
+    afterVersion: number;
+}): Promise<void> {
+    const tracker = getCollectionSyncTracker(opts.collection);
+    const currentVersion = tracker.versions.get(opts.key) ?? 0;
+    const currentEvent = tracker.lastEvents.get(opts.key);
+    if (currentVersion > opts.afterVersion && currentEvent === opts.event) {
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+        const waiters = tracker.waiters.get(opts.key) ?? new Set<CollectionSyncWaiter>();
+        const waiter: CollectionSyncWaiter = {
+            afterVersion: opts.afterVersion,
+            event: opts.event,
+            resolve: () => {
+                waiters.delete(waiter);
+                if (waiters.size === 0) {
+                    tracker.waiters.delete(opts.key);
+                }
+                resolve();
+            },
+            timeoutId: setTimeout(() => {
+                waiters.delete(waiter);
+                if (waiters.size === 0) {
+                    tracker.waiters.delete(opts.key);
+                }
+                resolve();
+            }, COLLECTION_SYNC_TIMEOUT_MS),
+        };
+        waiters.add(waiter);
+        tracker.waiters.set(opts.key, waiters);
+    });
+}
+
+function getActionSyncTargets(opts: {
+    edits: Exclude<Awaited<ReturnType<typeof Actions.applyWithOverrides>>["edits"], undefined>;
+    objectCollections: Record<string, Collection<Record<string, unknown>>>;
+}): Array<{
+    collection: Collection<Record<string, unknown>>;
+    key: string | number;
+    event: CollectionSyncEvent;
+    afterVersion: number;
+}> {
+    if (opts.edits.type !== "edits") {
+        return [];
+    }
+
+    const finalEventsByObjectType = new Map<string, Map<string | number, CollectionSyncEvent>>();
+    for (const edit of opts.edits.edits) {
+        if (edit.type !== "addObject" && edit.type !== "modifyObject" && edit.type !== "deleteObject") {
+            continue;
+        }
+
+        const event: CollectionSyncEvent = edit.type === "deleteObject" ? "delete" : "upsert";
+        const entries =
+            finalEventsByObjectType.get(edit.objectType) ?? new Map<string | number, CollectionSyncEvent>();
+        entries.set(edit.primaryKey as string | number, event);
+        finalEventsByObjectType.set(edit.objectType, entries);
+    }
+
+    return Array.from(finalEventsByObjectType.entries()).flatMap(([objectType, entries]) => {
+        const collection = opts.objectCollections[objectType];
+        if (!collection) {
+            return [];
+        }
+
+        return Array.from(entries.entries()).map(([key, event]) => ({
+            collection,
+            key,
+            event,
+            afterVersion: getCollectionSyncVersion(collection, key),
+        }));
+    });
 }
 
 function serializeOverrideValue(value: unknown): string {
@@ -205,114 +251,6 @@ async function fetchFoundryObjects(
     return (results as FoundryObject[]).map(decodeObject);
 }
 
-async function fetchFoundryObjectsByPrimaryKeys(
-    client: OntologyClient,
-    objectType: string,
-    primaryKey: string,
-    keys: Array<string | number>,
-    decodeObject: (object: FoundryObject) => FoundryObject = (object) => object
-): Promise<FoundryObject[]> {
-    return fetchFoundryObjects(
-        client,
-        objectType,
-        {
-            where: {
-                type: "in",
-                left: {
-                    type: "ref",
-                    path: [primaryKey],
-                },
-                value: keys,
-            } as unknown as LoadSubsetOptions["where"],
-            limit: keys.length,
-        },
-        decodeObject
-    );
-}
-
-async function syncActionEditsIntoCollections(opts: {
-    client: OntologyClient;
-    ir: OntologyIR;
-    decodeObject: (objectType: string, object: FoundryObject) => FoundryObject;
-    edits: Exclude<Awaited<ReturnType<typeof Actions.applyWithOverrides>>["edits"], undefined>;
-    objectCollections: Record<string, Collection<Record<string, unknown>>>;
-}) {
-    if (opts.edits.type !== "edits") {
-        return;
-    }
-
-    const objectTypes = new Map(opts.ir.objectTypes.map((objectType) => [objectType.name, objectType]));
-    const keysByObjectType = new Map<
-        string,
-        {
-            upserts: Set<string | number>;
-            deletes: Set<string | number>;
-        }
-    >();
-
-    for (const edit of opts.edits.edits) {
-        if (edit.type !== "addObject" && edit.type !== "modifyObject" && edit.type !== "deleteObject") {
-            continue;
-        }
-        const entry = keysByObjectType.get(edit.objectType) ?? {
-            upserts: new Set<string | number>(),
-            deletes: new Set<string | number>(),
-        };
-        if (edit.type === "deleteObject") {
-            entry.deletes.add(edit.primaryKey as string | number);
-            entry.upserts.delete(edit.primaryKey as string | number);
-        } else {
-            entry.upserts.add(edit.primaryKey as string | number);
-        }
-        keysByObjectType.set(edit.objectType, entry);
-    }
-
-    for (const [objectTypeName, keys] of keysByObjectType) {
-        const collection = opts.objectCollections[objectTypeName];
-        const controller = collection ? manualSyncControllers.get(collection) : undefined;
-        const syncState = collection ? collectionSyncStates.get(collection) : undefined;
-        const objectType = objectTypes.get(objectTypeName);
-        if (!collection || !controller || !syncState || !objectType) {
-            continue;
-        }
-
-        const affectedKeys = [...keys.upserts, ...keys.deletes];
-        markPendingKeys(syncState, affectedKeys);
-
-        try {
-            const upsertedObjects = await fetchFoundryObjectsByPrimaryKeys(
-                opts.client,
-                objectTypeName,
-                objectType.primaryKey,
-                Array.from(keys.upserts),
-                (object) => opts.decodeObject(objectTypeName, object)
-            );
-
-            controller.begin({ immediate: true });
-            for (const key of keys.deletes) {
-                const previousValue = collection.get(key);
-                controller.write({ type: "delete", key, previousValue });
-            }
-            for (const object of upsertedObjects) {
-                const previousValue = collection.get(object.__primaryKey);
-                controller.write({
-                    type: previousValue ? "update" : "insert",
-                    value: object,
-                    previousValue,
-                });
-            }
-            controller.commit();
-        } finally {
-            releasePendingKeys(syncState, affectedKeys);
-            applyBufferedObjectUpdates({
-                collection,
-                controller,
-                state: syncState,
-            });
-        }
-    }
-}
-
 export function createFoundryObjectSyncConfig(
     client: OntologyClient,
     objectType: string,
@@ -322,7 +260,7 @@ export function createFoundryObjectSyncConfig(
         sync: (params) => {
             const { begin, write, commit, markReady, collection } = params;
             manualSyncControllers.set(collection as Collection, { begin, write, commit });
-            const syncState = getCollectionSyncState(collection as Collection);
+            getCollectionSyncTracker(collection as Collection);
 
             const upsertObject = (object: FoundryObject) => {
                 const existingObject = collection._state.syncedData.get(object.__primaryKey);
@@ -348,54 +286,47 @@ export function createFoundryObjectSyncConfig(
                         upsertObject(object);
                     }
                     commit();
+                    for (const object of objects) {
+                        recordCollectionSyncEvent(collection as Collection, object.__primaryKey, "upsert");
+                    }
                 }
             };
             const loadSubsetDedupe = new DeduplicatedLoadSubset({ loadSubset });
-            syncState.resetLoadSubsetDedupe = () => {
-                loadSubsetDedupe.reset();
-            };
             const objectSetWatcherManager = getObjectSetWatcherManager(client);
             const unsubscribe = objectSetWatcherManager.subscribe({ type: "base", objectType }, (message) => {
                 switch (message.type) {
                     case "change": {
-                        let hasImmediateWrites = false;
+                        const syncEvents: Array<{ key: string | number; event: CollectionSyncEvent }> = [];
+                        begin();
                         for (const update of message.updates) {
                             if (update.type === "object") {
                                 const object = decodeObject(update.object as FoundryObject);
-                                if (isPendingKey(syncState, object.__primaryKey)) {
-                                    syncState.bufferedObjectUpdates.set(object.__primaryKey, {
-                                        state: update.state,
-                                        object,
-                                    });
-                                    continue;
-                                }
-                                if (!hasImmediateWrites) {
-                                    begin();
-                                    hasImmediateWrites = true;
-                                }
                                 switch (update.state) {
                                     case "ADDED_OR_UPDATED": {
                                         upsertObject(object);
+                                        syncEvents.push({ key: object.__primaryKey, event: "upsert" });
                                         break;
                                     }
                                     case "REMOVED": {
                                         deleteObject(object);
+                                        syncEvents.push({ key: object.__primaryKey, event: "delete" });
                                         break;
                                     }
                                 }
                             }
                         }
-                        if (hasImmediateWrites) {
-                            commit();
+                        commit();
+                        for (const syncEvent of syncEvents) {
+                            recordCollectionSyncEvent(
+                                collection as Collection,
+                                syncEvent.key,
+                                syncEvent.event
+                            );
                         }
                         break;
                     }
                     case "refresh": {
-                        if (syncState.pendingKeyCounts.size > 0) {
-                            syncState.needsRefresh = true;
-                        } else {
-                            loadSubsetDedupe.reset();
-                        }
+                        loadSubsetDedupe.reset();
                         break;
                     }
                 }
@@ -407,7 +338,7 @@ export function createFoundryObjectSyncConfig(
                 loadSubset: loadSubsetDedupe.loadSubset,
                 cleanup: () => {
                     manualSyncControllers.delete(collection as Collection);
-                    collectionSyncStates.delete(collection as Collection);
+                    collectionSyncTrackers.delete(collection as Collection);
                     unsubscribe();
                 },
             };
@@ -485,14 +416,11 @@ export function createFoundryOntologyAdapter(opts: {
                 throw new NonRetriableError("Invalid Action arguments.");
             }
             if (context && result.edits) {
-                await syncActionEditsIntoCollections({
-                    client: opts.client,
-                    ir: opts.ir,
-                    decodeObject: (objectType, object) =>
-                        decoder.decodeObject(objectType, object) as FoundryObject,
+                const syncTargets = getActionSyncTargets({
                     edits: result.edits,
                     objectCollections: context.objects,
                 });
+                await Promise.all(syncTargets.map((target) => waitForCollectionSyncEvent(target)));
             }
         },
     };

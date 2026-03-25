@@ -2,7 +2,8 @@
 
 import { concat, eq, ilike, useLiveInfiniteQuery } from "@tanstack/react-db";
 import React, { useState } from "react";
-import { User, ontology } from "./collections";
+import { User } from "./collections";
+import { ontology } from "./collections";
 import { useAction } from "./useAction";
 
 export const TaskList: React.FC = () => {
@@ -10,20 +11,23 @@ export const TaskList: React.FC = () => {
     const [title, setTitle] = useState("");
     const createTask = useAction(ontology.actions.createTask);
     const deleteTask = useAction(ontology.actions.deleteTask);
+    const completeTask = useAction(ontology.actions.completeTask);
+    const reopenTask = useAction(ontology.actions.reopenTask);
+
     const { data: tasks } = useLiveInfiniteQuery(
         (q) =>
             q
                 .from({ Task: ontology.objects.Task })
                 .where(({ Task }) => ilike(Task.title, `${query}%`))
-                .limit(10)
-                .orderBy(({ Task }) => Task.completedAt, "desc")
                 .join({ User }, ({ Task, User }) => eq(Task.createdBy, User.id))
                 .select(({ Task, User }) => ({
                     id: Task.id,
                     title: Task.title,
-                    createdBy: concat(User?.givenName, " ", User.familyName),
+                    createdBy: concat(User.givenName, " ", User.familyName),
                     completedAt: Task.completedAt,
-                })),
+                }))
+                .orderBy(({ Task }) => Task.createdAt, "asc")
+                .limit(10),
         {
             getNextPageParam: (page) => page.length,
         },
@@ -44,6 +48,15 @@ export const TaskList: React.FC = () => {
 
     const handleDeleteTask = (taskId: string) => {
         deleteTask({ task: taskId });
+    };
+
+    const handleToggleTask = (taskId: string, completedAt: unknown) => {
+        if (completedAt) {
+            reopenTask({ task: taskId });
+            return;
+        }
+
+        completeTask({ task: taskId });
     };
 
     return (
@@ -77,18 +90,32 @@ export const TaskList: React.FC = () => {
                             className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
                         >
                             <div className="flex items-start justify-between gap-4">
-                                <div className="flex min-w-0 flex-1 flex-col gap-2">
-                                    <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">
-                                        {task.title}
-                                    </h2>
-                                    <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                                        Created by {task.createdBy}
-                                    </p>
-                                    {task.completedAt && (
-                                        <p className="text-xs text-zinc-500 dark:text-zinc-500">
-                                            Completed {String(task.completedAt)}
+                                <div className="flex min-w-0 flex-1 items-start gap-3">
+                                    <input
+                                        checked={Boolean(task.completedAt)}
+                                        className="mt-1 h-4 w-4 rounded border-zinc-300"
+                                        onChange={() => handleToggleTask(task.id, task.completedAt)}
+                                        type="checkbox"
+                                    />
+                                    <div className="flex min-w-0 flex-1 flex-col gap-2">
+                                        <h2
+                                            className={`truncate text-base font-semibold ${
+                                                task.completedAt
+                                                    ? "text-zinc-500 line-through dark:text-zinc-500"
+                                                    : "text-zinc-900 dark:text-zinc-100"
+                                            }`}
+                                        >
+                                            {task.title}
+                                        </h2>
+                                        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                                            Created by {task.createdBy}
                                         </p>
-                                    )}
+                                        {task.completedAt && (
+                                            <p className="text-xs text-zinc-500 dark:text-zinc-500">
+                                                Completed {String(task.completedAt)}
+                                            </p>
+                                        )}
+                                    </div>
                                 </div>
                                 <button
                                     className="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40"

@@ -27,6 +27,11 @@ export type DeleteTaskParameters = {
     task: string;
 };
 
+export type ReopenTaskParameters = {
+    completedAt?: v.timestamp;
+    task: string;
+};
+
 export type IssueTrackerOntology = {
     objectTypes: {
         Task: Task;
@@ -40,6 +45,9 @@ export type IssueTrackerOntology = {
         };
         deleteTask: {
             parameters: DeleteTaskParameters;
+        };
+        reopenTask: {
+            parameters: ReopenTaskParameters;
         };
     };
 };
