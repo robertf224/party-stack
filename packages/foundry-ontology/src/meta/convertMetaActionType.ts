@@ -1,3 +1,4 @@
+import { Temporal } from "temporal-polyfill";
 import type {
     ActionParameterDef,
     ActionTypeDef,
@@ -273,6 +274,43 @@ function valueReference(path: string[]): Expression {
     };
 }
 
+// TODO: This uses regex heuristics to infer the type of static literal values without
+// knowing the target property type. We should eventually resolve the target property's
+// TypeDef from the object type definition so we decode accurately instead of guessing
+// from the string format.
+const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const GEO_POINT_RE = /^(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)$/;
+
+function decodeLiteralValue(value: unknown): unknown {
+    if (typeof value !== "string") {
+        return value;
+    }
+
+    if (ISO_TIMESTAMP_RE.test(value)) {
+        try {
+            return Temporal.Instant.from(value);
+        } catch {
+            return value;
+        }
+    }
+
+    if (ISO_DATE_RE.test(value)) {
+        try {
+            return Temporal.PlainDate.from(value);
+        } catch {
+            return value;
+        }
+    }
+
+    const geoMatch = GEO_POINT_RE.exec(value);
+    if (geoMatch) {
+        return { lat: Number(geoMatch[1]), lon: Number(geoMatch[2]) };
+    }
+
+    return value;
+}
+
 function convertLogicRuleArgument(
     argument: LogicRuleArgument | StructFieldArgument,
     syntheticParameters: {
@@ -309,7 +347,7 @@ function convertLogicRuleArgument(
         case "staticValue":
             return {
                 kind: "literal",
-                value: { value: argument.value },
+                value: { value: decodeLiteralValue(argument.value) },
             };
         case "currentUser":
             return {

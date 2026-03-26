@@ -1,3 +1,4 @@
+import { Temporal } from "temporal-polyfill";
 import { CodeBlockWriter, Project, type WriterFunction } from "ts-morph";
 import type {
     ActionTypeDef,
@@ -80,11 +81,15 @@ function renderObject(entries: Array<{ name: string; value: string | undefined }
     return withWriter((writer) => writeObject(writer, entries));
 }
 
-function renderPlainValue(value: unknown): string {
-    return withWriter((writer) => writePlainValue(writer, value));
+interface RenderContext {
+    markTemporalUsed(): void;
 }
 
-function writePlainValue(writer: CodeBlockWriter, value: unknown): void {
+function renderPlainValue(value: unknown, ctx?: RenderContext): string {
+    return withWriter((writer) => writePlainValue(writer, value, ctx));
+}
+
+function writePlainValue(writer: CodeBlockWriter, value: unknown, ctx?: RenderContext): void {
     if (value === null) {
         writer.write("null");
         return;
@@ -100,10 +105,22 @@ function writePlainValue(writer: CodeBlockWriter, value: unknown): void {
         return;
     }
 
+    if (value instanceof Temporal.Instant) {
+        ctx?.markTemporalUsed();
+        writer.write(`Temporal.Instant.from(${JSON.stringify(value.toString())})`);
+        return;
+    }
+
+    if (value instanceof Temporal.PlainDate) {
+        ctx?.markTemporalUsed();
+        writer.write(`Temporal.PlainDate.from(${JSON.stringify(value.toString())})`);
+        return;
+    }
+
     if (Array.isArray(value)) {
         writeArray(
             writer,
-            value.map((entry) => renderPlainValue(entry))
+            value.map((entry) => renderPlainValue(entry, ctx))
         );
         return;
     }
@@ -112,7 +129,7 @@ function writePlainValue(writer: CodeBlockWriter, value: unknown): void {
         writer,
         Object.entries(value).map(([name, entryValue]) => ({
             name,
-            value: entryValue === undefined ? undefined : renderPlainValue(entryValue),
+            value: entryValue === undefined ? undefined : renderPlainValue(entryValue, ctx),
         }))
     );
 }
@@ -282,18 +299,18 @@ function renderLinkType(linkType: LinkTypeDef): string {
     ]);
 }
 
-function renderExpression(expression: Expression): string {
-    return `o.Expression.${expression.kind}(${renderPlainValue(expression.value)})`;
+function renderExpression(expression: Expression, ctx?: RenderContext): string {
+    return `o.Expression.${expression.kind}(${renderPlainValue(expression.value, ctx)})`;
 }
 
-function renderActionPropertyAssignment(assignment: PropertyAssignment): string {
+function renderActionPropertyAssignment(assignment: PropertyAssignment, ctx?: RenderContext): string {
     return renderObject([
         { name: "property", value: renderPlainValue(assignment.property) },
-        { name: "value", value: renderExpression(assignment.value) },
+        { name: "value", value: renderExpression(assignment.value, ctx) },
     ]);
 }
 
-function renderActionType(actionType: ActionTypeDef): string {
+function renderActionType(actionType: ActionTypeDef, ctx?: RenderContext): string {
     return renderObject([
         { name: "name", value: renderPlainValue(actionType.name) },
         { name: "displayName", value: renderPlainValue(actionType.displayName) },
@@ -315,7 +332,7 @@ function renderActionType(actionType: ActionTypeDef): string {
                             {
                                 name: "defaultValue",
                                 value: parameter.defaultValue
-                                    ? renderExpression(parameter.defaultValue)
+                                    ? renderExpression(parameter.defaultValue, ctx)
                                     : undefined,
                             },
                         ])
@@ -352,7 +369,7 @@ function renderActionType(actionType: ActionTypeDef): string {
                                               writeArray(
                                                   arrayWriter,
                                                   ("values" in step.value ? step.value.values : []).map((value) =>
-                                                      renderActionPropertyAssignment(value)
+                                                      renderActionPropertyAssignment(value, ctx)
                                                   )
                                               )
                                           )
@@ -373,6 +390,15 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile("ontology.ts", "");
 
+    let usesTemporalTypes = false;
+    const ctx: RenderContext = {
+        markTemporalUsed() {
+            usesTemporalTypes = true;
+        },
+    };
+
+    const renderedActionTypes = ir.actionTypes.map((actionType) => renderActionType(actionType, ctx));
+
     sourceFile.addImportDeclaration({
         moduleSpecifier: ontologyImportPath,
         namedImports: ["o"],
@@ -382,6 +408,12 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
         namedImports: ["OntologyIR"],
         isTypeOnly: true,
     });
+    if (usesTemporalTypes) {
+        sourceFile.addImportDeclaration({
+            moduleSpecifier: "temporal-polyfill",
+            namedImports: ["Temporal"],
+        });
+    }
 
     sourceFile.addStatements((writer) => {
         writer.write("export default ");
@@ -416,10 +448,7 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
             {
                 name: "actionTypes",
                 value: withWriter((arrayWriter) =>
-                    writeArray(
-                        arrayWriter,
-                        ir.actionTypes.map((actionType) => renderActionType(actionType))
-                    )
+                    writeArray(arrayWriter, renderedActionTypes)
                 ),
             },
         ]);

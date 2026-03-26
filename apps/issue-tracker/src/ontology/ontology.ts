@@ -133,12 +133,6 @@ export default {
                             }),
                         },
                         {
-                            property: ["location"],
-                            value: o.Expression.literal({
-                                value: "40.375786,-74.111440",
-                            }),
-                        },
-                        {
                             property: ["id"],
                             value: o.Expression.valueReference({
                                 path: ["__uuid_9131b78a-d4a1-443b-9fca-a3f70c2355ef"],

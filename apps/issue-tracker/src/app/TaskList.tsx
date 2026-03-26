@@ -133,7 +133,6 @@ export const TaskList: React.FC = () => {
                                                 Completed {String(task.completedAt)}
                                             </p>
                                         )}
-                                        <span>{JSON.stringify(task.location)}</span>
                                     </div>
                                 </div>
                                 <button
