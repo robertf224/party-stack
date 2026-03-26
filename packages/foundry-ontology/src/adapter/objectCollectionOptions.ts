@@ -112,6 +112,18 @@ function isNullPropertyValue(value: unknown): boolean {
     return value === "NullPropertyValue{}";
 }
 
+const geoPointPattern = /^GeoPointPropertyValue\{latitude:\s*(-?[\d.]+),\s*longitude:\s*(-?[\d.]+)\}$/;
+
+function parseGeoPointPropertyValue(value: unknown): { lat: number; lon: number } | undefined {
+    if (typeof value !== "string") return undefined;
+    const match = geoPointPattern.exec(value);
+    if (!match) return undefined;
+    const lat = Number(match[1]);
+    const lon = Number(match[2]);
+    if (Number.isNaN(lat) || Number.isNaN(lon)) return undefined;
+    return { lat, lon };
+}
+
 function isWrappedPrimitivePropertyValue(
     value: unknown
 ): value is { type: string; value: string | number | boolean } {
@@ -131,6 +143,8 @@ function isWrappedPrimitivePropertyValue(
 
 function normalizeEditPropertyValue(value: unknown): unknown {
     if (isNullPropertyValue(value)) return undefined;
+    const geoPoint = parseGeoPointPropertyValue(value);
+    if (geoPoint) return geoPoint;
     if (isWrappedPrimitivePropertyValue(value)) return value.value;
     if (Array.isArray(value)) return value.map(normalizeEditPropertyValue);
     if (isPlainObject(value)) {

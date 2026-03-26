@@ -334,6 +334,45 @@ describe("objectCollectionOptions", () => {
         harness.cleanup();
     });
 
+    it("decodes GeoPointPropertyValue strings from edit history", async () => {
+        mockState.getEditsHistory.mockResolvedValue({
+            data: [
+                {
+                    objectPrimaryKey: { employeeId: 5 },
+                    operationId: "op-1",
+                    actionTypeRid: "action-1",
+                    userId: "user-1",
+                    timestamp: "2099-03-12T12:00:00.000Z",
+                    edit: {
+                        type: "createEdit",
+                        properties: {
+                            employeeId: 5,
+                            name: "Employee Five",
+                            location: "GeoPointPropertyValue{latitude: 40.375786, longitude: -74.11144}",
+                        },
+                    },
+                },
+            ],
+            nextPageToken: undefined,
+        });
+
+        const harness = createSyncHarness();
+
+        mockState.subscribeCallback?.({ type: "state", status: "open" });
+
+        await vi.waitFor(() => {
+            expect(harness.syncedData.get(5)).toEqual({
+                employeeId: 5,
+                name: "Employee Five",
+                location: { lat: 40.375786, lon: -74.11144 },
+            });
+        });
+
+        expect(mockState.getObject).not.toHaveBeenCalled();
+
+        harness.cleanup();
+    });
+
     it("unwraps tagged primary key values from edit history", async () => {
         mockState.getEditsHistory.mockResolvedValue({
             data: [
