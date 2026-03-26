@@ -7,9 +7,7 @@ import {
 } from "@osdk/foundry.ontologies";
 import {
     BasicIndex,
-    Collection,
     CollectionConfig,
-    createCollection,
     DeduplicatedLoadSubset,
     InferSchemaOutput,
     LoadSubsetOptions,
@@ -182,21 +180,19 @@ async function fetchFoundryObjects(
 }
 
 // ---------------------------------------------------------------------------
-// Sync config + utils factory
+// Sync config + utils (private)
 //
 // Follows Electric's pattern: the Store is created in the factory closure and
 // shared by both the sync function and the utils via lexical scope.
 // No WeakMap, no lazy binding — just closures, like electricCollectionOptions.
 // ---------------------------------------------------------------------------
 
-export function createFoundryObjectSyncConfig(
+function createSyncConfig(
     client: OntologyClient,
     objectType: string,
     primaryKeyProperty: string,
     decodeObject: (object: FoundryObject) => FoundryObject = (object) => object
 ): { sync: SyncConfig<Record<string, unknown>, string | number>; utils: ObjectCollectionUtils } {
-    // Shared Store for sync tracking — like Electric's seenTxids Store.
-    // Both the sync function and the utils close over this same instance.
     const syncStore = new Store<Map<string | number, SyncEntry>>(new Map());
 
     const recordSyncEvent = (key: string | number, event: CollectionSyncEvent): void => {
@@ -207,8 +203,6 @@ export function createFoundryObjectSyncConfig(
             return next;
         });
     };
-
-    // -- utils (like Electric's awaitTxId / awaitMatch) -----------------------
 
     const getObjectSyncVersion = (key: string | number): number =>
         syncStore.state.get(key)?.version ?? 0;
@@ -246,8 +240,6 @@ export function createFoundryObjectSyncConfig(
 
     const utils: ObjectCollectionUtils = { getObjectSyncVersion, awaitObjectSync };
 
-    // -- sync -----------------------------------------------------------------
-
     const sync: SyncConfig<Record<string, unknown>, string | number> = {
         sync: (params) => {
             const { begin, write, commit, markReady } = params;
@@ -260,12 +252,8 @@ export function createFoundryObjectSyncConfig(
             let catchUpTask: Promise<void> | undefined;
             let scheduledCatchUpRetry: ReturnType<typeof setTimeout> | undefined;
 
-            // -- key extraction -----------------------------------------------
-
             const getObjectKey = (object: FoundryObject): string | number =>
                 object[primaryKeyProperty] as string | number;
-
-            // -- write helpers ------------------------------------------------
 
             const upsertObject = (object: FoundryObject) => {
                 const key = getObjectKey(object);
@@ -280,8 +268,6 @@ export function createFoundryObjectSyncConfig(
                 syncedKeys.delete(key);
                 return true;
             };
-
-            // -- edit history -------------------------------------------------
 
             const fetchEditHistoryPage = (body: Parameters<typeof ObjectTypesV2.getEditsHistory>[3]) =>
                 ObjectTypesV2.getEditsHistory(
@@ -385,8 +371,6 @@ export function createFoundryObjectSyncConfig(
                     });
             };
 
-            // -- loadSubset ---------------------------------------------------
-
             const loadSubset = async (opts: LoadSubsetOptions): Promise<void> => {
                 const objects = await fetchFoundryObjects(client, objectType, opts, decodeObject);
                 if (objects.length > 0) {
@@ -400,8 +384,6 @@ export function createFoundryObjectSyncConfig(
                     }
                 }
             };
-
-            // -- watcher subscription -----------------------------------------
 
             const loadSubsetDedupe = new DeduplicatedLoadSubset({ loadSubset });
             const objectSetWatcherManager = getObjectSetWatcherManager(client);
@@ -481,52 +463,57 @@ export function createFoundryObjectSyncConfig(
 }
 
 // ---------------------------------------------------------------------------
-// Collection config types
+// Collection option types
 // ---------------------------------------------------------------------------
 
-export interface ObjectCollectionConfig<TSchema extends StandardSchema<OntologyObject>>
-    extends Omit<
-        CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema>,
-        "sync" | "syncMode" | "getKey" | "onInsert" | "onUpdate" | "onDelete"
-    > {
+export interface ObjectCollectionOpts {
     client: OntologyClient;
     objectType: string;
     primaryKeyProperty: string;
+    decodeObject?: (object: Record<string, unknown>) => Record<string, unknown>;
+}
+
+export interface ObjectCollectionConfig<TSchema extends StandardSchema<OntologyObject>>
+    extends ObjectCollectionOpts,
+        Omit<
+            CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema>,
+            "sync" | "syncMode" | "getKey" | "onInsert" | "onUpdate" | "onDelete"
+        > {
     schema: TSchema;
 }
 
 // ---------------------------------------------------------------------------
-// Public collection creation
+// Public collection options
 // ---------------------------------------------------------------------------
 
-function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>(
+export function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>(
     config: ObjectCollectionConfig<TSchema>
 ): WithRequired<
     CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema, ObjectCollectionUtils>,
     "schema"
-> {
-    const { client, objectType, primaryKeyProperty, schema, ...rest } = config;
-    const { sync: syncConfig, utils } = createFoundryObjectSyncConfig(client, objectType, primaryKeyProperty);
-    const sync = syncConfig as unknown as SyncConfig<InferSchemaOutput<TSchema>, string | number>;
+>;
+export function objectCollectionOptions(
+    config: ObjectCollectionOpts
+): { syncMode: "on-demand"; sync: SyncConfig<Record<string, unknown>, string | number>; utils: ObjectCollectionUtils };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function objectCollectionOptions(config: any): any {
+    const { client, objectType, primaryKeyProperty, decodeObject, schema, ...rest } =
+        config as ObjectCollectionOpts & { schema?: StandardSchema<OntologyObject> } & Record<string, unknown>;
+    const { sync, utils } = createSyncConfig(client, objectType, primaryKeyProperty, decodeObject);
+
+    if (schema === undefined) {
+        return { syncMode: "on-demand" as const, sync, utils };
+    }
 
     return {
         ...rest,
         schema,
         defaultIndexType: BasicIndex,
         autoIndex: "eager",
-        syncMode: "on-demand",
-        getKey: (object) =>
+        syncMode: "on-demand" as const,
+        getKey: (object: Record<string, unknown>) =>
             (object as Record<string, string | number>)[primaryKeyProperty] as string | number,
         sync,
         utils,
     };
-}
-
-export function createObjectCollection<TSchema extends StandardSchema<OntologyObject>>(
-    config: ObjectCollectionConfig<TSchema>
-): Collection<InferSchemaOutput<TSchema>, string | number, ObjectCollectionUtils, TSchema>;
-export function createObjectCollection<TSchema extends StandardSchema<OntologyObject>>(
-    config: ObjectCollectionConfig<TSchema>
-): Collection<InferSchemaOutput<TSchema>, string | number, ObjectCollectionUtils, TSchema> {
-    return createCollection(objectCollectionOptions(config));
 }

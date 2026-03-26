@@ -1,7 +1,8 @@
 "use client";
 
+import { createCollection } from "@tanstack/db";
 import { createOntologyClient, createFoundryOntologyAdapter } from "@party-stack/foundry-ontology";
-import { createUserCollection } from "@party-stack/foundry-ontology/users";
+import { userCollectionOptions } from "@party-stack/foundry-ontology/users";
 import ir from "../ontology/ontology";
 import { createIssueTrackerLiveOntology } from "../ontology/generated/live";
 
@@ -16,4 +17,4 @@ export const ontology = createIssueTrackerLiveOntology(adapter, {
         userId: "77a1fe87-ad9f-4cd7-ba76-223ab048d2d3",
     }),
 });
-export const User = createUserCollection({ client });
+export const User = createCollection(userCollectionOptions({ client }));

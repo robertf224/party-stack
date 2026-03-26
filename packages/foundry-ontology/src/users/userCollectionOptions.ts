@@ -1,6 +1,5 @@
 import { User, Users } from "@osdk/foundry.admin";
 import {
-    createCollection,
     FieldPath,
     LoadSubsetOptions,
     parseOrderByExpression,
@@ -14,69 +13,65 @@ import { Client } from "../utils/client.js";
 
 type UsersQuery = { type: "getBatch"; ids: string[] } | { type: "search"; query: string } | { type: "list" };
 
-export interface CreateUserCollectionOpts {
+export interface UserCollectionOpts {
     client: Client;
 }
 
-export function createUserCollection({ client }: CreateUserCollectionOpts) {
-    return createCollection(
-        queryCollectionOptions<User>({
-            queryClient: new QueryClient(),
-            getKey: (user) => user.id,
-            queryKey: ["foundry", "users"],
-            syncMode: "on-demand",
-            queryFn: async (ctx) => {
-                const loadSubsetOptions = ctx.meta?.loadSubsetOptions;
+export function userCollectionOptions({ client }: UserCollectionOpts) {
+    return queryCollectionOptions<User>({
+        queryClient: new QueryClient(),
+        getKey: (user) => user.id,
+        queryKey: ["foundry", "users"],
+        syncMode: "on-demand",
+        queryFn: async (ctx) => {
+            const loadSubsetOptions = ctx.meta?.loadSubsetOptions;
 
-                const query = convertQuery(loadSubsetOptions);
+            const query = convertQuery(loadSubsetOptions);
 
-                if (query.type === "getBatch") {
-                    // The max batch size here is 500 (https://www.palantir.com/docs/foundry/api/v2/admin-v2-resources/users/get-users-batch)
-                    const chunks = chunk(query.ids, 500);
-                    const results = await Promise.all(
-                        chunks.map((chunk) =>
-                            Users.getBatch(
-                                client,
-                                chunk.map((userId) => ({ userId }))
-                            )
+            if (query.type === "getBatch") {
+                // The max batch size here is 500 (https://www.palantir.com/docs/foundry/api/v2/admin-v2-resources/users/get-users-batch)
+                const chunks = chunk(query.ids, 500);
+                const results = await Promise.all(
+                    chunks.map((chunk) =>
+                        Users.getBatch(
+                            client,
+                            chunk.map((userId) => ({ userId }))
                         )
-                    );
-                    return results.flatMap((result) => Object.values(result.data));
-                }
-
-                const queryString = query.type === "search" ? query.query : "";
-                let limit: number | undefined;
-                if (query.type === "search") {
-                    const orderBy = parseOrderByExpression(loadSubsetOptions?.orderBy);
-                    // Only if there is no order by or order by matches the default for the underlying endpoint can we push down the limit
-                    // to the endpoint, otherwise we need to load everything for our query to make sure we don't miss any results.
-                    if (
-                        orderBy.length === 0 ||
-                        (orderBy.length === 1 &&
-                            orderBy[0]!.field.join(".") === "id" &&
-                            orderBy[0]!.direction === "asc")
-                    ) {
-                        limit = loadSubsetOptions?.limit;
-                    }
-                }
-
-                return AsyncIterable.toArray(
-                    AsyncIterable.fromPagination(
-                        (pageSize, pageToken: string | undefined) =>
-                            Users.search(client, {
-                                pageSize,
-                                pageToken,
-                                where: { type: "queryString", value: queryString },
-                            }),
-                        (page) => page.nextPageToken,
-                        (page) => page.data,
-                        10_000,
-                        limit
                     )
                 );
-            },
-        })
-    );
+                return results.flatMap((result) => Object.values(result.data));
+            }
+
+            const queryString = query.type === "search" ? query.query : "";
+            let limit: number | undefined;
+            if (query.type === "search") {
+                const orderBy = parseOrderByExpression(loadSubsetOptions?.orderBy);
+                if (
+                    orderBy.length === 0 ||
+                    (orderBy.length === 1 &&
+                        orderBy[0]!.field.join(".") === "id" &&
+                        orderBy[0]!.direction === "asc")
+                ) {
+                    limit = loadSubsetOptions?.limit;
+                }
+            }
+
+            return AsyncIterable.toArray(
+                AsyncIterable.fromPagination(
+                    (pageSize, pageToken: string | undefined) =>
+                        Users.search(client, {
+                            pageSize,
+                            pageToken,
+                            where: { type: "queryString", value: queryString },
+                        }),
+                    (page) => page.nextPageToken,
+                    (page) => page.data,
+                    10_000,
+                    limit
+                )
+            );
+        },
+    });
 }
 
 function convertQuery(options?: LoadSubsetOptions): UsersQuery {

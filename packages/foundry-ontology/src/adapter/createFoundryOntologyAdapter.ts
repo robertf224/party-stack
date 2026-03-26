@@ -5,8 +5,8 @@ import type { OntologyAdapter, OntologyIR } from "@party-stack/ontology";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import { OntologyClient } from "../utils/client.js";
-import { createFoundryObjectSyncConfig, type CollectionSyncEvent, type ObjectCollectionUtils } from "./createObjectCollection.js";
 import { createFoundryObjectDecoder } from "./foundryCodec.js";
+import { objectCollectionOptions, type CollectionSyncEvent, type ObjectCollectionUtils } from "./objectCollectionOptions.js";
 
 type FoundryObject = Record<string, unknown>;
 
@@ -103,13 +103,12 @@ export function createFoundryOntologyAdapter(opts: {
         name: "foundry",
         getCollectionOptions: (objectType: string) => {
             const objectTypeDef = opts.ir.objectTypes.find((ot) => ot.name === objectType)!;
-            const { sync, utils } = createFoundryObjectSyncConfig(
-                opts.client,
+            return objectCollectionOptions({
+                client: opts.client,
                 objectType,
-                objectTypeDef.primaryKey,
-                (object) => decoder.decodeObject(objectType, object) as FoundryObject
-            );
-            return { syncMode: "on-demand", sync, utils };
+                primaryKeyProperty: objectTypeDef.primaryKey,
+                decodeObject: (object) => decoder.decodeObject(objectType, object) as FoundryObject,
+            });
         },
         applyAction: async (name, parameters, context) => {
             const actionType = opts.ir.actionTypes.find((actionType) => actionType.name === name)!;

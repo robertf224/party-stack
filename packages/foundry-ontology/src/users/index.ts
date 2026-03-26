@@ -1,1 +1,1 @@
-export * from "./createUserCollection.js";
+export * from "./userCollectionOptions.js";

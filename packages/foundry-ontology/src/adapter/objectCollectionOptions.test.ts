@@ -32,7 +32,7 @@ vi.mock("./sync/ObjectSetWatcherManager.js", () => ({
     }),
 }));
 
-import { createFoundryObjectSyncConfig } from "./createObjectCollection.js";
+import { objectCollectionOptions } from "./objectCollectionOptions.js";
 
 function createSyncHarness(initialObjects: Array<Record<string, unknown>> = []) {
     const syncedData = new Map(
@@ -40,16 +40,16 @@ function createSyncHarness(initialObjects: Array<Record<string, unknown>> = []) 
     );
     const writes: Array<{ type: string; primaryKey: string | number }> = [];
 
-    const { sync: syncConfig } = createFoundryObjectSyncConfig(
-        {
+    const { sync: syncConfig } = objectCollectionOptions({
+        client: {
             baseUrl: "https://example.com",
             fetch: vi.fn(),
             ontologyRid: "ri.ontology.main",
             tokenProvider: () => Promise.resolve("token"),
         } as never,
-        "Employee",
-        "employeeId"
-    );
+        objectType: "Employee",
+        primaryKeyProperty: "employeeId",
+    });
 
     const handle = syncConfig.sync({
         begin: vi.fn(),
@@ -78,7 +78,7 @@ function createSyncHarness(initialObjects: Array<Record<string, unknown>> = []) 
     };
 }
 
-describe("createFoundryObjectSyncConfig", () => {
+describe("objectCollectionOptions", () => {
     beforeEach(() => {
         mockState.getEditsHistory.mockReset();
         mockState.getObject.mockReset();
