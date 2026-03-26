@@ -306,6 +306,11 @@ function convertLogicRuleArgument(
                       kind: "functionCall",
                       value: { kind: "now", value: {} },
                   };
+        // case "staticValue":
+        //    return {
+        //        kind: "literal",
+        //        value: { value: argument.value },
+        //    };
         case "currentUser":
             return {
                 kind: "contextReference",
@@ -317,10 +322,7 @@ function convertLogicRuleArgument(
 }
 
 function convertAssignments(
-    rule: Extract<
-        ActionLogicRule,
-        { type: "createObject" | "modifyObject" }
-    >,
+    rule: Extract<ActionLogicRule, { type: "createObject" | "modifyObject" }>,
     syntheticParameters: {
         uniqueIdentifierParametersByLinkId: Map<string, string>;
         nowParameterName?: string;

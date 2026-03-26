@@ -76,6 +76,11 @@ export const result = (value: Extract<t.TypeDef, { kind: "result" }>["value"]) =
 
 export const ref = (value: Extract<t.TypeDef, { kind: "ref" }>["value"]) => ({ kind: "ref" as const, value });
 
+export const unknown = (value: Extract<t.TypeDef, { kind: "unknown" }>["value"]) => ({
+    kind: "unknown" as const,
+    value,
+});
+
 export const StringConstraint = {
     enum: (value: Extract<t.StringConstraint, { kind: "enum" }>["value"]) => ({
         kind: "enum" as const,
@@ -104,5 +109,6 @@ export const s = {
     optional,
     result,
     ref,
+    unknown,
     StringConstraint,
 };

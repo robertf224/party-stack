@@ -36,6 +36,8 @@ export const GeopointTypeDef: z.ZodMiniType<t.GeopointTypeDef> = z.object({});
 
 export const AttachmentTypeDef: z.ZodMiniType<t.AttachmentTypeDef> = z.object({});
 
+export const UnknownTypeDef: z.ZodMiniType<t.UnknownTypeDef> = z.object({});
+
 export const ListTypeDef: z.ZodMiniType<t.ListTypeDef> = z.object({ elementType: z.lazy(() => TypeDef) });
 
 export const MapTypeDef: z.ZodMiniType<t.MapTypeDef> = z.object({
@@ -90,6 +92,7 @@ export const TypeDef: z.ZodMiniType<t.TypeDef> = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("optional"), value: z.lazy(() => OptionalTypeDef) }),
     z.object({ kind: z.literal("result"), value: z.lazy(() => ResultTypeDef) }),
     z.object({ kind: z.literal("ref"), value: z.lazy(() => TypeRef) }),
+    z.object({ kind: z.literal("unknown"), value: z.lazy(() => UnknownTypeDef) }),
 ]);
 
 export const NamedTypeDef: z.ZodMiniType<t.NamedTypeDef> = z.object({

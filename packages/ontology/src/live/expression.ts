@@ -70,6 +70,8 @@ export function evaluateExpression(
         }
         case "contextReference":
             return get(context, expression.value.path);
+        case "literal":
+            return expression.value.value;
         case "functionCall":
             switch (expression.value.kind) {
                 case "uuid":

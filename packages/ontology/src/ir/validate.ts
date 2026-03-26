@@ -35,6 +35,7 @@ function validateTypeDef(
         case "timestamp":
         case "geopoint":
         case "attachment":
+        case "unknown":
             return [];
 
         case "objectReference":
@@ -271,6 +272,7 @@ function validateExpression(
                 ? []
                 : [{ message: "Context references must include a path.", path: [...path, "path"] }];
         case "functionCall":
+        case "literal":
             return [];
     }
 }

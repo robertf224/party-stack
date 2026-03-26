@@ -37,6 +37,7 @@ function lowerType(
         case "geopoint":
         case "attachment":
         case "ref":
+        case "unknown":
             return type;
         case "objectReference": {
             return lowerObjectReferenceType(type.value.objectType, objectTypes);

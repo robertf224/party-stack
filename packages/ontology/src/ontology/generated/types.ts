@@ -54,6 +54,9 @@ export type GeopointTypeDef = Record<never, never>;
 /** A file handle. */
 export type AttachmentTypeDef = Record<never, never>;
 
+/** An opaque type whose shape is not known at schema time. */
+export type UnknownTypeDef = Record<never, never>;
+
 /** A list/array type. */
 export type ListTypeDef = {
     /** The type of elements in the list. */
@@ -137,6 +140,7 @@ export type TypeDef = v.Union<{
     optional: OptionalTypeDef;
     result: ResultTypeDef;
     ref: TypeRef;
+    unknown: UnknownTypeDef;
     objectReference: ObjectReferenceTypeDef;
 }>;
 
@@ -199,6 +203,12 @@ export type UuidFunctionCall = Record<never, never>;
 /** Returns the current timestamp. */
 export type NowFunctionCall = Record<never, never>;
 
+/** A static literal value. */
+export type LiteralExpression = {
+    /** The literal value. */
+    value: unknown;
+};
+
 /** Calls a function within an expression. */
 export type FunctionCallExpression = v.Union<{
     uuid: UuidFunctionCall;
@@ -210,6 +220,7 @@ export type Expression = v.Union<{
     valueReference: ValueReferenceExpression;
     contextReference: ContextReferenceExpression;
     functionCall: FunctionCallExpression;
+    literal: LiteralExpression;
 }>;
 
 /** Assigns an expression to a property path on an object written by an action. */

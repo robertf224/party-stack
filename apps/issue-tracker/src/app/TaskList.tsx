@@ -35,6 +35,7 @@ export const TaskList: React.FC = () => {
                     createdBy: concat(User.givenName, " ", User.familyName),
                     createdAt: Task.createdAt,
                     completedAt: Task.completedAt,
+                    location: Task.location,
                 }))
                 .orderBy(({ Task }) => Task.completedAt, "desc")
                 .orderBy(({ Task }) => Task.createdAt, "asc")
@@ -132,6 +133,7 @@ export const TaskList: React.FC = () => {
                                                 Completed {String(task.completedAt)}
                                             </p>
                                         )}
+                                        <span>{JSON.stringify(task.location)}</span>
                                     </div>
                                 </div>
                                 <button

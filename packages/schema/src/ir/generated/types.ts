@@ -54,6 +54,9 @@ export type GeopointTypeDef = Record<never, never>;
 /** A file handle. */
 export type AttachmentTypeDef = Record<never, never>;
 
+/** An opaque type whose shape is not known at schema time. */
+export type UnknownTypeDef = Record<never, never>;
+
 /** A list/array type. */
 export type ListTypeDef = {
     /** The type of elements in the list. */
@@ -137,6 +140,7 @@ export type TypeDef = v.Union<{
     optional: OptionalTypeDef;
     result: ResultTypeDef;
     ref: TypeRef;
+    unknown: UnknownTypeDef;
 }>;
 
 /** A named type definition that can be referenced by other types. */

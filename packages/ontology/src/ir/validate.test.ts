@@ -484,6 +484,111 @@ describe("Ontology Validation", () => {
         });
     });
 
+    describe("Literal Expression", () => {
+        it("should validate an action with a literal default value", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [
+                    {
+                        name: "Task",
+                        displayName: "Task",
+                        pluralDisplayName: "Tasks",
+                        primaryKey: "taskId",
+                        properties: [
+                            { name: "taskId", displayName: "Task ID", type: o.string({}) },
+                            { name: "status", displayName: "Status", type: o.string({}) },
+                        ],
+                    },
+                ],
+                actionTypes: [
+                    {
+                        name: "createTask",
+                        displayName: "Create Task",
+                        parameters: [
+                            {
+                                name: "taskId",
+                                displayName: "Task ID",
+                                type: o.string({}),
+                                defaultValue: o.Expression.functionCall(o.FunctionCallExpression.uuid({})),
+                            },
+                            {
+                                name: "status",
+                                displayName: "Status",
+                                type: o.string({}),
+                                defaultValue: o.Expression.literal({ value: "open" }),
+                            },
+                        ],
+                        logic: [
+                            o.ActionLogicStep.createObject({
+                                objectType: "Task",
+                                values: [
+                                    {
+                                        property: ["taskId"],
+                                        value: o.Expression.valueReference({ path: ["taskId"] }),
+                                    },
+                                    {
+                                        property: ["status"],
+                                        value: o.Expression.valueReference({ path: ["status"] }),
+                                    },
+                                ],
+                            }),
+                        ],
+                    },
+                ],
+            };
+
+            expectOk(validate(ontology));
+        });
+
+        it("should validate literal expressions in property assignments", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [
+                    {
+                        name: "Task",
+                        displayName: "Task",
+                        pluralDisplayName: "Tasks",
+                        primaryKey: "taskId",
+                        properties: [
+                            { name: "taskId", displayName: "Task ID", type: o.string({}) },
+                            { name: "status", displayName: "Status", type: o.string({}) },
+                        ],
+                    },
+                ],
+                actionTypes: [
+                    {
+                        name: "createTask",
+                        displayName: "Create Task",
+                        parameters: [
+                            {
+                                name: "taskId",
+                                displayName: "Task ID",
+                                type: o.string({}),
+                            },
+                        ],
+                        logic: [
+                            o.ActionLogicStep.createObject({
+                                objectType: "Task",
+                                values: [
+                                    {
+                                        property: ["taskId"],
+                                        value: o.Expression.valueReference({ path: ["taskId"] }),
+                                    },
+                                    {
+                                        property: ["status"],
+                                        value: o.Expression.literal({ value: "open" }),
+                                    },
+                                ],
+                            }),
+                        ],
+                    },
+                ],
+            };
+
+            expectOk(validate(ontology));
+        });
+    });
+
     describe("Blog Example", () => {
         it("should validate the blog example ontology", async () => {
             const { default: blogOntology } = await import("../examples/blog.js");

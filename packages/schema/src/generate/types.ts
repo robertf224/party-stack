@@ -61,6 +61,9 @@ function generateForTypeDef(type: TypeDef): string {
         case "attachment":
             return "v.attachment";
 
+        case "unknown":
+            return "unknown";
+
         case "list":
             return `Array<${generateForTypeDef(type.value.elementType)}>`;
 

@@ -36,6 +36,8 @@ export const GeopointTypeDef: z.ZodMiniType<t.GeopointTypeDef> = z.object({});
 
 export const AttachmentTypeDef: z.ZodMiniType<t.AttachmentTypeDef> = z.object({});
 
+export const UnknownTypeDef: z.ZodMiniType<t.UnknownTypeDef> = z.object({});
+
 export const ListTypeDef: z.ZodMiniType<t.ListTypeDef> = z.object({ elementType: z.lazy(() => TypeDef) });
 
 export const MapTypeDef: z.ZodMiniType<t.MapTypeDef> = z.object({
@@ -90,6 +92,7 @@ export const TypeDef: z.ZodMiniType<t.TypeDef> = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("optional"), value: z.lazy(() => OptionalTypeDef) }),
     z.object({ kind: z.literal("result"), value: z.lazy(() => ResultTypeDef) }),
     z.object({ kind: z.literal("ref"), value: z.lazy(() => TypeRef) }),
+    z.object({ kind: z.literal("unknown"), value: z.lazy(() => UnknownTypeDef) }),
     z.object({ kind: z.literal("objectReference"), value: z.lazy(() => ObjectReferenceTypeDef) }),
 ]);
 
@@ -159,6 +162,8 @@ export const UuidFunctionCall: z.ZodMiniType<t.UuidFunctionCall> = z.object({});
 
 export const NowFunctionCall: z.ZodMiniType<t.NowFunctionCall> = z.object({});
 
+export const LiteralExpression: z.ZodMiniType<t.LiteralExpression> = z.object({ value: z.unknown() });
+
 export const FunctionCallExpression: z.ZodMiniType<t.FunctionCallExpression> = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("uuid"), value: z.lazy(() => UuidFunctionCall) }),
     z.object({ kind: z.literal("now"), value: z.lazy(() => NowFunctionCall) }),
@@ -168,6 +173,7 @@ export const Expression: z.ZodMiniType<t.Expression> = z.discriminatedUnion("kin
     z.object({ kind: z.literal("valueReference"), value: z.lazy(() => ValueReferenceExpression) }),
     z.object({ kind: z.literal("contextReference"), value: z.lazy(() => ContextReferenceExpression) }),
     z.object({ kind: z.literal("functionCall"), value: z.lazy(() => FunctionCallExpression) }),
+    z.object({ kind: z.literal("literal"), value: z.lazy(() => LiteralExpression) }),
 ]);
 
 export const PropertyAssignment: z.ZodMiniType<t.PropertyAssignment> = z.object({

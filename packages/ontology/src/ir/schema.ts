@@ -270,6 +270,20 @@ export default {
             }),
         },
         {
+            name: "LiteralExpression",
+            description: "A static literal value.",
+            type: s.struct({
+                fields: [
+                    {
+                        name: "value",
+                        displayName: "Value",
+                        type: s.unknown({}),
+                        description: "The literal value.",
+                    },
+                ],
+            }),
+        },
+        {
             name: "FunctionCallExpression",
             description: "Calls a function within an expression.",
             type: s.union({
@@ -295,6 +309,10 @@ export default {
                     {
                         name: "functionCall",
                         type: s.ref({ name: "FunctionCallExpression" }),
+                    },
+                    {
+                        name: "literal",
+                        type: s.ref({ name: "LiteralExpression" }),
                     },
                 ],
             }),
