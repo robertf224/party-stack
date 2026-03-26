@@ -1,6 +1,6 @@
 "use client";
 
-import { concat, eq, ilike, useLiveInfiniteQuery } from "@tanstack/react-db";
+import { concat, eq, ilike, useLiveQuery } from "@tanstack/react-db";
 import React, { useState } from "react";
 import { User } from "./collections";
 import { ontology } from "./collections";
@@ -14,7 +14,7 @@ export const TaskList: React.FC = () => {
     const completeTask = useAction(ontology.actions.completeTask);
     const reopenTask = useAction(ontology.actions.reopenTask);
 
-    const { data: tasks } = useLiveInfiniteQuery(
+    const { data: tasks } = useLiveQuery(
         (q) =>
             q
                 .from({ Task: ontology.objects.Task })
@@ -24,13 +24,12 @@ export const TaskList: React.FC = () => {
                     id: Task.id,
                     title: Task.title,
                     createdBy: concat(User.givenName, " ", User.familyName),
+                    createdAt: Task.createdAt,
                     completedAt: Task.completedAt,
                 }))
+                .orderBy(({ Task }) => Task.completedAt, "desc")
                 .orderBy(({ Task }) => Task.createdAt, "asc")
                 .limit(10),
-        {
-            getNextPageParam: (page) => page.length,
-        },
         [query]
     );
 
@@ -105,7 +104,10 @@ export const TaskList: React.FC = () => {
                                                     : "text-zinc-900 dark:text-zinc-100"
                                             }`}
                                         >
-                                            {task.title}
+                                            {task.title}{" "}
+                                            <span className="text-gray-500">
+                                                {task.createdAt?.toLocaleString()}
+                                            </span>
                                         </h2>
                                         <p className="text-sm text-zinc-600 dark:text-zinc-400">
                                             Created by {task.createdBy}

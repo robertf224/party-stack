@@ -1,4 +1,4 @@
-import { Collection, createCollection } from "@tanstack/db";
+import { BasicIndex, Collection, createCollection } from "@tanstack/db";
 import { applyActionLogic } from "./applyActionLogic.js";
 import { resolveActionParameters } from "./expression.js";
 import type { OntologyAdapter } from "./OntologyAdapter.js";
@@ -56,6 +56,8 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
             const collectionOptions = opts.adapter.getCollectionOptions(objectType.name);
             const collection = createCollection({
                 ...collectionOptions,
+                defaultIndexType: BasicIndex,
+                autoIndex: "eager",
                 getKey: (object) =>
                     (object as Record<string, string | number>)[objectType.primaryKey] as string | number,
             }) as OntologyCollection<OntologyObject>;

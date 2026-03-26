@@ -1,4 +1,5 @@
 import { get } from "lodash-es";
+import { Temporal } from "temporal-polyfill";
 import type { OntologyCollection, OntologyObject } from "./LiveOntology.js";
 import type {
     Expression,
@@ -74,7 +75,7 @@ export function evaluateExpression(
                 case "uuid":
                     return globalThis.crypto.randomUUID();
                 case "now":
-                    return new Date().toISOString();
+                    return Temporal.Now.instant();
             }
     }
 }

@@ -51,7 +51,9 @@ export function createFoundryObjectDecoder(ir: OntologyIR): FoundryObjectDecoder
             case "date":
                 return typeof value === "string" ? Temporal.PlainDate.from(value) : value;
             case "timestamp":
-                return typeof value === "string" ? Temporal.Instant.from(value) : value;
+                if (typeof value === "string") return Temporal.Instant.from(value);
+                if (typeof value === "number") return Temporal.Instant.fromEpochMilliseconds(value);
+                return value;
             case "geopoint":
                 return decodeGeoPoint(value);
             case "attachment":

@@ -32,12 +32,13 @@
         "jiti": "^2.6.1",
         "lodash-es": "^4.17.23",
         "prettier": "^3.5.3",
+        "temporal-polyfill": "^0.3.0",
         "ts-morph": "^27.0.2",
         "zod": "^4.1.13"
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",
-        "@tanstack/db": "^0.5.32",
+        "@tanstack/db": "^0.6.0",
         "@types/lodash-es": "^4.17.12",
         "eslint": "^9.25.0",
         "tsx": "^4.20.6",
@@ -45,6 +46,6 @@
         "vitest": "^3.1.1"
     },
     "peerDependencies": {
-        "@tanstack/db": "^0.5.32"
+        "@tanstack/db": "^0.6.0"
     }
 }

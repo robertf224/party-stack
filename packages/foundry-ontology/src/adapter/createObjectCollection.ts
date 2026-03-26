@@ -1,24 +1,31 @@
-import { Actions, OntologyObjectsV2, OntologyObjectV2 } from "@osdk/foundry.ontologies";
 import {
+    OntologyObjectsV2,
+    OntologyObjectV2,
+    type ObjectEditHistoryEntry,
+    ObjectTypesV2,
+    type ObjectPrimaryKeyV2,
+} from "@osdk/foundry.ontologies";
+import {
+    BasicIndex,
     Collection,
     CollectionConfig,
     createCollection,
     DeduplicatedLoadSubset,
     InferSchemaOutput,
     LoadSubsetOptions,
-    NonRetriableError,
     StandardSchema,
     SyncConfig,
     UtilsRecord,
 } from "@tanstack/db";
-import type { OntologyAdapter, OntologyIR } from "@party-stack/ontology";
-import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
-import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
+import { Store } from "@tanstack/store";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import { OntologyClient } from "../utils/client.js";
 import { convertLoadSubsetFilter, convertLoadSubsetOrderBy } from "./convertLoadSubsetOptions.js";
-import { createFoundryObjectDecoder } from "./foundryCodec.js";
 import { getObjectSetWatcherManager } from "./sync/ObjectSetWatcherManager.js";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 type WithRequired<T, K extends keyof T> = T & { [P in K]-?: T[P] };
 
@@ -26,195 +33,119 @@ interface OntologyObject extends OntologyObjectV2 {
     __primaryKey: string | number;
 }
 
-type FoundryObject = OntologyObject & Record<string, unknown>;
+type FoundryObject = Record<string, unknown>;
 
-type ManualSyncController = {
-    begin: (options?: { immediate?: boolean }) => void;
-    write: (
-        message:
-            | {
-                  type: "insert" | "update";
-                  value: Record<string, unknown>;
-                  previousValue?: Record<string, unknown>;
-              }
-            | {
-                  type: "delete";
-                  key: string | number;
-                  previousValue?: Record<string, unknown>;
-              }
-    ) => void;
-    commit: () => void;
-};
+// ---------------------------------------------------------------------------
+// Sync tracking types
+// ---------------------------------------------------------------------------
 
-const manualSyncControllers = new WeakMap<Collection, ManualSyncController>();
 const COLLECTION_SYNC_TIMEOUT_MS = 5_000;
 
-type CollectionSyncEvent = "upsert" | "delete";
+export type CollectionSyncEvent = "upsert" | "delete";
 
-type CollectionSyncWaiter = {
-    afterVersion: number;
-    event: CollectionSyncEvent;
-    resolve: () => void;
-    timeoutId: ReturnType<typeof setTimeout>;
-};
+type SyncEntry = { version: number; event: CollectionSyncEvent };
 
-type CollectionSyncTracker = {
-    versions: Map<string | number, number>;
-    lastEvents: Map<string | number, CollectionSyncEvent>;
-    waiters: Map<string | number, Set<CollectionSyncWaiter>>;
-};
-
-const collectionSyncTrackers = new WeakMap<Collection, CollectionSyncTracker>();
-
-function getCollectionSyncTracker(collection: Collection): CollectionSyncTracker {
-    let tracker = collectionSyncTrackers.get(collection);
-    if (!tracker) {
-        tracker = {
-            versions: new Map(),
-            lastEvents: new Map(),
-            waiters: new Map(),
-        };
-        collectionSyncTrackers.set(collection, tracker);
-    }
-    return tracker;
+export interface ObjectCollectionUtils extends UtilsRecord {
+    getObjectSyncVersion: (key: string | number) => number;
+    awaitObjectSync: (
+        key: string | number,
+        opts: { event: CollectionSyncEvent; afterVersion: number; timeout?: number }
+    ) => Promise<void>;
 }
 
-function getCollectionSyncVersion(collection: Collection, key: string | number): number {
-    return getCollectionSyncTracker(collection).versions.get(key) ?? 0;
+// ---------------------------------------------------------------------------
+// Edit history helpers
+// ---------------------------------------------------------------------------
+
+const EDIT_HISTORY_PAGE_SIZE = 1_000;
+
+interface EditHistoryCursor {
+    timestamp: string;
+    seenEntryKeysAtTimestamp: Set<string>;
 }
 
-function recordCollectionSyncEvent(
-    collection: Collection,
-    key: string | number,
-    event: CollectionSyncEvent
-): void {
-    const tracker = getCollectionSyncTracker(collection);
-    const version = (tracker.versions.get(key) ?? 0) + 1;
-    tracker.versions.set(key, version);
-    tracker.lastEvents.set(key, event);
-
-    const waiters = tracker.waiters.get(key);
-    if (!waiters) {
-        return;
-    }
-
-    for (const waiter of Array.from(waiters)) {
-        if (version > waiter.afterVersion && waiter.event === event) {
-            clearTimeout(waiter.timeoutId);
-            waiters.delete(waiter);
-            waiter.resolve();
-        }
-    }
-
-    if (waiters.size === 0) {
-        tracker.waiters.delete(key);
-    }
+function createEditHistoryCursor(timestamp: string = new Date().toISOString()): EditHistoryCursor {
+    return { timestamp, seenEntryKeysAtTimestamp: new Set() };
 }
 
-function waitForCollectionSyncEvent(opts: {
-    collection: Collection;
-    key: string | number;
-    event: CollectionSyncEvent;
-    afterVersion: number;
-}): Promise<void> {
-    const tracker = getCollectionSyncTracker(opts.collection);
-    const currentVersion = tracker.versions.get(opts.key) ?? 0;
-    const currentEvent = tracker.lastEvents.get(opts.key);
-    if (currentVersion > opts.afterVersion && currentEvent === opts.event) {
-        return Promise.resolve();
-    }
-
-    return new Promise((resolve) => {
-        const waiters = tracker.waiters.get(opts.key) ?? new Set<CollectionSyncWaiter>();
-        const waiter: CollectionSyncWaiter = {
-            afterVersion: opts.afterVersion,
-            event: opts.event,
-            resolve: () => {
-                waiters.delete(waiter);
-                if (waiters.size === 0) {
-                    tracker.waiters.delete(opts.key);
-                }
-                resolve();
-            },
-            timeoutId: setTimeout(() => {
-                waiters.delete(waiter);
-                if (waiters.size === 0) {
-                    tracker.waiters.delete(opts.key);
-                }
-                resolve();
-            }, COLLECTION_SYNC_TIMEOUT_MS),
-        };
-        waiters.add(waiter);
-        tracker.waiters.set(opts.key, waiters);
+function getEditHistoryEntryKey(entry: ObjectEditHistoryEntry): string {
+    return JSON.stringify({
+        objectPrimaryKey: entry.objectPrimaryKey,
+        operationId: entry.operationId,
+        timestamp: entry.timestamp,
+        edit: entry.edit,
     });
 }
 
-function getActionSyncTargets(opts: {
-    edits: Exclude<Awaited<ReturnType<typeof Actions.applyWithOverrides>>["edits"], undefined>;
-    objectCollections: Record<string, Collection<Record<string, unknown>>>;
-}): Array<{
-    collection: Collection<Record<string, unknown>>;
-    key: string | number;
-    event: CollectionSyncEvent;
-    afterVersion: number;
-}> {
-    if (opts.edits.type !== "edits") {
-        return [];
+function shouldProcessEditHistoryEntry(cursor: EditHistoryCursor, entry: ObjectEditHistoryEntry): boolean {
+    if (entry.timestamp < cursor.timestamp) return false;
+    if (entry.timestamp === cursor.timestamp) {
+        return !cursor.seenEntryKeysAtTimestamp.has(getEditHistoryEntryKey(entry));
     }
-
-    const finalEventsByObjectType = new Map<string, Map<string | number, CollectionSyncEvent>>();
-    for (const edit of opts.edits.edits) {
-        if (edit.type !== "addObject" && edit.type !== "modifyObject" && edit.type !== "deleteObject") {
-            continue;
-        }
-
-        const event: CollectionSyncEvent = edit.type === "deleteObject" ? "delete" : "upsert";
-        const entries =
-            finalEventsByObjectType.get(edit.objectType) ?? new Map<string | number, CollectionSyncEvent>();
-        entries.set(edit.primaryKey as string | number, event);
-        finalEventsByObjectType.set(edit.objectType, entries);
-    }
-
-    return Array.from(finalEventsByObjectType.entries()).flatMap(([objectType, entries]) => {
-        const collection = opts.objectCollections[objectType];
-        if (!collection) {
-            return [];
-        }
-
-        return Array.from(entries.entries()).map(([key, event]) => ({
-            collection,
-            key,
-            event,
-            afterVersion: getCollectionSyncVersion(collection, key),
-        }));
-    });
+    return true;
 }
 
-function serializeOverrideValue(value: unknown): string {
-    if (typeof value === "string") {
-        return value;
+function advanceEditHistoryCursor(cursor: EditHistoryCursor, entry: ObjectEditHistoryEntry): void {
+    const entryKey = getEditHistoryEntryKey(entry);
+    if (entry.timestamp > cursor.timestamp) {
+        cursor.timestamp = entry.timestamp;
+        cursor.seenEntryKeysAtTimestamp.clear();
     }
-    if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-        return String(value);
-    }
-    if (value instanceof Date) {
-        return value.toISOString();
-    }
-    return JSON.stringify(value) ?? "";
+    cursor.seenEntryKeysAtTimestamp.add(entryKey);
 }
 
-export interface ObjectCollectionConfig<TSchema extends StandardSchema<OntologyObject>>
-    extends Omit<
-        CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema>,
-        "sync" | "syncMode" | "getKey" | "onInsert" | "onUpdate" | "onDelete"
-    > {
-    client: OntologyClient;
-    objectType: string;
-    schema: TSchema;
+function getPrimaryKeyValue(primaryKey: ObjectPrimaryKeyV2): string | number {
+    const values = Object.values(primaryKey);
+    if (values.length !== 1) {
+        throw new Error("Foundry object collections currently only support single-field primary keys.");
+    }
+    const value = normalizeEditPropertyValue(values[0]);
+    if (typeof value !== "string" && typeof value !== "number") {
+        throw new Error("Foundry object collections currently only support string or number primary keys.");
+    }
+    return value;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface ObjectCollectionUtils extends UtilsRecord {}
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNullPropertyValue(value: unknown): boolean {
+    return value === "NullPropertyValue{}";
+}
+
+function isWrappedPrimitivePropertyValue(
+    value: unknown
+): value is { type: string; value: string | number | boolean } {
+    if (!isPlainObject(value) || typeof value.type !== "string" || !("value" in value)) {
+        return false;
+    }
+    return [
+        "stringValue",
+        "integerValue",
+        "doubleValue",
+        "longValue",
+        "booleanValue",
+        "dateValue",
+        "timestampValue",
+    ].includes(value.type);
+}
+
+function normalizeEditPropertyValue(value: unknown): unknown {
+    if (isNullPropertyValue(value)) return undefined;
+    if (isWrappedPrimitivePropertyValue(value)) return value.value;
+    if (Array.isArray(value)) return value.map(normalizeEditPropertyValue);
+    if (isPlainObject(value)) {
+        return Object.fromEntries(
+            Object.entries(value).map(([key, v]) => [key, normalizeEditPropertyValue(v)])
+        );
+    }
+    return value;
+}
+
+// ---------------------------------------------------------------------------
+// Foundry object fetching
+// ---------------------------------------------------------------------------
 
 async function fetchFoundryObjects(
     client: OntologyClient,
@@ -223,7 +154,6 @@ async function fetchFoundryObjects(
     decodeObject: (object: FoundryObject) => FoundryObject = (object) => object
 ): Promise<FoundryObject[]> {
     const where = convertLoadSubsetFilter(opts.where);
-
     if (where?.type === "in" && where.value.length === 0) {
         return [];
     }
@@ -251,180 +181,323 @@ async function fetchFoundryObjects(
     return (results as FoundryObject[]).map(decodeObject);
 }
 
+// ---------------------------------------------------------------------------
+// Sync config + utils factory
+//
+// Follows Electric's pattern: the Store is created in the factory closure and
+// shared by both the sync function and the utils via lexical scope.
+// No WeakMap, no lazy binding — just closures, like electricCollectionOptions.
+// ---------------------------------------------------------------------------
+
 export function createFoundryObjectSyncConfig(
     client: OntologyClient,
     objectType: string,
+    primaryKeyProperty: string,
     decodeObject: (object: FoundryObject) => FoundryObject = (object) => object
-): SyncConfig<Record<string, unknown>, string | number> {
-    return {
+): { sync: SyncConfig<Record<string, unknown>, string | number>; utils: ObjectCollectionUtils } {
+    // Shared Store for sync tracking — like Electric's seenTxids Store.
+    // Both the sync function and the utils close over this same instance.
+    const syncStore = new Store<Map<string | number, SyncEntry>>(new Map());
+
+    const recordSyncEvent = (key: string | number, event: CollectionSyncEvent): void => {
+        syncStore.setState((prev) => {
+            const next = new Map(prev);
+            const current = next.get(key);
+            next.set(key, { version: (current?.version ?? 0) + 1, event });
+            return next;
+        });
+    };
+
+    // -- utils (like Electric's awaitTxId / awaitMatch) -----------------------
+
+    const getObjectSyncVersion = (key: string | number): number =>
+        syncStore.state.get(key)?.version ?? 0;
+
+    const awaitObjectSync = (
+        key: string | number,
+        opts: { event: CollectionSyncEvent; afterVersion: number; timeout?: number }
+    ): Promise<void> => {
+        const isSatisfied = () => {
+            const entry = syncStore.state.get(key);
+            return entry !== undefined && entry.version > opts.afterVersion && entry.event === opts.event;
+        };
+
+        if (isSatisfied()) {
+            return Promise.resolve();
+        }
+
+        return new Promise<void>((resolve) => {
+            const timeout = opts.timeout ?? COLLECTION_SYNC_TIMEOUT_MS;
+
+            const timeoutId = setTimeout(() => {
+                subscription.unsubscribe();
+                resolve();
+            }, timeout);
+
+            const subscription = syncStore.subscribe(() => {
+                if (isSatisfied()) {
+                    clearTimeout(timeoutId);
+                    subscription.unsubscribe();
+                    resolve();
+                }
+            });
+        });
+    };
+
+    const utils: ObjectCollectionUtils = { getObjectSyncVersion, awaitObjectSync };
+
+    // -- sync -----------------------------------------------------------------
+
+    const sync: SyncConfig<Record<string, unknown>, string | number> = {
         sync: (params) => {
-            const { begin, write, commit, markReady, collection } = params;
-            manualSyncControllers.set(collection as Collection, { begin, write, commit });
-            getCollectionSyncTracker(collection as Collection);
+            const { begin, write, commit, markReady } = params;
+
+            const syncedKeys = new Set<string | number>();
+
+            let disposed = false;
+            const editHistoryCursor = createEditHistoryCursor();
+            let catchUpRequested = false;
+            let catchUpTask: Promise<void> | undefined;
+            let scheduledCatchUpRetry: ReturnType<typeof setTimeout> | undefined;
+
+            // -- key extraction -----------------------------------------------
+
+            const getObjectKey = (object: FoundryObject): string | number =>
+                object[primaryKeyProperty] as string | number;
+
+            // -- write helpers ------------------------------------------------
 
             const upsertObject = (object: FoundryObject) => {
-                const existingObject = collection._state.syncedData.get(object.__primaryKey);
-                if (existingObject) {
-                    write({ type: "update", value: object, previousValue: existingObject });
-                } else {
-                    write({ type: "insert", value: object });
+                const key = getObjectKey(object);
+                write({ type: syncedKeys.has(key) ? "update" : "insert", value: object });
+                syncedKeys.add(key);
+            };
+
+            const deleteObject = (object: FoundryObject): boolean => {
+                const key = getObjectKey(object);
+                if (!syncedKeys.has(key)) return false;
+                write({ type: "delete", value: object });
+                syncedKeys.delete(key);
+                return true;
+            };
+
+            // -- edit history -------------------------------------------------
+
+            const fetchEditHistoryPage = (body: Parameters<typeof ObjectTypesV2.getEditsHistory>[3]) =>
+                ObjectTypesV2.getEditsHistory(
+                    client,
+                    client.ontologyRid,
+                    objectType,
+                    body,
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+                    {
+                        preview: true,
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    } as unknown as any
+                );
+
+            const decodeEditProperties = (
+                properties: Record<string, unknown>,
+                primaryKey: string | number
+            ): FoundryObject =>
+                decodeObject({
+                    ...Object.fromEntries(
+                        Object.entries(properties).map(([key, value]) => [
+                            key,
+                            normalizeEditPropertyValue(value),
+                        ])
+                    ),
+                    [primaryKeyProperty]: primaryKey,
+                } as FoundryObject);
+
+            const catchUpFromEditHistory = async (): Promise<void> => {
+                const pendingUpserts = new Map<string | number, FoundryObject>();
+
+                for await (const entry of AsyncIterable.fromPagination(
+                    (pageSize, pageToken: string | undefined) =>
+                        fetchEditHistoryPage({
+                            filters: {
+                                type: "timestampFilter",
+                                startTime: editHistoryCursor.timestamp,
+                            },
+                            includeAllPreviousProperties: true,
+                            pageSize,
+                            pageToken,
+                            sortOrder: "oldest_first",
+                        }),
+                    (page) => page.nextPageToken,
+                    (page) => page.data,
+                    EDIT_HISTORY_PAGE_SIZE
+                )) {
+                    if (disposed) break;
+                    if (!shouldProcessEditHistoryEntry(editHistoryCursor, entry)) continue;
+                    advanceEditHistoryCursor(editHistoryCursor, entry);
+
+                    const primaryKey = getPrimaryKeyValue(entry.objectPrimaryKey);
+
+                    switch (entry.edit.type) {
+                        case "createEdit":
+                        case "modifyEdit":
+                            pendingUpserts.set(
+                                primaryKey,
+                                decodeEditProperties(entry.edit.properties, primaryKey)
+                            );
+                            break;
+                        case "deleteEdit":
+                            break;
+                    }
+                }
+
+                if (disposed || pendingUpserts.size === 0) return;
+
+                begin({ immediate: true });
+                for (const object of pendingUpserts.values()) {
+                    upsertObject(object);
+                }
+                commit();
+
+                for (const key of pendingUpserts.keys()) {
+                    recordSyncEvent(key, "upsert");
                 }
             };
 
-            const deleteObject = (object: FoundryObject) => {
-                const existingObject = collection._state.syncedData.get(object.__primaryKey);
-                if (existingObject) {
-                    write({ type: "delete", value: object, previousValue: existingObject });
+            const requestEditHistoryCatchUp = () => {
+                if (scheduledCatchUpRetry) {
+                    clearTimeout(scheduledCatchUpRetry);
+                    scheduledCatchUpRetry = undefined;
                 }
+
+                catchUpRequested = true;
+                if (catchUpTask) return;
+
+                catchUpTask = (async () => {
+                    while (catchUpRequested && !disposed) {
+                        catchUpRequested = false;
+                        await catchUpFromEditHistory();
+                    }
+                })()
+                    .catch((error: unknown) => {
+                        console.error("Error during edit history catch-up", error);
+                    })
+                    .finally(() => {
+                        catchUpTask = undefined;
+                        if (catchUpRequested && !disposed) requestEditHistoryCatchUp();
+                    });
             };
+
+            // -- loadSubset ---------------------------------------------------
 
             const loadSubset = async (opts: LoadSubsetOptions): Promise<void> => {
                 const objects = await fetchFoundryObjects(client, objectType, opts, decodeObject);
                 if (objects.length > 0) {
-                    begin();
+                    begin({ immediate: true });
                     for (const object of objects) {
                         upsertObject(object);
                     }
                     commit();
                     for (const object of objects) {
-                        recordCollectionSyncEvent(collection as Collection, object.__primaryKey, "upsert");
+                        recordSyncEvent(getObjectKey(object), "upsert");
                     }
                 }
             };
+
+            // -- watcher subscription -----------------------------------------
+
             const loadSubsetDedupe = new DeduplicatedLoadSubset({ loadSubset });
             const objectSetWatcherManager = getObjectSetWatcherManager(client);
-            const unsubscribe = objectSetWatcherManager.subscribe({ type: "base", objectType }, (message) => {
-                switch (message.type) {
-                    case "change": {
-                        const syncEvents: Array<{ key: string | number; event: CollectionSyncEvent }> = [];
-                        begin();
-                        for (const update of message.updates) {
-                            if (update.type === "object") {
-                                const object = decodeObject(update.object as FoundryObject);
-                                switch (update.state) {
-                                    case "ADDED_OR_UPDATED": {
-                                        upsertObject(object);
-                                        syncEvents.push({ key: object.__primaryKey, event: "upsert" });
-                                        break;
-                                    }
-                                    case "REMOVED": {
-                                        deleteObject(object);
-                                        syncEvents.push({ key: object.__primaryKey, event: "delete" });
-                                        break;
+            const unsubscribe = objectSetWatcherManager.subscribe(
+                { type: "base", objectType },
+                (message) => {
+                    switch (message.type) {
+                        case "change": {
+                            let shouldCatchUp = false;
+                            const removedObjects: FoundryObject[] = [];
+
+                            for (const update of message.updates) {
+                                if (update.type === "object") {
+                                    switch (update.state) {
+                                        case "ADDED_OR_UPDATED":
+                                            shouldCatchUp = true;
+                                            break;
+                                        case "REMOVED":
+                                            removedObjects.push(
+                                                decodeObject(update.object as FoundryObject)
+                                            );
+                                            break;
                                     }
                                 }
                             }
+
+                            if (removedObjects.length > 0) {
+                                const deletedKeys: Array<string | number> = [];
+                                begin({ immediate: true });
+                                for (const object of removedObjects) {
+                                    if (deleteObject(object)) {
+                                        deletedKeys.push(getObjectKey(object));
+                                    }
+                                }
+                                commit();
+                                for (const key of deletedKeys) {
+                                    recordSyncEvent(key, "delete");
+                                }
+                            }
+
+                            if (shouldCatchUp) {
+                                requestEditHistoryCatchUp();
+                            }
+                            break;
                         }
-                        commit();
-                        for (const syncEvent of syncEvents) {
-                            recordCollectionSyncEvent(
-                                collection as Collection,
-                                syncEvent.key,
-                                syncEvent.event
-                            );
+                        case "refresh": {
+                            loadSubsetDedupe.reset();
+                            requestEditHistoryCatchUp();
+                            break;
                         }
-                        break;
-                    }
-                    case "refresh": {
-                        loadSubsetDedupe.reset();
-                        break;
+                        case "state": {
+                            if (message.status === "open") {
+                                requestEditHistoryCatchUp();
+                            }
+                            break;
+                        }
                     }
                 }
-            });
+            );
 
             markReady();
 
             return {
                 loadSubset: loadSubsetDedupe.loadSubset,
                 cleanup: () => {
-                    manualSyncControllers.delete(collection as Collection);
-                    collectionSyncTrackers.delete(collection as Collection);
+                    disposed = true;
+                    if (scheduledCatchUpRetry) {
+                        clearTimeout(scheduledCatchUpRetry);
+                    }
                     unsubscribe();
                 },
             };
         },
     };
+
+    return { sync, utils };
 }
 
-export function createFoundryOntologyAdapter(opts: {
+// ---------------------------------------------------------------------------
+// Collection config types
+// ---------------------------------------------------------------------------
+
+export interface ObjectCollectionConfig<TSchema extends StandardSchema<OntologyObject>>
+    extends Omit<
+        CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema>,
+        "sync" | "syncMode" | "getKey" | "onInsert" | "onUpdate" | "onDelete"
+    > {
     client: OntologyClient;
-    ir: OntologyIR;
-}): OntologyAdapter {
-    const decoder = createFoundryObjectDecoder(opts.ir);
-
-    return {
-        name: "foundry",
-        getCollectionOptions: (objectType: string) => ({
-            syncMode: "on-demand",
-            sync: createFoundryObjectSyncConfig(
-                opts.client,
-                objectType,
-                (object) => decoder.decodeObject(objectType, object) as FoundryObject
-            ),
-        }),
-        applyAction: async (name, parameters, context) => {
-            const actionType = opts.ir.actionTypes.find((actionType) => actionType.name === name)!;
-            const overrideMapping = getFoundryActionOverrideParameterMapping(actionType);
-            const requestParameters: Record<string, unknown> = {};
-            const uniqueIdentifierLinkIdValues: Record<string, string> = {};
-            let actionExecutionTime: string | undefined;
-
-            for (const [parameterName, value] of Object.entries(parameters)) {
-                if (overrideMapping.uuidByParameterName.has(parameterName)) {
-                    if (value !== undefined) {
-                        uniqueIdentifierLinkIdValues[
-                            overrideMapping.uuidByParameterName.get(parameterName)!
-                        ] = serializeOverrideValue(value);
-                    }
-                    continue;
-                }
-                if (overrideMapping.nowParameterName === parameterName) {
-                    if (value !== undefined) {
-                        actionExecutionTime = serializeOverrideValue(value);
-                    }
-                    continue;
-                }
-                if (value !== undefined) {
-                    requestParameters[parameterName] = value;
-                }
-            }
-
-            const result = await Actions.applyWithOverrides(
-                opts.client,
-                opts.client.ontologyRid,
-                toFoundryActionTypeName(name),
-                {
-                    request: {
-                        options: {
-                            mode: "VALIDATE_AND_EXECUTE",
-                            returnEdits: "ALL_V2_WITH_DELETIONS",
-                        },
-                        parameters: requestParameters,
-                    },
-                    overrides: {
-                        uniqueIdentifierLinkIdValues,
-                        actionExecutionTime,
-                    },
-                },
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-                {
-                    preview: true,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                } as any
-            );
-            if (result.validation?.result === "INVALID") {
-                throw new NonRetriableError("Invalid Action arguments.");
-            }
-            if (context && result.edits) {
-                const syncTargets = getActionSyncTargets({
-                    edits: result.edits,
-                    objectCollections: context.objects,
-                });
-                await Promise.all(syncTargets.map((target) => waitForCollectionSyncEvent(target)));
-            }
-        },
-    };
+    objectType: string;
+    primaryKeyProperty: string;
+    schema: TSchema;
 }
+
+// ---------------------------------------------------------------------------
+// Public collection creation
+// ---------------------------------------------------------------------------
 
 function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>(
     config: ObjectCollectionConfig<TSchema>
@@ -432,20 +505,23 @@ function objectCollectionOptions<TSchema extends StandardSchema<OntologyObject>>
     CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema, ObjectCollectionUtils>,
     "schema"
 > {
-    const { client, objectType, schema, ...rest } = config;
-    const sync = createFoundryObjectSyncConfig(client, objectType) as unknown as SyncConfig<
-        InferSchemaOutput<TSchema>,
-        string | number
-    >;
+    const { client, objectType, primaryKeyProperty, schema, ...rest } = config;
+    const { sync: syncConfig, utils } = createFoundryObjectSyncConfig(client, objectType, primaryKeyProperty);
+    const sync = syncConfig as unknown as SyncConfig<InferSchemaOutput<TSchema>, string | number>;
 
     return {
         ...rest,
         schema,
+        defaultIndexType: BasicIndex,
+        autoIndex: "eager",
         syncMode: "on-demand",
-        getKey: (object) => object.__primaryKey,
+        getKey: (object) =>
+            (object as Record<string, string | number>)[primaryKeyProperty] as string | number,
         sync,
+        utils,
     };
 }
+
 export function createObjectCollection<TSchema extends StandardSchema<OntologyObject>>(
     config: ObjectCollectionConfig<TSchema>
 ): Collection<InferSchemaOutput<TSchema>, string | number, ObjectCollectionUtils, TSchema>;
