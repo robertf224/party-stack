@@ -18,6 +18,7 @@ export type CompleteTaskParameters = {
 };
 
 export type CreateTaskParameters = {
+    location?: string;
     title: string;
     "__uuid_9131b78a-d4a1-443b-9fca-a3f70c2355ef"?: string;
     __now?: v.timestamp;

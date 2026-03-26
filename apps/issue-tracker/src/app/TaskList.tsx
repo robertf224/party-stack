@@ -1,10 +1,11 @@
 "use client";
 
 import { concat, eq, ilike, useLiveQuery } from "@tanstack/react-db";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { User } from "./collections";
 import { ontology } from "./collections";
+import { MiniMap } from "./MiniMap";
 import { useAction } from "./useAction";
 
 function withViewTransition(fn: () => void) {
@@ -15,9 +16,24 @@ function withViewTransition(fn: () => void) {
     document.startViewTransition(() => flushSync(fn));
 }
 
+function useGeolocation() {
+    const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
+
+    useEffect(() => {
+        if (!navigator.geolocation) return;
+        navigator.geolocation.getCurrentPosition(
+            (pos) => setCoords({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+            () => {}
+        );
+    }, []);
+
+    return coords;
+}
+
 export const TaskList: React.FC = () => {
     const [query, setQuery] = useState("");
     const [title, setTitle] = useState("");
+    const coords = useGeolocation();
     const createTask = useAction(ontology.actions.createTask);
     const deleteTask = useAction(ontology.actions.deleteTask);
     const completeTask = useAction(ontology.actions.completeTask);
@@ -53,6 +69,7 @@ export const TaskList: React.FC = () => {
 
         withViewTransition(() => {
             setTitle("");
+            // TODO: write location here
             createTask({ title: nextTitle });
         });
     };
@@ -132,6 +149,9 @@ export const TaskList: React.FC = () => {
                                             <p className="text-xs text-zinc-500 dark:text-zinc-500">
                                                 Completed {String(task.completedAt)}
                                             </p>
+                                        )}
+                                        {task.location && (
+                                            <MiniMap lat={task.location.lat} lon={task.location.lon} />
                                         )}
                                     </div>
                                 </div>

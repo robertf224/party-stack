@@ -93,6 +93,13 @@ export default {
             displayName: "Create Task",
             parameters: [
                 {
+                    name: "location",
+                    displayName: "Location",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
                     name: "title",
                     displayName: "Title",
                     type: o.string({}),
@@ -130,6 +137,12 @@ export default {
                             property: ["createdBy"],
                             value: o.Expression.contextReference({
                                 path: ["userId"],
+                            }),
+                        },
+                        {
+                            property: ["location"],
+                            value: o.Expression.valueReference({
+                                path: ["location"],
                             }),
                         },
                         {
