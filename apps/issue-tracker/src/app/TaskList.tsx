@@ -2,9 +2,18 @@
 
 import { concat, eq, ilike, useLiveQuery } from "@tanstack/react-db";
 import React, { useState } from "react";
+import { flushSync } from "react-dom";
 import { User } from "./collections";
 import { ontology } from "./collections";
 import { useAction } from "./useAction";
+
+function withViewTransition(fn: () => void) {
+    if (!document.startViewTransition) {
+        fn();
+        return;
+    }
+    document.startViewTransition(() => flushSync(fn));
+}
 
 export const TaskList: React.FC = () => {
     const [query, setQuery] = useState("");
@@ -41,21 +50,26 @@ export const TaskList: React.FC = () => {
             return;
         }
 
-        setTitle("");
-        createTask({ title: nextTitle });
+        withViewTransition(() => {
+            setTitle("");
+            createTask({ title: nextTitle });
+        });
     };
 
     const handleDeleteTask = (taskId: string) => {
-        deleteTask({ task: taskId });
+        withViewTransition(() => {
+            deleteTask({ task: taskId });
+        });
     };
 
     const handleToggleTask = (taskId: string, completedAt: unknown) => {
-        if (completedAt) {
-            reopenTask({ task: taskId });
-            return;
-        }
-
-        completeTask({ task: taskId });
+        withViewTransition(() => {
+            if (completedAt) {
+                reopenTask({ task: taskId });
+                return;
+            }
+            completeTask({ task: taskId });
+        });
     };
 
     return (
@@ -87,6 +101,7 @@ export const TaskList: React.FC = () => {
                         <li
                             key={task.id}
                             className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+                            style={{ viewTransitionName: `task-${task.id}` }}
                         >
                             <div className="flex items-start justify-between gap-4">
                                 <div className="flex min-w-0 flex-1 items-start gap-3">
