@@ -96,7 +96,7 @@ export default {
                     name: "location",
                     displayName: "Location",
                     type: o.optional({
-                        type: o.string({}),
+                        type: o.geopoint({}),
                     }),
                 },
                 {

@@ -52,6 +52,10 @@ function timestampType(): TypeDef {
     return { kind: "timestamp", value: {} };
 }
 
+function geopointType(): TypeDef {
+    return { kind: "geopoint", value: {} };
+}
+
 function attachmentType(): TypeDef {
     return { kind: "attachment", value: {} };
 }
@@ -87,6 +91,7 @@ function convertActionParameterType(type: ActionParameterType, required = true):
             case "mediaReference":
                 return attachmentType();
             case "geohash":
+                return geopointType();
             case "geoshape":
             case "marking":
                 return stringType();

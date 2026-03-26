@@ -69,8 +69,7 @@ export const TaskList: React.FC = () => {
 
         withViewTransition(() => {
             setTitle("");
-            // TODO: write location here
-            createTask({ title: nextTitle });
+            createTask({ title: nextTitle, location: coords ?? undefined });
         });
     };
 

@@ -5,7 +5,7 @@ import type { OntologyAdapter, OntologyIR } from "@party-stack/ontology";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import { OntologyClient } from "../utils/client.js";
-import { createFoundryObjectDecoder } from "./foundryCodec.js";
+import { createFoundryCodec } from "./foundryCodec.js";
 import { objectCollectionOptions, type CollectionSyncEvent, type ObjectCollectionUtils } from "./objectCollectionOptions.js";
 
 type FoundryObject = Record<string, unknown>;
@@ -97,7 +97,7 @@ export function createFoundryOntologyAdapter(opts: {
     client: OntologyClient;
     ir: OntologyIR;
 }): OntologyAdapter {
-    const decoder = createFoundryObjectDecoder(opts.ir);
+    const codec = createFoundryCodec(opts.ir);
 
     return {
         name: "foundry",
@@ -107,12 +107,13 @@ export function createFoundryOntologyAdapter(opts: {
                 client: opts.client,
                 objectType,
                 primaryKeyProperty: objectTypeDef.primaryKey,
-                decodeObject: (object) => decoder.decodeObject(objectType, object) as FoundryObject,
+                decodeObject: (object) => codec.decodeObject(objectType, object) as FoundryObject,
             });
         },
         applyAction: async (name, parameters, context) => {
             const actionType = opts.ir.actionTypes.find((actionType) => actionType.name === name)!;
             const overrideMapping = getFoundryActionOverrideParameterMapping(actionType);
+            const parameterTypes = new Map(actionType.parameters.map((p) => [p.name, p.type]));
             const requestParameters: Record<string, unknown> = {};
             const uniqueIdentifierLinkIdValues: Record<string, string> = {};
             let actionExecutionTime: string | undefined;
@@ -139,7 +140,10 @@ export function createFoundryOntologyAdapter(opts: {
                     continue;
                 }
                 if (value !== undefined) {
-                    requestParameters[parameterName] = value;
+                    const paramType = parameterTypes.get(parameterName);
+                    requestParameters[parameterName] = paramType
+                        ? codec.encodeValue(paramType, value)
+                        : value;
                 }
             }
 
