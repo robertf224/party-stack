@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { pascalCase } from "change-case";
 import { Command } from "commander";
 import { generateFiles } from "./generate.js";
 import {
@@ -12,14 +13,6 @@ import {
 } from "./pull.js";
 
 const GENERATED_DIR_PATH = "src/ontology/generated";
-
-function pascalCase(value: string): string {
-    return value
-        .split(/[^a-zA-Z0-9]+/)
-        .filter(Boolean)
-        .map((part) => part[0]!.toUpperCase() + part.slice(1))
-        .join("");
-}
 
 function readPackageNamespace(cwd: string): string {
     const packageJsonPath = resolve(cwd, "package.json");

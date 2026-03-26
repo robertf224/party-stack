@@ -1,11 +1,15 @@
+import { Temporal } from "temporal-polyfill";
 import { CodeBlockWriter, Project, type WriterFunction } from "ts-morph";
 import type {
+    ActionTypeDef,
     Deprecation,
+    Expression,
     FieldDef,
     LinkTypeDef,
     LinkTypeSideDef,
     NamedTypeDef,
     ObjectTypeDef,
+    PropertyAssignment,
     PropertyDef,
     StringConstraint,
     TypeDef,
@@ -77,11 +81,15 @@ function renderObject(entries: Array<{ name: string; value: string | undefined }
     return withWriter((writer) => writeObject(writer, entries));
 }
 
-function renderPlainValue(value: unknown): string {
-    return withWriter((writer) => writePlainValue(writer, value));
+interface RenderContext {
+    markTemporalUsed(): void;
 }
 
-function writePlainValue(writer: CodeBlockWriter, value: unknown): void {
+function renderPlainValue(value: unknown, ctx?: RenderContext): string {
+    return withWriter((writer) => writePlainValue(writer, value, ctx));
+}
+
+function writePlainValue(writer: CodeBlockWriter, value: unknown, ctx?: RenderContext): void {
     if (value === null) {
         writer.write("null");
         return;
@@ -97,10 +105,22 @@ function writePlainValue(writer: CodeBlockWriter, value: unknown): void {
         return;
     }
 
+    if (value instanceof Temporal.Instant) {
+        ctx?.markTemporalUsed();
+        writer.write(`Temporal.Instant.from(${JSON.stringify(value.toString())})`);
+        return;
+    }
+
+    if (value instanceof Temporal.PlainDate) {
+        ctx?.markTemporalUsed();
+        writer.write(`Temporal.PlainDate.from(${JSON.stringify(value.toString())})`);
+        return;
+    }
+
     if (Array.isArray(value)) {
         writeArray(
             writer,
-            value.map((entry) => renderPlainValue(entry))
+            value.map((entry) => renderPlainValue(entry, ctx))
         );
         return;
     }
@@ -109,7 +129,7 @@ function writePlainValue(writer: CodeBlockWriter, value: unknown): void {
         writer,
         Object.entries(value).map(([name, entryValue]) => ({
             name,
-            value: entryValue === undefined ? undefined : renderPlainValue(entryValue),
+            value: entryValue === undefined ? undefined : renderPlainValue(entryValue, ctx),
         }))
     );
 }
@@ -152,6 +172,10 @@ function renderType(type: TypeDef): string {
             return `o.geopoint(${renderPlainValue(type.value)})`;
         case "attachment":
             return `o.attachment(${renderPlainValue(type.value)})`;
+        case "objectReference":
+            return `o.objectReference(${renderPlainValue(type.value)})`;
+        case "unknown":
+            return `o.unknown(${renderPlainValue(type.value)})`;
         case "list":
             return `o.list(${renderObject([{ name: "elementType", value: renderType(type.value.elementType) }])})`;
         case "map":
@@ -275,10 +299,105 @@ function renderLinkType(linkType: LinkTypeDef): string {
     ]);
 }
 
+function renderExpression(expression: Expression, ctx?: RenderContext): string {
+    return `o.Expression.${expression.kind}(${renderPlainValue(expression.value, ctx)})`;
+}
+
+function renderActionPropertyAssignment(assignment: PropertyAssignment, ctx?: RenderContext): string {
+    return renderObject([
+        { name: "property", value: renderPlainValue(assignment.property) },
+        { name: "value", value: renderExpression(assignment.value, ctx) },
+    ]);
+}
+
+function renderActionType(actionType: ActionTypeDef, ctx?: RenderContext): string {
+    return renderObject([
+        { name: "name", value: renderPlainValue(actionType.name) },
+        { name: "displayName", value: renderPlainValue(actionType.displayName) },
+        {
+            name: "parameters",
+            value: withWriter((writer) =>
+                writeArray(
+                    writer,
+                    actionType.parameters.map((parameter) =>
+                        renderObject([
+                            { name: "name", value: renderPlainValue(parameter.name) },
+                            { name: "displayName", value: renderPlainValue(parameter.displayName) },
+                            { name: "type", value: renderType(parameter.type) },
+                            {
+                                name: "description",
+                                value: parameter.description ? renderPlainValue(parameter.description) : undefined,
+                            },
+                            { name: "deprecated", value: renderDeprecation(parameter.deprecated) },
+                            {
+                                name: "defaultValue",
+                                value: parameter.defaultValue
+                                    ? renderExpression(parameter.defaultValue, ctx)
+                                    : undefined,
+                            },
+                        ])
+                    )
+                )
+            ),
+        },
+        {
+            name: "logic",
+            value: withWriter((writer) =>
+                writeArray(
+                    writer,
+                    actionType.logic.map((step) =>
+                        `o.ActionLogicStep.${step.kind}(${renderObject([
+                            {
+                                name: "objectType",
+                                value:
+                                    "objectType" in step.value
+                                        ? renderPlainValue(step.value.objectType)
+                                        : undefined,
+                            },
+                            {
+                                name: "object",
+                                value:
+                                    "object" in step.value
+                                        ? renderPlainValue(step.value.object)
+                                        : undefined,
+                            },
+                            {
+                                name: "values",
+                                value:
+                                    "values" in step.value
+                                        ? withWriter((arrayWriter) =>
+                                              writeArray(
+                                                  arrayWriter,
+                                                  ("values" in step.value ? step.value.values : []).map((value) =>
+                                                      renderActionPropertyAssignment(value, ctx)
+                                                  )
+                                              )
+                                          )
+                                        : undefined,
+                            },
+                        ])})`
+                    )
+                )
+            ),
+        },
+        { name: "description", value: actionType.description ? renderPlainValue(actionType.description) : undefined },
+        { name: "deprecated", value: renderDeprecation(actionType.deprecated) },
+    ]);
+}
+
 export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}): string {
     const ontologyImportPath = opts.ontologyImportPath ?? "@party-stack/ontology";
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile("ontology.ts", "");
+
+    let usesTemporalTypes = false;
+    const ctx: RenderContext = {
+        markTemporalUsed() {
+            usesTemporalTypes = true;
+        },
+    };
+
+    const renderedActionTypes = ir.actionTypes.map((actionType) => renderActionType(actionType, ctx));
 
     sourceFile.addImportDeclaration({
         moduleSpecifier: ontologyImportPath,
@@ -289,6 +408,12 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
         namedImports: ["OntologyIR"],
         isTypeOnly: true,
     });
+    if (usesTemporalTypes) {
+        sourceFile.addImportDeclaration({
+            moduleSpecifier: "temporal-polyfill",
+            namedImports: ["Temporal"],
+        });
+    }
 
     sourceFile.addStatements((writer) => {
         writer.write("export default ");
@@ -318,6 +443,12 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
                         arrayWriter,
                         ir.linkTypes.map((linkType) => renderLinkType(linkType))
                     )
+                ),
+            },
+            {
+                name: "actionTypes",
+                value: withWriter((arrayWriter) =>
+                    writeArray(arrayWriter, renderedActionTypes)
                 ),
             },
         ]);

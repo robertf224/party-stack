@@ -3,11 +3,15 @@
 import { createLiveOntology, type LiveOntology } from "@party-stack/ontology";
 import ontology from "../ontology";
 import type { IssueTrackerOntology } from "./types";
-import type { OntologyAdapter } from "@party-stack/ontology";
+import type { LiveOntologyOpts, OntologyAdapter } from "@party-stack/ontology";
 
-export function createIssueTrackerLiveOntology(adapter: OntologyAdapter): LiveOntology<IssueTrackerOntology> {
+export function createIssueTrackerLiveOntology(
+    adapter: OntologyAdapter,
+    opts?: Pick<LiveOntologyOpts, "getContext">
+): LiveOntology<IssueTrackerOntology> {
     return createLiveOntology<IssueTrackerOntology>({
         ir: ontology,
         adapter,
+        getContext: opts?.getContext,
     });
 }

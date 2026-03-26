@@ -24,6 +24,7 @@ function validateTypeDef(
         case "timestamp":
         case "geopoint":
         case "attachment":
+        case "unknown":
             return [];
 
         case "list":

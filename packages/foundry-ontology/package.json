@@ -41,14 +41,16 @@
         "@osdk/shared.client.impl": "^1.5.0",
         "@osdk/shared.client2": "^1.0.0",
         "@party-stack/ontology": "workspace:*",
+        "@tanstack/store": "^0.9.3",
+        "change-case": "^5.4.4",
         "effection": "^4.0.2",
         "temporal-polyfill": "^0.3.0",
         "zod": "^4.1.13"
     },
     "devDependencies": {
         "@bobbyfidz/react-build-config": "^0.1.1",
-        "@tanstack/db": "^0.5.32",
-        "@tanstack/query-db-collection": "^1.0.29",
+        "@tanstack/db": "^0.6.0",
+        "@tanstack/query-db-collection": "^1.0.31",
         "@types/node": "^24.10.1",
         "@types/react": "^19.2.6",
         "eslint": "^9.25.0",
@@ -59,9 +61,9 @@
         "vitest": "^3.1.1"
     },
     "peerDependencies": {
-        "@tanstack/db": "^0.5.32",
+        "@tanstack/db": "^0.6.0",
         "@tanstack/query-core": "^5.0.0",
-        "@tanstack/query-db-collection": "^1.0.29",
+        "@tanstack/query-db-collection": "^1.0.31",
         "react": "^18.0.0 || ^19.0.0"
     }
 }

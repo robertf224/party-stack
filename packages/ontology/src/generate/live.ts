@@ -29,18 +29,26 @@ export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
     });
     sourceFile.addImportDeclaration({
         moduleSpecifier: opts.ontologyRuntimeImportPath,
-        namedImports: ["OntologyAdapter"],
+        namedImports: ["LiveOntologyOpts", "OntologyAdapter"],
         isTypeOnly: true,
     });
 
     sourceFile.addFunction({
         name: opts.outputFactoryName,
         isExported: true,
-        parameters: [{ name: "adapter", type: "OntologyAdapter" }],
+        parameters: [
+            { name: "adapter", type: "OntologyAdapter" },
+            {
+                name: "opts",
+                type: "Pick<LiveOntologyOpts, \"getContext\">",
+                hasQuestionToken: true,
+            },
+        ],
         returnType: `LiveOntology<${opts.ontologyTypeName}>`,
         statements: `return createLiveOntology<${opts.ontologyTypeName}>({
             ir: ${ontologyImportName},
             adapter,
+            getContext: opts?.getContext,
         });`,
     });
 

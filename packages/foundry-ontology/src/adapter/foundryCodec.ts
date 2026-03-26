@@ -3,11 +3,18 @@ import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology";
 
 type FoundryObjectRecord = Record<string, unknown>;
 
-export interface FoundryObjectDecoder {
+/** @deprecated Use {@link FoundryCodec} instead. */
+export type FoundryObjectDecoder = FoundryCodec;
+
+/** @deprecated Use {@link createFoundryCodec} instead. */
+export const createFoundryObjectDecoder = createFoundryCodec;
+
+export interface FoundryCodec {
     decodeObject: (objectType: string, object: FoundryObjectRecord) => FoundryObjectRecord;
+    encodeValue: (type: TypeDef, value: unknown) => unknown;
 }
 
-export function createFoundryObjectDecoder(ir: OntologyIR): FoundryObjectDecoder {
+export function createFoundryCodec(ir: OntologyIR): FoundryCodec {
     const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
     const namedTypes = new Map(ir.types.map((type) => [type.name, type.type]));
 
@@ -51,10 +58,14 @@ export function createFoundryObjectDecoder(ir: OntologyIR): FoundryObjectDecoder
             case "date":
                 return typeof value === "string" ? Temporal.PlainDate.from(value) : value;
             case "timestamp":
-                return typeof value === "string" ? Temporal.Instant.from(value) : value;
+                if (typeof value === "string") return Temporal.Instant.from(value);
+                if (typeof value === "number") return Temporal.Instant.fromEpochMilliseconds(value);
+                return value;
             case "geopoint":
                 return decodeGeoPoint(value);
             case "attachment":
+                return value;
+            case "objectReference":
                 return value;
             case "list":
                 return Array.isArray(value)
@@ -90,13 +101,72 @@ export function createFoundryObjectDecoder(ir: OntologyIR): FoundryObjectDecoder
         }
     };
 
-    const decodeObjectType = (objectType: ObjectTypeDef, object: FoundryObjectRecord): FoundryObjectRecord => {
+    const decodeObjectType = (
+        objectType: ObjectTypeDef,
+        object: FoundryObjectRecord
+    ): FoundryObjectRecord => {
         return Object.fromEntries(
             Object.entries(object).map(([key, value]) => {
                 const property = objectType.properties.find((candidate) => candidate.name === key);
                 return [key, property ? decodeValue(property.type, value) : value];
             })
         );
+    };
+
+    const encodeValue = (type: TypeDef, value: unknown): unknown => {
+        if (value === undefined || value === null) {
+            return undefined;
+        }
+
+        const resolvedType = resolveType(type);
+
+        switch (resolvedType.kind) {
+            case "string":
+            case "boolean":
+            case "integer":
+            case "float":
+            case "double":
+                return value;
+            case "date":
+                return value instanceof Temporal.PlainDate ? value.toString() : value;
+            case "timestamp":
+                if (value instanceof Temporal.Instant) return value.toString();
+                if (value instanceof Temporal.PlainDateTime) return value.toString();
+                return value;
+            case "geopoint":
+                return encodeGeoPoint(value);
+            case "attachment":
+            case "objectReference":
+            case "unknown":
+                return value;
+            case "list":
+                return Array.isArray(value)
+                    ? value.map((item) => encodeValue(resolvedType.value.elementType, item))
+                    : value;
+            case "map":
+                if (!isPlainObject(value)) return value;
+                return Object.fromEntries(
+                    Object.entries(value).map(([key, entryValue]) => [
+                        key,
+                        encodeValue(resolvedType.value.valueType, entryValue),
+                    ])
+                );
+            case "struct":
+                if (!isPlainObject(value)) return value;
+                return Object.fromEntries(
+                    Object.entries(value).map(([key, entryValue]) => {
+                        const field = resolvedType.value.fields.find((f) => f.name === key);
+                        return [key, field ? encodeValue(field.type, entryValue) : entryValue];
+                    })
+                );
+            case "optional":
+                return encodeValue(resolvedType.value.type, value);
+            case "union":
+            case "result":
+                return value;
+            case "ref":
+                return encodeValue(resolveType(resolvedType), value);
+        }
     };
 
     return {
@@ -108,7 +178,15 @@ export function createFoundryObjectDecoder(ir: OntologyIR): FoundryObjectDecoder
 
             return decodeObjectType(objectType, object);
         },
+        encodeValue,
     };
+}
+
+function encodeGeoPoint(value: unknown): unknown {
+    if (isPlainObject(value) && typeof value.lat === "number" && typeof value.lon === "number") {
+        return { type: "Point", coordinates: [value.lon, value.lat] };
+    }
+    return value;
 }
 
 function decodeGeoPoint(value: unknown): unknown {
@@ -121,11 +199,7 @@ function decodeGeoPoint(value: unknown): unknown {
         }
     }
 
-    if (
-        isPlainObject(value) &&
-        typeof value.lat === "number" &&
-        typeof value.lon === "number"
-    ) {
+    if (isPlainObject(value) && typeof value.lat === "number" && typeof value.lon === "number") {
         return value;
     }
 

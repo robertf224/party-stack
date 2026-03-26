@@ -36,6 +36,8 @@ export const GeopointTypeDef: z.ZodMiniType<t.GeopointTypeDef> = z.object({});
 
 export const AttachmentTypeDef: z.ZodMiniType<t.AttachmentTypeDef> = z.object({});
 
+export const UnknownTypeDef: z.ZodMiniType<t.UnknownTypeDef> = z.object({});
+
 export const ListTypeDef: z.ZodMiniType<t.ListTypeDef> = z.object({ elementType: z.lazy(() => TypeDef) });
 
 export const MapTypeDef: z.ZodMiniType<t.MapTypeDef> = z.object({
@@ -90,6 +92,8 @@ export const TypeDef: z.ZodMiniType<t.TypeDef> = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("optional"), value: z.lazy(() => OptionalTypeDef) }),
     z.object({ kind: z.literal("result"), value: z.lazy(() => ResultTypeDef) }),
     z.object({ kind: z.literal("ref"), value: z.lazy(() => TypeRef) }),
+    z.object({ kind: z.literal("unknown"), value: z.lazy(() => UnknownTypeDef) }),
+    z.object({ kind: z.literal("objectReference"), value: z.lazy(() => ObjectReferenceTypeDef) }),
 ]);
 
 export const NamedTypeDef: z.ZodMiniType<t.NamedTypeDef> = z.object({
@@ -97,6 +101,10 @@ export const NamedTypeDef: z.ZodMiniType<t.NamedTypeDef> = z.object({
     description: z.optional(z.string()),
     deprecated: z.optional(z.lazy(() => Deprecation)),
     type: z.lazy(() => TypeDef),
+});
+
+export const ObjectReferenceTypeDef: z.ZodMiniType<t.ObjectReferenceTypeDef> = z.object({
+    objectType: z.string(),
 });
 
 export const PropertyDef: z.ZodMiniType<t.PropertyDef> = z.object({
@@ -133,8 +141,78 @@ export const LinkTypeDef: z.ZodMiniType<t.LinkTypeDef> = z.object({
     cardinality: z.enum(["one", "many"]),
 });
 
+export const ActionParameterDef: z.ZodMiniType<t.ActionParameterDef> = z.object({
+    name: z.string(),
+    displayName: z.string(),
+    type: z.lazy(() => TypeDef),
+    description: z.optional(z.string()),
+    deprecated: z.optional(z.lazy(() => Deprecation)),
+    defaultValue: z.optional(z.lazy(() => Expression)),
+});
+
+export const ValueReferenceExpression: z.ZodMiniType<t.ValueReferenceExpression> = z.object({
+    path: z.array(z.string()),
+});
+
+export const ContextReferenceExpression: z.ZodMiniType<t.ContextReferenceExpression> = z.object({
+    path: z.array(z.string()),
+});
+
+export const UuidFunctionCall: z.ZodMiniType<t.UuidFunctionCall> = z.object({});
+
+export const NowFunctionCall: z.ZodMiniType<t.NowFunctionCall> = z.object({});
+
+export const LiteralExpression: z.ZodMiniType<t.LiteralExpression> = z.object({ value: z.unknown() });
+
+export const FunctionCallExpression: z.ZodMiniType<t.FunctionCallExpression> = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("uuid"), value: z.lazy(() => UuidFunctionCall) }),
+    z.object({ kind: z.literal("now"), value: z.lazy(() => NowFunctionCall) }),
+]);
+
+export const Expression: z.ZodMiniType<t.Expression> = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("valueReference"), value: z.lazy(() => ValueReferenceExpression) }),
+    z.object({ kind: z.literal("contextReference"), value: z.lazy(() => ContextReferenceExpression) }),
+    z.object({ kind: z.literal("functionCall"), value: z.lazy(() => FunctionCallExpression) }),
+    z.object({ kind: z.literal("literal"), value: z.lazy(() => LiteralExpression) }),
+]);
+
+export const PropertyAssignment: z.ZodMiniType<t.PropertyAssignment> = z.object({
+    property: z.array(z.string()),
+    value: z.lazy(() => Expression),
+});
+
+export const CreateObjectActionLogicStep: z.ZodMiniType<t.CreateObjectActionLogicStep> = z.object({
+    objectType: z.string(),
+    values: z.array(z.lazy(() => PropertyAssignment)),
+});
+
+export const UpdateObjectActionLogicStep: z.ZodMiniType<t.UpdateObjectActionLogicStep> = z.object({
+    object: z.lazy(() => ValueReferenceExpression),
+    values: z.array(z.lazy(() => PropertyAssignment)),
+});
+
+export const DeleteObjectActionLogicStep: z.ZodMiniType<t.DeleteObjectActionLogicStep> = z.object({
+    object: z.lazy(() => ValueReferenceExpression),
+});
+
+export const ActionLogicStep: z.ZodMiniType<t.ActionLogicStep> = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("createObject"), value: z.lazy(() => CreateObjectActionLogicStep) }),
+    z.object({ kind: z.literal("updateObject"), value: z.lazy(() => UpdateObjectActionLogicStep) }),
+    z.object({ kind: z.literal("deleteObject"), value: z.lazy(() => DeleteObjectActionLogicStep) }),
+]);
+
+export const ActionTypeDef: z.ZodMiniType<t.ActionTypeDef> = z.object({
+    name: z.string(),
+    displayName: z.string(),
+    parameters: z.array(z.lazy(() => ActionParameterDef)),
+    logic: z.array(z.lazy(() => ActionLogicStep)),
+    description: z.optional(z.string()),
+    deprecated: z.optional(z.lazy(() => Deprecation)),
+});
+
 export const OntologyIR: z.ZodMiniType<t.OntologyIR> = z.object({
     types: z.array(z.lazy(() => NamedTypeDef)),
     objectTypes: z.array(z.lazy(() => ObjectTypeDef)),
     linkTypes: z.array(z.lazy(() => LinkTypeDef)),
+    actionTypes: z.array(z.lazy(() => ActionTypeDef)),
 });

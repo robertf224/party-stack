@@ -22,6 +22,7 @@ const emptyOntology: OntologyIR = {
     types: [],
     objectTypes: [],
     linkTypes: [],
+    actionTypes: [],
 };
 
 const minimalObjectType = (overrides?: Partial<OntologyIR["objectTypes"][number]>) => ({
@@ -290,6 +291,63 @@ describe("Ontology Validation", () => {
 
             expectOk(validate(ontology));
         });
+
+        it("should detect unknown object type references", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [
+                    {
+                        name: "Employee",
+                        displayName: "Employee",
+                        pluralDisplayName: "Employees",
+                        primaryKey: "id",
+                        properties: [
+                            { name: "id", displayName: "ID", type: o.string({}) },
+                            {
+                                name: "managerId",
+                                displayName: "Manager ID",
+                                type: o.objectReference({ objectType: "Manager" }),
+                            },
+                        ],
+                    },
+                ],
+            };
+
+            const result = validate(ontology);
+            expectErr(result, 1);
+            expect(getErrors(result)).toContain('Unknown object type reference: "Manager".');
+        });
+
+        it("should resolve object references to declared object types", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [
+                    {
+                        name: "Manager",
+                        displayName: "Manager",
+                        pluralDisplayName: "Managers",
+                        primaryKey: "id",
+                        properties: [{ name: "id", displayName: "ID", type: o.string({}) }],
+                    },
+                    {
+                        name: "Employee",
+                        displayName: "Employee",
+                        pluralDisplayName: "Employees",
+                        primaryKey: "id",
+                        properties: [
+                            { name: "id", displayName: "ID", type: o.string({}) },
+                            {
+                                name: "managerId",
+                                displayName: "Manager ID",
+                                type: o.objectReference({ objectType: "Manager" }),
+                            },
+                        ],
+                    },
+                ],
+            };
+
+            expectOk(validate(ontology));
+        });
     });
 
     describe("Attachment Type", () => {
@@ -319,6 +377,218 @@ describe("Ontology Validation", () => {
         });
     });
 
+    describe("Action Validation", () => {
+        it("should validate action defaults and logic steps", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [
+                    {
+                        name: "Task",
+                        displayName: "Task",
+                        pluralDisplayName: "Tasks",
+                        primaryKey: "taskId",
+                        properties: [
+                            { name: "taskId", displayName: "Task ID", type: o.string({}) },
+                            { name: "title", displayName: "Title", type: o.string({}) },
+                            { name: "updatedAt", displayName: "Updated At", type: o.timestamp({}) },
+                        ],
+                    },
+                ],
+                actionTypes: [
+                    {
+                        name: "createTask",
+                        displayName: "Create Task",
+                        parameters: [
+                            {
+                                name: "title",
+                                displayName: "Title",
+                                type: o.string({}),
+                            },
+                            {
+                                name: "__taskId",
+                                displayName: "Task ID",
+                                type: o.optional({ type: o.string({}) }),
+                                defaultValue: o.Expression.functionCall(o.FunctionCallExpression.uuid({})),
+                            },
+                            {
+                                name: "__now",
+                                displayName: "Now",
+                                type: o.optional({ type: o.timestamp({}) }),
+                                defaultValue: o.Expression.functionCall(o.FunctionCallExpression.now({})),
+                            },
+                        ],
+                        logic: [
+                            o.ActionLogicStep.createObject({
+                                objectType: "Task",
+                                values: [
+                                    {
+                                        property: ["taskId"],
+                                        value: o.Expression.valueReference({
+                                            path: ["__taskId"],
+                                        }),
+                                    },
+                                    {
+                                        property: ["title"],
+                                        value: o.Expression.valueReference({
+                                            path: ["title"],
+                                        }),
+                                    },
+                                    {
+                                        property: ["updatedAt"],
+                                        value: o.Expression.valueReference({
+                                            path: ["__now"],
+                                        }),
+                                    },
+                                ],
+                            }),
+                        ],
+                    },
+                ],
+            };
+
+            expectOk(validate(ontology));
+        });
+
+        it("should detect invalid action parameter references", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType()],
+                actionTypes: [
+                    {
+                        name: "renameEmployee",
+                        displayName: "Rename Employee",
+                        parameters: [
+                            {
+                                name: "employee",
+                                displayName: "Employee",
+                                type: o.objectReference({ objectType: "Employee" }),
+                            },
+                        ],
+                        logic: [
+                            o.ActionLogicStep.updateObject({
+                                object: {
+                                    path: ["employee", "name"],
+                                },
+                                values: [],
+                            }),
+                        ],
+                    },
+                ],
+            };
+
+            const result = validate(ontology);
+            expectErr(result, 1);
+            expect(getErrors(result)).toContain(
+                "Action targets must point directly to an object reference parameter."
+            );
+        });
+    });
+
+    describe("Literal Expression", () => {
+        it("should validate an action with a literal default value", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [
+                    {
+                        name: "Task",
+                        displayName: "Task",
+                        pluralDisplayName: "Tasks",
+                        primaryKey: "taskId",
+                        properties: [
+                            { name: "taskId", displayName: "Task ID", type: o.string({}) },
+                            { name: "status", displayName: "Status", type: o.string({}) },
+                        ],
+                    },
+                ],
+                actionTypes: [
+                    {
+                        name: "createTask",
+                        displayName: "Create Task",
+                        parameters: [
+                            {
+                                name: "taskId",
+                                displayName: "Task ID",
+                                type: o.string({}),
+                                defaultValue: o.Expression.functionCall(o.FunctionCallExpression.uuid({})),
+                            },
+                            {
+                                name: "status",
+                                displayName: "Status",
+                                type: o.string({}),
+                                defaultValue: o.Expression.literal({ value: "open" }),
+                            },
+                        ],
+                        logic: [
+                            o.ActionLogicStep.createObject({
+                                objectType: "Task",
+                                values: [
+                                    {
+                                        property: ["taskId"],
+                                        value: o.Expression.valueReference({ path: ["taskId"] }),
+                                    },
+                                    {
+                                        property: ["status"],
+                                        value: o.Expression.valueReference({ path: ["status"] }),
+                                    },
+                                ],
+                            }),
+                        ],
+                    },
+                ],
+            };
+
+            expectOk(validate(ontology));
+        });
+
+        it("should validate literal expressions in property assignments", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [
+                    {
+                        name: "Task",
+                        displayName: "Task",
+                        pluralDisplayName: "Tasks",
+                        primaryKey: "taskId",
+                        properties: [
+                            { name: "taskId", displayName: "Task ID", type: o.string({}) },
+                            { name: "status", displayName: "Status", type: o.string({}) },
+                        ],
+                    },
+                ],
+                actionTypes: [
+                    {
+                        name: "createTask",
+                        displayName: "Create Task",
+                        parameters: [
+                            {
+                                name: "taskId",
+                                displayName: "Task ID",
+                                type: o.string({}),
+                            },
+                        ],
+                        logic: [
+                            o.ActionLogicStep.createObject({
+                                objectType: "Task",
+                                values: [
+                                    {
+                                        property: ["taskId"],
+                                        value: o.Expression.valueReference({ path: ["taskId"] }),
+                                    },
+                                    {
+                                        property: ["status"],
+                                        value: o.Expression.literal({ value: "open" }),
+                                    },
+                                ],
+                            }),
+                        ],
+                    },
+                ],
+            };
+
+            expectOk(validate(ontology));
+        });
+    });
+
     describe("Blog Example", () => {
         it("should validate the blog example ontology", async () => {
             const { default: blogOntology } = await import("../examples/blog.js");
@@ -332,12 +602,13 @@ describe("Ontology Validation", () => {
             expectOk(validate(ontologyOntology));
         });
 
-        it("should contain ObjectType, ValueType, and LinkType as object types", async () => {
+        it("should contain ObjectType, ValueType, LinkType, and ActionType as object types", async () => {
             const { default: ontologyOntology } = await import("../ontology/ontology.js");
             const objectTypeNames = ontologyOntology.objectTypes.map((ot) => ot.name);
             expect(objectTypeNames).toContain("ObjectType");
             expect(objectTypeNames).toContain("ValueType");
             expect(objectTypeNames).toContain("LinkType");
+            expect(objectTypeNames).toContain("ActionType");
         });
 
         it("should have links from LinkType to ObjectType for source and target metadata", async () => {

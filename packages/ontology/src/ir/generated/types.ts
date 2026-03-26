@@ -54,6 +54,9 @@ export type GeopointTypeDef = Record<never, never>;
 /** A file handle. */
 export type AttachmentTypeDef = Record<never, never>;
 
+/** An opaque type whose shape is not known at schema time. */
+export type UnknownTypeDef = Record<never, never>;
+
 /** A list/array type. */
 export type ListTypeDef = {
     /** The type of elements in the list. */
@@ -137,6 +140,8 @@ export type TypeDef = v.Union<{
     optional: OptionalTypeDef;
     result: ResultTypeDef;
     ref: TypeRef;
+    unknown: UnknownTypeDef;
+    objectReference: ObjectReferenceTypeDef;
 }>;
 
 /** A named type definition that can be referenced by other types. */
@@ -148,6 +153,12 @@ export type NamedTypeDef = {
     deprecated?: Deprecation;
     /** The type definition. */
     type: TypeDef;
+};
+
+/** A reference to an ontology object type. */
+export type ObjectReferenceTypeDef = {
+    /** The referenced object type name. */
+    objectType: string;
 };
 
 /** A property on an Object type. */
@@ -199,6 +210,102 @@ export type LinkTypeDef = {
     cardinality: "one" | "many";
 };
 
+/** A parameter of an Action type. */
+export type ActionParameterDef = {
+    /** The parameter's name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    /** The parameter's type. */
+    type: TypeDef;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+    /** The expression used when the caller does not provide a value. */
+    defaultValue?: Expression;
+};
+
+/** Reads a value from scope by path. */
+export type ValueReferenceExpression = {
+    path: Array<string>;
+};
+
+/** Reads a value from context by path. */
+export type ContextReferenceExpression = {
+    path: Array<string>;
+};
+
+/** Generates a UUID value. */
+export type UuidFunctionCall = Record<never, never>;
+
+/** Returns the current timestamp. */
+export type NowFunctionCall = Record<never, never>;
+
+/** A static literal value. */
+export type LiteralExpression = {
+    /** The literal value. */
+    value: unknown;
+};
+
+/** Calls a function within an expression. */
+export type FunctionCallExpression = v.Union<{
+    uuid: UuidFunctionCall;
+    now: NowFunctionCall;
+}>;
+
+/** An expression that resolves to a value. */
+export type Expression = v.Union<{
+    valueReference: ValueReferenceExpression;
+    contextReference: ContextReferenceExpression;
+    functionCall: FunctionCallExpression;
+    literal: LiteralExpression;
+}>;
+
+/** Assigns an expression to a property path on an object written by an action. */
+export type PropertyAssignment = {
+    property: Array<string>;
+    value: Expression;
+};
+
+/** Creates an object and assigns property values. */
+export type CreateObjectActionLogicStep = {
+    objectType: string;
+    values: Array<PropertyAssignment>;
+};
+
+/** Updates a referenced object and assigns property values. */
+export type UpdateObjectActionLogicStep = {
+    object: ValueReferenceExpression;
+    values: Array<PropertyAssignment>;
+};
+
+/** Deletes a referenced object. */
+export type DeleteObjectActionLogicStep = {
+    object: ValueReferenceExpression;
+};
+
+/** A logic step performed by an action. */
+export type ActionLogicStep = v.Union<{
+    createObject: CreateObjectActionLogicStep;
+    updateObject: UpdateObjectActionLogicStep;
+    deleteObject: DeleteObjectActionLogicStep;
+}>;
+
+/** An action type in the ontology. */
+export type ActionTypeDef = {
+    /** The object type's programmatic name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    /** The action type's parameters. */
+    parameters: Array<ActionParameterDef>;
+    /** The action type's local logic steps. */
+    logic: Array<ActionLogicStep>;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
 /** The root ontology definition containing all type definitions. */
 export type OntologyIR = {
     /** Named, reusable value types. */
@@ -207,4 +314,6 @@ export type OntologyIR = {
     objectTypes: Array<ObjectTypeDef>;
     /** Relationship definitions between object types. */
     linkTypes: Array<LinkTypeDef>;
+    /** Action type definitions. */
+    actionTypes: Array<ActionTypeDef>;
 };

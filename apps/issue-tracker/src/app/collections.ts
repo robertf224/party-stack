@@ -1,8 +1,9 @@
 "use client";
 
+import { createCollection } from "@tanstack/db";
 import { createOntologyClient, createFoundryOntologyAdapter } from "@party-stack/foundry-ontology";
-import { createUserCollection } from "@party-stack/foundry-ontology/users";
-import ontology from "../ontology/ontology";
+import { userCollectionOptions } from "@party-stack/foundry-ontology/users";
+import ir from "../ontology/ontology";
 import { createIssueTrackerLiveOntology } from "../ontology/generated/live";
 
 const client = createOntologyClient({
@@ -10,7 +11,10 @@ const client = createOntologyClient({
     ontologyRid: process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
     tokenProvider: () => Promise.resolve(process.env.NEXT_PUBLIC_FOUNDRY_TOKEN!),
 });
-const adapter = createFoundryOntologyAdapter({ client, ir: ontology });
-const liveOntology = createIssueTrackerLiveOntology(adapter);
-export const { Task } = liveOntology.objects;
-export const User = createUserCollection({ client });
+const adapter = createFoundryOntologyAdapter({ client, ir });
+export const ontology = createIssueTrackerLiveOntology(adapter, {
+    getContext: () => ({
+        userId: "77a1fe87-ad9f-4cd7-ba76-223ab048d2d3",
+    }),
+});
+export const User = createCollection(userCollectionOptions({ client }));

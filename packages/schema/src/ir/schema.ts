@@ -116,6 +116,11 @@ export default {
             type: s.struct({ fields: [] }),
         },
         {
+            name: "UnknownTypeDef",
+            description: "An opaque type whose shape is not known at schema time.",
+            type: s.struct({ fields: [] }),
+        },
+        {
             name: "ListTypeDef",
             description: "A list/array type.",
             type: s.struct({
@@ -302,6 +307,7 @@ export default {
                     { name: "optional", type: s.ref({ name: "OptionalTypeDef" }) },
                     { name: "result", type: s.ref({ name: "ResultTypeDef" }) },
                     { name: "ref", type: s.ref({ name: "TypeRef" }) },
+                    { name: "unknown", type: s.ref({ name: "UnknownTypeDef" }) },
                 ],
             }),
         },

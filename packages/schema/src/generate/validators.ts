@@ -46,6 +46,10 @@ function generateForTypeDef(type: TypeDef): string {
             return "z.unknown()";
         }
 
+        case "unknown": {
+            return "z.unknown()";
+        }
+
         case "list": {
             const elementType = generateForTypeDef(type.value.elementType);
             return `z.array(${elementType})`;

@@ -1,7 +1,7 @@
 import { performLocalOAuthFlow } from "@bobbyfidz/local-oauth-flow";
 import { invariant } from "@bobbyfidz/panic";
 import type { OntologyConfig, OntologyConfigAdapter } from "@party-stack/ontology";
-import { createFoundryMetaOntologyAdapter } from "../meta/createOntologyMetadataCollections.js";
+import { createFoundryMetaOntologyAdapter } from "../meta/createFoundryMetaOntologyAdapter.js";
 import { createOntologyClient, type OntologyClient } from "../utils/client.js";
 
 const DEFAULT_FOUNDRY_SCOPES = ["api:read-data", "offline_access"];
@@ -13,7 +13,7 @@ export interface FoundryOntologyConfigAdapterOpts {
     foundryRedirectUrl: string;
 }
 
-async function createFoundryOntologyClient(
+export async function createFoundryOntologyClient(
     config: FoundryOntologyConfigAdapterOpts
 ): Promise<OntologyClient> {
     const { accessToken } = await performLocalOAuthFlow({

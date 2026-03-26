@@ -45,10 +45,26 @@ export type Comment = {
     createdAt: v.timestamp;
 };
 
+/** Create a new blog post. */
+export type CreatePostParameters = {
+    postId?: string;
+    author: string;
+    title: string;
+    body: string;
+    status: "draft" | "published" | "archived";
+    tags: Array<string>;
+    createdAt?: v.timestamp;
+};
+
 export type BlogOntology = {
     objectTypes: {
         Author: Author;
         Post: Post;
         Comment: Comment;
+    };
+    actionTypes: {
+        createPost: {
+            parameters: CreatePostParameters;
+        };
     };
 };

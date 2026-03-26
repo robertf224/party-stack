@@ -28,7 +28,9 @@ function isOntologyConfig(value: unknown): value is OntologyConfig {
         isRecord(value) &&
         isOntologyConfigAdapter(value.adapter) &&
         Array.isArray(value.objectTypeNames) &&
-        value.objectTypeNames.every((entry) => typeof entry === "string")
+        value.objectTypeNames.every((entry) => typeof entry === "string") &&
+        Array.isArray(value.actionTypeNames) &&
+        value.actionTypeNames.every((entry) => typeof entry === "string")
     );
 }
 
@@ -60,7 +62,10 @@ export async function writePulledOntology(
     const liveOntology = createMetaLiveOntology(adapter);
 
     try {
-        const ontology = await pull(liveOntology, config.objectTypeNames);
+        const ontology = await pull(liveOntology, {
+            objectTypeNames: config.objectTypeNames,
+            actionTypeNames: config.actionTypeNames,
+        });
         const output = generateOntology(ontology, { ontologyImportPath });
 
         mkdirSync(dirname(outPath), { recursive: true });
