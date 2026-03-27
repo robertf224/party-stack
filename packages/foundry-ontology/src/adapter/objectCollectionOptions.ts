@@ -165,9 +165,16 @@ async function fetchFoundryObjects(
     opts: LoadSubsetOptions,
     decodeObject: (object: FoundryObject) => FoundryObject = (object) => object
 ): Promise<FoundryObject[]> {
-    const where = convertLoadSubsetFilter(opts.where);
+    let where = convertLoadSubsetFilter(opts.where);
     if (where?.type === "in" && where.value.length === 0) {
         return [];
+    }
+
+    if (opts.cursor?.whereFrom) {
+        const cursorWhere = convertLoadSubsetFilter(opts.cursor.whereFrom);
+        if (cursorWhere) {
+            where = where ? { type: "and", value: [where, cursorWhere] } : cursorWhere;
+        }
     }
 
     const results = await AsyncIterable.toArray(
