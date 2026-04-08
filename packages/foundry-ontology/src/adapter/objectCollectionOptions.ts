@@ -17,8 +17,8 @@ import {
     UtilsRecord,
 } from "@tanstack/db";
 import { Store } from "@tanstack/store";
+import type { OntologyClient } from "@party-stack/foundry-client";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
-import { OntologyClient } from "../utils/client.js";
 import { convertLoadSubsetFilter, convertLoadSubsetOrderBy } from "./convertLoadSubsetOptions.js";
 
 // ---------------------------------------------------------------------------

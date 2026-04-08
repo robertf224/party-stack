@@ -6,10 +6,10 @@ import {
 } from "@tanstack/db";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
+import type { OntologyClient } from "@party-stack/foundry-client";
 import type { MetaActionType, OntologyCollectionOptions } from "@party-stack/ontology";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import { convertFoundryMetaActionType } from "./convertMetaActionType.js";
-import type { OntologyClient } from "../utils/client.js";
 
 const foundryPreviewOptions = {
     preview: true,

@@ -1,14 +1,9 @@
 import { ObjectSet } from "@osdk/foundry.ontologies";
 import { run, each, Task, until } from "effection";
+import type { OntologyClient } from "@party-stack/foundry-client";
 import { useValueSignal } from "./effection-utils/useValueSignal.js";
 import { ObjectSetSubscription, ObjectSetSubscriptionMessage } from "./ObjectSetSubscription.js";
 import { useObjectSetWatcherSession } from "./useObjectSetWatcherSession.js";
-
-type ObjectSetWatcherClient = {
-    baseUrl: string;
-    ontologyRid: string;
-    tokenProvider: () => Promise<string>;
-};
 
 export class ObjectSetWatcherManager {
     #task: Task<void> | undefined;
@@ -17,7 +12,7 @@ export class ObjectSetWatcherManager {
         | ((updater: (state: ObjectSetSubscription[]) => ObjectSetSubscription[]) => void)
         | undefined;
 
-    constructor(client: ObjectSetWatcherClient) {
+    constructor(client: Pick<OntologyClient, "baseUrl" | "ontologyRid" | "tokenProvider">) {
         this.#objectSetSubscriptions = new Map();
 
         // eslint-disable-next-line @typescript-eslint/no-this-alias
@@ -55,7 +50,7 @@ export class ObjectSetWatcherManager {
                         });
                         if (update.status === "error") {
                             desiredSubscriptions.update((subs) =>
-                                subs.filter((sub) => sub.id === update.subscriptionId)
+                                subs.filter((sub) => sub.id !== update.subscriptionId)
                             );
                         }
                     }
@@ -81,7 +76,7 @@ export class ObjectSetWatcherManager {
             const deleted = existingSubscriptions.delete(callback);
             if (deleted && existingSubscriptions.size === 0) {
                 this.#objectSetSubscriptions.delete(key);
-                this.#updateDesiredSubscriptions?.((subs) => subs.filter((sub) => sub.id === key));
+                this.#updateDesiredSubscriptions?.((subs) => subs.filter((sub) => sub.id !== key));
             }
         };
     }
@@ -95,8 +90,13 @@ export class ObjectSetWatcherManager {
     }
 }
 
-const cache = new WeakMap<ObjectSetWatcherClient, ObjectSetWatcherManager>();
-export function getObjectSetWatcherManager(client: ObjectSetWatcherClient): ObjectSetWatcherManager {
+const cache = new WeakMap<
+    Pick<OntologyClient, "baseUrl" | "ontologyRid" | "tokenProvider">,
+    ObjectSetWatcherManager
+>();
+export function getObjectSetWatcherManager(
+    client: Pick<OntologyClient, "baseUrl" | "ontologyRid" | "tokenProvider">
+): ObjectSetWatcherManager {
     let manager = cache.get(client);
     if (!manager) {
         manager = new ObjectSetWatcherManager(client);

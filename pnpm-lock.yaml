@@ -486,6 +486,31 @@ importers:
         specifier: ~5.8.3
         version: 5.8.3
 
+  packages/foundry-client:
+    dependencies:
+      '@bobbyfidz/panic':
+        specifier: ^0.1.0
+        version: 0.1.0
+      '@osdk/shared.client.impl':
+        specifier: ^1.5.0
+        version: 1.5.0
+      '@osdk/shared.client2':
+        specifier: ^1.0.0
+        version: 1.0.0
+    devDependencies:
+      '@bobbyfidz/universal-build-config':
+        specifier: ^0.1.1
+        version: 0.1.1(eslint@9.28.0(jiti@2.6.1))(typescript@5.8.3)
+      eslint:
+        specifier: ^9.25.0
+        version: 9.28.0(jiti@2.6.1)
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+      vitest:
+        specifier: ^3.1.1
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.1)(jiti@2.6.1)(jsdom@27.2.0)(lightningcss@1.32.0)(terser@5.46.0)(tsx@4.20.6)(yaml@2.8.1)
+
   packages/foundry-object-set-watcher:
     dependencies:
       '@bobbyfidz/panic':
@@ -506,6 +531,9 @@ importers:
       '@osdk/foundry.ontologies':
         specifier: ^2.57.0
         version: 2.57.0
+      '@party-stack/foundry-client':
+        specifier: workspace:*
+        version: link:../foundry-client
       effection:
         specifier: ^4.0.2
         version: 4.0.2
@@ -552,12 +580,9 @@ importers:
       '@osdk/foundry.ontologies':
         specifier: ^2.57.0
         version: 2.57.0
-      '@osdk/shared.client.impl':
-        specifier: ^1.5.0
-        version: 1.5.0
-      '@osdk/shared.client2':
-        specifier: ^1.0.0
-        version: 1.0.0
+      '@party-stack/foundry-client':
+        specifier: workspace:*
+        version: link:../foundry-client
       '@party-stack/foundry-object-set-watcher':
         specifier: workspace:*
         version: link:../foundry-object-set-watcher

@@ -1,10 +1,10 @@
 import { Actions } from "@osdk/foundry.ontologies";
 import { Collection, NonRetriableError } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
+import type { OntologyClient } from "@party-stack/foundry-client";
 import type { OntologyAdapter, OntologyIR } from "@party-stack/ontology";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
-import { OntologyClient } from "../utils/client.js";
 import { createFoundryCodec } from "./foundryCodec.js";
 import { objectCollectionOptions, type ObjectCollectionUtils } from "./objectCollectionOptions.js";
 
