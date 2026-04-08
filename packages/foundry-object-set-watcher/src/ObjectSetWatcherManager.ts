@@ -1,9 +1,14 @@
 import { ObjectSet } from "@osdk/foundry.ontologies";
 import { run, each, Task, until } from "effection";
-import { OntologyClient } from "../../utils/client.js";
 import { useValueSignal } from "./effection-utils/useValueSignal.js";
 import { ObjectSetSubscription, ObjectSetSubscriptionMessage } from "./ObjectSetSubscription.js";
 import { useObjectSetWatcherSession } from "./useObjectSetWatcherSession.js";
+
+type ObjectSetWatcherClient = {
+    baseUrl: string;
+    ontologyRid: string;
+    tokenProvider: () => Promise<string>;
+};
 
 export class ObjectSetWatcherManager {
     #task: Task<void> | undefined;
@@ -12,7 +17,7 @@ export class ObjectSetWatcherManager {
         | ((updater: (state: ObjectSetSubscription[]) => ObjectSetSubscription[]) => void)
         | undefined;
 
-    constructor(client: OntologyClient) {
+    constructor(client: ObjectSetWatcherClient) {
         this.#objectSetSubscriptions = new Map();
 
         // eslint-disable-next-line @typescript-eslint/no-this-alias
@@ -90,8 +95,8 @@ export class ObjectSetWatcherManager {
     }
 }
 
-const cache = new WeakMap<OntologyClient, ObjectSetWatcherManager>();
-export function getObjectSetWatcherManager(client: OntologyClient): ObjectSetWatcherManager {
+const cache = new WeakMap<ObjectSetWatcherClient, ObjectSetWatcherManager>();
+export function getObjectSetWatcherManager(client: ObjectSetWatcherClient): ObjectSetWatcherManager {
     let manager = cache.get(client);
     if (!manager) {
         manager = new ObjectSetWatcherManager(client);

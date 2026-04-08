@@ -1,0 +1,37 @@
+{
+    "name": "@party-stack/foundry-object-set-watcher",
+    "version": "0.2.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run --pass-with-no-tests"
+    },
+    "dependencies": {
+        "@bobbyfidz/panic": "^0.1.0",
+        "@bobbyfidz/urls": "^0.2.1",
+        "@effectionx/signals": "^0.5.2",
+        "@effectionx/stream-helpers": "^0.8.1",
+        "@effectionx/websocket": "^2.3.2",
+        "@osdk/foundry.ontologies": "^2.57.0",
+        "effection": "^4.0.2"
+    },
+    "devDependencies": {
+        "@bobbyfidz/react-build-config": "^0.1.1",
+        "@types/node": "^24.10.1",
+        "@types/react": "^19.2.6",
+        "eslint": "^9.25.0",
+        "react": "^19.2.0",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    }
+}
