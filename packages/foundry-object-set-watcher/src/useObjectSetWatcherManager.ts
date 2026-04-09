@@ -3,7 +3,7 @@ import { ObjectSet } from "@osdk/foundry.ontologies";
 import { Channel, createChannel, Operation, resource, spawn, Stream, until } from "effection";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import { useValueSignal } from "./effection-utils/useValueSignal.js";
-import { ObjectSetSubscription, ObjectSetSubscriptionMessage } from "./ObjectSetSubscription.js";
+import { ObjectSetSubscription, ObjectSetSubscriptionMessage } from "./types.js";
 import { useObjectSetWatcherSession } from "./useObjectSetWatcherSession.js";
 import type { ValueSignal } from "@effectionx/signals";
 
@@ -64,6 +64,7 @@ export function useObjectSetWatcherManager(client: OntologyClient): Operation<Ob
                     const message = nextMessage.value;
                     if (message.type === "change" || message.type === "refresh") {
                         const subscription = sharedSubscriptions.get(message.subscriptionId);
+                        // TODO: think about where this can happen, maybe throw
                         if (!subscription) {
                             continue;
                         }
@@ -74,6 +75,7 @@ export function useObjectSetWatcherManager(client: OntologyClient): Operation<Ob
 
                     for (const update of message.updates) {
                         const subscription = sharedSubscriptions.get(update.subscriptionId);
+                        // TODO: think about where this can happen, maybe throw
                         if (!subscription) {
                             continue;
                         }
@@ -81,6 +83,7 @@ export function useObjectSetWatcherManager(client: OntologyClient): Operation<Ob
                         const stateMessage = { type: "state", status: update.status } as const;
                         yield* subscription.channel.send(stateMessage);
 
+                        // TODO: maybe just throw in this case instead
                         if (update.status === "error") {
                             removeDesiredSubscription(desiredSubscriptions, update.subscriptionId);
                         }
@@ -109,6 +112,8 @@ export function useObjectSetWatcherManager(client: OntologyClient): Operation<Ob
                     } finally {
                         subscription.consumers -= 1;
                         if (subscription.consumers === 0) {
+                            // TODO: add a grace period here, race new subscription and grace period,
+                            // if grace period wins then proceed w/ delete
                             sharedSubscriptions.delete(id);
                             removeDesiredSubscription(desiredSubscriptions, id);
                             yield* subscription.channel.close();

@@ -1,6 +1,6 @@
 /* eslint-disable react-hooks/rules-of-hooks */
 import { createChannel, Operation, resource, scoped, sleep, spawn, Stream } from "effection";
-import { ObjectSetSubscription, ObjectSetSubscriptionsMessage } from "./ObjectSetSubscription.js";
+import { ObjectSetSubscription, ObjectSetSubscriptionsMessage } from "./types.js";
 import { useObjectSetWatcherConnection } from "./useObjectSetWatcherConnection.js";
 import type { ValueSignal } from "@effectionx/signals";
 

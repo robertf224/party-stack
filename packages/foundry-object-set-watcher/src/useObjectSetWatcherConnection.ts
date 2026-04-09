@@ -11,7 +11,7 @@ import {
     ObjectSetSubscriptionsMessage,
     ObjectSetSubscriptionsStateUpdateMessage,
     ObjectSetSubscriptionsStateUpdateMessages,
-} from "./ObjectSetSubscription.js";
+} from "./types.js";
 import type { ValueSignal } from "@effectionx/signals";
 
 const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 45_000;

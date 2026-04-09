@@ -1,7 +1,7 @@
 import { ObjectSet } from "@osdk/foundry.ontologies";
 import { each, run, suspend, Task, useScope } from "effection";
 import type { OntologyClient } from "@party-stack/foundry-client";
-import { ObjectSetSubscriptionMessage } from "./ObjectSetSubscription.js";
+import { ObjectSetSubscriptionMessage } from "./types.js";
 import {
     ObjectSetWatcherManager as EffectionObjectSetWatcherManager,
     useObjectSetWatcherManager,
@@ -31,7 +31,7 @@ export class ObjectSetWatcherManager {
         }
 
         const task = scope.run(function* () {
-            for (const message of yield* each(manager.subscribe(objectSet))) {
+            for (const message of yield* each(manager.observe(objectSet))) {
                 try {
                     callback(message);
                 } catch (error) {
@@ -55,10 +55,7 @@ export class ObjectSetWatcherManager {
     }
 }
 
-const cache = new WeakMap<
-    OntologyClient,
-    ObjectSetWatcherManager
->();
+const cache = new WeakMap<OntologyClient, ObjectSetWatcherManager>();
 export function getObjectSetWatcherManager(client: OntologyClient): ObjectSetWatcherManager {
     let manager = cache.get(client);
     if (!manager) {

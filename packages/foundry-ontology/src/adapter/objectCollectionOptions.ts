@@ -202,14 +202,6 @@ async function fetchFoundryObjects(
     return (results as FoundryObject[]).map(decodeObject);
 }
 
-// ---------------------------------------------------------------------------
-// Sync config + utils (private)
-//
-// Follows Electric's pattern: the Store is created in the factory closure and
-// shared by both the sync function and the utils via lexical scope.
-// No WeakMap, no lazy binding — just closures, like electricCollectionOptions.
-// ---------------------------------------------------------------------------
-
 function createSyncConfig(
     client: OntologyClient,
     objectType: string,
