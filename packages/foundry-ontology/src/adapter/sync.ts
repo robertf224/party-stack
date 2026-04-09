@@ -17,6 +17,9 @@ export function createSyncConfig(opts: { objectType: string }): SyncConfig {
                     if (nextMessage.done) {
                         break;
                     }
+                    const message = nextMessage.value;
+
+                    // iterate over history
                 }
 
                 // wait for subscription messages, catch up when we see.

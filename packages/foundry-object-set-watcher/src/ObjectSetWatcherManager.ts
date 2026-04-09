@@ -31,7 +31,7 @@ export class ObjectSetWatcherManager {
         }
 
         const task = scope.run(function* () {
-            for (const message of yield* each(manager.observe(objectSet))) {
+            for (const message of yield* each(manager.subscribe(objectSet))) {
                 try {
                     callback(message);
                 } catch (error) {

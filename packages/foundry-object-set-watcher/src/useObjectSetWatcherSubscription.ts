@@ -9,5 +9,5 @@ export function* useObjectSetWatcherSubscription(
     manager?: ObjectSetWatcherManager
 ): Stream<ObjectSetSubscriptionMessage, void> {
     manager = manager ?? (yield* ObjectSetWatcherManagerContext.expect());
-    return yield* manager.observe(objectSet);
+    return yield* manager.subscribe(objectSet);
 }
