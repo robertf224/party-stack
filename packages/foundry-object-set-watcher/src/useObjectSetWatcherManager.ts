@@ -7,9 +7,9 @@ import { ObjectSetSubscription, ObjectSetSubscriptionMessage } from "./ObjectSet
 import { useObjectSetWatcherSession } from "./useObjectSetWatcherSession.js";
 import type { ValueSignal } from "@effectionx/signals";
 
-export type ObjectSetSubscriptionProvider = (
-    objectSet: ObjectSet
-) => Operation<Stream<ObjectSetSubscriptionMessage, void>>;
+export interface ObjectSetWatcherManager {
+    subscribe: (objectSet: ObjectSet) => Stream<ObjectSetSubscriptionMessage, void>;
+}
 
 function ensureDesiredSubscription(
     desiredSubscriptions: ValueSignal<ObjectSetSubscription[]>,
@@ -40,9 +40,7 @@ type SharedSubscription = {
     consumers: number;
 };
 
-export function useObjectSetSubscriptionManager(
-    client: OntologyClient
-): Operation<ObjectSetSubscriptionProvider> {
+export function useObjectSetWatcherManager(client: OntologyClient): Operation<ObjectSetWatcherManager> {
     return resource(function* (provide) {
         const desiredSubscriptions = yield* useValueSignal<ObjectSetSubscription[]>([]);
         const sharedSubscriptions = new Map<string, SharedSubscription>();
@@ -90,9 +88,7 @@ export function useObjectSetSubscriptionManager(
                 }
             }));
 
-            yield* provide(function useObjectSetSubscription(
-                objectSet: ObjectSet
-            ): Operation<Stream<ObjectSetSubscriptionMessage, void>> {
+            function subscribe(objectSet: ObjectSet): Stream<ObjectSetSubscriptionMessage, void> {
                 return resource(function* (provideSubscription) {
                     const id = JSON.stringify(objectSet);
                     let subscription = sharedSubscriptions.get(id);
@@ -109,7 +105,7 @@ export function useObjectSetSubscriptionManager(
                     ensureDesiredSubscription(desiredSubscriptions, id, subscription.objectSet);
 
                     try {
-                        yield* provideSubscription(subscription.channel);
+                        yield* provideSubscription(yield* subscription.channel);
                     } finally {
                         subscription.consumers -= 1;
                         if (subscription.consumers === 0) {
@@ -119,7 +115,9 @@ export function useObjectSetSubscriptionManager(
                         }
                     }
                 });
-            });
+            }
+
+            yield* provide({ subscribe });
         } finally {
             for (const subscription of sharedSubscriptions.values()) {
                 yield* subscription.channel.close();

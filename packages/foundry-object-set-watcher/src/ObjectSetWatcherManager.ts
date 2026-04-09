@@ -1,83 +1,48 @@
 import { ObjectSet } from "@osdk/foundry.ontologies";
-import { run, each, Task, until } from "effection";
+import { each, run, suspend, Task, useScope } from "effection";
 import type { OntologyClient } from "@party-stack/foundry-client";
-import { useValueSignal } from "./effection-utils/useValueSignal.js";
-import { ObjectSetSubscription, ObjectSetSubscriptionMessage } from "./ObjectSetSubscription.js";
-import { useObjectSetWatcherSession } from "./useObjectSetWatcherSession.js";
+import { ObjectSetSubscriptionMessage } from "./ObjectSetSubscription.js";
+import {
+    ObjectSetWatcherManager as EffectionObjectSetWatcherManager,
+    useObjectSetWatcherManager,
+} from "./useObjectSetWatcherManager.js";
+import type { Scope } from "effection";
 
 export class ObjectSetWatcherManager {
     #task: Task<void> | undefined;
-    #objectSetSubscriptions: Map<string, Set<(data: ObjectSetSubscriptionMessage) => void>>;
-    #updateDesiredSubscriptions:
-        | ((updater: (state: ObjectSetSubscription[]) => ObjectSetSubscription[]) => void)
-        | undefined;
+    #scope: Scope | undefined;
+    #manager: EffectionObjectSetWatcherManager | undefined;
 
-    constructor(client: Pick<OntologyClient, "baseUrl" | "ontologyRid" | "tokenProvider">) {
-        this.#objectSetSubscriptions = new Map();
-
+    constructor(client: OntologyClient) {
         // eslint-disable-next-line @typescript-eslint/no-this-alias
         const manager = this;
         this.#task = run(function* () {
-            const desiredSubscriptions = yield* useValueSignal<ObjectSetSubscription[]>([]);
-            // eslint-disable-next-line @typescript-eslint/unbound-method
-            manager.#updateDesiredSubscriptions = desiredSubscriptions.update;
-            const messages = yield* useObjectSetWatcherSession(
-                client.baseUrl,
-                () => until(client.tokenProvider()),
-                client.ontologyRid,
-                desiredSubscriptions
-            );
-
-            for (const message of yield* each(messages)) {
-                if (message.type === "change" || message.type === "refresh") {
-                    const subscriptions = manager.#objectSetSubscriptions.get(message.subscriptionId);
-                    subscriptions?.forEach((sub) => {
-                        try {
-                            sub(message);
-                        } catch (error) {
-                            console.error("Error during subscription callback", error);
-                        }
-                    });
-                } else {
-                    for (const update of message.updates) {
-                        const subscriptions = manager.#objectSetSubscriptions.get(update.subscriptionId);
-                        subscriptions?.forEach((sub) => {
-                            try {
-                                sub({ type: "state", status: update.status });
-                            } catch (error) {
-                                console.error("Error during subscription callback", error);
-                            }
-                        });
-                        if (update.status === "error") {
-                            desiredSubscriptions.update((subs) =>
-                                subs.filter((sub) => sub.id !== update.subscriptionId)
-                            );
-                        }
-                    }
-                }
-                yield* each.next();
-            }
+            manager.#scope = yield* useScope();
+            manager.#manager = yield* useObjectSetWatcherManager(client);
+            yield* suspend();
         });
     }
 
     subscribe(objectSet: ObjectSet, callback: (data: ObjectSetSubscriptionMessage) => void): () => void {
-        const key = JSON.stringify(objectSet);
-        let existingSubscriptions = this.#objectSetSubscriptions.get(key);
-        if (!existingSubscriptions) {
-            existingSubscriptions = new Set();
-            this.#objectSetSubscriptions.set(key, existingSubscriptions);
-            this.#updateDesiredSubscriptions?.((subs) => [
-                ...subs,
-                { id: key, objectSet, propertySet: [], referenceSet: [] },
-            ]);
+        const scope = this.#scope;
+        const manager = this.#manager;
+        if (!scope || !manager) {
+            throw new Error("ObjectSetWatcherManager has not been initialized");
         }
-        existingSubscriptions.add(callback);
-        return () => {
-            const deleted = existingSubscriptions.delete(callback);
-            if (deleted && existingSubscriptions.size === 0) {
-                this.#objectSetSubscriptions.delete(key);
-                this.#updateDesiredSubscriptions?.((subs) => subs.filter((sub) => sub.id !== key));
+
+        const task = scope.run(function* () {
+            for (const message of yield* each(manager.subscribe(objectSet))) {
+                try {
+                    callback(message);
+                } catch (error) {
+                    console.error("Error during subscription callback", error);
+                }
+                yield* each.next();
             }
+        });
+
+        return () => {
+            void task.halt();
         };
     }
 
@@ -91,12 +56,10 @@ export class ObjectSetWatcherManager {
 }
 
 const cache = new WeakMap<
-    Pick<OntologyClient, "baseUrl" | "ontologyRid" | "tokenProvider">,
+    OntologyClient,
     ObjectSetWatcherManager
 >();
-export function getObjectSetWatcherManager(
-    client: Pick<OntologyClient, "baseUrl" | "ontologyRid" | "tokenProvider">
-): ObjectSetWatcherManager {
+export function getObjectSetWatcherManager(client: OntologyClient): ObjectSetWatcherManager {
     let manager = cache.get(client);
     if (!manager) {
         manager = new ObjectSetWatcherManager(client);

@@ -444,7 +444,6 @@ function createSyncConfig(
                         break;
                     }
                     case "refresh": {
-                        loadSubsetDedupe.reset();
                         requestEditHistoryCatchUp?.();
                         break;
                     }
@@ -456,6 +455,11 @@ function createSyncConfig(
                     }
                 }
             });
+
+            // start task here, cleanup can stop it
+            // in that task:
+            // - spawn object set subscription, which sends messages to catch up
+            // - actions sends messages to catch up
 
             markReady();
 
