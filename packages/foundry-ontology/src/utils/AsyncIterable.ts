@@ -11,7 +11,7 @@ export async function toArray<T>(asyncIterable: AsyncIterable<T>): Promise<T[]> 
 
 export async function* fromPagination<C extends string | number, P, T>(
     getPage: (pageSize: number, pageToken?: C) => Promise<P>,
-    getpageToken: (page: P) => C | undefined,
+    getPageToken: (page: P) => C | undefined,
     getElements: (page: P) => T[] | Promise<T[]>,
     defaultPageSize: number,
     limit: number = Infinity
@@ -26,7 +26,7 @@ export async function* fromPagination<C extends string | number, P, T>(
             yield element;
         }
         count += elements.length;
-        pageToken = getpageToken(page);
+        pageToken = getPageToken(page);
         if (pageToken === undefined) {
             hasMore = false;
         }

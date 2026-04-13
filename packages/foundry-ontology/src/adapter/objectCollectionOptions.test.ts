@@ -18,7 +18,7 @@ vi.mock("@osdk/foundry.ontologies", () => ({
     },
 }));
 
-vi.mock("./sync/ObjectSetWatcherManager.js", () => ({
+vi.mock("@party-stack/foundry-object-set-watcher", () => ({
     getObjectSetWatcherManager: () => ({
         subscribe: (
             _objectSet: unknown,
@@ -40,7 +40,7 @@ function createSyncHarness(initialObjects: Array<Record<string, unknown>> = []) 
     );
     const writes: Array<{ type: string; primaryKey: string | number }> = [];
 
-    const { sync: syncConfig } = objectCollectionOptions({
+    const { sync: syncConfig, utils } = objectCollectionOptions({
         client: {
             baseUrl: "https://example.com",
             fetch: vi.fn(),
@@ -54,18 +54,25 @@ function createSyncHarness(initialObjects: Array<Record<string, unknown>> = []) 
     const handle = syncConfig.sync({
         begin: vi.fn(),
         collection: {
+            *keys() {
+                yield* syncedData.keys();
+            },
             syncedData,
         } as never,
         commit: vi.fn(),
         markReady: vi.fn(),
         truncate: vi.fn(),
         write: (mutation: Record<string, unknown>) => {
-            const value = (mutation as { value: Record<string, unknown> }).value;
-            const key = value.employeeId as string | number;
+            const key =
+                mutation.type === "delete"
+                    ? (mutation as { key: string | number }).key
+                    : (((mutation as { value: Record<string, unknown> }).value
+                          .employeeId as string | number));
             writes.push({ type: mutation.type as string, primaryKey: key });
             if (mutation.type === "delete") {
                 syncedData.delete(key);
             } else {
+                const value = (mutation as { value: Record<string, unknown> }).value;
                 syncedData.set(key, value);
             }
         },
@@ -74,6 +81,7 @@ function createSyncHarness(initialObjects: Array<Record<string, unknown>> = []) 
     return {
         cleanup: handle.cleanup,
         syncedData,
+        utils,
         writes,
     };
 }
@@ -124,7 +132,7 @@ describe("objectCollectionOptions", () => {
         harness.cleanup();
     });
 
-    it("skips delete edits in history (deletes come from watcher)", async () => {
+    it("applies delete edits from history", async () => {
         mockState.getEditsHistory.mockResolvedValue({
             data: [
                 {
@@ -148,15 +156,15 @@ describe("objectCollectionOptions", () => {
 
         await vi.waitFor(() => {
             expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
+            expect(harness.syncedData.has(2)).toBe(false);
         });
 
-        expect(harness.syncedData.has(2)).toBe(true);
         expect(mockState.getObject).not.toHaveBeenCalled();
 
         harness.cleanup();
     });
 
-    it("applies watcher REMOVED events as direct deletes", async () => {
+    it("treats watcher REMOVED events as a history catch-up signal", async () => {
         mockState.getEditsHistory.mockResolvedValue({
             data: [
                 {
@@ -171,6 +179,41 @@ describe("objectCollectionOptions", () => {
                             employeeId: 5,
                             name: "Employee Five",
                         },
+                    },
+                },
+            ],
+            nextPageToken: undefined,
+        });
+        mockState.getEditsHistory.mockResolvedValueOnce({
+            data: [
+                {
+                    objectPrimaryKey: { employeeId: 5 },
+                    operationId: "op-5",
+                    actionTypeRid: "action-1",
+                    userId: "user-1",
+                    timestamp: "2099-03-12T12:00:00.000Z",
+                    edit: {
+                        type: "createEdit",
+                        properties: {
+                            employeeId: 5,
+                            name: "Employee Five",
+                        },
+                    },
+                },
+            ],
+            nextPageToken: undefined,
+        });
+        mockState.getEditsHistory.mockResolvedValueOnce({
+            data: [
+                {
+                    objectPrimaryKey: { employeeId: 5 },
+                    operationId: "op-6",
+                    actionTypeRid: "action-1",
+                    userId: "user-1",
+                    timestamp: "2099-03-12T12:01:00.000Z",
+                    edit: {
+                        type: "deleteEdit",
+                        previousProperties: {},
                     },
                 },
             ],
@@ -197,6 +240,7 @@ describe("objectCollectionOptions", () => {
         });
 
         await vi.waitFor(() => {
+            expect(mockState.getEditsHistory).toHaveBeenCalledTimes(2);
             expect(harness.syncedData.has(5)).toBe(false);
             expect(harness.writes).toContainEqual({ type: "delete", primaryKey: 5 });
         });
@@ -469,6 +513,40 @@ describe("objectCollectionOptions", () => {
                 employeeId: 10,
                 name: "New Employee",
             });
+        });
+
+        harness.cleanup();
+    });
+
+    it("awaitOperationId resolves after the matching edit is observed", async () => {
+        mockState.getEditsHistory.mockResolvedValue({
+            data: [
+                {
+                    objectPrimaryKey: { employeeId: 11 },
+                    operationId: "op-11",
+                    actionTypeRid: "action-1",
+                    userId: "user-1",
+                    timestamp: "2099-03-12T12:06:00.000Z",
+                    edit: {
+                        type: "createEdit",
+                        properties: {
+                            employeeId: 11,
+                            name: "Operation Eleven",
+                        },
+                    },
+                },
+            ],
+            nextPageToken: undefined,
+        });
+
+        const harness = createSyncHarness();
+
+        await expect(harness.utils.awaitOperationId("op-11")).resolves.toBe(true);
+
+        expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
+        expect(harness.syncedData.get(11)).toEqual({
+            employeeId: 11,
+            name: "Operation Eleven",
         });
 
         harness.cleanup();

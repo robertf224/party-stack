@@ -1,0 +1,30 @@
+{
+    "name": "@party-stack/foundry-client",
+    "version": "0.2.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run --pass-with-no-tests"
+    },
+    "dependencies": {
+        "@bobbyfidz/panic": "^0.1.0",
+        "@osdk/shared.client.impl": "^1.5.0",
+        "@osdk/shared.client2": "^1.0.0"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "eslint": "^9.25.0",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    }
+}

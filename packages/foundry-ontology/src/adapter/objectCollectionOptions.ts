@@ -5,6 +5,7 @@ import {
     ObjectTypesV2,
     type ObjectPrimaryKeyV2,
 } from "@osdk/foundry.ontologies";
+import { getObjectSetWatcherManager } from "@party-stack/foundry-object-set-watcher";
 import {
     BasicIndex,
     CollectionConfig,
@@ -16,10 +17,9 @@ import {
     UtilsRecord,
 } from "@tanstack/db";
 import { Store } from "@tanstack/store";
+import type { OntologyClient } from "@party-stack/foundry-client";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
-import { OntologyClient } from "../utils/client.js";
 import { convertLoadSubsetFilter, convertLoadSubsetOrderBy } from "./convertLoadSubsetOptions.js";
-import { getObjectSetWatcherManager } from "./sync/ObjectSetWatcherManager.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -33,22 +33,24 @@ interface OntologyObject extends OntologyObjectV2 {
 
 type FoundryObject = Record<string, unknown>;
 
-// ---------------------------------------------------------------------------
-// Sync tracking types
-// ---------------------------------------------------------------------------
-
 const COLLECTION_SYNC_TIMEOUT_MS = 5_000;
 
-export type CollectionSyncEvent = "upsert" | "delete";
+class TimeoutWaitingForOperationIdError extends Error {
+    constructor(operationId: string, objectType: string) {
+        super(`Timed out waiting for Foundry operation ${operationId} to sync for ${objectType}.`);
+        this.name = "TimeoutWaitingForOperationIdError";
+    }
+}
 
-type SyncEntry = { version: number; event: CollectionSyncEvent };
+class ObjectCollectionSyncAbortedError extends Error {
+    constructor(objectType: string) {
+        super(`Foundry sync for ${objectType} stopped before the operation was observed.`);
+        this.name = "ObjectCollectionSyncAbortedError";
+    }
+}
 
 export interface ObjectCollectionUtils extends UtilsRecord {
-    getObjectSyncVersion: (key: string | number) => number;
-    awaitObjectSync: (
-        key: string | number,
-        opts: { event: CollectionSyncEvent; afterVersion: number; timeout?: number }
-    ) => Promise<void>;
+    awaitOperationId: (operationId: string, timeout?: number) => Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,78 +202,76 @@ async function fetchFoundryObjects(
     return (results as FoundryObject[]).map(decodeObject);
 }
 
-// ---------------------------------------------------------------------------
-// Sync config + utils (private)
-//
-// Follows Electric's pattern: the Store is created in the factory closure and
-// shared by both the sync function and the utils via lexical scope.
-// No WeakMap, no lazy binding — just closures, like electricCollectionOptions.
-// ---------------------------------------------------------------------------
-
 function createSyncConfig(
     client: OntologyClient,
     objectType: string,
     primaryKeyProperty: string,
     decodeObject: (object: FoundryObject) => FoundryObject = (object) => object
 ): { sync: SyncConfig<Record<string, unknown>, string | number>; utils: ObjectCollectionUtils } {
-    const syncStore = new Store<Map<string | number, SyncEntry>>(new Map());
+    const seenOperationIds = new Store<Set<string>>(new Set<string>());
+    const syncDisposed = new Store<boolean>(false);
+    let requestEditHistoryCatchUp: (() => void) | undefined;
 
-    const recordSyncEvent = (key: string | number, event: CollectionSyncEvent): void => {
-        syncStore.setState((prev) => {
-            const next = new Map(prev);
-            const current = next.get(key);
-            next.set(key, { version: (current?.version ?? 0) + 1, event });
-            return next;
-        });
-    };
-
-    const getObjectSyncVersion = (key: string | number): number =>
-        syncStore.state.get(key)?.version ?? 0;
-
-    const awaitObjectSync = (
-        key: string | number,
-        opts: { event: CollectionSyncEvent; afterVersion: number; timeout?: number }
-    ): Promise<void> => {
-        const isSatisfied = () => {
-            const entry = syncStore.state.get(key);
-            return entry !== undefined && entry.version > opts.afterVersion && entry.event === opts.event;
-        };
-
-        if (isSatisfied()) {
-            return Promise.resolve();
+    const awaitOperationId = async (
+        operationId: string,
+        timeout: number = COLLECTION_SYNC_TIMEOUT_MS
+    ): Promise<boolean> => {
+        if (typeof operationId !== "string" || operationId.length === 0) {
+            throw new Error("Foundry operationId must be a non-empty string.");
         }
 
-        return new Promise<void>((resolve) => {
-            const timeout = opts.timeout ?? COLLECTION_SYNC_TIMEOUT_MS;
+        if (seenOperationIds.state.has(operationId)) {
+            return true;
+        }
+
+        if (syncDisposed.state) {
+            throw new ObjectCollectionSyncAbortedError(objectType);
+        }
+
+        requestEditHistoryCatchUp?.();
+
+        return new Promise((resolve, reject) => {
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                seenOperationIdsSubscription.unsubscribe();
+                disposedSubscription.unsubscribe();
+            };
 
             const timeoutId = setTimeout(() => {
-                subscription.unsubscribe();
-                resolve();
+                cleanup();
+                reject(new TimeoutWaitingForOperationIdError(operationId, objectType));
             }, timeout);
 
-            const subscription = syncStore.subscribe(() => {
-                if (isSatisfied()) {
-                    clearTimeout(timeoutId);
-                    subscription.unsubscribe();
-                    resolve();
+            const seenOperationIdsSubscription = seenOperationIds.subscribe(() => {
+                if (seenOperationIds.state.has(operationId)) {
+                    cleanup();
+                    resolve(true);
+                }
+            });
+
+            const disposedSubscription = syncDisposed.subscribe(() => {
+                if (syncDisposed.state) {
+                    cleanup();
+                    reject(new ObjectCollectionSyncAbortedError(objectType));
                 }
             });
         });
     };
 
-    const utils: ObjectCollectionUtils = { getObjectSyncVersion, awaitObjectSync };
+    const utils: ObjectCollectionUtils = { awaitOperationId };
 
     const sync: SyncConfig<Record<string, unknown>, string | number> = {
         sync: (params) => {
             const { begin, write, commit, markReady } = params;
 
-            const syncedKeys = new Set<string | number>();
+            syncDisposed.setState(() => false);
+
+            const syncedKeys = new Set<string | number>(params.collection.keys());
 
             let disposed = false;
             const editHistoryCursor = createEditHistoryCursor();
             let catchUpRequested = false;
             let catchUpTask: Promise<void> | undefined;
-            let scheduledCatchUpRetry: ReturnType<typeof setTimeout> | undefined;
 
             const getObjectKey = (object: FoundryObject): string | number =>
                 object[primaryKeyProperty] as string | number;
@@ -282,10 +282,9 @@ function createSyncConfig(
                 syncedKeys.add(key);
             };
 
-            const deleteObject = (object: FoundryObject): boolean => {
-                const key = getObjectKey(object);
+            const deleteObjectByKey = (key: string | number): boolean => {
                 if (!syncedKeys.has(key)) return false;
-                write({ type: "delete", value: object });
+                write({ type: "delete", key });
                 syncedKeys.delete(key);
                 return true;
             };
@@ -318,7 +317,11 @@ function createSyncConfig(
                 } as FoundryObject);
 
             const catchUpFromEditHistory = async (): Promise<void> => {
-                const pendingUpserts = new Map<string | number, FoundryObject>();
+                const pendingMutations = new Map<
+                    string | number,
+                    { type: "upsert"; object: FoundryObject } | { type: "delete" }
+                >();
+                const newOperationIds = new Set<string>();
 
                 for await (const entry of AsyncIterable.fromPagination(
                     (pageSize, pageToken: string | undefined) =>
@@ -339,41 +342,60 @@ function createSyncConfig(
                     if (disposed) break;
                     if (!shouldProcessEditHistoryEntry(editHistoryCursor, entry)) continue;
                     advanceEditHistoryCursor(editHistoryCursor, entry);
+                    newOperationIds.add(entry.operationId);
 
                     const primaryKey = getPrimaryKeyValue(entry.objectPrimaryKey);
 
                     switch (entry.edit.type) {
                         case "createEdit":
                         case "modifyEdit":
-                            pendingUpserts.set(
-                                primaryKey,
-                                decodeEditProperties(entry.edit.properties, primaryKey)
-                            );
+                            pendingMutations.set(primaryKey, {
+                                type: "upsert",
+                                object: decodeEditProperties(entry.edit.properties, primaryKey),
+                            });
                             break;
                         case "deleteEdit":
+                            pendingMutations.set(primaryKey, { type: "delete" });
                             break;
                     }
                 }
 
-                if (disposed || pendingUpserts.size === 0) return;
+                if (disposed) return;
 
-                begin({ immediate: true });
-                for (const object of pendingUpserts.values()) {
-                    upsertObject(object);
+                let transactionStarted = false;
+                for (const [primaryKey, mutation] of pendingMutations) {
+                    if (mutation.type === "delete") {
+                        if (!syncedKeys.has(primaryKey)) continue;
+                    }
+
+                    if (!transactionStarted) {
+                        begin({ immediate: true });
+                        transactionStarted = true;
+                    }
+
+                    if (mutation.type === "delete") {
+                        deleteObjectByKey(primaryKey);
+                    } else {
+                        upsertObject(mutation.object);
+                    }
                 }
-                commit();
 
-                for (const key of pendingUpserts.keys()) {
-                    recordSyncEvent(key, "upsert");
+                if (transactionStarted) {
+                    commit();
+                }
+
+                if (newOperationIds.size > 0) {
+                    seenOperationIds.setState((current) => {
+                        const next = new Set(current);
+                        for (const operationId of newOperationIds) {
+                            next.add(operationId);
+                        }
+                        return next;
+                    });
                 }
             };
 
-            const requestEditHistoryCatchUp = () => {
-                if (scheduledCatchUpRetry) {
-                    clearTimeout(scheduledCatchUpRetry);
-                    scheduledCatchUpRetry = undefined;
-                }
-
+            requestEditHistoryCatchUp = () => {
                 catchUpRequested = true;
                 if (catchUpTask) return;
 
@@ -388,7 +410,9 @@ function createSyncConfig(
                     })
                     .finally(() => {
                         catchUpTask = undefined;
-                        if (catchUpRequested && !disposed) requestEditHistoryCatchUp();
+                        if (catchUpRequested && !disposed) {
+                            requestEditHistoryCatchUp?.();
+                        }
                     });
             };
 
@@ -400,70 +424,34 @@ function createSyncConfig(
                         upsertObject(object);
                     }
                     commit();
-                    for (const object of objects) {
-                        recordSyncEvent(getObjectKey(object), "upsert");
-                    }
                 }
             };
 
             const loadSubsetDedupe = new DeduplicatedLoadSubset({ loadSubset });
             const objectSetWatcherManager = getObjectSetWatcherManager(client);
-            const unsubscribe = objectSetWatcherManager.subscribe(
-                { type: "base", objectType },
-                (message) => {
-                    switch (message.type) {
-                        case "change": {
-                            let shouldCatchUp = false;
-                            const removedObjects: FoundryObject[] = [];
-
-                            for (const update of message.updates) {
-                                if (update.type === "object") {
-                                    switch (update.state) {
-                                        case "ADDED_OR_UPDATED":
-                                            shouldCatchUp = true;
-                                            break;
-                                        case "REMOVED":
-                                            removedObjects.push(
-                                                decodeObject(update.object as FoundryObject)
-                                            );
-                                            break;
-                                    }
-                                }
-                            }
-
-                            if (removedObjects.length > 0) {
-                                const deletedKeys: Array<string | number> = [];
-                                begin({ immediate: true });
-                                for (const object of removedObjects) {
-                                    if (deleteObject(object)) {
-                                        deletedKeys.push(getObjectKey(object));
-                                    }
-                                }
-                                commit();
-                                for (const key of deletedKeys) {
-                                    recordSyncEvent(key, "delete");
-                                }
-                            }
-
-                            if (shouldCatchUp) {
-                                requestEditHistoryCatchUp();
-                            }
-                            break;
+            const unsubscribe = objectSetWatcherManager.subscribe({ type: "base", objectType }, (message) => {
+                switch (message.type) {
+                    case "change": {
+                        requestEditHistoryCatchUp?.();
+                        break;
+                    }
+                    case "refresh": {
+                        requestEditHistoryCatchUp?.();
+                        break;
+                    }
+                    case "state": {
+                        if (message.status === "open") {
+                            requestEditHistoryCatchUp?.();
                         }
-                        case "refresh": {
-                            loadSubsetDedupe.reset();
-                            requestEditHistoryCatchUp();
-                            break;
-                        }
-                        case "state": {
-                            if (message.status === "open") {
-                                requestEditHistoryCatchUp();
-                            }
-                            break;
-                        }
+                        break;
                     }
                 }
-            );
+            });
+
+            // start task here, cleanup can stop it
+            // in that task:
+            // - spawn object set subscription, which sends messages to catch up
+            // - actions sends messages to catch up
 
             markReady();
 
@@ -471,10 +459,10 @@ function createSyncConfig(
                 loadSubset: loadSubsetDedupe.loadSubset,
                 cleanup: () => {
                     disposed = true;
-                    if (scheduledCatchUpRetry) {
-                        clearTimeout(scheduledCatchUpRetry);
-                    }
+                    requestEditHistoryCatchUp = undefined;
+                    syncDisposed.setState(() => true);
                     unsubscribe();
+                    loadSubsetDedupe.reset();
                 },
             };
         },
@@ -513,13 +501,18 @@ export function objectCollectionOptions<TSchema extends StandardSchema<OntologyO
     CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema, ObjectCollectionUtils>,
     "schema"
 >;
-export function objectCollectionOptions(
-    config: ObjectCollectionOpts
-): { syncMode: "on-demand"; sync: SyncConfig<Record<string, unknown>, string | number>; utils: ObjectCollectionUtils };
+export function objectCollectionOptions(config: ObjectCollectionOpts): {
+    syncMode: "on-demand";
+    sync: SyncConfig<Record<string, unknown>, string | number>;
+    utils: ObjectCollectionUtils;
+};
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function objectCollectionOptions(config: any): any {
     const { client, objectType, primaryKeyProperty, decodeObject, schema, ...rest } =
-        config as ObjectCollectionOpts & { schema?: StandardSchema<OntologyObject> } & Record<string, unknown>;
+        config as ObjectCollectionOpts & { schema?: StandardSchema<OntologyObject> } & Record<
+                string,
+                unknown
+            >;
     const { sync, utils } = createSyncConfig(client, objectType, primaryKeyProperty, decodeObject);
 
     if (schema === undefined) {

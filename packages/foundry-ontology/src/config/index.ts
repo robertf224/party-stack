@@ -1,8 +1,8 @@
 import { performLocalOAuthFlow } from "@bobbyfidz/local-oauth-flow";
 import { invariant } from "@bobbyfidz/panic";
+import { createOntologyClient, type OntologyClient } from "@party-stack/foundry-client";
 import type { OntologyConfig, OntologyConfigAdapter } from "@party-stack/ontology";
 import { createFoundryMetaOntologyAdapter } from "../meta/createFoundryMetaOntologyAdapter.js";
-import { createOntologyClient, type OntologyClient } from "../utils/client.js";
 
 const DEFAULT_FOUNDRY_SCOPES = ["api:read-data", "offline_access"];
 

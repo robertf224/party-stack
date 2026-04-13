@@ -9,6 +9,8 @@ export interface ApplyActionLiveOpts {
     objects: Record<string, Collection<Record<string, unknown>>>;
 }
 
+// TODO: maybe put collections/actions/cleanup/etc. behind "create" provider that returns create/cleanup collection and cleanup adapter (similar to sync config in colleciton)
+
 export interface OntologyAdapter {
     name: string;
     getCollectionOptions: (objectType: string) => OntologyCollectionOptions;

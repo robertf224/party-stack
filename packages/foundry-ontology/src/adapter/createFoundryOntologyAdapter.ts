@@ -1,16 +1,19 @@
 import { Actions } from "@osdk/foundry.ontologies";
 import { Collection, NonRetriableError } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
+import type { OntologyClient } from "@party-stack/foundry-client";
 import type { OntologyAdapter, OntologyIR } from "@party-stack/ontology";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
-import { OntologyClient } from "../utils/client.js";
 import { createFoundryCodec } from "./foundryCodec.js";
-import { objectCollectionOptions, type CollectionSyncEvent, type ObjectCollectionUtils } from "./objectCollectionOptions.js";
+import { objectCollectionOptions, type ObjectCollectionUtils } from "./objectCollectionOptions.js";
 
 type FoundryObject = Record<string, unknown>;
 
 type CollectionWithUtils = Collection<Record<string, unknown>, string | number, ObjectCollectionUtils>;
+type ApplyActionResult = Awaited<ReturnType<typeof Actions.applyWithOverrides>> & {
+    operationId?: string;
+};
 
 function serializeOverrideValue(value: unknown): string {
     if (typeof value === "string") {
@@ -31,66 +34,29 @@ function serializeOverrideValue(value: unknown): string {
     return JSON.stringify(value) ?? "";
 }
 
-function snapshotSyncVersions(
-    parameters: Record<string, unknown>,
-    objectCollections: Record<string, Collection<Record<string, unknown>>>
-): Map<string, number> {
-    const snapshot = new Map<string, number>();
-    const potentialKeys = Object.values(parameters).filter(
-        (v): v is string | number => typeof v === "string" || typeof v === "number"
-    );
-    for (const [objectType, collection] of Object.entries(objectCollections)) {
-        const coll = collection as CollectionWithUtils;
-        if (!coll?.utils?.getObjectSyncVersion) continue;
-        for (const key of potentialKeys) {
-            snapshot.set(`${objectType}\0${key}`, coll.utils.getObjectSyncVersion(key));
-        }
+function getApplyActionOperationId(result: ApplyActionResult): string {
+    const operationId = result.operationId;
+    if (typeof operationId !== "string" || operationId.length === 0) {
+        throw new Error("Foundry apply action response did not include an operationId.");
     }
-    return snapshot;
+    return operationId;
 }
 
-function buildSyncTargets(opts: {
-    edits: Exclude<Awaited<ReturnType<typeof Actions.applyWithOverrides>>["edits"], undefined>;
-    objectCollections: Record<string, Collection<Record<string, unknown>>>;
-    versionSnapshot: Map<string, number>;
-}): Array<{
-    collection: CollectionWithUtils;
-    key: string | number;
-    event: CollectionSyncEvent;
-    afterVersion: number;
-}> {
-    if (opts.edits.type !== "edits") {
-        return [];
+function getEditedObjectTypes(
+    edits: Awaited<ReturnType<typeof Actions.applyWithOverrides>>["edits"]
+): Set<string> {
+    const objectTypes = new Set<string>();
+    if (!edits || edits.type !== "edits") {
+        return objectTypes;
     }
 
-    const finalEventsByObjectType = new Map<string, Map<string | number, CollectionSyncEvent>>();
-    for (const edit of opts.edits.edits) {
-        if (edit.type !== "addObject" && edit.type !== "modifyObject" && edit.type !== "deleteObject") {
-            continue;
+    for (const edit of edits.edits) {
+        if (edit.type === "addObject" || edit.type === "modifyObject" || edit.type === "deleteObject") {
+            objectTypes.add(edit.objectType);
         }
-
-        const event: CollectionSyncEvent = edit.type === "deleteObject" ? "delete" : "upsert";
-        const entries =
-            finalEventsByObjectType.get(edit.objectType) ?? new Map<string | number, CollectionSyncEvent>();
-        entries.set(edit.primaryKey as string | number, event);
-        finalEventsByObjectType.set(edit.objectType, entries);
     }
 
-    return Array.from(finalEventsByObjectType.entries()).flatMap(([objectType, entries]) => {
-        const collection = opts.objectCollections[objectType] as CollectionWithUtils | undefined;
-        if (!collection?.utils?.getObjectSyncVersion) {
-            return [];
-        }
-
-        return Array.from(entries.entries()).map(([key, event]) => ({
-            collection,
-            key,
-            event,
-            afterVersion:
-                opts.versionSnapshot.get(`${objectType}\0${key}`) ??
-                collection.utils.getObjectSyncVersion(key),
-        }));
-    });
+    return objectTypes;
 }
 
 export function createFoundryOntologyAdapter(opts: {
@@ -118,12 +84,6 @@ export function createFoundryOntologyAdapter(opts: {
             const uniqueIdentifierLinkIdValues: Record<string, string> = {};
             let actionExecutionTime: string | undefined;
 
-            // Snapshot sync versions BEFORE the API call so the watcher can't
-            // race ahead and bump the version before we capture it.
-            const versionSnapshot = context
-                ? snapshotSyncVersions(parameters, context.objects)
-                : new Map<string, number>();
-
             for (const [parameterName, value] of Object.entries(parameters)) {
                 if (overrideMapping.uuidByParameterName.has(parameterName)) {
                     if (value !== undefined) {
@@ -147,7 +107,7 @@ export function createFoundryOntologyAdapter(opts: {
                 }
             }
 
-            const result = await Actions.applyWithOverrides(
+            const result: ApplyActionResult = await Actions.applyWithOverrides(
                 opts.client,
                 opts.client.ontologyRid,
                 toFoundryActionTypeName(name),
@@ -173,19 +133,16 @@ export function createFoundryOntologyAdapter(opts: {
             if (result.validation?.result === "INVALID") {
                 throw new NonRetriableError("Invalid Action arguments.");
             }
-            if (context && result.edits) {
-                const targets = buildSyncTargets({
-                    edits: result.edits,
-                    objectCollections: context.objects,
-                    versionSnapshot,
-                });
+            if (context) {
+                const operationId = getApplyActionOperationId(result);
+                const targetCollections = Array.from(getEditedObjectTypes(result.edits))
+                    .map((objectType) => context.objects[objectType] as CollectionWithUtils | undefined)
+                    .filter((collection): collection is CollectionWithUtils =>
+                        Boolean(collection?.utils?.awaitOperationId)
+                    );
+
                 await Promise.all(
-                    targets.map((t) =>
-                        t.collection.utils.awaitObjectSync(t.key, {
-                            event: t.event,
-                            afterVersion: t.afterVersion,
-                        })
-                    )
+                    targetCollections.map((collection) => collection.utils.awaitOperationId(operationId))
                 );
             }
         },

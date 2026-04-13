@@ -1,2 +1,2 @@
-export * from "./utils/client";
+export * from "@party-stack/foundry-client";
 export * from "./adapter";

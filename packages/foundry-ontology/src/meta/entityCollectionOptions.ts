@@ -7,6 +7,7 @@ import {
 } from "@tanstack/db";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
+import type { OntologyClient } from "@party-stack/foundry-client";
 import type {
     MetaLinkType,
     MetaObjectType,
@@ -16,7 +17,6 @@ import type {
 import { convertFoundryMetaLinkTypes } from "./convertMetaLinkType.js";
 import { convertFoundryMetaObjectType } from "./convertMetaObjectType.js";
 import { convertFoundryMetaValueType } from "./convertMetaValueType.js";
-import type { OntologyClient } from "../utils/client.js";
 
 type MetaEntity =
     | { entityType: "ObjectType"; entity: MetaObjectType }
