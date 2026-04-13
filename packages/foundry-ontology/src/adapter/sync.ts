@@ -101,10 +101,7 @@ function normalizeEditPropertyValue(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(normalizeEditPropertyValue);
     if (isPlainObject(value)) {
         return Object.fromEntries(
-            Object.entries(value).map(([key, nestedValue]) => [
-                key,
-                normalizeEditPropertyValue(nestedValue),
-            ])
+            Object.entries(value).map(([key, nestedValue]) => [key, normalizeEditPropertyValue(nestedValue)])
         );
     }
     return value;
@@ -125,8 +122,7 @@ function getPrimaryKeyValue(primaryKey: ObjectPrimaryKeyV2): string | number {
 export function createSyncConfig(
     opts: CreateSyncConfigOpts
 ): SyncConfig<Record<string, unknown>, string | number> {
-    const { client, objectType, operationIds, primaryKeyProperty, decodeObject = (object) => object } =
-        opts;
+    const { client, objectType, operationIds, primaryKeyProperty, decodeObject = (object) => object } = opts;
 
     return {
         sync: (params) => {
@@ -135,9 +131,7 @@ export function createSyncConfig(
             const editHistoryCursor = createEditHistoryCursor();
             const invalidations = createSignal<void, void>();
 
-            const fetchEditHistoryPage = (
-                body: Parameters<typeof ObjectTypesV2.getEditsHistory>[3],
-            ) =>
+            const fetchEditHistoryPage = (body: Parameters<typeof ObjectTypesV2.getEditsHistory>[3]) =>
                 ObjectTypesV2.getEditsHistory(
                     client,
                     client.ontologyRid,
