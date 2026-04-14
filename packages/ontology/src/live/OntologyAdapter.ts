@@ -1,3 +1,4 @@
+import * as v from "../utils/values.js";
 import type { Collection, CollectionConfig } from "@tanstack/db";
 
 export type OntologyCollectionOptions = Omit<
@@ -9,7 +10,7 @@ export interface ApplyActionLiveOpts {
     objects: Record<string, Collection<Record<string, unknown>>>;
 }
 
-// TODO: maybe put collections/actions/cleanup/etc. behind "create" provider that returns create/cleanup collection and cleanup adapter (similar to sync config in colleciton)
+// TODO: maybe put collections/actions/cleanup/etc. behind provider
 
 export interface OntologyAdapter {
     name: string;
@@ -19,6 +20,25 @@ export interface OntologyAdapter {
         parameters: Record<string, unknown>,
         live: ApplyActionLiveOpts
     ) => Promise<void>;
+    generateAttachmentId?: (
+        blob: Blob,
+        opts: {
+            target?: {
+                objectType: string;
+                property: string;
+            };
+        }
+    ) => string;
+    createAttachment: (
+        blob: Blob,
+        opts: {
+            id?: string;
+            target?: {
+                objectType: string;
+                property: string;
+            };
+        }
+    ) => Promise<v.attachment>;
     cleanup?: () => void | Promise<void>;
     // TODO: install/destroy
 }

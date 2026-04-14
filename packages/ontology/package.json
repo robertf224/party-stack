@@ -6,6 +6,9 @@
         ".": {
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
+        },
+        "./values": {
+            "types": "./lib/utils/values.d.ts"
         }
     },
     "bin": {

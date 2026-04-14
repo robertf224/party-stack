@@ -1,4 +1,4 @@
-import { Actions } from "@osdk/foundry.ontologies";
+import { Actions, AttachmentRid, Attachments } from "@osdk/foundry.ontologies";
 import { Collection, NonRetriableError } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
 import type { OntologyClient } from "@party-stack/foundry-client";
@@ -145,6 +145,21 @@ export function createFoundryOntologyAdapter(opts: {
                     targetCollections.map((collection) => collection.utils.awaitOperationId(operationId))
                 );
             }
+        },
+        generateAttachmentId: () => {
+            // TODO: save some metadata alongside IR so we can differentiate b/w attachment/media properties via target
+            return `ri.attachments.main.attachment.${crypto.randomUUID()}`;
+        },
+        createAttachment: async (blob, { id, target }) => {
+            // TODO: save some metadata alongside IR so we can differentiate b/w attachment/media properties via target
+            const attachment = await Attachments.uploadWithRid(opts.client, id as AttachmentRid, blob, {
+                filename: "", // TODO: filename in API
+                preview: true,
+            });
+
+            return {
+                id: attachment.rid,
+            };
         },
     };
 }
