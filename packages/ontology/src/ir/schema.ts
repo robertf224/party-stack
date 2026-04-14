@@ -59,6 +59,13 @@ export default {
                         displayName: "Deprecated?",
                         type: s.optional({ type: s.ref({ name: "Deprecation" }) }),
                     },
+                    {
+                        name: "meta",
+                        displayName: "Meta",
+                        type: s.optional({
+                            type: s.map({ keyType: s.string({}), valueType: s.unknown({}) }),
+                        }),
+                    },
                 ],
             }),
         },
@@ -106,13 +113,6 @@ export default {
                         name: "deprecated",
                         displayName: "Deprecated?",
                         type: s.optional({ type: s.ref({ name: "Deprecation" }) }),
-                    },
-                    {
-                        name: "meta",
-                        displayName: "Meta",
-                        type: s.optional({
-                            type: s.map({ keyType: s.string({}), valueType: s.unknown({}) }),
-                        }),
                     },
                 ],
             }),

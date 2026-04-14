@@ -255,6 +255,7 @@ function renderProperty(property: PropertyDef): string {
             value: property.description ? renderPlainValue(property.description) : undefined,
         },
         { name: "deprecated", value: renderDeprecation(property.deprecated) },
+        { name: "meta", value: property.meta ? renderPlainValue(property.meta) : undefined },
     ]);
 }
 

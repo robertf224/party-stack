@@ -68,7 +68,7 @@ function generateForTypeDef(type: TypeDef): string {
             return `Array<${generateForTypeDef(type.value.elementType)}>`;
 
         case "map":
-            return `Map<${generateForTypeDef(type.value.keyType)}, ${generateForTypeDef(type.value.valueType)}>`;
+            return `Record<string, ${generateForTypeDef(type.value.valueType)}>`;
 
         case "struct":
             return generateForStructTypeDef(type.value);

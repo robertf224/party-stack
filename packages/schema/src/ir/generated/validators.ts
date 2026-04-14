@@ -51,6 +51,7 @@ export const FieldDef: z.ZodMiniType<t.FieldDef> = z.object({
     type: z.lazy(() => TypeDef),
     description: z.optional(z.string()),
     deprecated: z.optional(z.lazy(() => Deprecation)),
+    meta: z.optional(z.record(z.string(), z.unknown())),
 });
 
 export const StructTypeDef: z.ZodMiniType<t.StructTypeDef> = z.object({

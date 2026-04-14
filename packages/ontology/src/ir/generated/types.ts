@@ -172,6 +172,7 @@ export type PropertyDef = {
     /** Optional description. */
     description?: string;
     deprecated?: Deprecation;
+    meta?: Record<string, unknown>;
 };
 
 /** An object type in the ontology. */

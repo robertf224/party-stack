@@ -133,4 +133,5 @@ describe("generateTypes", () => {
         expect(output).toContain('"__uuid_9131b78a-d4a1-443b-9fca-a3f70c2355ef"?: string;');
         expect(output).toContain('"create-task": {');
     });
+
 });

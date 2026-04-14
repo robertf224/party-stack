@@ -400,7 +400,7 @@ describe("Zod Schema Generation", () => {
               "import { z } from "zod/mini";
               import * as t from "./types.js";
 
-              export const Config: z.ZodMiniType<t.Config> = z.object({ settings: z.map(z.string(), z.string()) });"
+              export const Config: z.ZodMiniType<t.Config> = z.object({ settings: z.record(z.string(), z.string()) });"
             `);
         });
 
