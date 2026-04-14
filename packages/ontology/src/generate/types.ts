@@ -106,7 +106,6 @@ function lowerProperty(
         displayName: property.displayName,
         description: property.description,
         deprecated: property.deprecated,
-        meta: property.meta,
         type: lowerType(property.type, objectTypes),
     };
 }

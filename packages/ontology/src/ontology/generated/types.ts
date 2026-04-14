@@ -82,7 +82,6 @@ export type FieldDef = {
     /** Optional description. */
     description?: string;
     deprecated?: Deprecation;
-    meta?: Record<string, unknown>;
 };
 
 /** A struct type with named fields. */
@@ -162,7 +161,6 @@ export type PropertyDef = {
     /** Optional description. */
     description?: string;
     deprecated?: Deprecation;
-    meta?: Record<string, unknown>;
 };
 
 export type LinkTypeSideDef = {

@@ -52,7 +52,9 @@ export type TimestampTypeDef = Record<never, never>;
 export type GeopointTypeDef = Record<never, never>;
 
 /** A file handle. */
-export type AttachmentTypeDef = Record<never, never>;
+export type AttachmentTypeDef = {
+    meta?: Record<string, unknown>;
+};
 
 /** An opaque type whose shape is not known at schema time. */
 export type UnknownTypeDef = Record<never, never>;
@@ -82,7 +84,6 @@ export type FieldDef = {
     /** Optional description. */
     description?: string;
     deprecated?: Deprecation;
-    meta?: Record<string, unknown>;
 };
 
 /** A struct type with named fields. */

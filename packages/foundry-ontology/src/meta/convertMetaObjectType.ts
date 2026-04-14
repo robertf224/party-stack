@@ -20,6 +20,12 @@ function convertFoundryObjectProperty(name: string, property: PropertyV2): Prope
         name,
         displayName: property.displayName ?? name,
         description: property.description,
+        deprecated:
+            property.status?.type === "deprecated"
+                ? {
+                      message: property.status.message,
+                  }
+                : undefined,
         type: property.valueTypeApiName
             ? { kind: "ref", value: { name: property.valueTypeApiName } }
             : convertFoundryObjectPropertyType(property.dataType),

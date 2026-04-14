@@ -113,7 +113,6 @@ export const PropertyDef: z.ZodMiniType<t.PropertyDef> = z.object({
     type: z.lazy(() => TypeDef),
     description: z.optional(z.string()),
     deprecated: z.optional(z.lazy(() => Deprecation)),
-    meta: z.optional(z.record(z.string(), z.unknown())),
 });
 
 export const ObjectTypeDef: z.ZodMiniType<t.ObjectTypeDef> = z.object({

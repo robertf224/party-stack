@@ -113,7 +113,17 @@ export default {
         {
             name: "AttachmentTypeDef",
             description: "A file handle.",
-            type: s.struct({ fields: [] }),
+            type: s.struct({
+                fields: [
+                    {
+                        name: "meta",
+                        displayName: "Meta",
+                        type: s.optional({
+                            type: s.map({ keyType: s.string({}), valueType: s.unknown({}) }),
+                        }),
+                    },
+                ],
+            }),
         },
         {
             name: "UnknownTypeDef",
@@ -187,13 +197,6 @@ export default {
                         name: "deprecated",
                         displayName: "Deprecated?",
                         type: s.optional({ type: s.ref({ name: "Deprecation" }) }),
-                    },
-                    {
-                        name: "meta",
-                        displayName: "Meta",
-                        type: s.optional({
-                            type: s.map({ keyType: s.string({}), valueType: s.unknown({}) }),
-                        }),
                     },
                 ],
             }),
