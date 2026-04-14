@@ -1,4 +1,4 @@
-import * as v from "../utils/values.js";
+import * as v from "@party-stack/schema/values";
 import type { Collection, CollectionConfig } from "@tanstack/db";
 
 export type OntologyCollectionOptions = Omit<
