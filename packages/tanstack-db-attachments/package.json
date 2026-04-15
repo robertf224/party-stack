@@ -1,0 +1,29 @@
+{
+    "name": "@party-stack/tanstack-db-attachments",
+    "version": "0.1.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json",
+        "lint": "eslint",
+        "test": "vitest run"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@tanstack/db": "^0.6.0",
+        "eslint": "^9.25.0",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    },
+    "peerDependencies": {
+        "@tanstack/db": "^0.6.0"
+    }
+}
