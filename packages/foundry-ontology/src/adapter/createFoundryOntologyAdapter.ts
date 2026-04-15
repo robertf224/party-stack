@@ -1,8 +1,10 @@
+import { invariant } from "@bobbyfidz/panic";
+import { MediaSets } from "@osdk/foundry.mediasets";
 import { Actions, AttachmentRid, Attachments } from "@osdk/foundry.ontologies";
+import { type OntologyAdapter, type OntologyIR } from "@party-stack/ontology";
 import { Collection, NonRetriableError } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
 import type { OntologyClient } from "@party-stack/foundry-client";
-import type { OntologyAdapter, OntologyIR } from "@party-stack/ontology";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import { createFoundryCodec } from "./foundryCodec.js";
@@ -146,20 +148,46 @@ export function createFoundryOntologyAdapter(opts: {
                 );
             }
         },
-        generateAttachmentId: () => {
-            // TODO: save some metadata alongside IR so we can differentiate b/w attachment/media properties via target
-            return `ri.attachments.main.attachment.${crypto.randomUUID()}`;
+        generateAttachmentId: (_, { target }) => {
+            invariant(
+                target,
+                "A property target must be passed to generateAttachmentId in the Foundry adapter so that we know whether to target attachments or media."
+            );
+            const meta = target.meta as { type: "attachment" | "media" };
+            if (meta.type === "attachment") {
+                return `ri.attachments.main.attachment.${crypto.randomUUID()}`;
+            } else {
+                return `ri.mio.main.media-item.${crypto.randomUUID()}`;
+            }
         },
         createAttachment: async (blob, { id, target }) => {
-            // TODO: save some metadata alongside IR so we can differentiate b/w attachment/media properties via target
-            const attachment = await Attachments.uploadWithRid(opts.client, id as AttachmentRid, blob, {
-                filename: "", // TODO: filename in API
-                preview: true,
-            });
-
-            return {
-                id: attachment.rid,
-            };
+            invariant(
+                target,
+                "A property target must be passed to createAttachment in the Foundry adapter so that we know whether to target attachments or media."
+            );
+            const meta = target.meta as { type: "attachment" | "media" };
+            if (meta.type === "attachment") {
+                const attachment = await Attachments.uploadWithRid(opts.client, id as AttachmentRid, blob, {
+                    filename: "", // TODO: filename in API
+                    preview: true,
+                });
+                return {
+                    id: attachment.rid,
+                    metadata: () => Promise.resolve({ type: attachment.mediaType, size: blob.size }),
+                    blob: () => Promise.resolve(blob),
+                };
+            } else {
+                const attachment = await MediaSets.uploadMedia(opts.client, blob, {
+                    filename: "", // TODO: filename in API
+                    mediaItemRid: id,
+                    preview: true,
+                });
+                return {
+                    id: attachment.reference.mediaSetViewItem.mediaItemRid,
+                    metadata: () => Promise.resolve({ type: attachment.mimeType, size: blob.size }),
+                    blob: () => Promise.resolve(blob),
+                };
+            }
         },
     };
 }

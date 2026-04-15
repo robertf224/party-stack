@@ -34,7 +34,9 @@ export const TimestampTypeDef: z.ZodMiniType<t.TimestampTypeDef> = z.object({});
 
 export const GeopointTypeDef: z.ZodMiniType<t.GeopointTypeDef> = z.object({});
 
-export const AttachmentTypeDef: z.ZodMiniType<t.AttachmentTypeDef> = z.object({});
+export const AttachmentTypeDef: z.ZodMiniType<t.AttachmentTypeDef> = z.object({
+    meta: z.optional(z.record(z.string(), z.unknown())),
+});
 
 export const UnknownTypeDef: z.ZodMiniType<t.UnknownTypeDef> = z.object({});
 

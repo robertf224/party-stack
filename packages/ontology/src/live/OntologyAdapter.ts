@@ -1,3 +1,4 @@
+import { AttachmentTypeDef } from "@party-stack/schema";
 import * as v from "@party-stack/schema/values";
 import type { Collection, CollectionConfig } from "@tanstack/db";
 
@@ -23,20 +24,14 @@ export interface OntologyAdapter {
     generateAttachmentId?: (
         blob: Blob,
         opts: {
-            target?: {
-                objectType: string;
-                property: string;
-            };
+            target?: AttachmentTypeDef;
         }
-    ) => string;
+    ) => Promise<string>;
     createAttachment: (
         blob: Blob,
         opts: {
             id?: string;
-            target?: {
-                objectType: string;
-                property: string;
-            };
+            target?: AttachmentTypeDef;
         }
     ) => Promise<v.attachment>;
     cleanup?: () => void | Promise<void>;
