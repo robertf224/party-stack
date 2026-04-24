@@ -1,5 +1,5 @@
 {
-    "name": "@party-stack/tanstack-db-attachments",
+    "name": "@party-stack/blobs",
     "version": "0.1.0",
     "type": "module",
     "exports": {
@@ -12,7 +12,7 @@
         "lib"
     ],
     "scripts": {
-        "build": "tsc -p tsconfig.build.json",
+        "build": "tsc",
         "lint": "eslint",
         "test": "vitest run"
     },
