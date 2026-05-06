@@ -36,11 +36,18 @@ export function convertLoadSubsetFilter(filter: LoadSubsetOptions["where"]): Sea
                 and: (...filters: SearchJsonQueryV2[]) => ({ type: "and", value: filters }),
                 or: (...filters: SearchJsonQueryV2[]) => ({ type: "or", value: filters }),
                 not: (filter: SearchJsonQueryV2) => ({ type: "not", value: filter }),
-                eq: (field: FieldPath, value) => ({
-                    type: "eq",
-                    propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                    value,
-                }),
+                eq: (field: FieldPath, value) =>
+                    value == null
+                        ? {
+                              type: "isNull",
+                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                              value: true,
+                          }
+                        : {
+                              type: "eq",
+                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                              value,
+                          },
                 gt: (field: FieldPath, value) =>
                     value == null
                         ? ALWAYS_FALSE_FILTER
