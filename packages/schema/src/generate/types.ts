@@ -58,9 +58,6 @@ function generateForTypeDef(type: TypeDef): string {
         case "geopoint":
             return "v.geopoint";
 
-        case "attachment":
-            return "v.attachment";
-
         case "unknown":
             return "unknown";
 

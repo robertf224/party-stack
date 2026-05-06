@@ -143,11 +143,16 @@ function isWrappedPrimitivePropertyValue(
     ].includes(value.type);
 }
 
+function isAttachmentPropertyValue(value: unknown): value is { type: "attachment"; attachment: string } {
+    return isPlainObject(value) && value.type === "attachment" && typeof value.attachment === "string";
+}
+
 function normalizeEditPropertyValue(value: unknown): unknown {
     if (isNullPropertyValue(value)) return undefined;
     const geoPoint = parseGeoPointPropertyValue(value);
     if (geoPoint) return geoPoint;
     if (isWrappedPrimitivePropertyValue(value)) return value.value;
+    if (isAttachmentPropertyValue(value)) return { rid: value.attachment };
     if (Array.isArray(value)) return value.map(normalizeEditPropertyValue);
     if (isPlainObject(value)) {
         return Object.fromEntries(

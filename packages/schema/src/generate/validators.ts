@@ -42,10 +42,6 @@ function generateForTypeDef(type: TypeDef): string {
             return "z.object({ lat: z.float64().min(-90).max(90), lon: z.float64().min(-180).max(180) })";
         }
 
-        case "attachment": {
-            return "z.unknown()";
-        }
-
         case "unknown": {
             return "z.unknown()";
         }

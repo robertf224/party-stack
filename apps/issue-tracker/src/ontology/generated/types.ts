@@ -2,9 +2,17 @@
 
 import * as v from "@party-stack/schema/values";
 
+export type attachment = {
+    id: string;
+    size?: v.double;
+    type?: string;
+    name?: string;
+};
+
 export type Task = {
     createdAt: v.timestamp;
     completedAt: v.timestamp;
+    attachments: Array<attachment>;
     createdBy: string;
     location: v.geopoint;
     id: string;
@@ -18,6 +26,7 @@ export type CompleteTaskParameters = {
 };
 
 export type CreateTaskParameters = {
+    attachments?: Array<attachment>;
     location?: v.geopoint;
     title: string;
     "__uuid_9131b78a-d4a1-443b-9fca-a3f70c2355ef"?: string;

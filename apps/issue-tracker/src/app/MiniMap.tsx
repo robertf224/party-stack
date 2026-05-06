@@ -23,30 +23,39 @@ export const MiniMap: React.FC<{ lat: number; lon: number }> = ({
 }) => {
     const cx = lon + 180;
     const cy = 90 - lat;
+    const coordinateLabel = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
 
     const mapsUrl = `https://www.google.com/maps?q=${lat},${lon}`;
 
     return (
-        <a href={mapsUrl} target="_blank" rel="noopener noreferrer" title="Open in Google Maps">
-        <svg
-            viewBox="0 0 360 180"
-            width="120"
-            height="60"
-            className="cursor-pointer rounded border border-zinc-200 transition hover:border-zinc-400 dark:border-zinc-700 dark:hover:border-zinc-500"
-            aria-label={`Location: ${lat.toFixed(1)}°, ${lon.toFixed(1)}°`}
+        <a
+            aria-label={`Open location ${coordinateLabel} in Google Maps`}
+            className="group relative inline-flex w-fit text-xs font-medium text-zinc-500 underline decoration-dotted underline-offset-4 hover:text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-300 focus:ring-offset-2 dark:text-zinc-400 dark:hover:text-zinc-100 dark:focus:ring-zinc-700"
+            href={mapsUrl}
+            rel="noopener noreferrer"
+            target="_blank"
         >
-            <rect width="360" height="180" className="fill-sky-100 dark:fill-sky-950" />
-            {CONTINENTS.map((points, i) => (
-                <polygon
-                    key={i}
-                    points={points}
-                    className="fill-zinc-300 stroke-zinc-400 dark:fill-zinc-700 dark:stroke-zinc-600"
-                    strokeWidth="0.5"
-                />
-            ))}
-            <circle cx={cx} cy={cy} r="5" className="fill-red-500" />
-            <circle cx={cx} cy={cy} r="5" className="fill-red-500 animate-ping opacity-40" />
-        </svg>
+            {coordinateLabel}
+            <span className="pointer-events-none absolute bottom-full left-0 z-10 mb-2 hidden rounded-lg border border-zinc-200 bg-white p-2 shadow-lg group-hover:block group-focus:block dark:border-zinc-800 dark:bg-zinc-950">
+                <svg
+                    aria-hidden="true"
+                    className="block rounded border border-zinc-200 dark:border-zinc-700"
+                    height="60"
+                    viewBox="0 0 360 180"
+                    width="120"
+                >
+                    <rect width="360" height="180" className="fill-sky-100 dark:fill-sky-950" />
+                    {CONTINENTS.map((points, i) => (
+                        <polygon
+                            key={i}
+                            points={points}
+                            className="fill-zinc-300 stroke-zinc-400 dark:fill-zinc-700 dark:stroke-zinc-600"
+                            strokeWidth="0.5"
+                        />
+                    ))}
+                    <circle cx={cx} cy={cy} r="5" className="fill-red-500" />
+                </svg>
+            </span>
         </a>
     );
 };

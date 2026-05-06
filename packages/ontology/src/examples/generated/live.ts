@@ -7,11 +7,13 @@ import type { LiveOntologyOpts, OntologyAdapter } from "../../index.js";
 
 export function createBlogLiveOntology(
     adapter: OntologyAdapter,
-    opts?: Pick<LiveOntologyOpts, "getContext">
+    opts?: Pick<LiveOntologyOpts, "blobStore" | "getContext" | "id">
 ): LiveOntology<BlogOntology> {
     return createLiveOntology<BlogOntology>({
         ir: ontology,
         adapter,
+        id: opts?.id,
+        blobStore: opts?.blobStore,
         getContext: opts?.getContext,
     });
 }

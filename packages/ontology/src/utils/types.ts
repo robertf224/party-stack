@@ -8,13 +8,13 @@ export interface OntologyPropertyTarget {
     property: string;
 }
 
-function resolveTypeRef(ir: OntologyIR, type: TypeDef): TypeDef {
+export function resolveType(ir: OntologyIR, type: TypeDef): TypeDef {
     if (type.kind !== "ref") {
         return type;
     }
     const resolvedType = ir.types.find((candidate) => candidate.name === type.value.name)?.type;
     invariant(resolvedType !== undefined, `Unknown type reference "${type.value.name}".`);
-    return resolvedType;
+    return resolveType(ir, resolvedType);
 }
 
 export function unwrapValueType(ir: OntologyIR, type: TypeDef): TypeDef {
@@ -24,8 +24,7 @@ export function unwrapValueType(ir: OntologyIR, type: TypeDef): TypeDef {
     if (type.kind === "list") {
         return unwrapValueType(ir, type.value.elementType);
     }
-    const resolvedType = resolveTypeRef(ir, type);
-    invariant(resolvedType.kind !== "ref", "Type references must resolve to a concrete type.");
+    const resolvedType = resolveType(ir, type);
     return resolvedType === type ? type : unwrapValueType(ir, resolvedType);
 }
 

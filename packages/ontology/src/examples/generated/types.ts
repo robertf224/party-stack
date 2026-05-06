@@ -2,6 +2,13 @@
 
 import * as v from "@party-stack/schema/values";
 
+export type attachment = {
+    id: string;
+    size?: v.double;
+    type?: string;
+    name?: string;
+};
+
 /** A mailing address. */
 export type Address = {
     line1: string;
@@ -18,7 +25,7 @@ export type Author = {
     email: string;
     bio?: string;
     /** The author's profile picture. */
-    avatar?: v.attachment;
+    avatar?: attachment;
     address?: Address;
     createdAt: v.timestamp;
 };
@@ -30,7 +37,7 @@ export type Post = {
     body: string;
     authorId: string;
     status: "draft" | "published" | "archived";
-    coverImage?: v.attachment;
+    coverImage?: attachment;
     tags: Array<string>;
     createdAt: v.timestamp;
     publishedAt?: v.timestamp;

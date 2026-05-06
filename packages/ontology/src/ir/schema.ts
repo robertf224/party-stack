@@ -4,6 +4,10 @@ import type { SchemaIR, UnionTypeDef } from "@party-stack/schema";
 const schemaTypes = SchemaIRSchema.types.filter((type) => type.name !== "SchemaIR");
 const typeDef = schemaTypes.find((type) => type.name === "TypeDef")!;
 (typeDef.type.value as UnionTypeDef).variants.push({
+    name: "attachment",
+    type: s.ref({ name: "AttachmentTypeDef" }),
+});
+(typeDef.type.value as UnionTypeDef).variants.push({
     name: "objectReference",
     type: s.ref({ name: "ObjectReferenceTypeDef" }),
 });
@@ -11,6 +15,21 @@ const typeDef = schemaTypes.find((type) => type.name === "TypeDef")!;
 export default {
     types: [
         ...schemaTypes,
+        {
+            name: "AttachmentTypeDef",
+            description: "A file handle.",
+            type: s.struct({
+                fields: [
+                    {
+                        name: "meta",
+                        displayName: "Meta",
+                        type: s.optional({
+                            type: s.map({ keyType: s.string({}), valueType: s.unknown({}) }),
+                        }),
+                    },
+                ],
+            }),
+        },
         {
             name: "ObjectReferenceTypeDef",
             description: "A reference to an ontology object type.",

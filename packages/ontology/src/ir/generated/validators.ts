@@ -34,10 +34,6 @@ export const TimestampTypeDef: z.ZodMiniType<t.TimestampTypeDef> = z.object({});
 
 export const GeopointTypeDef: z.ZodMiniType<t.GeopointTypeDef> = z.object({});
 
-export const AttachmentTypeDef: z.ZodMiniType<t.AttachmentTypeDef> = z.object({
-    meta: z.optional(z.record(z.string(), z.unknown())),
-});
-
 export const UnknownTypeDef: z.ZodMiniType<t.UnknownTypeDef> = z.object({});
 
 export const ListTypeDef: z.ZodMiniType<t.ListTypeDef> = z.object({ elementType: z.lazy(() => TypeDef) });
@@ -86,7 +82,6 @@ export const TypeDef: z.ZodMiniType<t.TypeDef> = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("date"), value: z.lazy(() => DateTypeDef) }),
     z.object({ kind: z.literal("timestamp"), value: z.lazy(() => TimestampTypeDef) }),
     z.object({ kind: z.literal("geopoint"), value: z.lazy(() => GeopointTypeDef) }),
-    z.object({ kind: z.literal("attachment"), value: z.lazy(() => AttachmentTypeDef) }),
     z.object({ kind: z.literal("list"), value: z.lazy(() => ListTypeDef) }),
     z.object({ kind: z.literal("map"), value: z.lazy(() => MapTypeDef) }),
     z.object({ kind: z.literal("struct"), value: z.lazy(() => StructTypeDef) }),
@@ -95,6 +90,7 @@ export const TypeDef: z.ZodMiniType<t.TypeDef> = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("result"), value: z.lazy(() => ResultTypeDef) }),
     z.object({ kind: z.literal("ref"), value: z.lazy(() => TypeRef) }),
     z.object({ kind: z.literal("unknown"), value: z.lazy(() => UnknownTypeDef) }),
+    z.object({ kind: z.literal("attachment"), value: z.lazy(() => AttachmentTypeDef) }),
     z.object({ kind: z.literal("objectReference"), value: z.lazy(() => ObjectReferenceTypeDef) }),
 ]);
 
@@ -103,6 +99,10 @@ export const NamedTypeDef: z.ZodMiniType<t.NamedTypeDef> = z.object({
     description: z.optional(z.string()),
     deprecated: z.optional(z.lazy(() => Deprecation)),
     type: z.lazy(() => TypeDef),
+});
+
+export const AttachmentTypeDef: z.ZodMiniType<t.AttachmentTypeDef> = z.object({
+    meta: z.optional(z.record(z.string(), z.unknown())),
 });
 
 export const ObjectReferenceTypeDef: z.ZodMiniType<t.ObjectReferenceTypeDef> = z.object({

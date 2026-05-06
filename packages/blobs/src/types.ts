@@ -1,47 +1,79 @@
+import type { BlobEvictionStrategy } from "./gc/types.js";
+
+export type BlobState = "staging" | "staged" | "uploading" | "persisted" | "cached" | "failed";
+
 export interface BlobRef {
     id: string;
     type: string;
     size: number;
-    // last accessed
-    state: "pending" | "persisted" | "failed"; // do we want failed?
+    name?: string;
+    state: BlobState;
+    lastAccessedAt?: number;
+    createdAt: number;
+    updatedAt: number;
+    error?: string;
 }
 
-export interface LocalBlobStorageAdapter {
-    put: (id: string, blob: Blob) => Promise<BlobRef>;
-    get: (id: string) => Promise<BlobRef>;
+export interface BlobBytesAdapter {
+    write: (id: string, blob: Blob) => Promise<void>;
     read: (id: string) => Promise<Blob>;
-    list: () => Promise<BlobRef[]>;
+    delete: (id: string) => Promise<void>;
+    list?: () => Promise<string[]>;
 }
 
-// need beyond what we should normally expect from a fs: last access time, status
-// - last access time we could try touch hack, or keep a side meta store
-// - status we could do provider externally (e.g. offline transactions in tanstack db)
-// - also may want redirects for local/remote ids...
+export interface BlobMetadataAdapter {
+    put: (ref: BlobRef) => Promise<void>;
+    get: (id: string) => Promise<BlobRef | undefined>;
+    delete: (id: string) => Promise<void>;
+    list: (opts?: { state?: BlobState }) => Promise<BlobRef[]>;
+}
 
-// RemoteBlobStorageAdapter
-// => get, read
+export type BlobBytesAdapterProvider = (name: string) => BlobBytesAdapter;
+export type BlobMetadataAdapterProvider = (name: string) => BlobMetadataAdapter;
 
-// BlobStorage
-// stage, commit, get, read, list, retain, release, listen
-// stage: (blob: Blob, id: string) => Promise<BlobRef>;
-// complete: (id: string) => Promise<BlobRef>; // finalize? commit? also can this take a final blob? and maybe a remote id?
-// retain
-// release
-// listen
+export interface BlobStore {
+    stage: (id: string, blob: Blob | File) => Promise<BlobRef>;
+    cache: (id: string, blob: Blob | File) => Promise<BlobRef>;
+    get: (id: string) => Promise<BlobRef | undefined>;
+    read: (id: string) => Promise<Blob>;
+    list: (opts?: { state?: BlobState }) => Promise<BlobRef[]>;
+    markUploading: (id: string) => Promise<BlobRef>;
+    markPersisted: (id: string) => Promise<BlobRef>;
+    markFailed: (id: string, error?: unknown) => Promise<BlobRef>;
+    purge: (id: string) => Promise<void>;
+    reconcile: () => Promise<void>;
+}
 
-// Compose these into a BlobStorage,
-// which handles pull-through read caching and garbage collection.
-// - don't clean up staged files, gc persisted files based on LRU, size
-// can we also take an optional status provider?  so for tanstack db we could use peek outbox.
-// else we can store a json or something as a blob locally?
+export type BlobStoreProvider = (name: string) => BlobStore;
 
-// chapter example: write/stage local file, get back signed GCP bucket url on the other side
-// so remote is like, lookup in table to get url, read by reading url
+export interface BlobRemoteMetadata {
+    id: string;
+    size: number;
+    type: string;
+    name: string;
+}
 
-// examples:
-// ditto
-// foundry
-// salesforce
-// chapter
-// outlook
-// gmail
+export interface BlobRemoteSource {
+    metadata: (id: string) => Promise<BlobRemoteMetadata>;
+    blob: (id: string) => Promise<Blob>;
+}
+
+export interface BlobManager {
+    stage: (id: string, blob: Blob | File) => Promise<BlobRef>;
+    metadata: (id: string) => Promise<BlobRemoteMetadata>;
+    blob: (id: string) => Promise<Blob>;
+    withUploadTracking: (id: string, uploadFn: (blob: Blob) => Promise<void>) => Promise<void>;
+    retain: (id: string) => void;
+    release: (id: string) => void;
+}
+
+export interface BlobManagerOptions {
+    store: BlobStore;
+    remote: BlobRemoteSource;
+    now?: () => number;
+    gcScheduler?: (run: () => void) => void;
+    gcReleaseBufferSize?: number;
+    cacheMaxAgeMs?: number;
+    maxCacheBytes?: number;
+    evictionStrategy?: BlobEvictionStrategy;
+}

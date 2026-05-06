@@ -1,7 +1,17 @@
 import { Temporal } from "temporal-polyfill";
 import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology";
+import type { AttachmentProperty, OntologyObjectV2 } from "@osdk/foundry.ontologies";
 
 type FoundryObjectRecord = Record<string, unknown>;
+type MediaReferencePropertyValue = {
+    mimeType: string;
+    reference: {
+        type: "mediaSetViewItem";
+        mediaSetViewItem: {
+            mediaItemRid: string;
+        };
+    };
+};
 
 /** @deprecated Use {@link FoundryCodec} instead. */
 export type FoundryObjectDecoder = FoundryCodec;
@@ -10,7 +20,7 @@ export type FoundryObjectDecoder = FoundryCodec;
 export const createFoundryObjectDecoder = createFoundryCodec;
 
 export interface FoundryCodec {
-    decodeObject: (objectType: string, object: FoundryObjectRecord) => FoundryObjectRecord;
+    decodeObject: (objectType: string, object: OntologyObjectV2 | FoundryObjectRecord) => FoundryObjectRecord;
     encodeValue: (type: TypeDef, value: unknown) => unknown;
 }
 
@@ -64,7 +74,7 @@ export function createFoundryCodec(ir: OntologyIR): FoundryCodec {
             case "geopoint":
                 return decodeGeoPoint(value);
             case "attachment":
-                return value;
+                return decodeAttachment(value, resolvedType.value.meta);
             case "objectReference":
                 return value;
             case "list":
@@ -136,6 +146,7 @@ export function createFoundryCodec(ir: OntologyIR): FoundryCodec {
             case "geopoint":
                 return encodeGeoPoint(value);
             case "attachment":
+                return isPlainObject(value) && typeof value.id === "string" ? value.id : value;
             case "objectReference":
             case "unknown":
                 return value;
@@ -204,6 +215,23 @@ function decodeGeoPoint(value: unknown): unknown {
     }
 
     return value;
+}
+
+function decodeAttachment(value: unknown, meta?: Record<string, unknown>): unknown {
+    return meta?.type === "media" ? decodeMediaReference(value) : decodeFoundryAttachment(value);
+}
+
+function decodeFoundryAttachment(value: unknown): unknown {
+    const attachment = value as AttachmentProperty;
+    return { id: attachment.rid };
+}
+
+function decodeMediaReference(value: unknown): unknown {
+    const mediaReference = value as MediaReferencePropertyValue;
+    return {
+        id: mediaReference.reference.mediaSetViewItem.mediaItemRid,
+        type: mediaReference.mimeType,
+    };
 }
 
 function isPlainObject(value: unknown): value is FoundryObjectRecord {

@@ -111,21 +111,6 @@ export default {
             type: s.struct({ fields: [] }),
         },
         {
-            name: "AttachmentTypeDef",
-            description: "A file handle.",
-            type: s.struct({
-                fields: [
-                    {
-                        name: "meta",
-                        displayName: "Meta",
-                        type: s.optional({
-                            type: s.map({ keyType: s.string({}), valueType: s.unknown({}) }),
-                        }),
-                    },
-                ],
-            }),
-        },
-        {
             name: "UnknownTypeDef",
             description: "An opaque type whose shape is not known at schema time.",
             type: s.struct({ fields: [] }),
@@ -309,7 +294,6 @@ export default {
                     { name: "date", type: s.ref({ name: "DateTypeDef" }) },
                     { name: "timestamp", type: s.ref({ name: "TimestampTypeDef" }) },
                     { name: "geopoint", type: s.ref({ name: "GeopointTypeDef" }) },
-                    { name: "attachment", type: s.ref({ name: "AttachmentTypeDef" }) },
                     { name: "list", type: s.ref({ name: "ListTypeDef" }) },
                     { name: "map", type: s.ref({ name: "MapTypeDef" }) },
                     { name: "struct", type: s.ref({ name: "StructTypeDef" }) },

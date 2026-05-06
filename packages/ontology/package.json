@@ -10,6 +10,9 @@
         "./utils": {
             "types": "./lib/utils/index.d.ts",
             "default": "./lib/utils/index.js"
+        },
+        "./values": {
+            "types": "./lib/utils/values.d.ts"
         }
     },
     "bin": {
@@ -30,6 +33,7 @@
     "dependencies": {
         "@bobbyfidz/panic": "^0.1.0",
         "@next/env": "^16.1.6",
+        "@party-stack/blobs": "workspace:*",
         "@party-stack/schema": "workspace:*",
         "change-case": "^5.4.4",
         "commander": "^14.0.2",

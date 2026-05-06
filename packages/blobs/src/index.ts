@@ -1,69 +1,145 @@
-// we can scan all the things *into* a local tanstack db collection for queries if we want, and just drive based on a kv store?
+import { invariant } from "@bobbyfidz/panic";
+import { collectBlobGarbage, defaultEvictionStrategy } from "./gc/index.js";
+import type { BlobEvictionStrategy } from "./gc/index.js";
+import type {
+    BlobManager,
+    BlobManagerOptions,
+    BlobRemoteMetadata,
+    BlobRef,
+} from "./types.js";
 
-import { createCollection, createTransaction } from "@tanstack/db";
+export * from "./gc/index.js";
+export {
+    createInMemoryBlobBytesAdapter,
+    createInMemoryBlobMetadataAdapter,
+    createInMemoryBlobStore,
+} from "./memory/index.js";
+export type { CreateInMemoryBlobStoreOptions } from "./memory/index.js";
+export type {
+    BlobManager,
+    BlobManagerOptions,
+    BlobBytesAdapterProvider,
+    BlobMetadataAdapterProvider,
+    BlobRef,
+    BlobRemoteMetadata,
+    BlobRemoteSource,
+    BlobState,
+    BlobStore,
+    BlobStoreProvider,
+} from "./types.js";
 
-// create lifecycle
-// create/stage (us) - store file locally in adapter
-// possibly get blob later, potentially set a blob to be retained, possibly delete
-// upload blob (create attachment, upload during mutation, etc.) (caller)
-// on success: mark as uploaded, sync final metadata, optionally sync new blob (or don't to avoid slowness if metadata is unchanged)
-// on error: mark as failed (will be evicted)
-
-// LRU, w/ size bias
-
-// AttachmentStorageAdapter
-// save (blob, id) => promise<blob>
-// get (id) => promise<blob>
-// ...
-
-// createEffect?
-
-// flow
-// ----
-// pick file
-// intent to create attachment directly (or run action that does it)
-// so we need to return mutator that creates the blob record (and then either createAttachment or action that takes a file)
-
-type BlobRef = {
-    id: string;
-    type: string;
-    size: string;
-    state: "pending" | "persisting" | "completed" | "failed";
-};
-
-interface LocalBlobStorage {
-    stage: (blob: Blob, id: string) => Promise<BlobRef>;
-    complete: (id: string) => Promise<BlobRef>;
-    get: (id: string) => Promise<BlobRef>;
-    read: (id: string) => Promise<Blob>;
-    list: () => Promise<BlobRef[]>;
-    // retain
-    // release
-    // listen
+function toMetadata(ref: BlobRef): BlobRemoteMetadata {
+    return {
+        id: ref.id,
+        size: ref.size,
+        type: ref.type,
+        name: ref.name ?? "",
+    };
 }
 
-const storage: LocalBlobStorage = {};
+export function createBlobManager(opts: BlobManagerOptions): BlobManager {
+    const now = () => opts.now?.() ?? Date.now();
+    const retainCounts = new Map<string, number>();
+    const releaseBuffer = new Map<string, number>();
+    const gcReleaseBufferSize = opts.gcReleaseBufferSize ?? 10;
+    const evictionStrategy: BlobEvictionStrategy = opts.evictionStrategy ?? defaultEvictionStrategy;
+    let gcScheduled = false;
+    const reconcilePromise = opts.store.reconcile();
 
-const file: File = new File([], "test.jpeg");
+    const scheduleGC = () => {
+        if (gcScheduled) {
+            return;
+        }
+        gcScheduled = true;
+        const run = () => {
+            gcScheduled = false;
+            void collectGarbage();
+        };
+        if (opts.gcScheduler) {
+            opts.gcScheduler(run);
+        } else {
+            queueMicrotask(run);
+        }
+    };
 
-const blobId = crypto.randomUUID();
+    const collectGarbage = () =>
+        collectBlobGarbage({
+            store: opts.store,
+            retainCounts,
+            releaseBuffer,
+            evictionStrategy,
+            now: now(),
+            cacheMaxAgeMs: opts.cacheMaxAgeMs,
+            maxCacheBytes: opts.maxCacheBytes,
+        });
 
-const collection = createCollection({});
-
-async function createAttachment(blob: Blob): Promise<BlobRef> {
-    const blobRef = await storage.stage(file, blobId);
-    const transaction = createTransaction({
-        mutationFn: async () => {
-            // upload blob
-            await storage.complete(blobRef.id); // maybe sync in completed blob?
+    return {
+        async stage(id, blob) {
+            await reconcilePromise;
+            return opts.store.stage(id, blob);
         },
-    });
-    // if this was proper mutation we would mutate and add blob ref to collection here
-    await transaction.commit();
-}
 
-function useBlob(id: string) {
-    // storage.retain(id);
-    // read blob
-    // return () => storage.release(id);
+        async metadata(id) {
+            await reconcilePromise;
+            const ref = await opts.store.get(id);
+            if (ref) {
+                return toMetadata(ref);
+            }
+            return opts.remote.metadata(id);
+        },
+
+        async blob(id) {
+            await reconcilePromise;
+            try {
+                return await opts.store.read(id);
+            } catch (error) {
+                void error;
+            }
+
+            const [blob, metadata] = await Promise.all([opts.remote.blob(id), opts.remote.metadata(id)]);
+            await opts.store.cache(id, new File([blob], metadata.name, { type: blob.type }));
+            scheduleGC();
+            return blob;
+        },
+
+        async withUploadTracking(
+            id: string,
+            callback: (blob: Blob) => Promise<void>
+        ): Promise<void> {
+            await reconcilePromise;
+            const existingRef = await opts.store.get(id);
+            invariant(existingRef, `Blob metadata not found for "${id}".`);
+            if (existingRef.state === "persisted" || existingRef.state === "cached") {
+                return;
+            }
+
+            try {
+                const blob = await opts.store.read(id);
+                await opts.store.markUploading(id);
+                await callback(blob);
+                await opts.store.markPersisted(id);
+            } catch (error) {
+                await opts.store.markFailed(id, error);
+                throw error;
+            }
+        },
+
+        retain(id) {
+            retainCounts.set(id, (retainCounts.get(id) ?? 0) + 1);
+            releaseBuffer.delete(id);
+        },
+
+        release(id) {
+            const count = retainCounts.get(id) ?? 0;
+            if (count <= 1) {
+                retainCounts.delete(id);
+                releaseBuffer.set(id, now());
+                if (releaseBuffer.size > gcReleaseBufferSize) {
+                    scheduleGC();
+                }
+                return;
+            }
+            retainCounts.set(id, count - 1);
+        },
+    };
 }

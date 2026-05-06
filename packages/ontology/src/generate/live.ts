@@ -40,7 +40,7 @@ export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
             { name: "adapter", type: "OntologyAdapter" },
             {
                 name: "opts",
-                type: "Pick<LiveOntologyOpts, \"getContext\">",
+                type: "Pick<LiveOntologyOpts, \"blobStore\" | \"getContext\" | \"id\">",
                 hasQuestionToken: true,
             },
         ],
@@ -48,6 +48,8 @@ export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
         statements: `return createLiveOntology<${opts.ontologyTypeName}>({
             ir: ${ontologyImportName},
             adapter,
+            id: opts?.id,
+            blobStore: opts?.blobStore,
             getContext: opts?.getContext,
         });`,
     });

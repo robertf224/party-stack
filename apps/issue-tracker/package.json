@@ -12,6 +12,7 @@
         "start": "serve out"
     },
     "dependencies": {
+        "@party-stack/blobs": "workspace:*",
         "@party-stack/foundry-ontology": "workspace:*",
         "@party-stack/ontology": "workspace:*",
         "@party-stack/schema": "workspace:*",

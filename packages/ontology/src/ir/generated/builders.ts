@@ -42,11 +42,6 @@ export const geopoint = (value: Extract<t.TypeDef, { kind: "geopoint" }>["value"
     value,
 });
 
-export const attachment = (value: Extract<t.TypeDef, { kind: "attachment" }>["value"]) => ({
-    kind: "attachment" as const,
-    value,
-});
-
 export const list = (value: Extract<t.TypeDef, { kind: "list" }>["value"]) => ({
     kind: "list" as const,
     value,
@@ -78,6 +73,11 @@ export const ref = (value: Extract<t.TypeDef, { kind: "ref" }>["value"]) => ({ k
 
 export const unknown = (value: Extract<t.TypeDef, { kind: "unknown" }>["value"]) => ({
     kind: "unknown" as const,
+    value,
+});
+
+export const attachment = (value: Extract<t.TypeDef, { kind: "attachment" }>["value"]) => ({
+    kind: "attachment" as const,
     value,
 });
 
@@ -151,7 +151,6 @@ export const o = {
     date,
     timestamp,
     geopoint,
-    attachment,
     list,
     map,
     struct,
@@ -160,6 +159,7 @@ export const o = {
     result,
     ref,
     unknown,
+    attachment,
     objectReference,
     StringConstraint,
     FunctionCallExpression,

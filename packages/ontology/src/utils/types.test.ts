@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { o } from "../ir/generated/builders.js";
+import { getTargetValueType, resolveType, unwrapValueType } from "./types.js";
 import type { OntologyIR } from "../ir/generated/types.js";
-import { getTargetValueType, unwrapValueType } from "./types.js";
 
 describe("unwrapValueType", () => {
     it("unwraps nested optional and list wrappers", () => {
@@ -52,7 +52,38 @@ describe("unwrapValueType", () => {
             actionTypes: [],
         };
 
-        expect(() => unwrapValueType(ir, o.ref({ name: "MissingType" }))).toThrow('Unknown type reference "MissingType".');
+        expect(() => unwrapValueType(ir, o.ref({ name: "MissingType" }))).toThrow(
+            'Unknown type reference "MissingType".'
+        );
+    });
+});
+
+describe("resolveType", () => {
+    it("resolves refs recursively", () => {
+        const ir: OntologyIR = {
+            types: [
+                { name: "AttachmentAlias", type: o.ref({ name: "AttachmentType" }) },
+                { name: "AttachmentType", type: o.attachment({}) },
+            ],
+            objectTypes: [],
+            linkTypes: [],
+            actionTypes: [],
+        };
+
+        expect(resolveType(ir, o.ref({ name: "AttachmentAlias" }))).toEqual(o.attachment({}));
+    });
+
+    it("throws when a ref cannot be resolved", () => {
+        const ir: OntologyIR = {
+            types: [],
+            objectTypes: [],
+            linkTypes: [],
+            actionTypes: [],
+        };
+
+        expect(() => resolveType(ir, o.ref({ name: "MissingType" }))).toThrow(
+            'Unknown type reference "MissingType".'
+        );
     });
 });
 
@@ -91,7 +122,9 @@ describe("getTargetValueType", () => {
             actionTypes: [],
         };
 
-        expect(getTargetValueType(ir, { objectType: "Post", property: "attachments" })).toEqual(o.attachment({}));
+        expect(getTargetValueType(ir, { objectType: "Post", property: "attachments" })).toEqual(
+            o.attachment({})
+        );
     });
 
     it("throws when the object type is missing", () => {

@@ -51,11 +51,6 @@ export type TimestampTypeDef = Record<never, never>;
 /** A geographic point (lat/lon). */
 export type GeopointTypeDef = Record<never, never>;
 
-/** A file handle. */
-export type AttachmentTypeDef = {
-    meta?: Record<string, unknown>;
-};
-
 /** An opaque type whose shape is not known at schema time. */
 export type UnknownTypeDef = Record<never, never>;
 
@@ -134,7 +129,6 @@ export type TypeDef = v.Union<{
     date: DateTypeDef;
     timestamp: TimestampTypeDef;
     geopoint: GeopointTypeDef;
-    attachment: AttachmentTypeDef;
     list: ListTypeDef;
     map: MapTypeDef;
     struct: StructTypeDef;
