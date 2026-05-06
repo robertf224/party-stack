@@ -1,5 +1,11 @@
 # @party-stack/foundry-ontology
 
+## 0.3.1
+
+### Patch Changes
+
+- ba0a1b9: fix pagination bug
+
 ## 0.3.0
 
 ### Minor Changes
