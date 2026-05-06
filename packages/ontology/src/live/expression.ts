@@ -1,5 +1,6 @@
 import { get } from "lodash-es";
 import { Temporal } from "temporal-polyfill";
+import { resolveType } from "../utils/types.js";
 import type { OntologyCollection, OntologyObject } from "./LiveOntology.js";
 import type {
     Expression,
@@ -18,13 +19,6 @@ function unwrapType(type: TypeDef): { type: TypeDef; isOptional: boolean } {
         return { type: type.value.type, isOptional: true };
     }
     return { type, isOptional: false };
-}
-
-function resolveType(type: TypeDef, ir: OntologyIR): TypeDef {
-    if (type.kind === "ref") {
-        return resolveType(ir.types.find((t) => t.name === type.value.name)!.type, ir);
-    }
-    return type;
 }
 
 export function evaluateExpression(
@@ -47,8 +41,8 @@ export function evaluateExpression(
             const actionType = getActionType(ir, actionTypeName);
             const { type: parameterType, isOptional: parameterIsOptional } = unwrapType(
                 resolveType(
-                    actionType.parameters.find((parameter) => parameter.name === parameterName)!.type,
-                    ir
+                    ir,
+                    actionType.parameters.find((parameter) => parameter.name === parameterName)!.type
                 )
             );
 
@@ -134,7 +128,7 @@ export function getObjectReferenceObjectType(
 ): ObjectTypeDef {
     const actionType = getActionType(ir, actionTypeName);
     const parameter = actionType.parameters.find((parameter) => parameter.name === reference.path[0])!;
-    const resolvedType = unwrapType(resolveType(parameter.type, ir)).type as Extract<
+    const resolvedType = unwrapType(resolveType(ir, parameter.type)).type as Extract<
         TypeDef,
         { kind: "objectReference" }
     >;

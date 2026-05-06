@@ -1,8 +1,10 @@
+import { s } from "@party-stack/schema";
 import { generateTypes as generateSchemaTypes } from "@party-stack/schema/generate";
 import { pascalCase } from "change-case";
 import { Project, Writers } from "ts-morph";
 import type {
     FieldDef as SchemaFieldDef,
+    NamedTypeDef as SchemaNamedTypeDef,
     SchemaIR,
     TypeDef as SchemaTypeDef,
     VariantDef as SchemaVariantDef,
@@ -22,6 +24,24 @@ function lowerObjectReferenceType(
     return lowerType(primaryKey.type, objectTypes);
 }
 
+function lowerAttachmentType(): SchemaTypeDef {
+    return s.ref({ name: "attachment" });
+}
+
+function attachmentSchemaType(): SchemaNamedTypeDef {
+    return {
+        name: "attachment",
+        type: s.struct({
+            fields: [
+                { name: "id", displayName: "ID", type: s.string({}) },
+                { name: "size", displayName: "Size", type: s.optional({ type: s.double({}) }) },
+                { name: "type", displayName: "Type", type: s.optional({ type: s.string({}) }) },
+                { name: "name", displayName: "Name", type: s.optional({ type: s.string({}) }) },
+            ],
+        }),
+    };
+}
+
 function lowerType(
     type: TypeDef,
     objectTypes: ReadonlyMap<string, ObjectTypeDef>
@@ -35,10 +55,11 @@ function lowerType(
         case "date":
         case "timestamp":
         case "geopoint":
-        case "attachment":
         case "ref":
         case "unknown":
             return type;
+        case "attachment":
+            return lowerAttachmentType();
         case "objectReference": {
             return lowerObjectReferenceType(type.value.objectType, objectTypes);
         }
@@ -136,6 +157,7 @@ function toSchemaIR(ir: OntologyIR): SchemaIR {
 
     return {
         types: [
+            attachmentSchemaType(),
             ...ir.types.map((type) => ({
                 name: type.name,
                 description: type.description,

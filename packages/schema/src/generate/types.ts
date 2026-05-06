@@ -58,9 +58,6 @@ function generateForTypeDef(type: TypeDef): string {
         case "geopoint":
             return "v.geopoint";
 
-        case "attachment":
-            return "v.attachment";
-
         case "unknown":
             return "unknown";
 
@@ -68,7 +65,7 @@ function generateForTypeDef(type: TypeDef): string {
             return `Array<${generateForTypeDef(type.value.elementType)}>`;
 
         case "map":
-            return `Map<${generateForTypeDef(type.value.keyType)}, ${generateForTypeDef(type.value.valueType)}>`;
+            return `Record<string, ${generateForTypeDef(type.value.valueType)}>`;
 
         case "struct":
             return generateForStructTypeDef(type.value);

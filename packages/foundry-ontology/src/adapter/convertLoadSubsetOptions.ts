@@ -7,6 +7,8 @@ import {
 } from "@osdk/foundry.ontologies";
 import { FieldPath, LoadSubsetOptions, parseOrderByExpression, parseWhereExpression } from "@tanstack/db";
 
+const ALWAYS_FALSE_FILTER: SearchJsonQueryV2 = { type: "or", value: [] };
+
 function fieldPathToPropertyIdentifier(fieldPath: FieldPath): PropertyIdentifier {
     if (fieldPath.length === 1) {
         return {
@@ -23,6 +25,10 @@ function fieldPathToPropertyIdentifier(fieldPath: FieldPath): PropertyIdentifier
     throw new Error(`Invalid field path: ${fieldPath.join(".")}`);
 }
 
+export function isAlwaysFalseFilter(filter: SearchJsonQueryV2 | undefined): boolean {
+    return filter?.type === "or" && filter.value.length === 0;
+}
+
 export function convertLoadSubsetFilter(filter: LoadSubsetOptions["where"]): SearchJsonQueryV2 | undefined {
     return (
         parseWhereExpression<SearchJsonQueryV2>(filter, {
@@ -35,26 +41,38 @@ export function convertLoadSubsetFilter(filter: LoadSubsetOptions["where"]): Sea
                     propertyIdentifier: fieldPathToPropertyIdentifier(field),
                     value,
                 }),
-                gt: (field: FieldPath, value) => ({
-                    type: "gt",
-                    propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                    value,
-                }),
-                gte: (field: FieldPath, value) => ({
-                    type: "gte",
-                    propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                    value,
-                }),
-                lt: (field: FieldPath, value) => ({
-                    type: "lt",
-                    propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                    value,
-                }),
-                lte: (field: FieldPath, value) => ({
-                    type: "lte",
-                    propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                    value,
-                }),
+                gt: (field: FieldPath, value) =>
+                    value == null
+                        ? ALWAYS_FALSE_FILTER
+                        : {
+                              type: "gt",
+                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                              value,
+                          },
+                gte: (field: FieldPath, value) =>
+                    value == null
+                        ? ALWAYS_FALSE_FILTER
+                        : {
+                              type: "gte",
+                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                              value,
+                          },
+                lt: (field: FieldPath, value) =>
+                    value == null
+                        ? ALWAYS_FALSE_FILTER
+                        : {
+                              type: "lt",
+                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                              value,
+                          },
+                lte: (field: FieldPath, value) =>
+                    value == null
+                        ? ALWAYS_FALSE_FILTER
+                        : {
+                              type: "lte",
+                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                              value,
+                          },
                 isNull: (field: FieldPath) => ({
                     type: "isNull",
                     propertyIdentifier: fieldPathToPropertyIdentifier(field),

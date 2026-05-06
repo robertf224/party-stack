@@ -602,7 +602,7 @@ describe("TypeScript Type Generation", () => {
             `);
         });
 
-        it("should generate Map type for map", () => {
+        it("should generate Record type for map", () => {
             const schema: SchemaIR = {
                 types: [
                     {
@@ -633,7 +633,7 @@ describe("TypeScript Type Generation", () => {
               "import * as v from "@party-stack/schema/values";
 
               export type Config = {
-                      settings: Map<string, string>;
+                      settings: Record<string, string>;
                   };"
             `);
         });

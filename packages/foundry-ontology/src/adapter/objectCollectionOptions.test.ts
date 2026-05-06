@@ -1,3 +1,4 @@
+import { o } from "@party-stack/ontology";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockState = vi.hoisted(() => ({
@@ -32,9 +33,15 @@ vi.mock("@party-stack/foundry-object-set-watcher", () => ({
     }),
 }));
 
+import { createFoundryCodec } from "./foundryCodec.js";
 import { objectCollectionOptions } from "./objectCollectionOptions.js";
 
-function createSyncHarness(initialObjects: Array<Record<string, unknown>> = []) {
+function createSyncHarness(
+    initialObjects: Array<Record<string, unknown>> = [],
+    opts: {
+        decodeObject?: (object: Record<string, unknown>) => Record<string, unknown>;
+    } = {}
+) {
     const syncedData = new Map(
         initialObjects.map((object) => [object.employeeId as string | number, object])
     );
@@ -49,6 +56,7 @@ function createSyncHarness(initialObjects: Array<Record<string, unknown>> = []) 
         } as never,
         objectType: "Employee",
         primaryKeyProperty: "employeeId",
+        decodeObject: opts.decodeObject,
     });
 
     const handle = syncConfig.sync({
@@ -374,6 +382,74 @@ describe("objectCollectionOptions", () => {
         });
 
         expect(mockState.getObject).not.toHaveBeenCalled();
+
+        harness.cleanup();
+    });
+
+    it("decodes attachment property wrappers from edit history", async () => {
+        mockState.getEditsHistory.mockResolvedValue({
+            data: [
+                {
+                    objectPrimaryKey: { employeeId: 7 },
+                    operationId: "op-7",
+                    actionTypeRid: "action-1",
+                    userId: "user-1",
+                    timestamp: "2099-03-12T12:00:00.000Z",
+                    edit: {
+                        type: "createEdit",
+                        properties: {
+                            employeeId: 7,
+                            attachments: [
+                                {
+                                    type: "attachment",
+                                    attachment: "ri.attachments.main.attachment.7",
+                                },
+                            ],
+                            name: "Employee Seven",
+                        },
+                    },
+                },
+            ],
+            nextPageToken: undefined,
+        });
+        const codec = createFoundryCodec({
+            types: [],
+            objectTypes: [
+                {
+                    name: "Employee",
+                    displayName: "Employee",
+                    pluralDisplayName: "Employees",
+                    primaryKey: "employeeId",
+                    properties: [
+                        { name: "employeeId", displayName: "Employee ID", type: o.integer({}) },
+                        { name: "name", displayName: "Name", type: o.string({}) },
+                        {
+                            name: "attachments",
+                            displayName: "Attachments",
+                            type: o.list({
+                                elementType: o.attachment({ meta: { type: "attachment" } }),
+                            }),
+                        },
+                    ],
+                },
+            ],
+            linkTypes: [],
+            actionTypes: [],
+        });
+
+        const harness = createSyncHarness([], {
+            decodeObject: (object) => codec.decodeObject("Employee", object),
+        });
+
+        mockState.subscribeCallback?.({ type: "state", status: "open" });
+
+        await vi.waitFor(() => {
+            expect(harness.syncedData.get(7)).toEqual({
+                employeeId: 7,
+                name: "Employee Seven",
+                attachments: [{ id: "ri.attachments.main.attachment.7" }],
+            });
+        });
 
         harness.cleanup();
     });

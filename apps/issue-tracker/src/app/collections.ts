@@ -1,6 +1,7 @@
 "use client";
 
 import { createCollection } from "@tanstack/db";
+import { createWebBlobStore } from "@party-stack/blobs/web";
 import { createOntologyClient, createFoundryOntologyAdapter } from "@party-stack/foundry-ontology";
 import { userCollectionOptions } from "@party-stack/foundry-ontology/users";
 import ir from "../ontology/ontology";
@@ -11,8 +12,10 @@ const client = createOntologyClient({
     ontologyRid: process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
     tokenProvider: () => Promise.resolve(process.env.NEXT_PUBLIC_FOUNDRY_TOKEN!),
 });
-const adapter = createFoundryOntologyAdapter({ client, ir });
+export const adapter = createFoundryOntologyAdapter({ client, ir });
 export const ontology = createIssueTrackerLiveOntology(adapter, {
+    id: process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
+    blobStore: createWebBlobStore,
     getContext: () => ({
         userId: "77a1fe87-ad9f-4cd7-ba76-223ab048d2d3",
     }),

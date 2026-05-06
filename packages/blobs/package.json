@@ -1,0 +1,52 @@
+{
+    "name": "@party-stack/blobs",
+    "version": "0.1.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./web": {
+            "types": "./lib/web/index.d.ts",
+            "default": "./lib/web/index.js"
+        },
+        "./expo": {
+            "types": "./lib/expo/index.d.ts",
+            "default": "./lib/expo/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@tanstack/db": "^0.6.5",
+        "eslint": "^9.25.0",
+        "expo-file-system": "^55.0.19",
+        "expo-sqlite": "^55.0.15",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    },
+    "peerDependencies": {
+        "@tanstack/db": "^0.6.5",
+        "expo-file-system": "^55.0.19",
+        "expo-sqlite": "^55.0.15"
+    },
+    "peerDependenciesMeta": {
+        "expo-file-system": {
+            "optional": true
+        },
+        "expo-sqlite": {
+            "optional": true
+        }
+    },
+    "dependencies": {
+        "@bobbyfidz/panic": "^0.1.0"
+    }
+}

@@ -126,7 +126,14 @@ export function convertFoundryObjectPropertyType(type: ObjectPropertyType): Type
             return { kind: "string", value: {} };
         case "attachment":
         case "mediaReference":
-            return { kind: "attachment", value: {} };
+            return {
+                kind: "attachment",
+                value: {
+                    meta: {
+                        type: type.type === "attachment" ? "attachment" : "media",
+                    },
+                },
+            };
         case "vector":
             return {
                 kind: "list",

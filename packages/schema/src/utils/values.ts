@@ -12,14 +12,8 @@ export type date = Temporal.PlainDate;
 
 export type timestamp = Temporal.Instant;
 
-export type attachment = RemoteBlob;
-
 export type Union<T extends Record<string, unknown>> = {
     [K in keyof T]: { kind: K; value: T[K] };
 }[keyof T];
 
 export type Result<T, E> = Union<{ ok: T; err: E }>;
-
-export interface RemoteBlob extends Blob {
-    id: string;
-}

@@ -19,7 +19,11 @@ import {
 import { Store } from "@tanstack/store";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
-import { convertLoadSubsetFilter, convertLoadSubsetOrderBy } from "./convertLoadSubsetOptions.js";
+import {
+    convertLoadSubsetFilter,
+    convertLoadSubsetOrderBy,
+    isAlwaysFalseFilter,
+} from "./convertLoadSubsetOptions.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -143,11 +147,16 @@ function isWrappedPrimitivePropertyValue(
     ].includes(value.type);
 }
 
+function isAttachmentPropertyValue(value: unknown): value is { type: "attachment"; attachment: string } {
+    return isPlainObject(value) && value.type === "attachment" && typeof value.attachment === "string";
+}
+
 function normalizeEditPropertyValue(value: unknown): unknown {
     if (isNullPropertyValue(value)) return undefined;
     const geoPoint = parseGeoPointPropertyValue(value);
     if (geoPoint) return geoPoint;
     if (isWrappedPrimitivePropertyValue(value)) return value.value;
+    if (isAttachmentPropertyValue(value)) return { rid: value.attachment };
     if (Array.isArray(value)) return value.map(normalizeEditPropertyValue);
     if (isPlainObject(value)) {
         return Object.fromEntries(
@@ -168,12 +177,15 @@ async function fetchFoundryObjects(
     decodeObject: (object: FoundryObject) => FoundryObject = (object) => object
 ): Promise<FoundryObject[]> {
     let where = convertLoadSubsetFilter(opts.where);
-    if (where?.type === "in" && where.value.length === 0) {
+    if (isAlwaysFalseFilter(where) || (where?.type === "in" && where.value.length === 0)) {
         return [];
     }
 
     if (opts.cursor?.whereFrom) {
         const cursorWhere = convertLoadSubsetFilter(opts.cursor.whereFrom);
+        if (isAlwaysFalseFilter(cursorWhere)) {
+            return [];
+        }
         if (cursorWhere) {
             where = where ? { type: "and", value: [where, cursorWhere] } : cursorWhere;
         }

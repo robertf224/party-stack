@@ -42,10 +42,6 @@ function generateForTypeDef(type: TypeDef): string {
             return "z.object({ lat: z.float64().min(-90).max(90), lon: z.float64().min(-180).max(180) })";
         }
 
-        case "attachment": {
-            return "z.unknown()";
-        }
-
         case "unknown": {
             return "z.unknown()";
         }
@@ -58,7 +54,7 @@ function generateForTypeDef(type: TypeDef): string {
         case "map": {
             const keyType = generateForTypeDef(type.value.keyType);
             const valueType = generateForTypeDef(type.value.valueType);
-            return `z.map(${keyType}, ${valueType})`;
+            return `z.record(${keyType}, ${valueType})`;
         }
 
         case "struct": {

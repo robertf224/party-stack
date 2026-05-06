@@ -51,9 +51,6 @@ export type TimestampTypeDef = Record<never, never>;
 /** A geographic point (lat/lon). */
 export type GeopointTypeDef = Record<never, never>;
 
-/** A file handle. */
-export type AttachmentTypeDef = Record<never, never>;
-
 /** An opaque type whose shape is not known at schema time. */
 export type UnknownTypeDef = Record<never, never>;
 
@@ -132,7 +129,6 @@ export type TypeDef = v.Union<{
     date: DateTypeDef;
     timestamp: TimestampTypeDef;
     geopoint: GeopointTypeDef;
-    attachment: AttachmentTypeDef;
     list: ListTypeDef;
     map: MapTypeDef;
     struct: StructTypeDef;
@@ -141,6 +137,7 @@ export type TypeDef = v.Union<{
     result: ResultTypeDef;
     ref: TypeRef;
     unknown: UnknownTypeDef;
+    attachment: AttachmentTypeDef;
     objectReference: ObjectReferenceTypeDef;
 }>;
 
@@ -153,6 +150,11 @@ export type NamedTypeDef = {
     deprecated?: Deprecation;
     /** The type definition. */
     type: TypeDef;
+};
+
+/** A file handle. */
+export type AttachmentTypeDef = {
+    meta?: Record<string, unknown>;
 };
 
 /** A reference to an ontology object type. */

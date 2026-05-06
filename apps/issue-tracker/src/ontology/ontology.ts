@@ -22,6 +22,17 @@ export default {
                     type: o.timestamp({}),
                 },
                 {
+                    name: "attachments",
+                    displayName: "Attachments",
+                    type: o.list({
+                        elementType: o.attachment({
+                            meta: {
+                                type: "attachment",
+                            },
+                        }),
+                    }),
+                },
+                {
                     name: "createdBy",
                     displayName: "Created by",
                     type: o.string({}),
@@ -93,6 +104,19 @@ export default {
             displayName: "Create Task",
             parameters: [
                 {
+                    name: "attachments",
+                    displayName: "Attachments",
+                    type: o.optional({
+                        type: o.list({
+                            elementType: o.attachment({
+                                meta: {
+                                    type: "attachment",
+                                },
+                            }),
+                        }),
+                    }),
+                },
+                {
                     name: "location",
                     displayName: "Location",
                     type: o.optional({
@@ -131,6 +155,12 @@ export default {
                             property: ["createdAt"],
                             value: o.Expression.valueReference({
                                 path: ["__now"],
+                            }),
+                        },
+                        {
+                            property: ["attachments"],
+                            value: o.Expression.valueReference({
+                                path: ["attachments"],
                             }),
                         },
                         {
