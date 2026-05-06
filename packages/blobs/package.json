@@ -26,7 +26,7 @@
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",
-        "@tanstack/db": "^0.6.0",
+        "@tanstack/db": "^0.6.5",
         "eslint": "^9.25.0",
         "expo-file-system": "^55.0.19",
         "expo-sqlite": "^55.0.15",
@@ -34,7 +34,7 @@
         "vitest": "^3.1.1"
     },
     "peerDependencies": {
-        "@tanstack/db": "^0.6.0",
+        "@tanstack/db": "^0.6.5",
         "expo-file-system": "^55.0.19",
         "expo-sqlite": "^55.0.15"
     },
