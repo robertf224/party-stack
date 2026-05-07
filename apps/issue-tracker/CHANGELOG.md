@@ -1,5 +1,12 @@
 # @party-stack/issue-tracker
 
+## 0.0.6
+
+### Patch Changes
+
+- Updated dependencies [4d77e01]
+    - @party-stack/foundry-ontology@0.3.2
+
 ## 0.0.5
 
 ### Patch Changes

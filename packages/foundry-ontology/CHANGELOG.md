@@ -1,5 +1,11 @@
 # @party-stack/foundry-ontology
 
+## 0.3.2
+
+### Patch Changes
+
+- 4d77e01: support edits history being unavailable with fallback
+
 ## 0.3.1
 
 ### Patch Changes
