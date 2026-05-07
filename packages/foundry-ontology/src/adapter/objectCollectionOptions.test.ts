@@ -594,6 +594,86 @@ describe("objectCollectionOptions", () => {
         harness.cleanup();
     });
 
+    it("falls back to direct websocket updates when edit history is unavailable", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        mockState.getEditsHistory.mockRejectedValue(new Error("Edit history is not enabled"));
+
+        const harness = createSyncHarness();
+
+        mockState.subscribeCallback?.({
+            type: "change",
+            updates: [
+                {
+                    type: "object",
+                    state: "ADDED_OR_UPDATED",
+                    object: { employeeId: 12, name: "Direct Employee" },
+                },
+            ],
+        });
+
+        await vi.waitFor(() => {
+            expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
+            expect(harness.syncedData.get(12)).toEqual({
+                employeeId: 12,
+                name: "Direct Employee",
+            });
+        });
+
+        mockState.subscribeCallback?.({
+            type: "change",
+            updates: [
+                {
+                    type: "object",
+                    state: "REMOVED",
+                    object: { employeeId: 12 },
+                },
+            ],
+        });
+
+        await vi.waitFor(() => {
+            expect(harness.syncedData.has(12)).toBe(false);
+            expect(harness.writes).toContainEqual({ type: "delete", primaryKey: 12 });
+        });
+
+        expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
+
+        harness.cleanup();
+        warnSpy.mockRestore();
+    });
+
+    it("resolves awaitOperationId after direct websocket sync observes an update", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        mockState.getEditsHistory.mockRejectedValue(new Error("Edit history is not enabled"));
+
+        const harness = createSyncHarness();
+        const operationPromise = harness.utils.awaitOperationId("op-12");
+
+        await vi.waitFor(() => {
+            expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
+        });
+
+        mockState.subscribeCallback?.({
+            type: "change",
+            updates: [
+                {
+                    type: "object",
+                    state: "ADDED_OR_UPDATED",
+                    object: { employeeId: 13, name: "Direct Operation Employee" },
+                },
+            ],
+        });
+
+        await expect(operationPromise).resolves.toBe(true);
+        expect(harness.syncedData.get(13)).toEqual({
+            employeeId: 13,
+            name: "Direct Operation Employee",
+        });
+        expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
+
+        harness.cleanup();
+        warnSpy.mockRestore();
+    });
+
     it("awaitOperationId resolves after the matching edit is observed", async () => {
         mockState.getEditsHistory.mockResolvedValue({
             data: [

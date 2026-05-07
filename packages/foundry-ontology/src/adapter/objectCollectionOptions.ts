@@ -2,6 +2,7 @@ import {
     OntologyObjectsV2,
     OntologyObjectV2,
     type ObjectEditHistoryEntry,
+    type ObjectSetUpdate,
     ObjectTypesV2,
     type ObjectPrimaryKeyV2,
 } from "@osdk/foundry.ontologies";
@@ -222,6 +223,8 @@ function createSyncConfig(
 ): { sync: SyncConfig<Record<string, unknown>, string | number>; utils: ObjectCollectionUtils } {
     const seenOperationIds = new Store<Set<string>>(new Set<string>());
     const syncDisposed = new Store<boolean>(false);
+    const directWebsocketSyncVersion = new Store<number>(0);
+    const editHistoryUnavailable = new Store<boolean>(false);
     let requestEditHistoryCatchUp: (() => void) | undefined;
 
     const awaitOperationId = async (
@@ -240,12 +243,18 @@ function createSyncConfig(
             throw new ObjectCollectionSyncAbortedError(objectType);
         }
 
+        if (editHistoryUnavailable.state) {
+            return true;
+        }
+
+        const directSyncVersionAtStart = directWebsocketSyncVersion.state;
         requestEditHistoryCatchUp?.();
 
         return new Promise((resolve, reject) => {
             const cleanup = () => {
                 clearTimeout(timeoutId);
                 seenOperationIdsSubscription.unsubscribe();
+                directWebsocketSyncVersionSubscription.unsubscribe();
                 disposedSubscription.unsubscribe();
             };
 
@@ -256,6 +265,16 @@ function createSyncConfig(
 
             const seenOperationIdsSubscription = seenOperationIds.subscribe(() => {
                 if (seenOperationIds.state.has(operationId)) {
+                    cleanup();
+                    resolve(true);
+                }
+            });
+
+            const directWebsocketSyncVersionSubscription = directWebsocketSyncVersion.subscribe(() => {
+                if (
+                    editHistoryUnavailable.state &&
+                    directWebsocketSyncVersion.state > directSyncVersionAtStart
+                ) {
                     cleanup();
                     resolve(true);
                 }
@@ -284,9 +303,20 @@ function createSyncConfig(
             const editHistoryCursor = createEditHistoryCursor();
             let catchUpRequested = false;
             let catchUpTask: Promise<void> | undefined;
+            let pendingDirectWatcherUpdates: ObjectSetUpdate[] = [];
 
             const getObjectKey = (object: FoundryObject): string | number =>
                 object[primaryKeyProperty] as string | number;
+
+            const getWatcherObjectKey = (object: FoundryObject): string | number => {
+                const key = object[primaryKeyProperty] ?? object.__primaryKey;
+                if (typeof key !== "string" && typeof key !== "number") {
+                    throw new Error(
+                        `Foundry websocket update for ${objectType} did not include a supported primary key.`
+                    );
+                }
+                return key;
+            };
 
             const upsertObject = (object: FoundryObject) => {
                 const key = getObjectKey(object);
@@ -327,6 +357,83 @@ function createSyncConfig(
                     ),
                     [primaryKeyProperty]: primaryKey,
                 } as FoundryObject);
+
+            const decodeWatcherObject = (object: FoundryObject, primaryKey: string | number): FoundryObject =>
+                decodeObject({
+                    ...object,
+                    [primaryKeyProperty]: primaryKey,
+                });
+
+            const applyDirectWatcherUpdates = (updates: ObjectSetUpdate[]): void => {
+                const pendingMutations = new Map<
+                    string | number,
+                    { type: "upsert"; object: FoundryObject } | { type: "delete" }
+                >();
+                let observedObjectUpdate = false;
+
+                for (const update of updates) {
+                    if (update.type !== "object") continue;
+
+                    observedObjectUpdate = true;
+                    const object = update.object as FoundryObject;
+                    const primaryKey = getWatcherObjectKey(object);
+
+                    switch (update.state) {
+                        case "ADDED_OR_UPDATED":
+                            pendingMutations.set(primaryKey, {
+                                type: "upsert",
+                                object: decodeWatcherObject(object, primaryKey),
+                            });
+                            break;
+                        case "REMOVED":
+                            pendingMutations.set(primaryKey, { type: "delete" });
+                            break;
+                    }
+                }
+
+                let transactionStarted = false;
+                for (const [primaryKey, mutation] of pendingMutations) {
+                    if (mutation.type === "delete" && !syncedKeys.has(primaryKey)) {
+                        continue;
+                    }
+
+                    if (!transactionStarted) {
+                        begin({ immediate: true });
+                        transactionStarted = true;
+                    }
+
+                    if (mutation.type === "delete") {
+                        deleteObjectByKey(primaryKey);
+                    } else {
+                        upsertObject(mutation.object);
+                    }
+                }
+
+                if (transactionStarted) {
+                    commit();
+                }
+
+                if (observedObjectUpdate) {
+                    directWebsocketSyncVersion.setState((version) => version + 1);
+                }
+            };
+
+            const switchToDirectWebsocketMode = (error: unknown): void => {
+                if (!editHistoryUnavailable.state) {
+                    const errorMessage = error instanceof Error ? error.message : error;
+                    console.warn(
+                        `Edit history catch-up failed for ${objectType}; falling back to direct websocket updates.`,
+                        errorMessage
+                    );
+                    editHistoryUnavailable.setState(() => true);
+                }
+
+                if (pendingDirectWatcherUpdates.length > 0) {
+                    const updates = pendingDirectWatcherUpdates;
+                    pendingDirectWatcherUpdates = [];
+                    applyDirectWatcherUpdates(updates);
+                }
+            };
 
             const catchUpFromEditHistory = async (): Promise<void> => {
                 const pendingMutations = new Map<
@@ -405,9 +512,13 @@ function createSyncConfig(
                         return next;
                     });
                 }
+
+                pendingDirectWatcherUpdates = [];
             };
 
             requestEditHistoryCatchUp = () => {
+                if (editHistoryUnavailable.state) return;
+
                 catchUpRequested = true;
                 if (catchUpTask) return;
 
@@ -418,7 +529,7 @@ function createSyncConfig(
                     }
                 })()
                     .catch((error: unknown) => {
-                        console.error("Error during edit history catch-up", error);
+                        switchToDirectWebsocketMode(error);
                     })
                     .finally(() => {
                         catchUpTask = undefined;
@@ -444,15 +555,22 @@ function createSyncConfig(
             const unsubscribe = objectSetWatcherManager.subscribe({ type: "base", objectType }, (message) => {
                 switch (message.type) {
                     case "change": {
-                        requestEditHistoryCatchUp?.();
+                        if (editHistoryUnavailable.state) {
+                            applyDirectWatcherUpdates(message.updates);
+                        } else {
+                            pendingDirectWatcherUpdates.push(...message.updates);
+                            requestEditHistoryCatchUp?.();
+                        }
                         break;
                     }
                     case "refresh": {
-                        requestEditHistoryCatchUp?.();
+                        if (!editHistoryUnavailable.state) {
+                            requestEditHistoryCatchUp?.();
+                        }
                         break;
                     }
                     case "state": {
-                        if (message.status === "open") {
+                        if (message.status === "open" && !editHistoryUnavailable.state) {
                             requestEditHistoryCatchUp?.();
                         }
                         break;
