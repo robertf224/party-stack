@@ -1,0 +1,39 @@
+{
+    "name": "@party-stack/remote-notes",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "tsc",
+        "dev": "vite dev",
+        "dist": "vite build",
+        "lint": "eslint"
+    },
+    "dependencies": {
+        "@party-stack/ontology": "workspace:*",
+        "@party-stack/remote-ontology": "workspace:*",
+        "@tanstack/db": "^0.6.5",
+        "@tanstack/node-db-sqlite-persistence": "^0.1.9",
+        "@tanstack/query-core": "^5.100.9",
+        "@tanstack/query-db-collection": "^1.0.36",
+        "@tanstack/react-db": "^0.1.83",
+        "@tanstack/react-router": "^1.168.7",
+        "@tanstack/react-start": "^1.167.12",
+        "better-sqlite3": "^12.4.6",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+        "zod": "^4.1.13"
+    },
+    "devDependencies": {
+        "@tailwindcss/vite": "^4",
+        "@types/better-sqlite3": "^7.6.13",
+        "@types/node": "^24.10.1",
+        "@types/react": "^19.2.6",
+        "@types/react-dom": "^19.2.3",
+        "@vitejs/plugin-react": "^4.7.0",
+        "eslint": "^9.25.0",
+        "tailwindcss": "^4.0.6",
+        "typescript": "~5.8.3",
+        "vite": "^7.2.4"
+    }
+}
