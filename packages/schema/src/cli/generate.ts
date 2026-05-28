@@ -27,7 +27,7 @@ function resolveValuesImportPath(outDir: string): string {
     if (!resolve(outDir).startsWith(resolve(schemaPackageRoot))) {
         return "@party-stack/schema/values";
     }
-    const workspaceValuesPath = fileURLToPath(new URL("../../src/utils/values.ts", import.meta.url));
+    const workspaceValuesPath = fileURLToPath(new URL("../../src/values/index.ts", import.meta.url));
     if (!existsSync(workspaceValuesPath)) {
         return "@party-stack/schema/values";
     }

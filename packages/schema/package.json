@@ -12,7 +12,8 @@
             "default": "./lib/generate/index.js"
         },
         "./values": {
-            "types": "./lib/utils/values.d.ts"
+            "types": "./lib/values/index.d.ts",
+            "default": "./lib/values/index.js"
         }
     },
     "files": [

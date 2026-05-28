@@ -9,7 +9,7 @@
  * - String enum constraints for OrderStatus
  */
 
-import { s, SchemaIR } from "../ir/index.js";
+import { s, type SchemaIR } from "../ir/index.js";
 
 export const orderSchema = {
     types: [

@@ -15,7 +15,7 @@ function unionTypeToBuilders(
 ): Array<{ name: string; builder: string }> {
     return unionType.variants.map((variant) => ({
         name: variant.name,
-        builder: `(value: Extract<t.${name}, { kind: "${variant.name}" }>["value"]) => ({ kind: "${variant.name}" as const, value })`,
+        builder: `<const Value extends Extract<t.${name}, { kind: "${variant.name}" }>["value"]>(value: Value) => ({ kind: "${variant.name}" as const, value })`,
     }));
 }
 

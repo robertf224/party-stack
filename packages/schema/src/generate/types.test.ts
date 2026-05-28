@@ -19,10 +19,10 @@ describe("TypeScript Type Generation", () => {
 
             expect(
                 generateTypes(schema, {
-                    valuesImportPath: "../../utils/values.js",
+                    valuesImportPath: "../../values/index.js",
                 })
             ).toMatchInlineSnapshot(`
-              "import * as v from "../../utils/values.js";
+              "import type * as v from "../../values/index.js";
 
               export type IntegerValue = v.integer;"
             `);
@@ -58,7 +58,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Address = {
                       city: string;
@@ -83,7 +83,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type EmptyType = Record<never, never>;"
             `);
@@ -112,7 +112,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               /** Represents a user in the system */
               export type User = {
@@ -144,7 +144,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type User = {
                       /** The user's email address */
@@ -257,7 +257,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Item = {
                       name: string;
@@ -287,7 +287,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Item = {
                       active: boolean;
@@ -317,7 +317,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Item = {
                       quantity: v.integer;
@@ -347,7 +347,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Measurement = {
                       value: v.float;
@@ -377,7 +377,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Coordinate = {
                       latitude: v.double;
@@ -407,7 +407,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Event = {
                       eventDate: v.date;
@@ -437,7 +437,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Event = {
                       createdAt: v.timestamp;
@@ -467,7 +467,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Location = {
                       position: v.geopoint;
@@ -509,7 +509,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Order = {
                       status: "pending" | "active";
@@ -546,7 +546,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Cart = {
                       items: Array<string>;
@@ -592,7 +592,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Cart = {
                       items: Array<{
@@ -630,7 +630,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Config = {
                       settings: Record<string, string>;
@@ -687,7 +687,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Shape = v.Union<{
                       circle: {
@@ -719,7 +719,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type ApiResponse = v.Result<string, string>;"
             `);
@@ -767,7 +767,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Address = {
                       city: string;
@@ -819,7 +819,7 @@ describe("TypeScript Type Generation", () => {
             };
 
             expect(generateTypes(schema)).toMatchInlineSnapshot(`
-              "import * as v from "@party-stack/schema/values";
+              "import type * as v from "@party-stack/schema/values";
 
               export type Item = {
                       name: string;

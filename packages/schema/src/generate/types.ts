@@ -22,7 +22,7 @@ function union(options: string[]): string {
         return "never";
     }
     if (options.length === 1) {
-        return options[1]!;
+        return options[0]!;
     }
     return withWriter(Writers.unionType(options[0]!, options[1]!, ...options.slice(2)));
 }
@@ -125,6 +125,7 @@ export function generateTypes(schema: SchemaIR, opts: GenerateTypesOpts = {}): s
     sourceFile.addImportDeclaration({
         moduleSpecifier: opts.valuesImportPath ?? "@party-stack/schema/values",
         namespaceImport: "v",
+        isTypeOnly: true,
     });
 
     for (const type of schema.types) {

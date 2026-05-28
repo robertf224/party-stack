@@ -2,86 +2,82 @@
 
 import * as t from "./types.js";
 
-export const string = (value: Extract<t.TypeDef, { kind: "string" }>["value"]) => ({
-    kind: "string" as const,
-    value,
-});
+export const string = <const Value extends Extract<t.TypeDef, { kind: "string" }>["value"]>(
+    value: Value
+) => ({ kind: "string" as const, value });
 
-export const boolean = (value: Extract<t.TypeDef, { kind: "boolean" }>["value"]) => ({
-    kind: "boolean" as const,
-    value,
-});
+export const boolean = <const Value extends Extract<t.TypeDef, { kind: "boolean" }>["value"]>(
+    value: Value
+) => ({ kind: "boolean" as const, value });
 
-export const integer = (value: Extract<t.TypeDef, { kind: "integer" }>["value"]) => ({
-    kind: "integer" as const,
-    value,
-});
+export const integer = <const Value extends Extract<t.TypeDef, { kind: "integer" }>["value"]>(
+    value: Value
+) => ({ kind: "integer" as const, value });
 
-export const float = (value: Extract<t.TypeDef, { kind: "float" }>["value"]) => ({
+export const float = <const Value extends Extract<t.TypeDef, { kind: "float" }>["value"]>(value: Value) => ({
     kind: "float" as const,
     value,
 });
 
-export const double = (value: Extract<t.TypeDef, { kind: "double" }>["value"]) => ({
-    kind: "double" as const,
-    value,
-});
+export const double = <const Value extends Extract<t.TypeDef, { kind: "double" }>["value"]>(
+    value: Value
+) => ({ kind: "double" as const, value });
 
-export const date = (value: Extract<t.TypeDef, { kind: "date" }>["value"]) => ({
+export const date = <const Value extends Extract<t.TypeDef, { kind: "date" }>["value"]>(value: Value) => ({
     kind: "date" as const,
     value,
 });
 
-export const timestamp = (value: Extract<t.TypeDef, { kind: "timestamp" }>["value"]) => ({
-    kind: "timestamp" as const,
-    value,
-});
+export const timestamp = <const Value extends Extract<t.TypeDef, { kind: "timestamp" }>["value"]>(
+    value: Value
+) => ({ kind: "timestamp" as const, value });
 
-export const geopoint = (value: Extract<t.TypeDef, { kind: "geopoint" }>["value"]) => ({
-    kind: "geopoint" as const,
-    value,
-});
+export const geopoint = <const Value extends Extract<t.TypeDef, { kind: "geopoint" }>["value"]>(
+    value: Value
+) => ({ kind: "geopoint" as const, value });
 
-export const list = (value: Extract<t.TypeDef, { kind: "list" }>["value"]) => ({
+export const list = <const Value extends Extract<t.TypeDef, { kind: "list" }>["value"]>(value: Value) => ({
     kind: "list" as const,
     value,
 });
 
-export const map = (value: Extract<t.TypeDef, { kind: "map" }>["value"]) => ({ kind: "map" as const, value });
-
-export const struct = (value: Extract<t.TypeDef, { kind: "struct" }>["value"]) => ({
-    kind: "struct" as const,
+export const map = <const Value extends Extract<t.TypeDef, { kind: "map" }>["value"]>(value: Value) => ({
+    kind: "map" as const,
     value,
 });
 
-export const union = (value: Extract<t.TypeDef, { kind: "union" }>["value"]) => ({
+export const struct = <const Value extends Extract<t.TypeDef, { kind: "struct" }>["value"]>(
+    value: Value
+) => ({ kind: "struct" as const, value });
+
+export const union = <const Value extends Extract<t.TypeDef, { kind: "union" }>["value"]>(value: Value) => ({
     kind: "union" as const,
     value,
 });
 
-export const optional = (value: Extract<t.TypeDef, { kind: "optional" }>["value"]) => ({
-    kind: "optional" as const,
+export const optional = <const Value extends Extract<t.TypeDef, { kind: "optional" }>["value"]>(
+    value: Value
+) => ({ kind: "optional" as const, value });
+
+export const result = <const Value extends Extract<t.TypeDef, { kind: "result" }>["value"]>(
+    value: Value
+) => ({ kind: "result" as const, value });
+
+export const ref = <const Value extends Extract<t.TypeDef, { kind: "ref" }>["value"]>(value: Value) => ({
+    kind: "ref" as const,
     value,
 });
 
-export const result = (value: Extract<t.TypeDef, { kind: "result" }>["value"]) => ({
-    kind: "result" as const,
-    value,
-});
-
-export const ref = (value: Extract<t.TypeDef, { kind: "ref" }>["value"]) => ({ kind: "ref" as const, value });
-
-export const unknown = (value: Extract<t.TypeDef, { kind: "unknown" }>["value"]) => ({
-    kind: "unknown" as const,
-    value,
-});
+export const unknown = <const Value extends Extract<t.TypeDef, { kind: "unknown" }>["value"]>(
+    value: Value
+) => ({ kind: "unknown" as const, value });
 
 export const StringConstraint = {
-    enum: (value: Extract<t.StringConstraint, { kind: "enum" }>["value"]) => ({
+    enum: <const Value extends Extract<t.StringConstraint, { kind: "enum" }>["value"]>(value: Value) => ({
         kind: "enum" as const,
         value,
     }),
-    regex: (value: Extract<t.StringConstraint, { kind: "regex" }>["value"]) => ({
+    regex: <const Value extends Extract<t.StringConstraint, { kind: "regex" }>["value"]>(value: Value) => ({
         kind: "regex" as const,
         value,
     }),

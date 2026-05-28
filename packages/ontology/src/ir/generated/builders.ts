@@ -2,144 +2,131 @@
 
 import * as t from "./types.js";
 
-export const string = (value: Extract<t.TypeDef, { kind: "string" }>["value"]) => ({
-    kind: "string" as const,
-    value,
-});
+export const string = <const Value extends Extract<t.TypeDef, { kind: "string" }>["value"]>(
+    value: Value
+) => ({ kind: "string" as const, value });
 
-export const boolean = (value: Extract<t.TypeDef, { kind: "boolean" }>["value"]) => ({
-    kind: "boolean" as const,
-    value,
-});
+export const boolean = <const Value extends Extract<t.TypeDef, { kind: "boolean" }>["value"]>(
+    value: Value
+) => ({ kind: "boolean" as const, value });
 
-export const integer = (value: Extract<t.TypeDef, { kind: "integer" }>["value"]) => ({
-    kind: "integer" as const,
-    value,
-});
+export const integer = <const Value extends Extract<t.TypeDef, { kind: "integer" }>["value"]>(
+    value: Value
+) => ({ kind: "integer" as const, value });
 
-export const float = (value: Extract<t.TypeDef, { kind: "float" }>["value"]) => ({
+export const float = <const Value extends Extract<t.TypeDef, { kind: "float" }>["value"]>(value: Value) => ({
     kind: "float" as const,
     value,
 });
 
-export const double = (value: Extract<t.TypeDef, { kind: "double" }>["value"]) => ({
-    kind: "double" as const,
-    value,
-});
+export const double = <const Value extends Extract<t.TypeDef, { kind: "double" }>["value"]>(
+    value: Value
+) => ({ kind: "double" as const, value });
 
-export const date = (value: Extract<t.TypeDef, { kind: "date" }>["value"]) => ({
+export const date = <const Value extends Extract<t.TypeDef, { kind: "date" }>["value"]>(value: Value) => ({
     kind: "date" as const,
     value,
 });
 
-export const timestamp = (value: Extract<t.TypeDef, { kind: "timestamp" }>["value"]) => ({
-    kind: "timestamp" as const,
-    value,
-});
+export const timestamp = <const Value extends Extract<t.TypeDef, { kind: "timestamp" }>["value"]>(
+    value: Value
+) => ({ kind: "timestamp" as const, value });
 
-export const geopoint = (value: Extract<t.TypeDef, { kind: "geopoint" }>["value"]) => ({
-    kind: "geopoint" as const,
-    value,
-});
+export const geopoint = <const Value extends Extract<t.TypeDef, { kind: "geopoint" }>["value"]>(
+    value: Value
+) => ({ kind: "geopoint" as const, value });
 
-export const list = (value: Extract<t.TypeDef, { kind: "list" }>["value"]) => ({
+export const list = <const Value extends Extract<t.TypeDef, { kind: "list" }>["value"]>(value: Value) => ({
     kind: "list" as const,
     value,
 });
 
-export const map = (value: Extract<t.TypeDef, { kind: "map" }>["value"]) => ({ kind: "map" as const, value });
-
-export const struct = (value: Extract<t.TypeDef, { kind: "struct" }>["value"]) => ({
-    kind: "struct" as const,
+export const map = <const Value extends Extract<t.TypeDef, { kind: "map" }>["value"]>(value: Value) => ({
+    kind: "map" as const,
     value,
 });
 
-export const union = (value: Extract<t.TypeDef, { kind: "union" }>["value"]) => ({
+export const struct = <const Value extends Extract<t.TypeDef, { kind: "struct" }>["value"]>(
+    value: Value
+) => ({ kind: "struct" as const, value });
+
+export const union = <const Value extends Extract<t.TypeDef, { kind: "union" }>["value"]>(value: Value) => ({
     kind: "union" as const,
     value,
 });
 
-export const optional = (value: Extract<t.TypeDef, { kind: "optional" }>["value"]) => ({
-    kind: "optional" as const,
+export const optional = <const Value extends Extract<t.TypeDef, { kind: "optional" }>["value"]>(
+    value: Value
+) => ({ kind: "optional" as const, value });
+
+export const result = <const Value extends Extract<t.TypeDef, { kind: "result" }>["value"]>(
+    value: Value
+) => ({ kind: "result" as const, value });
+
+export const ref = <const Value extends Extract<t.TypeDef, { kind: "ref" }>["value"]>(value: Value) => ({
+    kind: "ref" as const,
     value,
 });
 
-export const result = (value: Extract<t.TypeDef, { kind: "result" }>["value"]) => ({
-    kind: "result" as const,
-    value,
-});
+export const unknown = <const Value extends Extract<t.TypeDef, { kind: "unknown" }>["value"]>(
+    value: Value
+) => ({ kind: "unknown" as const, value });
 
-export const ref = (value: Extract<t.TypeDef, { kind: "ref" }>["value"]) => ({ kind: "ref" as const, value });
+export const attachment = <const Value extends Extract<t.TypeDef, { kind: "attachment" }>["value"]>(
+    value: Value
+) => ({ kind: "attachment" as const, value });
 
-export const unknown = (value: Extract<t.TypeDef, { kind: "unknown" }>["value"]) => ({
-    kind: "unknown" as const,
-    value,
-});
-
-export const attachment = (value: Extract<t.TypeDef, { kind: "attachment" }>["value"]) => ({
-    kind: "attachment" as const,
-    value,
-});
-
-export const objectReference = (value: Extract<t.TypeDef, { kind: "objectReference" }>["value"]) => ({
-    kind: "objectReference" as const,
-    value,
-});
+export const objectReference = <const Value extends Extract<t.TypeDef, { kind: "objectReference" }>["value"]>(
+    value: Value
+) => ({ kind: "objectReference" as const, value });
 
 export const StringConstraint = {
-    enum: (value: Extract<t.StringConstraint, { kind: "enum" }>["value"]) => ({
+    enum: <const Value extends Extract<t.StringConstraint, { kind: "enum" }>["value"]>(value: Value) => ({
         kind: "enum" as const,
         value,
     }),
-    regex: (value: Extract<t.StringConstraint, { kind: "regex" }>["value"]) => ({
+    regex: <const Value extends Extract<t.StringConstraint, { kind: "regex" }>["value"]>(value: Value) => ({
         kind: "regex" as const,
         value,
     }),
 };
 
 export const FunctionCallExpression = {
-    uuid: (value: Extract<t.FunctionCallExpression, { kind: "uuid" }>["value"]) => ({
-        kind: "uuid" as const,
-        value,
-    }),
-    now: (value: Extract<t.FunctionCallExpression, { kind: "now" }>["value"]) => ({
+    uuid: <const Value extends Extract<t.FunctionCallExpression, { kind: "uuid" }>["value"]>(
+        value: Value
+    ) => ({ kind: "uuid" as const, value }),
+    now: <const Value extends Extract<t.FunctionCallExpression, { kind: "now" }>["value"]>(value: Value) => ({
         kind: "now" as const,
         value,
     }),
 };
 
 export const Expression = {
-    valueReference: (value: Extract<t.Expression, { kind: "valueReference" }>["value"]) => ({
-        kind: "valueReference" as const,
-        value,
-    }),
-    contextReference: (value: Extract<t.Expression, { kind: "contextReference" }>["value"]) => ({
-        kind: "contextReference" as const,
-        value,
-    }),
-    functionCall: (value: Extract<t.Expression, { kind: "functionCall" }>["value"]) => ({
-        kind: "functionCall" as const,
-        value,
-    }),
-    literal: (value: Extract<t.Expression, { kind: "literal" }>["value"]) => ({
+    valueReference: <const Value extends Extract<t.Expression, { kind: "valueReference" }>["value"]>(
+        value: Value
+    ) => ({ kind: "valueReference" as const, value }),
+    contextReference: <const Value extends Extract<t.Expression, { kind: "contextReference" }>["value"]>(
+        value: Value
+    ) => ({ kind: "contextReference" as const, value }),
+    functionCall: <const Value extends Extract<t.Expression, { kind: "functionCall" }>["value"]>(
+        value: Value
+    ) => ({ kind: "functionCall" as const, value }),
+    literal: <const Value extends Extract<t.Expression, { kind: "literal" }>["value"]>(value: Value) => ({
         kind: "literal" as const,
         value,
     }),
 };
 
 export const ActionLogicStep = {
-    createObject: (value: Extract<t.ActionLogicStep, { kind: "createObject" }>["value"]) => ({
-        kind: "createObject" as const,
-        value,
-    }),
-    updateObject: (value: Extract<t.ActionLogicStep, { kind: "updateObject" }>["value"]) => ({
-        kind: "updateObject" as const,
-        value,
-    }),
-    deleteObject: (value: Extract<t.ActionLogicStep, { kind: "deleteObject" }>["value"]) => ({
-        kind: "deleteObject" as const,
-        value,
-    }),
+    createObject: <const Value extends Extract<t.ActionLogicStep, { kind: "createObject" }>["value"]>(
+        value: Value
+    ) => ({ kind: "createObject" as const, value }),
+    updateObject: <const Value extends Extract<t.ActionLogicStep, { kind: "updateObject" }>["value"]>(
+        value: Value
+    ) => ({ kind: "updateObject" as const, value }),
+    deleteObject: <const Value extends Extract<t.ActionLogicStep, { kind: "deleteObject" }>["value"]>(
+        value: Value
+    ) => ({ kind: "deleteObject" as const, value }),
 };
 
 export const o = {

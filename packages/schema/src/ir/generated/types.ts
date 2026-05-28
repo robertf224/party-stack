@@ -1,6 +1,6 @@
 // Auto-generated file - do not edit manually
 
-import * as v from "../../utils/values.js";
+import type * as v from "../../values/index.js";
 
 export type Deprecation = {
     message: string;

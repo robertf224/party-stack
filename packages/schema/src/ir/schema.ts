@@ -1,7 +1,7 @@
+import { defineSchema } from "../values/index.js";
 import { s } from "./generated/builders.js";
-import type { SchemaIR } from "./generated/types.js";
 
-export default {
+export default defineSchema({
     types: [
         {
             name: "Deprecation",
@@ -351,4 +351,4 @@ export default {
             }),
         },
     ],
-} satisfies SchemaIR;
+});
