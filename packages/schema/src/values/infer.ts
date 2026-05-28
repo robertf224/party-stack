@@ -1,5 +1,5 @@
 import type { date, double, float, geopoint, integer, Result, timestamp } from "./values.js";
-import type { SchemaIR } from "../ir/generated/types.js";
+import type { SchemaIR, TypeDef } from "../ir/generated/types.js";
 
 type ReadonlyDeep<T> = T extends (...args: never[]) => unknown
     ? T
@@ -9,80 +9,85 @@ type ReadonlyDeep<T> = T extends (...args: never[]) => unknown
         ? { readonly [K in keyof T]: ReadonlyDeep<T[K]> }
         : T;
 
-export type ConstSchemaIR = ReadonlyDeep<SchemaIR>;
+type MutableDeep<T> = T extends (...args: never[]) => unknown
+    ? T
+    : T extends readonly (infer Element)[]
+      ? Array<MutableDeep<Element>>
+      : T extends object
+        ? { -readonly [K in keyof T]: MutableDeep<T[K]> }
+        : T;
 
-export function defineSchema<const Schema>(schema: Schema): Schema {
-    return schema;
-}
+type ArrayElement<T> = T extends (infer Element)[] ? Element : never;
 
-type ArrayElement<T> = T extends readonly (infer Element)[] ? Element : never;
+type FlattenObject<T> = { [K in keyof T]: T[K] } & {};
 
-type Simplify<T> = { [K in keyof T]: T[K] } & {};
-
-type UnionToIntersection<T> = (T extends unknown ? (value: T) => void : never) extends (
-    value: infer Intersection
-) => void
-    ? Intersection
-    : never;
-
-type SchemaTypeDefs<Schema> = Schema extends { readonly types: infer Types } ? ArrayElement<Types> : never;
+type SchemaTypeDefs<Schema> = Schema extends { types: infer Types } ? ArrayElement<Types> : never;
 
 type SchemaTypeName<Schema> =
     SchemaTypeDefs<Schema> extends {
-        readonly name: infer Name extends string;
+        name: infer Name extends string;
     }
         ? Name
         : never;
 
-type TypeKind<Type> = Type extends { readonly kind: infer Kind extends string } ? Kind : never;
+type TypeKind<Type> = Type extends { kind: infer Kind extends string } ? Kind : never;
 
-type TypeValue<Type> = Type extends { readonly value: infer Value } ? Value : never;
+type TypeValue<Type> = Type extends { value: infer Value } ? Value : never;
 
-type InferString<Value> =
-    Value extends {
-        readonly constraint: {
-            readonly kind: "enum";
-            readonly value: { readonly options: infer Options };
-        };
-    }
-        ? ArrayElement<Options> extends { readonly value: infer OptionValue extends string }
+type InferString<Value> = Value extends { constraint: infer Constraint }
+    ? Constraint extends { kind: "enum"; value: { options: infer Options } }
+        ? ArrayElement<Options> extends { value: infer OptionValue extends string }
             ? OptionValue
             : never
-        : string;
+        : string
+    : string;
 
-type OptionalInner<Type> = TypeValue<Type> extends { readonly type: infer Inner } ? Inner : never;
+type StructField<Fields> = ArrayElement<Fields>;
 
-type InferRequiredStructField<Field, Schema> = Field extends {
-    readonly name: infer Name extends PropertyKey;
-    readonly type: infer Type;
-}
-    ? TypeKind<Type> extends "optional"
-        ? never
-        : { [K in Name]: Infer<Type, Schema> }
-    : never;
+type FieldName<Field> = Field extends { name: infer Name extends PropertyKey } ? Name : never;
 
-type InferOptionalStructField<Field, Schema> = Field extends {
-    readonly name: infer Name extends PropertyKey;
-    readonly type: infer Type;
-}
-    ? TypeKind<Type> extends "optional"
-        ? { [K in Name]?: Infer<OptionalInner<Type>, Schema> }
-        : never
-    : never;
+type FieldByName<Fields, Name extends PropertyKey> = Extract<StructField<Fields>, { name: Name }>;
+
+type FieldType<Fields, Name extends PropertyKey> =
+    FieldByName<Fields, Name> extends { type: infer Type } ? Type : never;
+
+type RequiredFieldNames<Fields> =
+    StructField<Fields> extends infer Field
+        ? Field extends { type: infer Type }
+            ? TypeKind<Type> extends "optional"
+                ? never
+                : FieldName<Field>
+            : never
+        : never;
+
+type OptionalFieldNames<Fields> =
+    StructField<Fields> extends infer Field
+        ? Field extends { type: infer Type }
+            ? TypeKind<Type> extends "optional"
+                ? FieldName<Field>
+                : never
+            : never
+        : never;
 
 type InferStructFields<Fields, Schema> =
-    ArrayElement<Fields> extends never
+    StructField<Fields> extends never
         ? Record<never, never>
-        : Simplify<
-              UnionToIntersection<InferRequiredStructField<ArrayElement<Fields>, Schema>> &
-                  UnionToIntersection<InferOptionalStructField<ArrayElement<Fields>, Schema>>
+        : FlattenObject<
+              {
+                  [Name in RequiredFieldNames<Fields>]: InferNode<FieldType<Fields, Name>, Schema>;
+              } & {
+                  [Name in OptionalFieldNames<Fields>]?: InferNode<
+                      TypeValue<FieldType<Fields, Name>> extends { type: infer Inner } ? Inner : never,
+                      Schema
+                  >;
+              }
           >;
 
 type InferUnionVariant<Variant, Schema> = Variant extends {
-    readonly name: infer Name extends string;
-    readonly type: infer Type;
+    name: infer Name extends string;
+    type: infer Type;
 }
-    ? { kind: Name; value: Infer<Type, Schema> }
+    ? { kind: Name; value: InferNode<Type, Schema> }
     : never;
 
 type InferByKind<Type, Schema> = {
@@ -95,32 +100,31 @@ type InferByKind<Type, Schema> = {
     timestamp: timestamp;
     geopoint: geopoint;
     unknown: unknown;
-    list: TypeValue<Type> extends { readonly elementType: infer ElementType }
-        ? Array<Infer<ElementType, Schema>>
+    list: TypeValue<Type> extends { elementType: infer ElementType }
+        ? Array<InferNode<ElementType, Schema>>
         : never;
-    map: TypeValue<Type> extends { readonly valueType: infer ValueType }
-        ? Record<string, Infer<ValueType, Schema>>
+    map: TypeValue<Type> extends { valueType: infer ValueType }
+        ? Record<string, InferNode<ValueType, Schema>>
         : never;
-    struct: TypeValue<Type> extends { readonly fields: infer Fields } ? InferStructFields<Fields, Schema> : never;
-    union: TypeValue<Type> extends { readonly variants: infer Variants }
+    struct: TypeValue<Type> extends { fields: infer Fields } ? InferStructFields<Fields, Schema> : never;
+    union: TypeValue<Type> extends { variants: infer Variants }
         ? InferUnionVariant<ArrayElement<Variants>, Schema>
         : never;
-    optional: Infer<OptionalInner<Type>, Schema> | undefined;
-    result: TypeValue<Type> extends {
-        readonly okType: infer OkType;
-        readonly errType: infer ErrType;
-    }
-        ? Result<Infer<OkType, Schema>, Infer<ErrType, Schema>>
+    optional: TypeValue<Type> extends { type: infer Inner } ? InferNode<Inner, Schema> | undefined : never;
+    result: TypeValue<Type> extends { okType: infer OkType; errType: infer ErrType }
+        ? Result<InferNode<OkType, Schema>, InferNode<ErrType, Schema>>
         : never;
-    ref: TypeValue<Type> extends { readonly name: infer Name extends string } ? InferSchemaType<Schema, Name> : never;
+    ref: TypeValue<Type> extends { name: infer Name extends string } ? InferSchemaType<Schema, Name> : never;
 };
 
 type InferTypeDef<Type, Schema> =
-    TypeKind<Type> extends keyof InferByKind<Type, Schema> ? InferByKind<Type, Schema>[TypeKind<Type>] : never;
+    TypeKind<Type> extends keyof InferByKind<Type, Schema>
+        ? InferByKind<Type, Schema>[TypeKind<Type>]
+        : never;
 
 type InferSchemaType<Schema, Name extends string> =
-    Extract<SchemaTypeDefs<Schema>, { readonly name: Name }> extends {
-        readonly type: infer Type;
+    Extract<SchemaTypeDefs<Schema>, { name: Name }> extends {
+        type: infer Type;
     }
         ? InferTypeDef<Type, Schema>
         : never;
@@ -129,5 +133,16 @@ type InferSchema<Schema> = {
     [Name in SchemaTypeName<Schema>]: InferSchemaType<Schema, Name>;
 };
 
-export type Infer<Input, Schema = Input> =
-    Input extends { readonly types: readonly unknown[] } ? InferSchema<Input> : InferTypeDef<Input, Schema>;
+type InferNode<Input, Schema> = Input extends SchemaIR ? InferSchema<Input> : InferTypeDef<Input, Schema>;
+
+export type ConstSchemaIR = ReadonlyDeep<SchemaIR>;
+export type ConstTypeDef = ReadonlyDeep<TypeDef>;
+
+export type Infer<
+    Input extends ConstSchemaIR | ConstTypeDef,
+    Schema extends ConstSchemaIR = Extract<Input, ConstSchemaIR>,
+> = InferNode<MutableDeep<Input>, MutableDeep<Schema>>;
+
+export function defineSchema<const Schema>(schema: Schema): Schema {
+    return schema;
+}
