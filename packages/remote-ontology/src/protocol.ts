@@ -32,10 +32,20 @@ export interface RemoteApplyActionResponse {
     invalidatedObjectTypes?: string[];
 }
 
+export interface RemoteOntologyTransportOptions {
+    signal?: AbortSignal;
+}
+
 export interface RemoteOntologyTransport {
-    describe: () => Promise<RemoteOntologyDescription>;
-    loadSubset: (request: RemoteLoadSubsetRequest) => Promise<RemoteLoadSubsetResponse>;
-    applyAction: (request: RemoteApplyActionRequest) => Promise<RemoteApplyActionResponse>;
+    describe: (options?: RemoteOntologyTransportOptions) => Promise<RemoteOntologyDescription>;
+    loadSubset: (
+        request: RemoteLoadSubsetRequest,
+        options?: RemoteOntologyTransportOptions
+    ) => Promise<RemoteLoadSubsetResponse>;
+    applyAction: (
+        request: RemoteApplyActionRequest,
+        options?: RemoteOntologyTransportOptions
+    ) => Promise<RemoteApplyActionResponse>;
 }
 
 export type RemoteOntologyRequestByEndpoint = {

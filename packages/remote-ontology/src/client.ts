@@ -34,10 +34,13 @@ export function createRemoteOntologyAdapter(opts: CreateRemoteOntologyAdapterOpt
                 queryKey: [...queryKeyPrefix, objectType],
                 syncMode: "on-demand",
                 queryFn: async (ctx) => {
-                    const response = await transport.loadSubset({
-                        objectType,
-                        options: serializeLoadSubsetOptions(ctx.meta?.loadSubsetOptions),
-                    });
+                    const response = await transport.loadSubset(
+                        {
+                            objectType,
+                            options: serializeLoadSubsetOptions(ctx.meta?.loadSubsetOptions),
+                        },
+                        { signal: ctx.signal }
+                    );
                     return response.objects;
                 },
             }) as unknown as OntologyCollectionOptions;

@@ -3,6 +3,7 @@ import type {
     RemoteLoadSubsetResponse,
     RemoteOntologyDescription,
     RemoteOntologyTransport,
+    RemoteOntologyTransportOptions,
 } from "./protocol.js";
 import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
 
@@ -25,7 +26,8 @@ async function postJson<TResponse>(
     fetchImpl: typeof fetch,
     url: string,
     body: unknown,
-    headers?: HeadersInit
+    headers?: HeadersInit,
+    options?: RemoteOntologyTransportOptions
 ): Promise<TResponse> {
     const response = await fetchImpl(url, {
         method: "POST",
@@ -34,6 +36,7 @@ async function postJson<TResponse>(
             "content-type": "application/json",
         },
         body: serializeRemoteOntologyJson(body),
+        signal: options?.signal,
     });
 
     if (!response.ok) {
@@ -50,26 +53,29 @@ export function createHttpRemoteOntologyTransport(
     const fetchImpl = opts.fetch ?? globalThis.fetch;
     const getHeaders = () => (typeof opts.headers === "function" ? opts.headers() : opts.headers);
     return {
-        describe: () =>
+        describe: (options) =>
             postJson<RemoteOntologyDescription>(
                 fetchImpl,
                 resolveEndpoint(opts.url, "describe"),
                 {},
-                getHeaders()
+                getHeaders(),
+                options
             ),
-        loadSubset: (request) =>
+        loadSubset: (request, options) =>
             postJson<RemoteLoadSubsetResponse>(
                 fetchImpl,
                 resolveEndpoint(opts.url, "load-subset"),
                 request,
-                getHeaders()
+                getHeaders(),
+                options
             ),
-        applyAction: (request) =>
+        applyAction: (request, options) =>
             postJson<RemoteApplyActionResponse>(
                 fetchImpl,
                 resolveEndpoint(opts.url, "apply-action"),
                 request,
-                getHeaders()
+                getHeaders(),
+                options
             ),
     };
 }
