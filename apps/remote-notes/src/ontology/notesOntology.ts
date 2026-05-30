@@ -33,6 +33,24 @@ export const notesOntology = {
                 },
                 { name: "title", displayName: "Title", type: o.string({}) },
                 { name: "bodyMarkdown", displayName: "Body", type: o.string({}) },
+                {
+                    name: "ownerEmail",
+                    displayName: "Owner Email",
+                    type: o.string({}),
+                    defaultValue: o.Expression.contextReference({ path: ["user", "email"] }),
+                },
+                {
+                    name: "createdAt",
+                    displayName: "Created At",
+                    type: o.string({}),
+                    defaultValue: o.Expression.functionCall(o.FunctionCallExpression.now({})),
+                },
+                {
+                    name: "updatedAt",
+                    displayName: "Updated At",
+                    type: o.string({}),
+                    defaultValue: o.Expression.functionCall(o.FunctionCallExpression.now({})),
+                },
             ],
             logic: [],
         },
@@ -41,8 +59,14 @@ export const notesOntology = {
             displayName: "Update Note",
             parameters: [
                 { name: "note", displayName: "Note", type: o.objectReference({ objectType: "Note" }) },
-                { name: "title", displayName: "Title", type: o.string({}) },
-                { name: "bodyMarkdown", displayName: "Body", type: o.string({}) },
+                { name: "title", displayName: "Title", type: o.optional({ type: o.string({}) }) },
+                { name: "bodyMarkdown", displayName: "Body", type: o.optional({ type: o.string({}) }) },
+                {
+                    name: "updatedAt",
+                    displayName: "Updated At",
+                    type: o.string({}),
+                    defaultValue: o.Expression.functionCall(o.FunctionCallExpression.now({})),
+                },
             ],
             logic: [],
         },
@@ -57,18 +81,18 @@ export const notesOntology = {
     ],
 } satisfies OntologyIR;
 
-export interface Note {
+export type Note = {
     id: string;
     ownerEmail: string;
     title: string;
     bodyMarkdown: string;
     createdAt: string;
     updatedAt: string;
-}
+};
 
 export type NotesOntologyDefinition = {
     objectTypes: {
-        Note: Note & Record<string, unknown>;
+        Note: Note;
     };
     actionTypes: {
         createNote: {
@@ -76,13 +100,17 @@ export type NotesOntologyDefinition = {
                 id: string;
                 title: string;
                 bodyMarkdown: string;
+                ownerEmail?: string;
+                createdAt?: string;
+                updatedAt?: string;
             };
         };
         updateNote: {
             parameters: {
                 note: string;
-                title: string;
-                bodyMarkdown: string;
+                title?: string;
+                bodyMarkdown?: string;
+                updatedAt?: string;
             };
         };
         deleteNote: {

@@ -57,6 +57,7 @@ export interface LiveOntologyOpts {
     adapter: OntologyAdapter;
     blobStore?: BlobStoreProvider;
     getContext?: () => Record<string, unknown>;
+    startSync?: boolean;
 }
 
 export function createLiveOntology<Ontology extends OntologyDefinition = OntologyDefinition>(
@@ -82,6 +83,7 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
                   blobManager,
               })
             : undefined;
+    const startSync = opts.startSync ?? true;
     const objects = Object.fromEntries(
         opts.ir.objectTypes.map((objectType) => {
             const collectionOptions = opts.adapter.getCollectionOptions(objectType.name);
@@ -90,6 +92,7 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
                 id: `${ontologyId}:${objectType.name}`,
                 defaultIndexType: BasicIndex,
                 autoIndex: "eager",
+                startSync,
                 getKey: (object) =>
                     (object as Record<string, string | number>)[objectType.primaryKey] as string | number,
             }) as OntologyCollection<OntologyObject>;

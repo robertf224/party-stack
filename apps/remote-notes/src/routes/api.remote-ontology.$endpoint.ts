@@ -11,7 +11,6 @@ function getDemoEmail(request: Request): string {
 
 const remoteServer = createRemoteOntologyServer<NotesContext, NotesOntologyDefinition>({
     ir: notesOntology,
-    version: "1",
     adapter: notesAdapter,
     getContext: (request) => ({
         user: {
@@ -19,12 +18,12 @@ const remoteServer = createRemoteOntologyServer<NotesContext, NotesOntologyDefin
         },
     }),
     policy: {
-        baseLoadSubsetQuery: {
+        baseObjectTypeQueries: {
             Note: ({ ctx, q, collection }) =>
                 q.from({ object: collection }).where(({ object }) => eq(object.ownerEmail, ctx.user.email)),
         },
-        selectObjectProperties: {
-            Note: () => ["id", "ownerEmail", "title", "bodyMarkdown", "createdAt", "updatedAt"],
+        allowedObjectTypeProperties: {
+            Note: ["id", "ownerEmail", "title", "bodyMarkdown", "createdAt", "updatedAt"],
         },
         canApplyAction: async (ctx, request) => {
             if (request.actionType === "createNote") return true;
@@ -34,7 +33,7 @@ const remoteServer = createRemoteOntologyServer<NotesContext, NotesOntologyDefin
                 (await userOwnsNote(ctx.user.email, request.parameters.note))
             );
         },
-        rewriteActionParameters: (ctx, request) => {
+        finalizeActionParameters: (ctx, request) => {
             const now = new Date().toISOString();
             if (request.actionType === "createNote") {
                 return {

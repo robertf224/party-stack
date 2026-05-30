@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import Database from "better-sqlite3";
 import { BasicIndex, createCollection } from "@tanstack/db";
 import {
@@ -13,7 +14,9 @@ export interface NotesContext {
     };
 }
 
-const database = new Database("remote-notes.sqlite");
+mkdirSync("temp", { recursive: true });
+
+const database = new Database("temp/remote-notes.sqlite");
 const persistence = createNodeSQLitePersistence({ database });
 
 function createNoteCollectionOptions() {
@@ -88,8 +91,6 @@ export const notesAdapter: OntologyAdapter = {
             }
             case "updateNote": {
                 const noteId = requireString(parameters.note, "note");
-                const title = requireString(parameters.title, "title");
-                const bodyMarkdown = requireString(parameters.bodyMarkdown, "bodyMarkdown");
                 const updatedAt =
                     typeof parameters.updatedAt === "string"
                         ? parameters.updatedAt
@@ -97,8 +98,12 @@ export const notesAdapter: OntologyAdapter = {
 
                 await persistTransaction(
                     notesCollection.update(noteId, (draft) => {
-                        draft.title = title;
-                        draft.bodyMarkdown = bodyMarkdown;
+                        if (typeof parameters.title === "string") {
+                            draft.title = parameters.title;
+                        }
+                        if (typeof parameters.bodyMarkdown === "string") {
+                            draft.bodyMarkdown = parameters.bodyMarkdown;
+                        }
                         draft.updatedAt = updatedAt;
                     })
                 );
