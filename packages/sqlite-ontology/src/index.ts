@@ -533,6 +533,7 @@ function createCollectionOptions(opts: {
 
     return {
         syncMode: "on-demand",
+        startSync: true,
         sync,
     };
 }
