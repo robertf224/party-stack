@@ -1,9 +1,5 @@
 import { invariant } from "@bobbyfidz/panic";
-import {
-    Actions,
-    AttachmentRid,
-    Attachments,
-} from "@osdk/foundry.ontologies";
+import { Actions, AttachmentRid, Attachments } from "@osdk/foundry.ontologies";
 import {
     type OntologyAdapter,
     type OntologyAttachmentsAdapter,
@@ -122,9 +118,6 @@ export function createFoundryOntologyAdapter(opts: {
                 });
                 return;
             }
-
-            void attachment;
-            void blob;
             unsupportedMediaAttachmentOperation();
         },
         getAttachmentContent: async (attachment) => {

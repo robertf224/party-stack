@@ -1,0 +1,36 @@
+{
+    "name": "@party-stack/sqlite-ontology",
+    "version": "0.0.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run src --pass-with-no-tests"
+    },
+    "dependencies": {
+        "@party-stack/ontology": "workspace:*",
+        "temporal-polyfill": "^0.3.0"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@tanstack/db": "^0.6.5",
+        "@types/node": "^24.10.1",
+        "better-sqlite3": "^12.4.6",
+        "eslint": "^9.25.0",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    },
+    "peerDependencies": {
+        "@tanstack/db": "^0.6.5",
+        "better-sqlite3": "^12.4.6"
+    }
+}

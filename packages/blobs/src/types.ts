@@ -42,9 +42,14 @@ export interface BlobStore {
     markFailed: (id: string, error?: unknown) => Promise<BlobRef>;
     purge: (id: string) => Promise<void>;
     reconcile: () => Promise<void>;
+    withUploadLock?: <T>(id: string, callback: () => Promise<T>) => Promise<T>;
 }
 
 export type BlobStoreProvider = (name: string) => BlobStore;
+
+export type BlobRetentionProvider = () =>
+    | Iterable<string>
+    | Promise<Iterable<string>>;
 
 export interface BlobRemoteMetadata {
     id: string;
@@ -53,18 +58,21 @@ export interface BlobRemoteMetadata {
     name: string;
 }
 
+export interface BlobReadOptions {
+    meta?: Record<string, unknown>;
+}
+
 export interface BlobRemoteSource {
-    metadata: (id: string) => Promise<BlobRemoteMetadata>;
-    blob: (id: string) => Promise<Blob>;
+    metadata: (id: string, opts?: BlobReadOptions) => Promise<BlobRemoteMetadata>;
+    blob: (id: string, opts?: BlobReadOptions) => Promise<Blob>;
 }
 
 export interface BlobManager {
     stage: (id: string, blob: Blob | File) => Promise<BlobRef>;
-    metadata: (id: string) => Promise<BlobRemoteMetadata>;
-    blob: (id: string) => Promise<Blob>;
+    metadata: (id: string, opts?: BlobReadOptions) => Promise<BlobRemoteMetadata>;
+    blob: (id: string, opts?: BlobReadOptions) => Promise<Blob>;
     withUploadTracking: (id: string, uploadFn: (blob: Blob) => Promise<void>) => Promise<void>;
-    retain: (id: string) => void;
-    release: (id: string) => void;
+    lease: (id: string) => () => void;
 }
 
 export interface BlobManagerOptions {
@@ -76,4 +84,5 @@ export interface BlobManagerOptions {
     cacheMaxAgeMs?: number;
     maxCacheBytes?: number;
     evictionStrategy?: BlobEvictionStrategy;
+    retentionProviders?: BlobRetentionProvider[];
 }

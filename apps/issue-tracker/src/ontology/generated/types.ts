@@ -24,24 +24,20 @@ export type CompleteTaskParameters = {
     task: string;
     __now?: v.timestamp;
 };
-
 export type CreateTaskParameters = {
-    attachments?: Array<attachment>;
-    location?: v.geopoint;
+    attachments?: Array<attachment> | null;
+    location?: v.geopoint | null;
     title: string;
     "__uuid_9131b78a-d4a1-443b-9fca-a3f70c2355ef"?: string;
     __now?: v.timestamp;
 };
-
 export type DeleteTaskParameters = {
     task: string;
 };
-
 export type ReopenTaskParameters = {
-    completedAt?: v.timestamp;
+    completedAt?: v.timestamp | null;
     task: string;
 };
-
 export type IssueTrackerOntology = {
     objectTypes: {
         Task: Task;

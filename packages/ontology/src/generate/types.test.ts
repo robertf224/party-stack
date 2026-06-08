@@ -44,7 +44,7 @@ describe("generateTypes", () => {
         expect(output).not.toContain("ObjectReferenceTypeDef");
     });
 
-    it("generates action parameter types through schema lowering", () => {
+    it("generates action parameter types", () => {
         const ontology: OntologyIR = {
             types: [],
             objectTypes: [
@@ -75,10 +75,7 @@ describe("generateTypes", () => {
                             displayName: "Status",
                             type: o.string({
                                 constraint: o.StringConstraint.enum({
-                                    options: [
-                                        { value: "draft" },
-                                        { value: "published" },
-                                    ],
+                                    options: [{ value: "draft" }, { value: "published" }],
                                 }),
                             }),
                         },
@@ -103,7 +100,41 @@ describe("generateTypes", () => {
         expect(output).toContain("actionTypes: {");
         expect(output).toContain("createPost: {");
         expect(output).toContain("parameters: CreatePostParameters;");
-        expect(output).toContain("};\n\nexport type TestOntology = {");
+        expect(output).toContain("export type TestOntology = {");
+    });
+
+    it("allows null for optional action parameters without adding null to defaulted required parameters", () => {
+        const ontology: OntologyIR = {
+            types: [],
+            objectTypes: [],
+            linkTypes: [],
+            actionTypes: [
+                {
+                    name: "reopenTask",
+                    displayName: "Reopen Task",
+                    parameters: [
+                        {
+                            name: "completedAt",
+                            displayName: "Completed At",
+                            type: o.optional({ type: o.timestamp({}) }),
+                        },
+                        {
+                            name: "taskId",
+                            displayName: "Task ID",
+                            type: o.string({}),
+                            defaultValue: o.Expression.functionCall(o.FunctionCallExpression.uuid({})),
+                        },
+                    ],
+                    logic: [],
+                },
+            ],
+        };
+
+        const output = generateTypes(ontology, { outputTypeName: "TestOntology" });
+
+        expect(output).toContain("completedAt?: v.timestamp | null;");
+        expect(output).toContain("taskId?: string;");
+        expect(output).not.toContain("taskId?: string | null;");
     });
 
     it("quotes invalid action parameter and action names", () => {
@@ -133,5 +164,4 @@ describe("generateTypes", () => {
         expect(output).toContain('"__uuid_9131b78a-d4a1-443b-9fca-a3f70c2355ef"?: string;');
         expect(output).toContain('"create-task": {');
     });
-
 });

@@ -22,12 +22,12 @@ function union(options: string[]): string {
         return "never";
     }
     if (options.length === 1) {
-        return options[1]!;
+        return options[0]!;
     }
     return withWriter(Writers.unionType(options[0]!, options[1]!, ...options.slice(2)));
 }
 
-function generateForTypeDef(type: TypeDef): string {
+export function generateForTypeDef(type: TypeDef): string {
     switch (type.kind) {
         case "string": {
             if (type.value.constraint?.kind === "enum") {

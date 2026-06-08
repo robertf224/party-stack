@@ -1,0 +1,50 @@
+{
+    "name": "@party-stack/remote-ontology",
+    "version": "0.0.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./client": {
+            "types": "./lib/client.d.ts",
+            "default": "./lib/client.js"
+        },
+        "./http": {
+            "types": "./lib/http.d.ts",
+            "default": "./lib/http.js"
+        },
+        "./server": {
+            "types": "./lib/server.d.ts",
+            "default": "./lib/server.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run src --pass-with-no-tests"
+    },
+    "dependencies": {
+        "@party-stack/blobs": "workspace:*",
+        "@party-stack/ontology": "workspace:*",
+        "@tanstack/query-core": "^5.100.9",
+        "@tanstack/query-db-collection": "^1.0.36",
+        "temporal-polyfill": "^0.3.0",
+        "zod": "^4.1.13"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@tanstack/db": "^0.6.5",
+        "@types/node": "^24.10.1",
+        "eslint": "^9.25.0",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    },
+    "peerDependencies": {
+        "@tanstack/db": "^0.6.5"
+    }
+}

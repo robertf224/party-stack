@@ -1,7 +1,7 @@
 "use client";
 
 import { concat, eq, ilike, useLiveQuery } from "@tanstack/react-db";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ontology, User } from "./collections";
 import { MiniMap } from "./MiniMap";
@@ -24,6 +24,100 @@ function formatFileSize(size: number) {
     return `${(kilobytes / 1024).toFixed(1)} MB`;
 }
 
+type SelectedTaskImage = {
+    file: File;
+    attachment?: v.attachment;
+    status: "uploading" | "ready" | "deferred" | "failed";
+    error?: string;
+};
+
+type AttachmentStatus = "loading" | "ready" | "deferred" | "uploading" | "failed";
+
+function getAttachmentStatus(status: AttachmentStatus): {
+    label: string;
+    className: string;
+    icon: "check" | "spinner" | "dot" | "x";
+} {
+    switch (status) {
+        case "ready":
+            return {
+                label: "Image ready",
+                className: "bg-emerald-500 text-white",
+                icon: "check",
+            };
+        case "failed":
+            return {
+                label: "Attachment failed",
+                className: "bg-red-500 text-white",
+                icon: "x",
+            };
+        case "deferred":
+            return {
+                label: "Upload deferred",
+                className: "bg-amber-400 text-amber-950",
+                icon: "dot",
+            };
+        case "loading":
+        case "uploading":
+            return {
+                label: status === "uploading" ? "Uploading attachment" : "Loading attachment",
+                className: "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900",
+                icon: "spinner",
+            };
+    }
+}
+
+const AttachmentStatusBadge: React.FC<{
+    status: AttachmentStatus;
+    label?: string;
+    showLabel?: boolean;
+}> = ({ status, label, showLabel = false }) => {
+    const meta = getAttachmentStatus(status);
+    const accessibleLabel = label ?? meta.label;
+
+    return (
+        <span
+            aria-label={accessibleLabel}
+            className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs font-medium shadow-sm ${meta.className}`}
+            title={accessibleLabel}
+        >
+            {meta.icon === "check" && (
+                <svg aria-hidden="true" className="h-3.5 w-3.5" viewBox="0 0 16 16">
+                    <path
+                        d="M13.5 4.5 6.75 11.25 3 7.5"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                    />
+                </svg>
+            )}
+            {meta.icon === "x" && (
+                <svg aria-hidden="true" className="h-3.5 w-3.5" viewBox="0 0 16 16">
+                    <path
+                        d="m4.5 4.5 7 7m0-7-7 7"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeLinecap="round"
+                        strokeWidth="2"
+                    />
+                </svg>
+            )}
+            {meta.icon === "spinner" && (
+                <span
+                    aria-hidden="true"
+                    className="h-3 w-3 animate-spin rounded-full border-2 border-current border-r-transparent"
+                />
+            )}
+            {meta.icon === "dot" && (
+                <span aria-hidden="true" className="h-2 w-2 rounded-full bg-current" />
+            )}
+            <span className={showLabel ? "" : "sr-only"}>{accessibleLabel}</span>
+        </span>
+    );
+};
+
 function useGeolocation() {
     const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
 
@@ -45,6 +139,7 @@ const TaskAttachmentPreview: React.FC<{
         metadata: Partial<v.attachment>;
         src: string;
     }>();
+    const [status, setStatus] = useState<AttachmentStatus>("loading");
 
     useEffect(() => {
         const attachments = ontology.attachments;
@@ -55,7 +150,7 @@ const TaskAttachmentPreview: React.FC<{
         let cancelled = false;
         let objectUrl: string | undefined;
 
-        attachments.retain(attachment);
+        const releaseLease = attachments.lease(attachment);
         void Promise.all([attachments.metadata(attachment), attachments.blob(attachment)])
             .then(([metadata, blob]) => {
                 const nextObjectUrl = URL.createObjectURL(blob);
@@ -65,17 +160,19 @@ const TaskAttachmentPreview: React.FC<{
                 }
                 objectUrl = nextObjectUrl;
                 setPreview({ metadata, src: nextObjectUrl });
+                setStatus("ready");
             })
             .catch((error: unknown) => {
                 if (!cancelled) {
                     console.error("Failed to load task attachment preview", error);
                     setPreview(undefined);
+                    setStatus("failed");
                 }
             });
 
         return () => {
             cancelled = true;
-            attachments.release(attachment);
+            releaseLease();
             if (objectUrl) {
                 URL.revokeObjectURL(objectUrl);
             }
@@ -86,24 +183,33 @@ const TaskAttachmentPreview: React.FC<{
 
     if (!preview?.src) {
         return (
-            <div className="h-32 w-full animate-pulse rounded-lg bg-zinc-100 dark:bg-zinc-900" />
+            <div className="flex h-32 w-full items-end rounded-lg bg-zinc-100 p-3 dark:bg-zinc-900">
+                <AttachmentStatusBadge status={status} />
+            </div>
         );
     }
 
     return (
-        <img
-            alt={attachmentMetadata.name ?? "Task attachment"}
-            className="max-h-64 w-full rounded-lg border border-zinc-200 object-cover dark:border-zinc-800"
-            src={preview.src}
-        />
+        <div className="relative">
+            <img
+                alt={attachmentMetadata.name ?? "Task attachment"}
+                className="max-h-64 w-full rounded-lg border border-zinc-200 object-cover dark:border-zinc-800"
+                src={preview.src}
+            />
+            <span className="absolute right-2 top-2">
+                <AttachmentStatusBadge status={status} />
+            </span>
+        </div>
     );
 };
 
 export const TaskList: React.FC = () => {
     const [query, setQuery] = useState("");
     const [title, setTitle] = useState("");
-    const [image, setImage] = useState<File | null>(null);
+    const [selectedImage, setSelectedImage] = useState<SelectedTaskImage | null>(null);
+    const [eagerMaterialization, setEagerMaterialization] = useState(true);
     const [isImageDragActive, setIsImageDragActive] = useState(false);
+    const imageUploadRequestId = useRef(0);
     const coords = useGeolocation();
     const createTask = useAction(ontology.actions.createTask);
     const deleteTask = useAction(ontology.actions.deleteTask);
@@ -139,30 +245,56 @@ export const TaskList: React.FC = () => {
             return;
         }
 
-        const attachments = image
-            ? [
-                  await ontology.attachments!.create(image, {
-                      target: { objectType: "Task", property: "attachments" },
-                  }),
-              ]
-            : undefined;
+        if (selectedImage && !selectedImage.attachment) {
+            return;
+        }
+
+        const attachments = selectedImage?.attachment ? [selectedImage.attachment] : undefined;
 
         withViewTransition(() => {
             setTitle("");
-            setImage(null);
+            setSelectedImage(null);
             createTask({ title: nextTitle, location: coords ?? undefined, attachments });
         });
     };
 
     const handleImageFile = (file: File | null) => {
+        const requestId = imageUploadRequestId.current + 1;
+        imageUploadRequestId.current = requestId;
         if (!file) {
-            setImage(null);
+            setSelectedImage(null);
             return;
         }
         if (!file.type.startsWith("image/")) {
             return;
         }
-        setImage(file);
+        setSelectedImage({ file, status: eagerMaterialization ? "uploading" : "deferred" });
+
+        void ontology.attachments!
+            .create(file, {
+                target: { objectType: "Task", property: "attachments" },
+                eager: eagerMaterialization,
+            })
+            .then((attachment) => {
+                if (imageUploadRequestId.current !== requestId) {
+                    return;
+                }
+                setSelectedImage({
+                    file,
+                    attachment,
+                    status: eagerMaterialization ? "ready" : "deferred",
+                });
+            })
+            .catch((error: unknown) => {
+                if (imageUploadRequestId.current !== requestId) {
+                    return;
+                }
+                setSelectedImage({
+                    file,
+                    status: "failed",
+                    error: error instanceof Error ? error.message : "Upload failed",
+                });
+            });
     };
 
     const handleImageDrop = (event: React.DragEvent<HTMLDivElement>) => {
@@ -210,7 +342,7 @@ export const TaskList: React.FC = () => {
         if (!blob) {
             return;
         }
-        setImage(new File([blob], "demo-attachment.png", { type: "image/png" }));
+        handleImageFile(new File([blob], "demo-attachment.png", { type: "image/png" }));
     };
 
     const handleDeleteTask = (taskId: string) => {
@@ -222,7 +354,7 @@ export const TaskList: React.FC = () => {
     const handleToggleTask = (taskId: string, completedAt: unknown) => {
         withViewTransition(() => {
             if (completedAt) {
-                reopenTask({ task: taskId });
+                reopenTask({ task: taskId, completedAt: null });
                 return;
             }
             completeTask({ task: taskId });
@@ -234,9 +366,7 @@ export const TaskList: React.FC = () => {
             <main className="flex min-h-screen w-full max-w-3xl flex-col items-center gap-8 bg-white px-16 py-32 sm:items-start dark:bg-black">
                 <section className="w-full max-w-xl rounded-2xl border border-zinc-200 bg-zinc-50 p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
                     <div className="mb-4">
-                        <h1 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                            Create task
-                        </h1>
+                        <h1 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">Create task</h1>
                         <p className="text-sm text-zinc-500 dark:text-zinc-400">
                             Add a task with an optional image and your current coordinates.
                         </p>
@@ -253,7 +383,11 @@ export const TaskList: React.FC = () => {
                                 />
                                 <button
                                     className="rounded-lg bg-zinc-900 px-4 py-2 font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-100 dark:text-black"
-                                    disabled={!title.trim()}
+                                    disabled={
+                                        !title.trim() ||
+                                        selectedImage?.status === "uploading" ||
+                                        selectedImage?.status === "failed"
+                                    }
                                     type="submit"
                                 >
                                     Create
@@ -285,6 +419,17 @@ export const TaskList: React.FC = () => {
                                     <p className="text-sm text-zinc-500 dark:text-zinc-400">
                                         Drop an image here, browse your files, or use the demo image.
                                     </p>
+                                    <label className="mt-2 flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                                        <input
+                                            checked={eagerMaterialization}
+                                            className="h-3.5 w-3.5 rounded border-zinc-300"
+                                            onChange={(event) =>
+                                                setEagerMaterialization(event.target.checked)
+                                            }
+                                            type="checkbox"
+                                        />
+                                        Eagerly upload selected images
+                                    </label>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
                                     <label className="cursor-pointer rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-900">
@@ -307,14 +452,35 @@ export const TaskList: React.FC = () => {
                                     </button>
                                 </div>
                             </div>
-                            {image && (
+                            {selectedImage && (
                                 <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-zinc-100 px-3 py-2 text-sm text-zinc-600 dark:bg-zinc-900 dark:text-zinc-300">
-                                    <span className="min-w-0 truncate">
-                                        Will attach {image.name} ({formatFileSize(image.size)})
-                                    </span>
+                                    <div className="min-w-0">
+                                        <p className="truncate">
+                                            Will attach {selectedImage.file.name} (
+                                            {formatFileSize(selectedImage.file.size)})
+                                        </p>
+                                        <div className="mt-1 flex items-center gap-2">
+                                            <AttachmentStatusBadge
+                                                showLabel
+                                                status={
+                                                    selectedImage.status === "ready"
+                                                        ? "ready"
+                                                        : selectedImage.status
+                                                }
+                                            />
+                                            {selectedImage.status === "failed" && selectedImage.error && (
+                                                <span className="text-xs text-red-600 dark:text-red-400">
+                                                    {selectedImage.error}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
                                     <button
                                         className="shrink-0 text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-                                        onClick={() => setImage(null)}
+                                        onClick={() => {
+                                            imageUploadRequestId.current += 1;
+                                            setSelectedImage(null);
+                                        }}
                                         type="button"
                                     >
                                         Remove
@@ -375,7 +541,10 @@ export const TaskList: React.FC = () => {
                                             <MiniMap lat={task.location.lat} lon={task.location.lon} />
                                         )}
                                         {task.attachments?.[0]?.id && (
-                                            <TaskAttachmentPreview attachment={task.attachments[0]} />
+                                            <TaskAttachmentPreview
+                                                key={task.attachments[0].id}
+                                                attachment={task.attachments[0]}
+                                            />
                                         )}
                                     </div>
                                 </div>
