@@ -1,10 +1,12 @@
 import type {
     RemoteApplyActionResponse,
+    RemoteAttachmentRequest,
     RemoteLoadSubsetResponse,
     RemoteOntologyDescription,
     RemoteOntologyTransport,
     RemoteOntologyTransportOptions,
 } from "./protocol.js";
+import type { attachment } from "@party-stack/ontology/values";
 import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
 
 export interface HttpRemoteOntologyTransportOptions {
@@ -47,6 +49,63 @@ async function postJson<TResponse>(
     return parseRemoteOntologyJson(await response.text()) as TResponse;
 }
 
+async function postMultipart<TResponse>(
+    fetchImpl: typeof fetch,
+    url: string,
+    body: unknown,
+    headers?: HeadersInit,
+    options?: RemoteOntologyTransportOptions
+): Promise<TResponse> {
+    const formData = new FormData();
+    formData.append("payload", serializeRemoteOntologyJson(body));
+    for (const upload of options?.attachments ?? []) {
+        formData.append(
+            `attachment:${upload.attachment.id}`,
+            upload.blob,
+            upload.attachment.name ?? upload.attachment.id
+        );
+    }
+
+    const response = await fetchImpl(url, {
+        method: "POST",
+        headers,
+        body: formData,
+        signal: options?.signal,
+    });
+
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Remote ontology request failed with status ${response.status}.`);
+    }
+
+    return parseRemoteOntologyJson(await response.text()) as TResponse;
+}
+
+async function postBlob(
+    fetchImpl: typeof fetch,
+    url: string,
+    body: unknown,
+    headers?: HeadersInit,
+    options?: RemoteOntologyTransportOptions
+): Promise<Blob> {
+    const response = await fetchImpl(url, {
+        method: "POST",
+        headers: {
+            ...headers,
+            "content-type": "application/json",
+        },
+        body: serializeRemoteOntologyJson(body),
+        signal: options?.signal,
+    });
+
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Remote ontology request failed with status ${response.status}.`);
+    }
+
+    return response.blob();
+}
+
 export function createHttpRemoteOntologyTransport(
     opts: HttpRemoteOntologyTransportOptions
 ): RemoteOntologyTransport {
@@ -69,10 +128,36 @@ export function createHttpRemoteOntologyTransport(
                 getHeaders(),
                 options
             ),
-        applyAction: (request, options) =>
-            postJson<RemoteApplyActionResponse>(
+        applyAction: (request, options) => {
+            const hasAttachments = options?.attachments && options.attachments.length > 0;
+            return hasAttachments
+                ? postMultipart<RemoteApplyActionResponse>(
+                      fetchImpl,
+                      resolveEndpoint(opts.url, "apply-action"),
+                      request,
+                      getHeaders(),
+                      options
+                  )
+                : postJson<RemoteApplyActionResponse>(
+                      fetchImpl,
+                      resolveEndpoint(opts.url, "apply-action"),
+                      request,
+                      getHeaders(),
+                      options
+                  );
+        },
+        getAttachmentMetadata: (request: RemoteAttachmentRequest, options) =>
+            postJson<attachment & { size: number; type: string; name: string }>(
                 fetchImpl,
-                resolveEndpoint(opts.url, "apply-action"),
+                resolveEndpoint(opts.url, "attachment-metadata"),
+                request,
+                getHeaders(),
+                options
+            ),
+        getAttachmentContent: (request: RemoteAttachmentRequest, options) =>
+            postBlob(
+                fetchImpl,
+                resolveEndpoint(opts.url, "attachment-content"),
                 request,
                 getHeaders(),
                 options

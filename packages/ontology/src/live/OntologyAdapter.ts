@@ -7,8 +7,16 @@ export type OntologyCollectionOptions = Omit<
     "getKey"
 >;
 
+export interface OntologyActionAttachmentUpload {
+    attachment: v.attachment;
+    blob: Blob;
+    target: AttachmentTypeDef;
+}
+
 export interface ApplyActionLiveOpts {
     objects: Record<string, Collection<Record<string, unknown>>>;
+    context?: Record<string, unknown>;
+    attachmentUploads?: OntologyActionAttachmentUpload[];
 }
 
 export interface OntologyAttachmentsAdapter {
@@ -26,7 +34,7 @@ export interface OntologyAttachmentsAdapter {
         }
     ) => Promise<void>;
     getAttachmentContent: (attachment: v.attachment) => Promise<Blob>;
-    getAttachmentMetadata: (attachment: v.attachment) => Promise<Required<v.attachment>>;
+    getAttachmentMetadata: (attachment: v.attachment) => Promise<v.attachment & { size: number; type: string; name: string }>;
 }
 
 // TODO: maybe put collections/actions/cleanup/etc. behind provider

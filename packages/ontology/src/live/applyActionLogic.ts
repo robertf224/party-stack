@@ -1,4 +1,5 @@
 import { set } from "lodash-es";
+import { decorateObjectAttachmentSources } from "./attachmentSources.js";
 import { evaluateExpression, getObjectReferenceObjectType } from "./expression.js";
 import type { OntologyCollection, OntologyObject } from "./LiveOntology.js";
 import type { ObjectTypeDef, OntologyIR, PropertyAssignment } from "../ir/index.js";
@@ -24,6 +25,7 @@ function applyPropertyAssignments(opts: {
             opts.context,
             opts.objects
         );
+        if (value === undefined) continue;
         set(opts.object, assignment.property, value);
     }
 }
@@ -55,6 +57,11 @@ export function applyActionLogic(opts: {
                     objects: opts.objects,
                     objectType,
                 });
+                decorateObjectAttachmentSources({
+                    ir: opts.ir,
+                    objectType,
+                    object: createdObject,
+                });
                 collection.insert(createdObject);
                 break;
             }
@@ -76,6 +83,11 @@ export function applyActionLogic(opts: {
                         context: opts.context,
                         objects: opts.objects,
                         objectType,
+                    });
+                    decorateObjectAttachmentSources({
+                        ir: opts.ir,
+                        objectType,
+                        object: draft as Record<string, unknown>,
                     });
                 });
                 break;

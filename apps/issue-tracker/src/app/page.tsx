@@ -1,10 +1,9 @@
 "use client";
 
-import { ClientOnly } from "./ClientOnly";
-import { TaskList } from "./TaskList";
+import dynamic from "next/dynamic";
 
-function Home() {
-    return <TaskList />;
-}
+const Home = dynamic(() => import("./TaskList").then((module) => module.TaskList), {
+    ssr: false,
+});
 
-export default ClientOnly(Home);
+export default Home;

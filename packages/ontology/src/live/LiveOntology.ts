@@ -1,14 +1,17 @@
 import { createBlobManager, createInMemoryBlobStore, type BlobStoreProvider } from "@party-stack/blobs";
 import { BasicIndex, Collection, createCollection } from "@tanstack/db";
 import { applyActionLogic } from "./applyActionLogic.js";
+import { decorateObjectAttachmentSources } from "./attachmentSources.js";
 import {
     createLiveOntologyAttachments,
     type LiveOntologyAttachments,
 } from "./createLiveOntologyAttachments.js";
 import { resolveActionParameters } from "./expression.js";
-import { materializeActionParameters } from "./materializeActionParameters.js";
+import { prepareActionParameters } from "./prepareActionParameters.js";
 import type { OntologyAdapter } from "./OntologyAdapter.js";
+import type { PreparedActionParameters } from "./prepareActionParameters.js";
 import type { OntologyIR } from "../ir/index.js";
+import type { attachment } from "../utils/values.js";
 
 export type { LiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
 
@@ -57,7 +60,37 @@ export interface LiveOntologyOpts {
     adapter: OntologyAdapter;
     blobStore?: BlobStoreProvider;
     getContext?: () => Record<string, unknown>;
-    startSync?: boolean;
+}
+
+function decorateCollectionSync(opts: {
+    ir: OntologyIR;
+    objectType: OntologyIR["objectTypes"][number];
+    collectionOptions: ReturnType<OntologyAdapter["getCollectionOptions"]>;
+}): ReturnType<OntologyAdapter["getCollectionOptions"]> {
+    return {
+        ...opts.collectionOptions,
+        sync: {
+            ...opts.collectionOptions.sync,
+            sync: (syncParams) =>
+                opts.collectionOptions.sync.sync({
+                    ...syncParams,
+                    write: (message) => {
+                        if (message.type === "delete") {
+                            syncParams.write(message);
+                            return;
+                        }
+                        syncParams.write({
+                            ...message,
+                            value: decorateObjectAttachmentSources({
+                                ir: opts.ir,
+                                objectType: opts.objectType,
+                                object: message.value,
+                            }),
+                        });
+                    },
+                }),
+        },
+    };
 }
 
 export function createLiveOntology<Ontology extends OntologyDefinition = OntologyDefinition>(
@@ -70,8 +103,16 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
         ? createBlobManager({
               store: blobStore,
               remote: {
-                  blob: (id) => attachmentsAdapter.getAttachmentContent({ id }),
-                  metadata: (id) => attachmentsAdapter.getAttachmentMetadata({ id }),
+                  blob: (id, readOptions) =>
+                      attachmentsAdapter.getAttachmentContent({
+                          id,
+                          source: readOptions?.meta?.source as attachment["source"],
+                      }),
+                  metadata: (id, readOptions) =>
+                      attachmentsAdapter.getAttachmentMetadata({
+                          id,
+                          source: readOptions?.meta?.source as attachment["source"],
+                      }),
               },
           })
         : undefined;
@@ -83,16 +124,18 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
                   blobManager,
               })
             : undefined;
-    const startSync = opts.startSync ?? true;
     const objects = Object.fromEntries(
         opts.ir.objectTypes.map((objectType) => {
-            const collectionOptions = opts.adapter.getCollectionOptions(objectType.name);
+            const collectionOptions = decorateCollectionSync({
+                ir: opts.ir,
+                objectType,
+                collectionOptions: opts.adapter.getCollectionOptions(objectType.name),
+            });
             const collection = createCollection({
                 ...collectionOptions,
                 id: `${ontologyId}:${objectType.name}`,
                 defaultIndexType: BasicIndex,
                 autoIndex: "eager",
-                startSync,
                 getKey: (object) =>
                     (object as Record<string, string | number>)[objectType.primaryKey] as string | number,
             }) as OntologyCollection<OntologyObject>;
@@ -115,15 +158,17 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
 
                 return {
                     mutationFn: async () => {
-                        const materializedParameters = await materializeActionParameters({
+                        const preparedAction: PreparedActionParameters = await prepareActionParameters({
                             ir: opts.ir,
-                            adapter: opts.adapter,
                             actionTypeName: action.name,
                             parameters,
+                            adapter: opts.adapter,
                             blobManager,
                         });
-                        await opts.adapter.applyAction(action.name, materializedParameters, {
+                        await opts.adapter.applyAction(action.name, preparedAction.parameters, {
                             objects: objects as Record<string, Collection<Record<string, unknown>>>,
+                            context,
+                            attachmentUploads: preparedAction.attachmentUploads,
                         });
                     },
                     mutator: () => {

@@ -2,12 +2,26 @@ import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
 import type { QueryCollectionUtils } from "@tanstack/query-db-collection";
 import type { Collection } from "@tanstack/db";
-import type { OntologyAdapter, OntologyCollectionOptions, OntologyIR } from "@party-stack/ontology";
+import { createLiveOntology } from "@party-stack/ontology";
+import type {
+    LiveOntology,
+    OntologyDefinition,
+    OntologyAdapter,
+    OntologyCollectionOptions,
+    OntologyIR,
+} from "@party-stack/ontology";
+import type { BlobStoreProvider } from "@party-stack/blobs";
 import { serializeLoadSubsetOptions, type RemoteOntologyTransport } from "./protocol.js";
 
 export interface CreateRemoteOntologyAdapterOptions {
     ir: OntologyIR;
     transport: RemoteOntologyTransport;
+}
+
+export interface CreateRemoteLiveOntologyOptions {
+    transport: RemoteOntologyTransport;
+    id?: string;
+    blobStore?: BlobStoreProvider;
 }
 
 function getObjectTypePrimaryKey(ir: OntologyIR, objectType: string): string {
@@ -49,6 +63,8 @@ export function createRemoteOntologyAdapter(opts: CreateRemoteOntologyAdapterOpt
             const response = await transport.applyAction({
                 actionType,
                 parameters,
+            }, {
+                attachments: live.attachmentUploads,
             });
 
             const invalidatedObjectTypes =
@@ -67,5 +83,27 @@ export function createRemoteOntologyAdapter(opts: CreateRemoteOntologyAdapterOpt
                 })
             );
         },
+        attachments: {
+            generateAttachmentId: () => crypto.randomUUID(),
+            getAttachmentContent: (attachment) => transport.getAttachmentContent({ attachment }),
+            getAttachmentMetadata: (attachment) => transport.getAttachmentMetadata({ attachment }),
+        },
     };
+}
+
+export async function createRemoteLiveOntology<
+    Ontology extends OntologyDefinition = OntologyDefinition,
+>(opts: CreateRemoteLiveOntologyOptions): Promise<LiveOntology<Ontology>> {
+    const description = await opts.transport.describe();
+    const adapter = createRemoteOntologyAdapter({
+        ir: description.ir,
+        transport: opts.transport,
+    });
+    return createLiveOntology<Ontology>({
+        ir: description.ir,
+        adapter,
+        id: opts.id,
+        blobStore: opts.blobStore,
+        getContext: () => description.context ?? {},
+    });
 }

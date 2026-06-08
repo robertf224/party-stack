@@ -6,17 +6,27 @@ import {
     type QueryBuilder,
     type Context as QueryBuilderContext,
 } from "@tanstack/db";
+import { createInMemoryBlobStore } from "@party-stack/blobs";
 import { createLiveOntology } from "@party-stack/ontology";
-import type { OntologyAdapter, OntologyDefinition, OntologyIR } from "@party-stack/ontology";
+import type { LiveOntology, OntologyAdapter, OntologyDefinition, OntologyIR } from "@party-stack/ontology";
+import type { attachment } from "@party-stack/ontology/values";
 import {
     parseRemoteOntologyJson,
     parseRemoteOntologyRequest,
     remoteOntologyEndpointSchema,
     serializeRemoteOntologyJson,
 } from "./protocol.js";
+import {
+    applyFixedActionParameterValues,
+    projectRemoteOntologyIR,
+    type ClientContextProjectionMode,
+    type FixedActionParameterValues,
+} from "./securedOntology.js";
 import type {
     RemoteApplyActionRequest,
     RemoteApplyActionResponse,
+    RemoteAttachmentRequest,
+    RemoteAttachmentUpload,
     RemoteDescribeRequest,
     RemoteLoadSubsetRequest,
     RemoteLoadSubsetResponse,
@@ -98,20 +108,40 @@ export type RemoteOntologyAllowedObjectTypeProperties<
     >;
 };
 
+export type RemoteOntologyClientContextPolicy<Context> =
+    | "forward"
+    | ((
+          ctx: Context
+      ) =>
+          | Record<string, unknown>
+          | undefined
+          | Promise<Record<string, unknown> | undefined>);
+
+export type RemoteOntologyApplyActionRequest<
+    Ontology extends OntologyDefinition = OntologyDefinition,
+> = {
+    [ActionTypeName in Extract<
+        keyof Ontology["actionTypes"],
+        string
+    >]: {
+        actionType: ActionTypeName;
+        parameters: Ontology["actionTypes"][ActionTypeName]["parameters"];
+    };
+}[Extract<keyof Ontology["actionTypes"], string>];
+
 export interface RemoteOntologyPolicy<
     Context,
     Ontology extends OntologyDefinition = OntologyDefinition,
 > {
     baseObjectTypeQueries?: RemoteOntologyBaseObjectTypeQueries<Context, Ontology>;
     allowedObjectTypeProperties?: RemoteOntologyAllowedObjectTypeProperties<Context, Ontology>;
+    fixedActionParameterValues?: FixedActionParameterValues<Ontology>;
+    clientContext?: RemoteOntologyClientContextPolicy<Context>;
     canApplyAction?: (
         ctx: Context,
-        request: RemoteApplyActionRequest
+        request: RemoteOntologyApplyActionRequest<Ontology>,
+        opts: RemoteOntologyCanApplyActionOptions<Ontology>
     ) => boolean | Promise<boolean>;
-    finalizeActionParameters?: (
-        ctx: Context,
-        request: RemoteApplyActionRequest
-    ) => Record<string, unknown> | Promise<Record<string, unknown>>;
 }
 
 export interface CreateRemoteOntologyServerOptions<
@@ -128,6 +158,12 @@ export interface RemoteOntologyServer {
     handleRequest: (request: Request) => Promise<Response>;
 }
 
+export interface RemoteOntologyCanApplyActionOptions<
+    Ontology extends OntologyDefinition = OntologyDefinition,
+> {
+    objects: LiveOntology<Ontology>["objects"];
+}
+
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
     const headers = new Headers(init?.headers);
     headers.set("content-type", "application/json");
@@ -138,6 +174,9 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
 }
 
 function errorResponse(error: unknown, status: number = 500): Response {
+    if (status >= 500) {
+        console.error("Remote ontology request failed.", error);
+    }
     const message = error instanceof Error ? error.message : String(error);
     return jsonResponse({ error: message }, { status });
 }
@@ -172,8 +211,71 @@ async function resolveValue<Context, TValue>(
     return valueOrFactory;
 }
 
+async function waitForLiveOntologyReady(ontology: LiveOntology): Promise<void> {
+    await Promise.all(
+        Object.values(ontology.objects).map(async (collection) => {
+            if (collection.status === "ready") return;
+            if (collection.status === "error" || collection.status === "cleaned-up") {
+                throw new Error(`Collection "${collection.id}" is ${collection.status}.`);
+            }
+            await (collection as typeof collection & {
+                waitFor: (event: "status:ready") => Promise<unknown>;
+            }).waitFor("status:ready");
+        })
+    );
+}
+
 function normalizePath(pathname: string): string {
     return pathname.replace(/\/+$/, "").split("/").pop() ?? "";
+}
+
+function parseAttachmentQuery(url: URL): RemoteAttachmentRequest {
+    const attachment = url.searchParams.get("attachment");
+    if (!attachment) {
+        throw new Error("Missing attachment query parameter.");
+    }
+    return parseRemoteOntologyRequest(
+        "attachment-content",
+        parseRemoteOntologyJson(attachment)
+    ).input as RemoteAttachmentRequest;
+}
+
+async function parseRequestBody(
+    request: Request,
+    endpoint: RemoteOntologyEndpoint
+): Promise<{
+    input: RemoteOntologyRequestByEndpoint[RemoteOntologyEndpoint];
+    uploads: RemoteAttachmentUpload[];
+}> {
+    const contentType = request.headers.get("content-type") ?? "";
+    if (endpoint === "apply-action" && contentType.includes("multipart/form-data")) {
+        const formData = await request.formData();
+        const payload = formData.get("payload");
+        if (typeof payload !== "string") {
+            throw new Error("Multipart remote ontology request is missing a payload.");
+        }
+        const uploads: RemoteAttachmentUpload[] = [];
+        for (const [key, value] of formData.entries()) {
+            if (!key.startsWith("attachment:") || typeof value === "string") continue;
+            const blob = new Blob([await value.arrayBuffer()], { type: value.type });
+            uploads.push({
+                attachment: { id: key.slice("attachment:".length) },
+                blob,
+            });
+        }
+        return {
+            input: parseRemoteOntologyRequest(endpoint, parseRemoteOntologyJson(payload)).input,
+            uploads,
+        };
+    }
+
+    return {
+        input: parseRemoteOntologyRequest(
+            endpoint,
+            parseRemoteOntologyJson(await request.text())
+        ).input,
+        uploads: [],
+    };
 }
 
 function stripVirtualProps(object: Record<string, unknown>): Record<string, unknown> {
@@ -190,6 +292,15 @@ function selectProperties(
             .filter((property) => property in plainObject)
             .map((property) => [property, plainObject[property]])
     );
+}
+
+function containsAttachmentId(value: unknown, attachmentId: string): boolean {
+    if (Array.isArray(value)) {
+        return value.some((item) => containsAttachmentId(item, attachmentId));
+    }
+    if (typeof value !== "object" || value === null) return false;
+    const record = value as Record<string, unknown>;
+    return record.id === attachmentId || Object.values(record).some((item) => containsAttachmentId(item, attachmentId));
 }
 
 function qualifyExpressionPaths<TExpression extends IR.BasicExpression>(
@@ -285,6 +396,49 @@ function resolveAllowedObjectTypeProperties<Context, Ontology extends OntologyDe
     return allowedProperties;
 }
 
+function resolveProjectedAllowedObjectTypeProperties<Context, Ontology extends OntologyDefinition>(
+    ctx: Context,
+    ir: OntologyIR,
+    policy: RemoteOntologyPolicy<Context, Ontology> | undefined
+): Record<string, readonly string[]> {
+    return Object.fromEntries(
+        ir.objectTypes.map((objectType) => [
+            objectType.name,
+            resolveAllowedObjectTypeProperties(
+                ctx,
+                { objectType: objectType.name },
+                policy?.allowedObjectTypeProperties?.[objectType.name as ObjectTypeName<Ontology>] as
+                    | RemoteOntologyAllowedObjectTypePropertyList<
+                          Context,
+                          Ontology,
+                          ObjectTypeName<Ontology>
+                      >
+                    | undefined
+            ),
+        ])
+    );
+}
+
+async function resolveClientContext<Context, Ontology extends OntologyDefinition>(
+    ctx: Context,
+    policy: RemoteOntologyPolicy<Context, Ontology> | undefined
+): Promise<{
+    context?: Record<string, unknown>;
+    mode: ClientContextProjectionMode;
+}> {
+    if (!policy?.clientContext) return { mode: "none" };
+    if (policy.clientContext === "forward") {
+        return {
+            context: ctx as Record<string, unknown>,
+            mode: "forward",
+        };
+    }
+    return {
+        context: await policy.clientContext(ctx),
+        mode: "projected",
+    };
+}
+
 async function handleLoadSubset<
     Context,
     Ontology extends OntologyDefinition = OntologyDefinition,
@@ -301,9 +455,9 @@ async function handleLoadSubset<
         ir,
         adapter,
         getContext: () => ctx as Record<string, unknown>,
-        startSync: false,
     });
     try {
+        await waitForLiveOntologyReady(ontology);
         const collection = ontology.objects[
             request.objectType as ObjectTypeName<Ontology>
         ] as unknown as Collection<Record<string, unknown>, string | number>;
@@ -364,8 +518,17 @@ async function handleDescribe<
     _request: RemoteDescribeRequest
 ): Promise<RemoteOntologyDescription> {
     const ir = await resolveValue(opts.ir, ctx);
+    const clientContext = await resolveClientContext(ctx, opts.policy);
     return {
-        ir,
+        ir: projectRemoteOntologyIR({
+            ir,
+            serverContext: ctx,
+            clientContext: clientContext.context,
+            clientContextMode: clientContext.mode,
+            fixedActionParameterValues: opts.policy?.fixedActionParameterValues,
+            allowedObjectTypeProperties: resolveProjectedAllowedObjectTypeProperties(ctx, ir, opts.policy),
+        }),
+        ...(clientContext.context ? { context: clientContext.context } : {}),
     };
 }
 
@@ -375,25 +538,39 @@ async function handleApplyAction<
 >(
     ctx: Context,
     opts: CreateRemoteOntologyServerOptions<Context, Ontology>,
-    request: RemoteApplyActionRequest
+    request: RemoteApplyActionRequest,
+    uploads: RemoteAttachmentUpload[] = []
 ): Promise<RemoteApplyActionResponse> {
-    const canApply = await opts.policy?.canApplyAction?.(ctx, request);
-    if (canApply !== true) {
-        throw new RemoteOntologyForbiddenError(`Action "${request.actionType}" is not allowed.`);
-    }
-
     const ir = await resolveValue(opts.ir, ctx);
     const adapter = await resolveValue(opts.adapter, ctx);
-    const parameters =
-        (await opts.policy?.finalizeActionParameters?.(ctx, request)) ?? request.parameters;
+    const parameters = await applyFixedActionParameterValues({
+        ctx,
+        actionType: request.actionType,
+        parameters: request.parameters,
+        fixedActionParameterValues: opts.policy?.fixedActionParameterValues,
+    });
+    const blobStore = createInMemoryBlobStore(`remote-action:${crypto.randomUUID()}`);
+    await Promise.all(uploads.map((upload) => blobStore.stage(upload.attachment.id, upload.blob)));
     const ontology = createLiveOntology<Ontology>({
         ir,
         adapter,
+        blobStore: () => blobStore,
         getContext: () => ctx as Record<string, unknown>,
-        startSync: false,
     });
 
     try {
+        await waitForLiveOntologyReady(ontology);
+        const canApply = await opts.policy?.canApplyAction?.(
+            ctx,
+            request as RemoteOntologyApplyActionRequest<Ontology>,
+            {
+                objects: ontology.objects,
+            }
+        );
+        if (canApply !== true) {
+            throw new RemoteOntologyForbiddenError(`Action "${request.actionType}" is not allowed.`);
+        }
+
         const action = ontology.actions[request.actionType];
         if (!action) {
             throw new Error(`Unknown action "${request.actionType}".`);
@@ -408,6 +585,103 @@ async function handleApplyAction<
     };
 }
 
+async function handleAttachmentRead<
+    Context,
+    Ontology extends OntologyDefinition = OntologyDefinition,
+>(
+    ctx: Context,
+    opts: CreateRemoteOntologyServerOptions<Context, Ontology>,
+    request: RemoteAttachmentRequest
+): Promise<{
+    attachment: attachment & { size: number; type: string; name: string };
+    blob: Blob;
+}> {
+    const source = request.attachment.source;
+    if (!source) {
+        throw new RemoteOntologyForbiddenError("Attachment reads require a source.");
+    }
+
+    const ir = await resolveValue(opts.ir, ctx);
+    getObjectTypePrimaryKey(ir, source.objectType);
+    const adapter = await resolveValue(opts.adapter, ctx);
+    if (!adapter.attachments) {
+        throw new Error("Remote ontology adapter does not support attachments.");
+    }
+
+    const allowedProperties = opts.policy?.allowedObjectTypeProperties?.[
+        source.objectType as ObjectTypeName<Ontology>
+    ] as
+        | RemoteOntologyAllowedObjectTypePropertyList<
+              Context,
+              Ontology,
+              ObjectTypeName<Ontology>
+          >
+        | undefined;
+    const selectedProperties = resolveAllowedObjectTypeProperties(
+        ctx,
+        { objectType: source.objectType },
+        allowedProperties
+    );
+    if (!selectedProperties.includes(source.property)) {
+        throw new RemoteOntologyForbiddenError(
+            `Property "${source.property}" on "${source.objectType}" is not readable.`
+        );
+    }
+
+    const ontology = createLiveOntology<Ontology>({
+        ir,
+        adapter,
+        getContext: () => ctx as Record<string, unknown>,
+    });
+    try {
+        await waitForLiveOntologyReady(ontology);
+        const collection = ontology.objects[
+            source.objectType as ObjectTypeName<Ontology>
+        ] as unknown as Collection<Record<string, unknown>, string | number>;
+        const baseObjectTypeQuery = opts.policy?.baseObjectTypeQueries?.[
+            source.objectType as ObjectTypeName<Ontology>
+        ] as
+            | ((
+                  args: {
+                      ctx: Context;
+                      objectType: string;
+                      request: RemoteLoadSubsetRequest;
+                      q: InitialQueryBuilder;
+                      collection: Collection<Record<string, unknown>, string | number>;
+                  }
+              ) => RemoteOntologyLoadSubsetQuery<Record<string, unknown>>)
+            | undefined;
+        if (!baseObjectTypeQuery) {
+            throw new RemoteOntologyForbiddenError(
+                `Object type "${source.objectType}" is not queryable.`
+            );
+        }
+
+        const primaryKey = getObjectTypePrimaryKey(ir, source.objectType);
+        const objects = await queryCollectionSubset(collection, undefined, ({ q, collection }) =>
+            baseObjectTypeQuery({
+                ctx,
+                objectType: source.objectType,
+                request: { objectType: source.objectType },
+                q,
+                collection,
+            })
+        );
+        const object = objects.find((candidate) => candidate[primaryKey] === source.primaryKey);
+        if (!object || !containsAttachmentId(object[source.property], request.attachment.id)) {
+            throw new RemoteOntologyForbiddenError("Attachment is not readable.");
+        }
+
+        const attachment = await adapter.attachments.getAttachmentMetadata(request.attachment);
+        return {
+            attachment,
+            blob: await adapter.attachments.getAttachmentContent(request.attachment),
+        };
+    } finally {
+        await ontology.cleanup();
+    }
+}
+
 export function createRemoteOntologyServer<
     Context = Record<string, unknown>,
     Ontology extends OntologyDefinition = OntologyDefinition,
@@ -416,7 +690,8 @@ export function createRemoteOntologyServer<
     async function handleRpc<TEndpoint extends RemoteOntologyEndpoint>(
         ctx: Context,
         endpoint: TEndpoint,
-        input: RemoteOntologyRequestByEndpoint[TEndpoint]
+        input: RemoteOntologyRequestByEndpoint[TEndpoint],
+        uploads: RemoteAttachmentUpload[] = []
     ): Promise<RemoteOntologyResponseByEndpoint[TEndpoint]> {
         switch (endpoint) {
             case "describe":
@@ -435,14 +710,50 @@ export function createRemoteOntologyServer<
                 return (await handleApplyAction(
                     ctx,
                     opts,
-                    input as RemoteApplyActionRequest
+                    input as RemoteApplyActionRequest,
+                    uploads
                 )) as RemoteOntologyResponseByEndpoint[TEndpoint];
+            case "attachment-metadata":
+                return (
+                    await handleAttachmentRead(
+                        ctx,
+                        opts,
+                        input as RemoteAttachmentRequest
+                    )
+                ).attachment as RemoteOntologyResponseByEndpoint[TEndpoint];
+            case "attachment-content":
+                return (
+                    await handleAttachmentRead(
+                        ctx,
+                        opts,
+                        input as RemoteAttachmentRequest
+                    )
+                ).blob as RemoteOntologyResponseByEndpoint[TEndpoint];
         }
     }
 
     return {
         handleRequest: async (request) => {
             try {
+                const url = new URL(request.url);
+                const endpoint = remoteOntologyEndpointSchema.parse(normalizePath(url.pathname));
+                if (request.method === "GET" && endpoint === "attachment-content") {
+                    const ctx = opts.getContext
+                        ? await opts.getContext(request)
+                        : ({} as Context);
+                    const { blob, attachment } = await handleAttachmentRead(
+                        ctx,
+                        opts,
+                        parseAttachmentQuery(url)
+                    );
+                    return new Response(blob, {
+                        headers: {
+                            "content-type": attachment.type,
+                            "content-length": String(attachment.size),
+                        },
+                    });
+                }
+
                 if (request.method !== "POST") {
                     return errorResponse("Remote ontology endpoints only accept POST requests.", 405);
                 }
@@ -450,14 +761,18 @@ export function createRemoteOntologyServer<
                 const ctx = opts.getContext
                     ? await opts.getContext(request)
                     : ({} as Context);
-                const endpoint = remoteOntologyEndpointSchema.parse(
-                    normalizePath(new URL(request.url).pathname)
-                );
-                const envelope = parseRemoteOntologyRequest(
-                    endpoint,
-                    parseRemoteOntologyJson(await request.text())
-                );
-                return jsonResponse(await handleRpc(ctx, envelope.endpoint, envelope.input as never));
+                const { input, uploads } = await parseRequestBody(request, endpoint);
+                const response = await handleRpc(ctx, endpoint, input as never, uploads);
+                if (endpoint === "attachment-content") {
+                    const blob = response as Blob;
+                    return new Response(blob, {
+                        headers: {
+                            "content-type": blob.type || "application/octet-stream",
+                            "content-length": String(blob.size),
+                        },
+                    });
+                }
+                return jsonResponse(response);
             } catch (error) {
                 return errorResponse(error, getErrorStatus(error));
             }

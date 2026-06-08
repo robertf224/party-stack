@@ -10,6 +10,7 @@ export interface CreateBlobStoreOptions {
     bytes: BlobBytesAdapterProvider;
     metadata: BlobMetadataAdapterProvider;
     now?: () => number;
+    withUploadLock?: <T>(id: string, callback: () => Promise<T>) => Promise<T>;
 }
 
 function errorMessage(error: unknown): string {
@@ -178,5 +179,7 @@ export function createBlobStore(opts: CreateBlobStoreOptions): BlobStore {
                 byteIds.filter((id) => !refIds.has(id)).map((id) => bytes.delete(id))
             );
         },
+
+        withUploadLock: opts.withUploadLock,
     };
 }

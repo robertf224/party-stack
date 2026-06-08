@@ -10,12 +10,14 @@ export interface LiveOntologyAttachments {
         blob: Blob | File,
         opts: {
             target: OntologyPropertyTarget;
+            eager?: boolean;
         }
     ) => Promise<v.attachment>;
-    metadata: (attachment: v.attachment) => Promise<Required<v.attachment>>;
+    metadata: (
+        attachment: v.attachment
+    ) => Promise<v.attachment & { size: number; type: string; name: string }>;
     blob: (attachment: v.attachment) => Promise<Blob>;
-    retain: (attachment: v.attachment) => void;
-    release: (attachment: v.attachment) => void;
+    lease: (attachment: v.attachment) => () => void;
 }
 
 export function createLiveOntologyAttachments(opts: {
@@ -26,7 +28,7 @@ export function createLiveOntologyAttachments(opts: {
     const { attachmentsAdapter, blobManager } = opts;
 
     return {
-        create: async (blob, { target }) => {
+        create: async (blob, { target, eager }) => {
             const targetType = getTargetValueType(opts.ir, target);
             invariant(
                 targetType.kind === "attachment",
@@ -36,20 +38,25 @@ export function createLiveOntologyAttachments(opts: {
                 target: targetType.value,
             });
             const ref = await blobManager.stage(id, blob);
-            return {
+            const attachment = {
                 id: ref.id,
                 size: ref.size,
                 type: ref.type,
                 name: ref.name,
             };
+            const materializeAttachment = attachmentsAdapter.materializeAttachment;
+            if (eager && materializeAttachment) {
+                await blobManager.withUploadTracking(ref.id, (blob) =>
+                    materializeAttachment(attachment, blob, {
+                        target: targetType.value,
+                    })
+                );
+            }
+            return attachment;
         },
-        metadata: (attachment) => blobManager.metadata(attachment.id),
-        blob: (attachment) => blobManager.blob(attachment.id),
-        retain: (attachment) => {
-            blobManager.retain(attachment.id);
-        },
-        release: (attachment) => {
-            blobManager.release(attachment.id);
-        },
+        metadata: (attachment) =>
+            blobManager.metadata(attachment.id, { meta: { source: attachment.source } }),
+        blob: (attachment) => blobManager.blob(attachment.id, { meta: { source: attachment.source } }),
+        lease: (attachment) => blobManager.lease(attachment.id),
     };
 }

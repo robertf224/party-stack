@@ -1,13 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+    useEffect,
+    useMemo,
+    useState,
+    type DragEvent,
+} from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { debounceStrategy, useLiveQuery, usePacedMutations } from "@tanstack/react-db";
 import { ilike, or } from "@tanstack/db";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { createLiveOntology } from "@party-stack/ontology";
+import { Temporal } from "temporal-polyfill";
 import { createRemoteOntologyAdapter } from "@party-stack/remote-ontology/client";
 import { createHttpRemoteOntologyTransport } from "@party-stack/remote-ontology/http";
-import { notesOntology, type Note, type NotesOntologyDefinition } from "../ontology/notesOntology";
+import { createRemoteNotesLiveOntology } from "../ontology/generated/live";
+import type { attachment, Note } from "../ontology/generated/types";
+import { notesOntology } from "../ontology/ontology";
 
 const demoUsers = ["ada@example.com", "grace@example.com", "linus@example.com"];
 
@@ -17,14 +24,14 @@ function getInitialUserEmail(): string {
     return localStorage.getItem("remote-notes:user") ?? demoUsers[0]!;
 }
 
-function formatUpdatedAt(value: string | undefined): string {
+function formatUpdatedAt(value: Temporal.Instant | undefined): string {
     if (!value) return "Not saved yet";
     return new Intl.DateTimeFormat(undefined, {
         month: "short",
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
-    }).format(new Date(value));
+    }).format(new Date(value.epochMilliseconds));
 }
 
 function getSaveStatusLabel(status: SaveStatus): string {
@@ -42,6 +49,19 @@ function getSaveStatusLabel(status: SaveStatus): string {
     }
 }
 
+function attachmentContentUrl(attachment: attachment, userEmail: string): string {
+    const attachmentRequest = encodeURIComponent(JSON.stringify({ attachment }));
+    return `/api/remote-ontology/attachment-content?user=${encodeURIComponent(userEmail)}&attachment=${attachmentRequest}`;
+}
+
+function fileAltText(file: File): string {
+    return file.name.replace(/\.[^.]+$/, "") || "attachment";
+}
+
+function markdownImage(alt: string, url: string): string {
+    return `![${alt}](${url})`;
+}
+
 function createClientOntology(userEmail: string) {
     const adapter = createRemoteOntologyAdapter({
         ir: notesOntology,
@@ -52,7 +72,9 @@ function createClientOntology(userEmail: string) {
             }),
         }),
     });
-    return createLiveOntology<NotesOntologyDefinition>({ ir: notesOntology, adapter });
+    return createRemoteNotesLiveOntology(adapter, {
+        getContext: () => ({ user: { email: userEmail } }),
+    });
 }
 
 function MarkdownPreview({ markdown }: { markdown: string }) {
@@ -103,6 +125,13 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
                     </th>
                 ),
                 td: ({ children }) => <td className="border border-white/10 px-3 py-2">{children}</td>,
+                img: ({ alt, src }) => (
+                    <img
+                        alt={alt ?? ""}
+                        className="my-4 max-h-96 rounded-2xl border border-white/10 object-contain"
+                        src={src ?? ""}
+                    />
+                ),
             }}
         >
             {markdown}
@@ -288,6 +317,7 @@ function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: N
                         note={noteRows.find((note) => note.id === selectedNoteId)}
                         noteId={selectedNoteId}
                         ontology={ontology}
+                        userEmail={userEmail}
                     />
                 ) : (
                     <div className="flex flex-1 items-center justify-center p-8 text-center text-slate-500">
@@ -303,16 +333,19 @@ function NoteEditor({
     note,
     noteId,
     ontology,
+    userEmail,
 }: {
     note: Note | undefined;
     noteId: string;
     ontology: ReturnType<typeof createClientOntology>;
+    userEmail: string;
 }) {
     const navigate = useNavigate();
     const [draftTitle, setDraftTitle] = useState("");
     const [draftBody, setDraftBody] = useState("");
     const [showPreview, setShowPreview] = useState(true);
     const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+    const [isDraggingImage, setIsDraggingImage] = useState(false);
 
     useEffect(() => {
         setSaveStatus("idle");
@@ -334,7 +367,7 @@ function NoteEditor({
             setSaveStatus("pending");
             ontology.objects.Note.update(id, (draft) => {
                 Object.assign(draft, changes);
-                draft.updatedAt = new Date().toISOString();
+                draft.updatedAt = Temporal.Now.instant();
             });
         },
         mutationFn: async ({ transaction }) => {
@@ -377,6 +410,76 @@ function NoteEditor({
     function updateDraftBody(bodyMarkdown: string) {
         setDraftBody(bodyMarkdown);
         void saveNote({ bodyMarkdown });
+    }
+
+    async function createImageAttachmentMarkdown(file: File): Promise<string | undefined> {
+        if (!file.type.startsWith("image/")) return undefined;
+        if (!ontology.attachments) {
+            setSaveStatus("error");
+            return undefined;
+        }
+
+        const createdAttachment = await ontology.attachments.create(file, {
+            target: { objectType: "NoteAttachment", property: "attachment" },
+        });
+        const attachmentForUrl = {
+            ...createdAttachment,
+            source: {
+                objectType: "NoteAttachment",
+                primaryKey: createdAttachment.id,
+                property: "attachment",
+            },
+        } satisfies attachment;
+
+        await ontology.actions.createNoteAttachment({
+            note: noteId,
+            attachment: createdAttachment,
+        }).mutationFn();
+
+        return markdownImage(fileAltText(file), attachmentContentUrl(attachmentForUrl, userEmail));
+    }
+
+    async function addImageFiles(files: Iterable<File>) {
+        const imageFiles = Array.from(files).filter((file) => file.type.startsWith("image/"));
+        if (imageFiles.length === 0) return;
+
+        setSaveStatus("saving");
+        try {
+            const markdownImages = (
+                await Promise.all(imageFiles.map((file) => createImageAttachmentMarkdown(file)))
+            ).filter((markdownImage): markdownImage is string => markdownImage !== undefined);
+            if (markdownImages.length === 0) return;
+
+            const nextBody = `${draftBody.trimEnd()}\n\n${markdownImages.join("\n\n")}\n`;
+            updateDraftBody(nextBody);
+            setSaveStatus("saved");
+        } catch (error) {
+            setSaveStatus("error");
+            console.error("Failed to attach image.", error);
+        }
+    }
+
+    function handleDragOver(event: DragEvent<HTMLElement>) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.dataTransfer.types.includes("Files")) {
+            event.dataTransfer.dropEffect = "copy";
+            setIsDraggingImage(true);
+        }
+    }
+
+    function handleDragLeave(event: DragEvent<HTMLElement>) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setIsDraggingImage(false);
+    }
+
+    function handleDrop(event: DragEvent<HTMLElement>) {
+        event.preventDefault();
+        event.stopPropagation();
+        setIsDraggingImage(false);
+        void addImageFiles(event.dataTransfer.files);
     }
 
     async function deleteNote() {
@@ -440,16 +543,27 @@ function NoteEditor({
 
             <div className={`grid min-h-0 flex-1 grid-cols-1 ${showPreview ? "lg:grid-cols-2" : "lg:grid-cols-1"}`}>
                 <section
-                    className={`flex min-h-[45vh] min-w-0 flex-col p-4 sm:p-6 ${
+                    className={`relative flex min-h-[45vh] min-w-0 flex-col p-4 sm:p-6 ${
                         showPreview ? "border-b border-white/10 lg:border-b-0 lg:border-r" : ""
                     }`}
+                    onDragLeave={handleDragLeave}
+                    onDragOver={handleDragOver}
+                    onDrop={handleDrop}
                 >
                     <textarea
                         value={draftBody}
                         onChange={(event) => updateDraftBody(event.target.value)}
+                        onDragLeave={handleDragLeave}
+                        onDragOver={handleDragOver}
+                        onDrop={handleDrop}
                         className="min-h-88 flex-1 resize-none rounded-2xl border border-white/10 bg-white/3 p-4 font-mono text-sm leading-6 text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-cyan-300"
                         placeholder="Write markdown..."
                     />
+                    {isDraggingImage ? (
+                        <div className="pointer-events-none absolute inset-4 flex items-center justify-center rounded-2xl border border-dashed border-cyan-300/80 bg-slate-950/70 text-center text-sm font-medium text-cyan-100 backdrop-blur-sm sm:inset-6">
+                            Drop image to attach it to this note
+                        </div>
+                    ) : null}
                 </section>
 
                 {showPreview ? (

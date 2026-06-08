@@ -120,14 +120,13 @@ describe("createBlobManager", () => {
         });
 
         await manager.blob("remote-id");
-        manager.release("remote-id");
         scheduled.forEach((run) => run());
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         await expect(store.get("remote-id")).resolves.toBeUndefined();
     });
 
-    it("evicts released blobs with the default eviction policy", async () => {
+    it("evicts blobs after leases are released with the default eviction policy", async () => {
         const store = createInMemoryBlobStore("test", { now: () => 100 });
         const scheduled: Array<() => void> = [];
         const manager = createBlobManager({
@@ -140,16 +139,16 @@ describe("createBlobManager", () => {
             gcReleaseBufferSize: 0,
         });
 
+        const releaseLease = manager.lease("remote-id");
         await manager.blob("remote-id");
-        manager.retain("remote-id");
-        manager.release("remote-id");
+        releaseLease();
         scheduled.forEach((run) => run());
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         await expect(store.get("remote-id")).resolves.toBeUndefined();
     });
 
-    it("keeps retained blobs during default eviction", async () => {
+    it("keeps leased blobs during default eviction", async () => {
         const store = createInMemoryBlobStore("test", { now: () => 100 });
         const scheduled: Array<() => void> = [];
         const manager = createBlobManager({
@@ -162,9 +161,8 @@ describe("createBlobManager", () => {
             gcReleaseBufferSize: 0,
         });
 
-        manager.retain("remote-id");
+        const releaseLease = manager.lease("remote-id");
         await manager.blob("remote-id");
-        manager.release("other-id");
         scheduled.forEach((run) => run());
         await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -172,6 +170,64 @@ describe("createBlobManager", () => {
             id: "remote-id",
             state: "cached",
         });
+        releaseLease();
+    });
+
+    it("keeps blobs retained by external providers during GC", async () => {
+        const store = createInMemoryBlobStore("test", { now: () => 100 });
+        const scheduled: Array<() => void> = [];
+        const manager = createBlobManager({
+            store,
+            remote: {
+                metadata: (id) => Promise.resolve({ id, size: 6, type: "text/plain", name: "remote.txt" }),
+                blob: () => Promise.resolve(new Blob(["remote"], { type: "text/plain" })),
+            },
+            gcScheduler: (run) => scheduled.push(run),
+            gcReleaseBufferSize: 0,
+            retentionProviders: [() => ["local-id"]],
+        });
+
+        await manager.stage("local-id", new Blob(["hello"]));
+        const releaseLease = manager.lease("local-id");
+        releaseLease();
+        scheduled.forEach((run) => run());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        await expect(store.get("local-id")).resolves.toMatchObject({
+            id: "local-id",
+            state: "staged",
+        });
+    });
+
+    it("keeps leased blobs during GC", async () => {
+        const store = createInMemoryBlobStore("test", { now: () => 100 });
+        const scheduled: Array<() => void> = [];
+        const manager = createBlobManager({
+            store,
+            remote: {
+                metadata: (id) =>
+                    Promise.resolve({ id, size: 6, type: "text/plain", name: "remote.txt" }),
+                blob: () => Promise.resolve(new Blob(["remote"], { type: "text/plain" })),
+            },
+            gcScheduler: (run) => scheduled.push(run),
+            gcReleaseBufferSize: 0,
+            evictionStrategy: (candidates) =>
+                candidates
+                    .filter((candidate) => !candidate.retained)
+                    .map((candidate) => candidate.ref.id),
+        });
+        await manager.stage("local-id", new Blob(["hello"]));
+        const releaseLease = manager.lease("local-id");
+
+        await manager.blob("remote-id");
+        scheduled.forEach((run) => run());
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        await expect(store.get("local-id")).resolves.toMatchObject({
+            id: "local-id",
+            state: "staged",
+        });
+        releaseLease();
     });
 
     it("uploads staged blobs and updates lifecycle state", async () => {
@@ -192,6 +248,72 @@ describe("createBlobManager", () => {
             expect(await blob.text()).toBe("hello");
         });
 
+        await expect(store.get("local-id")).resolves.toMatchObject({
+            id: "local-id",
+            state: "persisted",
+        });
+    });
+
+    it("dedupes concurrent uploads without a store lock", async () => {
+        const store = createInMemoryBlobStore("test");
+        const manager = createBlobManager({
+            store,
+            remote: {
+                metadata: (id) => Promise.resolve({ id, size: 0, type: "", name: "" }),
+                blob: () => Promise.reject(new Error("unexpected remote read")),
+            },
+        });
+        await manager.stage("local-id", new Blob(["hello"]));
+        let uploadCount = 0;
+        let finishUpload: (() => void) | undefined;
+        let uploadStarted: (() => void) | undefined;
+        const uploadStartedPromise = new Promise<void>((resolve) => {
+            uploadStarted = resolve;
+        });
+        const upload = () =>
+            manager.withUploadTracking(
+                "local-id",
+                () =>
+                    new Promise<void>((resolve) => {
+                        uploadCount += 1;
+                        uploadStarted?.();
+                        finishUpload = resolve;
+                    })
+            );
+
+        const firstUpload = upload();
+        await uploadStartedPromise;
+        const secondUpload = upload();
+        expect(uploadCount).toBe(1);
+
+        finishUpload?.();
+        await Promise.all([firstUpload, secondUpload]);
+        expect(uploadCount).toBe(1);
+        await expect(store.get("local-id")).resolves.toMatchObject({
+            id: "local-id",
+            state: "persisted",
+        });
+    });
+
+    it("uses store upload locks when available", async () => {
+        const store = createInMemoryBlobStore("test");
+        const lockedIds: string[] = [];
+        store.withUploadLock = async (id, callback) => {
+            lockedIds.push(id);
+            return callback();
+        };
+        const manager = createBlobManager({
+            store,
+            remote: {
+                metadata: (id) => Promise.resolve({ id, size: 0, type: "", name: "" }),
+                blob: () => Promise.reject(new Error("unexpected remote read")),
+            },
+        });
+        await manager.stage("local-id", new Blob(["hello"]));
+
+        await manager.withUploadTracking("local-id", () => Promise.resolve());
+
+        expect(lockedIds).toEqual(["local-id"]);
         await expect(store.get("local-id")).resolves.toMatchObject({
             id: "local-id",
             state: "persisted",

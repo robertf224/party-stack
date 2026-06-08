@@ -178,12 +178,15 @@ importers:
       '@party-stack/remote-ontology':
         specifier: workspace:*
         version: link:../../packages/remote-ontology
+      '@party-stack/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
+      '@party-stack/sqlite-ontology':
+        specifier: workspace:*
+        version: link:../../packages/sqlite-ontology
       '@tanstack/db':
         specifier: ^0.6.5
         version: 0.6.5(typescript@5.8.3)
-      '@tanstack/node-db-sqlite-persistence':
-        specifier: ^0.1.9
-        version: 0.1.9(typescript@5.8.3)
       '@tanstack/query-core':
         specifier: ^5.100.9
         version: 5.100.9
@@ -214,6 +217,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      temporal-polyfill:
+        specifier: ^0.3.0
+        version: 0.3.0
       zod:
         specifier: ^4.1.13
         version: 4.1.13
@@ -818,6 +824,9 @@ importers:
 
   packages/remote-ontology:
     dependencies:
+      '@party-stack/blobs':
+        specifier: workspace:*
+        version: link:../blobs
       '@party-stack/ontology':
         specifier: workspace:*
         version: link:../ontology
@@ -892,6 +901,37 @@ importers:
       vitest:
         specifier: ^3.1.1
         version: 3.2.4(@types/debug@4.1.12)(@types/node@25.6.0)(jiti@2.6.1)(jsdom@27.2.0)(lightningcss@1.32.0)(terser@5.46.2)(tsx@4.20.6)(yaml@2.8.4)
+
+  packages/sqlite-ontology:
+    dependencies:
+      '@party-stack/ontology':
+        specifier: workspace:*
+        version: link:../ontology
+      temporal-polyfill:
+        specifier: ^0.3.0
+        version: 0.3.0
+    devDependencies:
+      '@bobbyfidz/universal-build-config':
+        specifier: ^0.1.1
+        version: 0.1.1(eslint@9.28.0(jiti@2.6.1))(typescript@5.8.3)
+      '@tanstack/db':
+        specifier: ^0.6.5
+        version: 0.6.5(typescript@5.8.3)
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.1
+      better-sqlite3:
+        specifier: ^12.4.6
+        version: 12.9.0
+      eslint:
+        specifier: ^9.25.0
+        version: 9.28.0(jiti@2.6.1)
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+      vitest:
+        specifier: ^3.1.1
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.1)(jiti@2.6.1)(jsdom@27.2.0)(lightningcss@1.32.0)(terser@5.46.2)(tsx@4.20.6)(yaml@2.8.4)
 
 packages:
 
@@ -2765,11 +2805,6 @@ packages:
     peerDependencies:
       typescript: '>=4.7'
 
-  '@tanstack/db-sqlite-persistence-core@0.1.9':
-    resolution: {integrity: sha512-Ju4HcBzaSXTaPJFMRWNjiyXRfCmom0AXBr/22sqLoQWY1TjFM/UTbSSTQgsrExkNuFDVFiV8EDpCt8WUBFiKcQ==}
-    peerDependencies:
-      typescript: '>=4.7'
-
   '@tanstack/db@0.6.5':
     resolution: {integrity: sha512-gtCuAo4UtC9SR/kTMu5fVEff6qZ2R1FZi9X7MybtHKA6wve7RePifGG6qBI4OmMB+7juT5/+glNbnqZOrG0/pg==}
     peerDependencies:
@@ -2778,11 +2813,6 @@ packages:
   '@tanstack/history@1.161.6':
     resolution: {integrity: sha512-NaOGLRrddszbQj9upGat6HG/4TKvXLvu+osAIgfxPYA+eIvYKv8GKDJOrY2D3/U9MRnKfMWD7bU4jeD4xmqyIg==}
     engines: {node: '>=20.19'}
-
-  '@tanstack/node-db-sqlite-persistence@0.1.9':
-    resolution: {integrity: sha512-irgaRzZ6eMV4Ky7fIoiy823vPfGllnsJPI0oqdjWS4kD09juktR8JfS0Gqg9ONBbwLB2kLBrC3ei72Dzz92RKg==}
-    peerDependencies:
-      typescript: '>=4.7'
 
   '@tanstack/pacer-lite@0.2.1':
     resolution: {integrity: sha512-3PouiFjR4B6x1c969/Pl4ZIJleof1M0n6fNX8NRiC9Sqv1g06CVDlEaXUR4212ycGFyfq4q+t8Gi37Xy+z34iQ==}
@@ -10106,12 +10136,6 @@ snapshots:
       sorted-btree: 1.8.1
       typescript: 5.8.3
 
-  '@tanstack/db-sqlite-persistence-core@0.1.9(typescript@5.8.3)':
-    dependencies:
-      '@standard-schema/spec': 1.1.0
-      '@tanstack/db': 0.6.5(typescript@5.8.3)
-      typescript: 5.8.3
-
   '@tanstack/db@0.6.5(typescript@5.8.3)':
     dependencies:
       '@standard-schema/spec': 1.1.0
@@ -10120,12 +10144,6 @@ snapshots:
       typescript: 5.8.3
 
   '@tanstack/history@1.161.6': {}
-
-  '@tanstack/node-db-sqlite-persistence@0.1.9(typescript@5.8.3)':
-    dependencies:
-      '@tanstack/db-sqlite-persistence-core': 0.1.9(typescript@5.8.3)
-      better-sqlite3: 12.9.0
-      typescript: 5.8.3
 
   '@tanstack/pacer-lite@0.2.1': {}
 
@@ -11789,7 +11807,7 @@ snapshots:
       '@next/eslint-plugin-next': 16.1.6
       eslint: 9.28.0(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1))
       eslint-plugin-import: 2.32.0(eslint-import-resolver-typescript@3.10.1)(eslint@9.28.0(jiti@2.6.1))
       eslint-plugin-jsx-a11y: 6.10.2(eslint@9.28.0(jiti@2.6.1))
       eslint-plugin-react: 7.37.5(eslint@9.28.0(jiti@2.6.1))
@@ -11812,7 +11830,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)):
+  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1)):
     dependencies:
       '@nolyfill/is-core-module': 1.0.39
       debug: 4.4.3(supports-color@8.1.1)
@@ -11827,13 +11845,13 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-module-utils@2.12.1(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)):
+  eslint-module-utils@2.12.1(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)):
     dependencies:
       debug: 3.2.7
     optionalDependencies:
       eslint: 9.28.0(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1))
     transitivePeerDependencies:
       - supports-color
 
@@ -11848,7 +11866,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 9.28.0(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
-      eslint-module-utils: 2.12.1(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1))
+      eslint-module-utils: 2.12.1(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1))
       hasown: 2.0.3
       is-core-module: 2.16.2
       is-glob: 4.0.3

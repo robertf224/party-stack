@@ -1,7 +1,7 @@
 import { s } from "@party-stack/schema";
-import { generateTypes as generateSchemaTypes } from "@party-stack/schema/generate";
+import { generateForTypeDef, generateTypes as generateSchemaTypes } from "@party-stack/schema/generate";
 import { pascalCase } from "change-case";
-import { Project, Writers } from "ts-morph";
+import { CodeBlockWriter, Project, Writers, type WriterFunction } from "ts-morph";
 import type {
     FieldDef as SchemaFieldDef,
     NamedTypeDef as SchemaNamedTypeDef,
@@ -9,7 +9,23 @@ import type {
     TypeDef as SchemaTypeDef,
     VariantDef as SchemaVariantDef,
 } from "@party-stack/schema";
-import type { ActionParameterDef, OntologyIR, ObjectTypeDef, PropertyDef, TypeDef } from "../ir/generated/types.js";
+import type { OntologyIR, ObjectTypeDef, PropertyDef, TypeDef } from "../ir/generated/types.js";
+
+function withWriter(fn: WriterFunction): string {
+    const writer = new CodeBlockWriter();
+    fn(writer);
+    return writer.toString();
+}
+
+function union(options: string[]): string {
+    if (options.length === 0) {
+        return "never";
+    }
+    if (options.length === 1) {
+        return options[0]!;
+    }
+    return withWriter(Writers.unionType(options[0]!, options[1]!, ...options.slice(2)));
+}
 
 function renderPropertyName(name: string): string {
     return /^[$A-Z_][0-9A-Z_$]*$/i.test(name) ? name : JSON.stringify(name);
@@ -131,27 +147,6 @@ function lowerProperty(
     };
 }
 
-function lowerActionParameter(
-    parameter: ActionParameterDef,
-    objectTypes: ReadonlyMap<string, ObjectTypeDef>
-): SchemaFieldDef {
-    const loweredType = lowerType(parameter.type, objectTypes);
-
-    return {
-        name: parameter.name,
-        displayName: parameter.displayName,
-        description: parameter.description,
-        deprecated: parameter.deprecated,
-        type:
-            parameter.defaultValue !== undefined && loweredType.kind !== "optional"
-                ? {
-                      kind: "optional",
-                      value: { type: loweredType },
-                  }
-                : loweredType,
-    };
-}
-
 function toSchemaIR(ir: OntologyIR): SchemaIR {
     const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
 
@@ -172,19 +167,6 @@ function toSchemaIR(ir: OntologyIR): SchemaIR {
                     kind: "struct" as const,
                     value: {
                         fields: objectType.properties.map((property) => lowerProperty(property, objectTypes)),
-                    },
-                },
-            })),
-            ...ir.actionTypes.map((actionType) => ({
-                name: `${pascalCase(actionType.name)}Parameters`,
-                description: actionType.description,
-                deprecated: actionType.deprecated,
-                type: {
-                    kind: "struct" as const,
-                    value: {
-                        fields: actionType.parameters.map((parameter) =>
-                            lowerActionParameter(parameter, objectTypes)
-                        ),
                     },
                 },
             })),
@@ -243,11 +225,37 @@ function addOntologyAggregateType(
     });
 }
 
+function addActionParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: OntologyIR): void {
+    const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
+    for (const actionType of ir.actionTypes) {
+        sourceFile.addTypeAlias({
+            name: `${pascalCase(actionType.name)}Parameters`,
+            isExported: true,
+            type: withWriter(
+                Writers.objectType({
+                    properties: actionType.parameters.map((parameter) => {
+                        const parameterType = parameter.type;
+                        const isOptional = parameterType.kind === "optional";
+                        const type = isOptional ? parameterType.value.type : parameterType;
+                        const renderedType = generateForTypeDef(lowerType(type, objectTypes));
+                        return {
+                            name: renderPropertyName(parameter.name),
+                            type: isOptional ? union([renderedType, "null"]) : renderedType,
+                            hasQuestionToken: isOptional || parameter.defaultValue !== undefined,
+                        };
+                    }),
+                })
+            ),
+        });
+    }
+}
+
 export function generateTypes(ir: OntologyIR, opts: GenerateTypesOpts = {}): string {
     const outputTypeName = opts.outputTypeName ?? "GeneratedOntology";
     const schemaTypes = generateSchemaTypes(toSchemaIR(ir));
     const project = new Project({ useInMemoryFileSystem: true });
     const aggregateFile = project.createSourceFile("ontology-aggregate.ts", "");
+    addActionParameterTypes(aggregateFile, ir);
     addOntologyAggregateType(aggregateFile, ir, outputTypeName);
     return `${schemaTypes}\n\n${aggregateFile.getFullText().trim()}`.trim();
 }
