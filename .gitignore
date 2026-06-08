@@ -17,6 +17,9 @@ coverage
 # Next.js
 .next
 
+# TanStack Start
+.tanstack
+
 # Build outputs
 out
 build
