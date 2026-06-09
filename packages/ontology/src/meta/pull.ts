@@ -1,7 +1,7 @@
 import { and, inArray, Query, queryOnce } from "@tanstack/db";
 import type { OntologyIR } from "../ir/generated/types.js";
 import type { LiveOntology } from "../live/LiveOntology.js";
-import type { MetaOntology, ObjectType, TypeDef } from "../ontology/generated/types.js";
+import type { MetaOntology, ObjectType, TypeDef } from "./generated/types.js";
 
 function getValueTypes(type: TypeDef): string[] {
     switch (type.kind) {

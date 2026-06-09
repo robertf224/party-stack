@@ -8,5 +8,5 @@ export type {
     ObjectType as MetaObjectType,
     ValueType as MetaValueType,
     ActionType as MetaActionType,
-} from "./ontology/generated/types.js";
-export { createMetaLiveOntology } from "./ontology/generated/live.js";
+} from "./meta/generated/types.js";
+export { createMetaLiveOntology } from "./meta/generated/live.js";

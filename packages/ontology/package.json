@@ -7,10 +7,6 @@
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
         },
-        "./generate": {
-            "types": "./lib/generate/index.d.ts",
-            "default": "./lib/generate/index.js"
-        },
         "./utils": {
             "types": "./lib/utils/index.d.ts",
             "default": "./lib/utils/index.js"
@@ -29,7 +25,7 @@
         "bootstrap": "tsx ./src/cli/index.ts generate --ontology ./src/ir/schema.ts --outDir ./src/ir/generated",
         "build": "tsc",
         "generate:examples": "tsx ./src/cli/index.ts generate --ontology ./src/examples/blog.ts --outDir ./src/examples/generated --namespace Blog",
-        "generate:meta": "tsx ./src/cli/index.ts generate --ontology ./src/ontology/ontology.ts --outDir ./src/ontology/generated --namespace Meta",
+        "generate:meta": "tsx ./src/cli/index.ts generate --ontology ./src/meta/ontology.ts --outDir ./src/meta/generated --namespace Meta",
         "lint": "eslint",
         "ontology": "tsx ./src/cli/index.ts",
         "test": "vitest run"

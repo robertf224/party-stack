@@ -3,7 +3,7 @@ import type { OntologyIR } from "./generated/types.js";
 
 export default {
     types: [
-{
+        {
             name: "Deprecation",
             type: o.struct({
                 fields: [

@@ -4,8 +4,8 @@ import nextEnv from "@next/env";
 import { createJiti } from "jiti";
 import { format, resolveConfig } from "prettier";
 import { generateOntology } from "../generate/ontology.js";
+import { createMetaLiveOntology } from "../meta/generated/live.js";
 import { pull } from "../meta/pull.js";
-import { createMetaLiveOntology } from "../ontology/generated/live.js";
 import type { OntologyConfigAdapter, OntologyConfig } from "../OntologyConfig.js";
 
 const { loadEnvConfig } = nextEnv;

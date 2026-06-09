@@ -1,5 +1,6 @@
 import { pascalCase } from "change-case";
 import { CodeBlockWriter, Project, Writers, type WriterFunction } from "ts-morph";
+import { unwrapType } from "../utils/types.js";
 import { buildJsDocs } from "./utils/buildJsDocs.js";
 import type {
     OntologyIR,
@@ -124,10 +125,7 @@ function generateForStructTypeDef(type: StructTypeDef, ctx: GenerateTypeContext)
     return withWriter(
         Writers.objectType({
             properties: type.fields.map((field) => {
-                const { fieldType, isOptional } =
-                    field.type.kind === "optional"
-                        ? { fieldType: field.type.value.type, isOptional: true }
-                        : { fieldType: field.type, isOptional: false };
+                const { type: fieldType, isOptional } = unwrapType(field.type);
                 return {
                     name: renderPropertyName(field.name),
                     type: generateForTypeDef(fieldType, ctx),
