@@ -401,12 +401,7 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
 
     sourceFile.addImportDeclaration({
         moduleSpecifier: ontologyImportPath,
-        namedImports: ["o"],
-    });
-    sourceFile.addImportDeclaration({
-        moduleSpecifier: ontologyImportPath,
-        namedImports: ["OntologyIR"],
-        isTypeOnly: true,
+        namedImports: ["defineOntology", "o"],
     });
     if (usesTemporalTypes) {
         sourceFile.addImportDeclaration({
@@ -416,7 +411,7 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
     }
 
     sourceFile.addStatements((writer) => {
-        writer.write("export default ");
+        writer.write("export default defineOntology(");
         writeObject(writer, [
             {
                 name: "types",
@@ -452,7 +447,7 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
                 ),
             },
         ]);
-        writer.write(" satisfies OntologyIR;");
+        writer.write(");");
         writer.newLine();
     });
 

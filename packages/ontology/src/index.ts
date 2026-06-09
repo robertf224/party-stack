@@ -1,4 +1,5 @@
 export * from "./ir/index.js";
+export * from "./infer.js";
 export * from "./live/index.js";
 export * from "./OntologyConfig.js";
 export * from "./meta/pull.js";
