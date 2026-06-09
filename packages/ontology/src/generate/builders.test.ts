@@ -24,7 +24,7 @@ describe("generateBuilders", () => {
         expect(generateBuilders(schema, { exportName: "o" })).toMatchInlineSnapshot(`
           "import * as t from "./types.js";
 
-          export const Shape = { circle: (value: Extract<t.Shape, { kind: "circle" }>["value"]) => ({ kind: "circle" as const, value }), square: (value: Extract<t.Shape, { kind: "square" }>["value"]) => ({ kind: "square" as const, value }) };
+          export const Shape = { circle: <const Value extends Extract<t.Shape, { kind: "circle" }>["value"]>(value: Value) => ({ kind: "circle" as const, value }), square: <const Value extends Extract<t.Shape, { kind: "square" }>["value"]>(value: Value) => ({ kind: "square" as const, value }) };
 
           export const o = { Shape };"
         `);
