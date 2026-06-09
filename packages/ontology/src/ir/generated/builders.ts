@@ -71,11 +71,6 @@ export const result = (value: Extract<t.TypeDef, { kind: "result" }>["value"]) =
 
 export const ref = (value: Extract<t.TypeDef, { kind: "ref" }>["value"]) => ({ kind: "ref" as const, value });
 
-export const unknown = (value: Extract<t.TypeDef, { kind: "unknown" }>["value"]) => ({
-    kind: "unknown" as const,
-    value,
-});
-
 export const attachment = (value: Extract<t.TypeDef, { kind: "attachment" }>["value"]) => ({
     kind: "attachment" as const,
     value,
@@ -83,6 +78,11 @@ export const attachment = (value: Extract<t.TypeDef, { kind: "attachment" }>["va
 
 export const objectReference = (value: Extract<t.TypeDef, { kind: "objectReference" }>["value"]) => ({
     kind: "objectReference" as const,
+    value,
+});
+
+export const unknown = (value: Extract<t.TypeDef, { kind: "unknown" }>["value"]) => ({
+    kind: "unknown" as const,
     value,
 });
 
@@ -158,9 +158,9 @@ export const o = {
     optional,
     result,
     ref,
-    unknown,
     attachment,
     objectReference,
+    unknown,
     StringConstraint,
     FunctionCallExpression,
     Expression,

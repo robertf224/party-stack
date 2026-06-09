@@ -1,13 +1,6 @@
 // Auto-generated file - do not edit manually
 
-import * as v from "@party-stack/schema/values";
-
-export type attachment = {
-    id: string;
-    size?: v.double;
-    type?: string;
-    name?: string;
-};
+import * as v from "@party-stack/ontology/values";
 
 /** A mailing address. */
 export type Address = {
@@ -25,7 +18,7 @@ export type Author = {
     email: string;
     bio?: string;
     /** The author's profile picture. */
-    avatar?: attachment;
+    avatar?: v.attachment;
     address?: Address;
     createdAt: v.timestamp;
 };
@@ -37,7 +30,7 @@ export type Post = {
     body: string;
     authorId: string;
     status: "draft" | "published" | "archived";
-    coverImage?: attachment;
+    coverImage?: v.attachment;
     tags: Array<string>;
     createdAt: v.timestamp;
     publishedAt?: v.timestamp;
@@ -52,7 +45,6 @@ export type Comment = {
     createdAt: v.timestamp;
 };
 
-/** Create a new blog post. */
 export type CreatePostParameters = {
     postId?: string;
     author: string;
@@ -62,7 +54,6 @@ export type CreatePostParameters = {
     tags: Array<string>;
     createdAt?: v.timestamp;
 };
-
 export type BlogOntology = {
     objectTypes: {
         Author: Author;

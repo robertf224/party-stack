@@ -8,6 +8,13 @@ export interface OntologyPropertyTarget {
     property: string;
 }
 
+export function unwrapType(type: TypeDef): { type: TypeDef; isOptional: boolean } {
+    if (type.kind === "optional") {
+        return { type: type.value.type, isOptional: true };
+    }
+    return { type, isOptional: false };
+}
+
 export function resolveType(ir: OntologyIR, type: TypeDef): TypeDef {
     if (type.kind !== "ref") {
         return type;

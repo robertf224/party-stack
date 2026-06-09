@@ -13,7 +13,6 @@
         "@base-ui/react": "^1.3.0",
         "@party-stack/foundry-ontology": "workspace:*",
         "@party-stack/ontology": "workspace:*",
-        "@party-stack/schema": "workspace:*",
         "@tanstack/db": "^0.6.5",
         "@tanstack/query-core": "^5.100.9",
         "@tanstack/query-db-collection": "^1.0.36",

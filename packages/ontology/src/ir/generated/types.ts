@@ -1,6 +1,6 @@
 // Auto-generated file - do not edit manually
 
-import * as v from "@party-stack/schema/values";
+import * as v from "../../utils/values.js";
 
 export type Deprecation = {
     message: string;
@@ -136,9 +136,9 @@ export type TypeDef = v.Union<{
     optional: OptionalTypeDef;
     result: ResultTypeDef;
     ref: TypeRef;
-    unknown: UnknownTypeDef;
     attachment: AttachmentTypeDef;
     objectReference: ObjectReferenceTypeDef;
+    unknown: UnknownTypeDef;
 }>;
 
 /** A named type definition that can be referenced by other types. */
@@ -185,7 +185,7 @@ export type ObjectTypeDef = {
     pluralDisplayName: string;
     /** The name of the property that serves as primary key. */
     primaryKey: string;
-    /** The object type's properties. */
+    /** The object type's propertieo. */
     properties: Array<PropertyDef>;
     /** Optional description. */
     description?: string;
@@ -299,9 +299,9 @@ export type ActionTypeDef = {
     name: string;
     /** Human-readable name. */
     displayName: string;
-    /** The action type's parameters. */
+    /** The action type's parametero. */
     parameters: Array<ActionParameterDef>;
-    /** The action type's local logic steps. */
+    /** The action type's local logic stepo. */
     logic: Array<ActionLogicStep>;
     /** Optional description. */
     description?: string;

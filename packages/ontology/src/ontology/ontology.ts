@@ -1,10 +1,9 @@
 import { invariant } from "@bobbyfidz/panic";
-import { SchemaIR } from "@party-stack/schema";
 import OntologyIRSchema from "../ir/schema.js";
 import type { OntologyIR } from "../ir/generated/types.js";
 
 function lift(
-    schema: SchemaIR,
+    schema: Pick<OntologyIR, "types">,
     objectTypes: Record<
         string,
         { name?: string; primaryKey: string; displayName: string; pluralDisplayName: string }

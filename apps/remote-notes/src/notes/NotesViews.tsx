@@ -10,10 +10,11 @@ import { ilike, or } from "@tanstack/db";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Temporal } from "temporal-polyfill";
+import type { attachment } from "@party-stack/ontology/values";
 import { createRemoteOntologyAdapter } from "@party-stack/remote-ontology/client";
 import { createHttpRemoteOntologyTransport } from "@party-stack/remote-ontology/http";
 import { createRemoteNotesLiveOntology } from "../ontology/generated/live";
-import type { attachment, Note } from "../ontology/generated/types";
+import type { Note } from "../ontology/generated/types";
 import { notesOntology } from "../ontology/ontology";
 
 const demoUsers = ["ada@example.com", "grace@example.com", "linus@example.com"];

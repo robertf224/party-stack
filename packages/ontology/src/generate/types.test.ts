@@ -1,10 +1,64 @@
 import { describe, expect, it } from "vitest";
 import { o } from "../ir/generated/builders.js";
-import { generateTypes } from "./types.js";
+import { generateTypeDefinitions, generateTypes } from "./types.js";
 import type { OntologyIR } from "../ir/generated/types.js";
 
 describe("generateTypes", () => {
-    it("lowers object references to referenced primary key types", () => {
+    it("generates type-only struct definitions with ontology values imports", () => {
+        const ontology: Pick<OntologyIR, "types"> = {
+            types: [
+                {
+                    name: "Address",
+                    type: {
+                        kind: "struct",
+                        value: {
+                            fields: [
+                                { name: "city", displayName: "City", type: o.string({}) },
+                                {
+                                    name: "zip",
+                                    displayName: "ZIP",
+                                    type: o.optional({ type: o.string({}) }),
+                                },
+                            ],
+                        },
+                    },
+                },
+            ],
+        };
+
+        expect(generateTypeDefinitions(ontology)).toMatchInlineSnapshot(`
+          "import * as v from "@party-stack/ontology/values";
+
+          export type Address = {
+                  city: string;
+                  zip?: string;
+              };"
+        `);
+    });
+
+    it("renders ontology value primitives", () => {
+        const ontology: Pick<OntologyIR, "types"> = {
+            types: [
+                { name: "CreatedAt", type: o.timestamp({}) },
+                { name: "File", type: o.attachment({}) },
+            ],
+        };
+
+        expect(generateTypeDefinitions(ontology)).toContain("export type CreatedAt = v.timestamp;");
+        expect(generateTypeDefinitions(ontology)).toContain("export type File = v.attachment;");
+    });
+
+    it("requires object type context to generate object references", () => {
+        const ontology: Pick<OntologyIR, "types"> = {
+            types: [{ name: "UserRef", type: o.objectReference({ objectType: "User" }) }],
+        };
+
+        expect(() => generateTypeDefinitions(ontology)).toThrow(
+            'Cannot generate object reference type for unknown object type "User".'
+        );
+    });
+
+    it("generates object references as referenced primary key types", () => {
         const ontology: OntologyIR = {
             types: [],
             objectTypes: [
