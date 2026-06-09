@@ -42,13 +42,21 @@ async function main(): Promise<void> {
 
     program
         .command("generate")
-        .description("Generate typed live ontology helpers from src/ontology/ontology.ts")
+        .description("Generate ontology types, builders, and live helpers")
+        .option("--ontology <path>", "Path to the ontology module", ontologyPath)
+        .option("--outDir <path>", "Directory to write generated files", generatedDir)
+        .option("--namespace <name>", "Namespace for generated ontology types/factories")
         .option("--no-js-extensions", "Omit .js extensions from generated relative imports")
-        .action(async (options: { jsExtensions?: boolean }) => {
+        .action(async (options: {
+            ontology: string;
+            outDir: string;
+            namespace?: string;
+            jsExtensions?: boolean;
+        }) => {
             await generateFiles({
-                ontology: ontologyPath,
-                outDir: generatedDir,
-                namespace: readPackageNamespace(cwd),
+                ontology: resolve(cwd, options.ontology),
+                outDir: resolve(cwd, options.outDir),
+                namespace: options.namespace ?? readPackageNamespace(cwd),
                 jsExtensions: options.jsExtensions,
             });
         });

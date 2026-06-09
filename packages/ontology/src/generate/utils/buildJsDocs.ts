@@ -1,5 +1,5 @@
 import type { Deprecation } from "../../ir/index.js";
-import type { OptionalKind, JSDocStructure } from "ts-morph";
+import type { JSDocStructure, OptionalKind } from "ts-morph";
 
 export function buildJsDocs(opts: {
     description?: string;

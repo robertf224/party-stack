@@ -1,15 +1,14 @@
-import { s } from "@party-stack/schema";
-import { generateForTypeDef, generateTypes as generateSchemaTypes } from "@party-stack/schema/generate";
 import { pascalCase } from "change-case";
 import { CodeBlockWriter, Project, Writers, type WriterFunction } from "ts-morph";
+import { unwrapType } from "../utils/types.js";
+import { buildJsDocs } from "./utils/buildJsDocs.js";
 import type {
-    FieldDef as SchemaFieldDef,
-    NamedTypeDef as SchemaNamedTypeDef,
-    SchemaIR,
-    TypeDef as SchemaTypeDef,
-    VariantDef as SchemaVariantDef,
-} from "@party-stack/schema";
-import type { OntologyIR, ObjectTypeDef, PropertyDef, TypeDef } from "../ir/generated/types.js";
+    OntologyIR,
+    ObjectTypeDef,
+    StructTypeDef,
+    TypeDef,
+    UnionTypeDef,
+} from "../ir/generated/types.js";
 
 function withWriter(fn: WriterFunction): string {
     const writer = new CodeBlockWriter();
@@ -31,134 +30,129 @@ function renderPropertyName(name: string): string {
     return /^[$A-Z_][0-9A-Z_$]*$/i.test(name) ? name : JSON.stringify(name);
 }
 
-function lowerObjectReferenceType(
-    objectTypeName: string,
-    objectTypes: ReadonlyMap<string, ObjectTypeDef>
-): SchemaTypeDef {
-    const objectType = objectTypes.get(objectTypeName)!;
-    const primaryKey = objectType.properties.find((property) => property.name === objectType.primaryKey)!;
-    return lowerType(primaryKey.type, objectTypes);
+export interface GenerateTypeDefinitionsOpts {
+    valuesImportPath?: string;
+    objectTypes?: ReadonlyMap<string, ObjectTypeDef>;
 }
 
-function lowerAttachmentType(): SchemaTypeDef {
-    return s.ref({ name: "attachment" });
+interface GenerateTypeContext {
+    objectTypes?: ReadonlyMap<string, ObjectTypeDef>;
 }
 
-function attachmentSchemaType(): SchemaNamedTypeDef {
-    return {
-        name: "attachment",
-        type: s.struct({
-            fields: [
-                { name: "id", displayName: "ID", type: s.string({}) },
-                { name: "size", displayName: "Size", type: s.optional({ type: s.double({}) }) },
-                { name: "type", displayName: "Type", type: s.optional({ type: s.string({}) }) },
-                { name: "name", displayName: "Name", type: s.optional({ type: s.string({}) }) },
-            ],
-        }),
-    };
-}
-
-function lowerType(
-    type: TypeDef,
-    objectTypes: ReadonlyMap<string, ObjectTypeDef>
-): SchemaTypeDef {
+export function generateForTypeDef(type: TypeDef, ctx: GenerateTypeContext = {}): string {
     switch (type.kind) {
-        case "string":
-        case "boolean":
-        case "integer":
-        case "float":
-        case "double":
-        case "date":
-        case "timestamp":
-        case "geopoint":
-        case "ref":
-        case "unknown":
-            return type;
-        case "attachment":
-            return lowerAttachmentType();
-        case "objectReference": {
-            return lowerObjectReferenceType(type.value.objectType, objectTypes);
+        case "string": {
+            if (type.value.constraint?.kind === "enum") {
+                const options = type.value.constraint.value.options;
+                return union(options.map((option) => `"${option.value}"`));
+            }
+            return "string";
         }
+
+        case "boolean":
+            return "boolean";
+
+        case "integer":
+            return "v.integer";
+
+        case "float":
+            return "v.float";
+
+        case "double":
+            return "v.double";
+
+        case "date":
+            return "v.date";
+
+        case "timestamp":
+            return "v.timestamp";
+
+        case "geopoint":
+            return "v.geopoint";
+
+        case "attachment":
+            return "v.attachment";
+
+        case "objectReference": {
+            const objectType = ctx.objectTypes?.get(type.value.objectType);
+            if (!objectType) {
+                throw new Error(
+                    `Cannot generate object reference type for unknown object type "${type.value.objectType}".`
+                );
+            }
+            const primaryKey = objectType?.properties.find(
+                (property) => property.name === objectType.primaryKey
+            );
+            if (!primaryKey) {
+                throw new Error(
+                    `Cannot generate object reference type for "${type.value.objectType}" because primary key "${objectType.primaryKey}" is not a property.`
+                );
+            }
+            return generateForTypeDef(primaryKey.type, ctx);
+        }
+
+        case "unknown":
+            return "unknown";
+
         case "list":
-            return {
-                kind: "list",
-                value: {
-                    elementType: lowerType(type.value.elementType, objectTypes),
-                },
-            };
+            return `Array<${generateForTypeDef(type.value.elementType, ctx)}>`;
+
         case "map":
-            return {
-                kind: "map",
-                value: {
-                    keyType: lowerType(type.value.keyType, objectTypes),
-                    valueType: lowerType(type.value.valueType, objectTypes),
-                },
-            };
+            return `Record<string, ${generateForTypeDef(type.value.valueType, ctx)}>`;
+
         case "struct":
-            return {
-                kind: "struct",
-                value: {
-                    fields: type.value.fields.map(
-                        (field): SchemaFieldDef => ({
-                            ...field,
-                            type: lowerType(field.type, objectTypes),
-                        })
-                    ),
-                },
-            };
+            return generateForStructTypeDef(type.value, ctx);
+
         case "union":
-            return {
-                kind: "union",
-                value: {
-                    variants: type.value.variants.map(
-                        (variant): SchemaVariantDef => ({
-                            ...variant,
-                            type: lowerType(variant.type, objectTypes),
-                        })
-                    ),
-                },
-            };
+            return generateForUnionTypeDef(type.value, ctx);
+
         case "optional":
-            return {
-                kind: "optional",
-                value: { type: lowerType(type.value.type, objectTypes) },
-            };
+            return union([generateForTypeDef(type.value.type, ctx), "undefined"]);
+
         case "result":
-            return {
-                kind: "result",
-                value: {
-                    okType: lowerType(type.value.okType, objectTypes),
-                    errType: lowerType(type.value.errType, objectTypes),
-                },
-            };
+            return `v.Result<${generateForTypeDef(type.value.okType, ctx)}, ${generateForTypeDef(type.value.errType, ctx)}>`;
+
+        case "ref":
+            return type.value.name;
     }
 }
 
-function lowerProperty(
-    property: PropertyDef,
-    objectTypes: ReadonlyMap<string, ObjectTypeDef>
-): SchemaFieldDef {
-    return {
-        name: property.name,
-        displayName: property.displayName,
-        description: property.description,
-        deprecated: property.deprecated,
-        type: lowerType(property.type, objectTypes),
-    };
+function generateForStructTypeDef(type: StructTypeDef, ctx: GenerateTypeContext): string {
+    if (type.fields.length === 0) {
+        return "Record<never, never>";
+    }
+
+    return withWriter(
+        Writers.objectType({
+            properties: type.fields.map((field) => {
+                const { type: fieldType, isOptional } = unwrapType(field.type);
+                return {
+                    name: renderPropertyName(field.name),
+                    type: generateForTypeDef(fieldType, ctx),
+                    hasQuestionToken: isOptional,
+                    docs: buildJsDocs({ description: field.description, deprecated: field.deprecated }),
+                };
+            }),
+        })
+    );
 }
 
-function toSchemaIR(ir: OntologyIR): SchemaIR {
-    const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
+function generateForUnionTypeDef(type: UnionTypeDef, ctx: GenerateTypeContext): string {
+    const innerType = withWriter(
+        Writers.objectType({
+            properties: type.variants.map((variant) => ({
+                name: renderPropertyName(variant.name),
+                type: generateForTypeDef(variant.type, ctx),
+            })),
+        })
+    );
+    return `v.Union<${innerType}>`;
+}
 
+function collectTypeDefinitions(ir: OntologyIR): Pick<OntologyIR, "types"> {
     return {
         types: [
-            attachmentSchemaType(),
-            ...ir.types.map((type) => ({
-                name: type.name,
-                description: type.description,
-                deprecated: type.deprecated,
-                type: lowerType(type.type, objectTypes),
-            })),
+            ...ir.types,
             ...ir.objectTypes.map((objectType) => ({
                 name: objectType.name,
                 description: objectType.description,
@@ -166,12 +160,41 @@ function toSchemaIR(ir: OntologyIR): SchemaIR {
                 type: {
                     kind: "struct" as const,
                     value: {
-                        fields: objectType.properties.map((property) => lowerProperty(property, objectTypes)),
+                        fields: objectType.properties,
                     },
                 },
             })),
         ],
     };
+}
+
+export function generateTypeDefinitions(
+    schema: Pick<OntologyIR, "types">,
+    opts: GenerateTypeDefinitionsOpts = {}
+): string {
+    const project = new Project({ useInMemoryFileSystem: true });
+    const sourceFile = project.createSourceFile("types.ts", "");
+
+    sourceFile.addImportDeclaration({
+        moduleSpecifier: opts.valuesImportPath ?? "@party-stack/ontology/values",
+        namespaceImport: "v",
+    });
+
+    for (const type of schema.types) {
+        sourceFile.addTypeAlias({
+            name: type.name,
+            isExported: true,
+            type: generateForTypeDef(type.type, { objectTypes: opts.objectTypes }),
+            docs: buildJsDocs({ description: type.description, deprecated: type.deprecated }),
+        });
+    }
+
+    const typeAliases = sourceFile.getTypeAliases();
+    for (const alias of typeAliases.slice(0, -1)) {
+        alias.appendWhitespace("\n");
+    }
+
+    return sourceFile.getFullText().trim();
 }
 
 export interface GenerateTypesOpts {
@@ -237,7 +260,7 @@ function addActionParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: 
                         const parameterType = parameter.type;
                         const isOptional = parameterType.kind === "optional";
                         const type = isOptional ? parameterType.value.type : parameterType;
-                        const renderedType = generateForTypeDef(lowerType(type, objectTypes));
+                        const renderedType = generateForTypeDef(type, { objectTypes });
                         return {
                             name: renderPropertyName(parameter.name),
                             type: isOptional ? union([renderedType, "null"]) : renderedType,
@@ -252,10 +275,13 @@ function addActionParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: 
 
 export function generateTypes(ir: OntologyIR, opts: GenerateTypesOpts = {}): string {
     const outputTypeName = opts.outputTypeName ?? "GeneratedOntology";
-    const schemaTypes = generateSchemaTypes(toSchemaIR(ir));
+    const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
+    const typeDefinitions = generateTypeDefinitions(collectTypeDefinitions(ir), {
+        objectTypes,
+    });
     const project = new Project({ useInMemoryFileSystem: true });
     const aggregateFile = project.createSourceFile("ontology-aggregate.ts", "");
     addActionParameterTypes(aggregateFile, ir);
     addOntologyAggregateType(aggregateFile, ir, outputTypeName);
-    return `${schemaTypes}\n\n${aggregateFile.getFullText().trim()}`.trim();
+    return `${typeDefinitions}\n\n${aggregateFile.getFullText().trim()}`.trim();
 }

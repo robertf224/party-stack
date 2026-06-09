@@ -1,9 +1,9 @@
 import { Project, VariableDeclarationKind } from "ts-morph";
 import { buildJsDocs } from "./utils/buildJsDocs.js";
-import type { NamedTypeDef, SchemaIR, UnionTypeDef } from "../ir/index.js";
+import type { NamedTypeDef, OntologyIR, UnionTypeDef } from "../ir/index.js";
 
 export interface GenerateBuildersOpts {
-    /** The name of the main export (e.g., "p" for `p.string()`). */
+    /** The name of the main export (e.g., "o" for `o.string()`). */
     exportName: string;
     /** If set, promotes this union type's variants to the top level of the export. */
     promoted?: string;
@@ -19,7 +19,7 @@ function unionTypeToBuilders(
     }));
 }
 
-export function generateBuilders(schema: SchemaIR, opts: GenerateBuildersOpts): string {
+export function generateBuilders(schema: Pick<OntologyIR, "types">, opts: GenerateBuildersOpts): string {
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile("builders.ts", "");
 

@@ -22,10 +22,10 @@
         "lib"
     ],
     "scripts": {
-        "bootstrap": "tsx ../schema/src/cli/generate.ts --schema ./src/ir/schema.ts --exportName o --promoted TypeDef --outDir ./src/ir/generated",
+        "bootstrap": "tsx ./src/cli/index.ts generate --ontology ./src/ir/schema.ts --outDir ./src/ir/generated",
         "build": "tsc",
-        "generate:examples": "tsx ./src/cli/generate.ts --ontology ./src/examples/blog.ts --outDir ./src/examples/generated --namespace Blog",
-        "generate:meta": "tsx ./src/cli/generate.ts --ontology ./src/ontology/ontology.ts --outDir ./src/ontology/generated --namespace Meta",
+        "generate:examples": "tsx ./src/cli/index.ts generate --ontology ./src/examples/blog.ts --outDir ./src/examples/generated --namespace Blog",
+        "generate:meta": "tsx ./src/cli/index.ts generate --ontology ./src/meta/ontology.ts --outDir ./src/meta/generated --namespace Meta",
         "lint": "eslint",
         "ontology": "tsx ./src/cli/index.ts",
         "test": "vitest run"
@@ -34,7 +34,6 @@
         "@bobbyfidz/panic": "^0.1.0",
         "@next/env": "^16.1.6",
         "@party-stack/blobs": "workspace:*",
-        "@party-stack/schema": "workspace:*",
         "change-case": "^5.4.4",
         "commander": "^14.0.2",
         "jiti": "^2.6.1",

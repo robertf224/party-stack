@@ -1,6 +1,6 @@
 import { get } from "lodash-es";
 import { Temporal } from "temporal-polyfill";
-import { resolveType } from "../utils/types.js";
+import { resolveType, unwrapType } from "../utils/types.js";
 import type { OntologyCollection, OntologyObject } from "./LiveOntology.js";
 import type {
     Expression,
@@ -12,13 +12,6 @@ import type {
 
 function getActionType(ir: OntologyIR, actionTypeName: string) {
     return ir.actionTypes.find((actionType) => actionType.name === actionTypeName)!;
-}
-
-function unwrapType(type: TypeDef): { type: TypeDef; isOptional: boolean } {
-    if (type.kind === "optional") {
-        return { type: type.value.type, isOptional: true };
-    }
-    return { type, isOptional: false };
 }
 
 export function evaluateExpression(

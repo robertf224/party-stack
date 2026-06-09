@@ -13,7 +13,6 @@
     "dependencies": {
         "@party-stack/ontology": "workspace:*",
         "@party-stack/remote-ontology": "workspace:*",
-        "@party-stack/schema": "workspace:*",
         "@party-stack/sqlite-ontology": "workspace:*",
         "@tanstack/db": "^0.6.5",
         "@tanstack/query-core": "^5.100.9",

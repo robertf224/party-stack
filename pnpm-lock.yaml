@@ -47,9 +47,6 @@ importers:
       '@party-stack/ontology':
         specifier: workspace:*
         version: link:../../packages/ontology
-      '@party-stack/schema':
-        specifier: workspace:*
-        version: link:../../packages/schema
       '@tanstack/db':
         specifier: ^0.6.5
         version: 0.6.5(typescript@5.8.3)
@@ -111,9 +108,6 @@ importers:
       '@party-stack/ontology':
         specifier: workspace:*
         version: link:../../packages/ontology
-      '@party-stack/schema':
-        specifier: workspace:*
-        version: link:../../packages/schema
       '@tanstack/db':
         specifier: ^0.6.5
         version: 0.6.5(typescript@5.8.3)
@@ -178,9 +172,6 @@ importers:
       '@party-stack/remote-ontology':
         specifier: workspace:*
         version: link:../../packages/remote-ontology
-      '@party-stack/schema':
-        specifier: workspace:*
-        version: link:../../packages/schema
       '@party-stack/sqlite-ontology':
         specifier: workspace:*
         version: link:../../packages/sqlite-ontology
@@ -772,9 +763,6 @@ importers:
       '@party-stack/blobs':
         specifier: workspace:*
         version: link:../blobs
-      '@party-stack/schema':
-        specifier: workspace:*
-        version: link:../schema
       change-case:
         specifier: ^5.4.4
         version: 5.4.4
@@ -861,46 +849,6 @@ importers:
       vitest:
         specifier: ^3.1.1
         version: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.1)(jiti@2.6.1)(jsdom@27.2.0)(lightningcss@1.32.0)(terser@5.46.2)(tsx@4.20.6)(yaml@2.8.4)
-
-  packages/schema:
-    dependencies:
-      '@standard-schema/spec':
-        specifier: ^1.1.0
-        version: 1.1.0
-      commander:
-        specifier: ^14.0.2
-        version: 14.0.2
-      jiti:
-        specifier: ^2.6.1
-        version: 2.6.1
-      prettier:
-        specifier: ^3.5.3
-        version: 3.6.2
-      temporal-polyfill:
-        specifier: ^0.3.0
-        version: 0.3.0
-      ts-morph:
-        specifier: ^27.0.2
-        version: 27.0.2
-      zod:
-        specifier: ^4.1.13
-        version: 4.1.13
-    devDependencies:
-      '@bobbyfidz/universal-build-config':
-        specifier: ^0.1.1
-        version: 0.1.1(eslint@9.28.0(jiti@2.6.1))(typescript@5.8.3)
-      eslint:
-        specifier: ^9.25.0
-        version: 9.28.0(jiti@2.6.1)
-      tsx:
-        specifier: ^4.20.6
-        version: 4.20.6
-      typescript:
-        specifier: ~5.8.3
-        version: 5.8.3
-      vitest:
-        specifier: ^3.1.1
-        version: 3.2.4(@types/debug@4.1.12)(@types/node@25.6.0)(jiti@2.6.1)(jsdom@27.2.0)(lightningcss@1.32.0)(terser@5.46.2)(tsx@4.20.6)(yaml@2.8.4)
 
   packages/sqlite-ontology:
     dependencies:

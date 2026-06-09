@@ -1,18 +1,6 @@
 // Auto-generated file - do not edit manually
 
-import * as v from "@party-stack/schema/values";
-
-export type attachment = {
-    id: string;
-    size?: v.double;
-    type?: string;
-    name?: string;
-    source?: {
-        objectType: string;
-        primaryKey: string | number;
-        property: string;
-    };
-};
+import * as v from "@party-stack/ontology/values";
 
 export type Note = {
     id: string;
@@ -27,7 +15,7 @@ export type NoteAttachment = {
     id: string;
     noteId: string;
     ownerEmail: string;
-    attachment: attachment;
+    attachment: v.attachment;
     createdAt: v.timestamp;
 };
 
@@ -37,24 +25,20 @@ export type CreateNoteParameters = {
     bodyMarkdown: string;
     ownerEmail?: string;
 };
-
 export type UpdateNoteParameters = {
     note: string;
-    title?: string;
-    bodyMarkdown?: string;
+    title?: string | null;
+    bodyMarkdown?: string | null;
 };
-
 export type DeleteNoteParameters = {
     note: string;
 };
-
 export type CreateNoteAttachmentParameters = {
     id?: string;
     note: string;
     ownerEmail?: string;
-    attachment: attachment;
+    attachment: v.attachment;
 };
-
 export type RemoteNotesOntology = {
     objectTypes: {
         Note: Note;

@@ -1,18 +1,11 @@
 // Auto-generated file - do not edit manually
 
-import * as v from "@party-stack/schema/values";
-
-export type attachment = {
-    id: string;
-    size?: v.double;
-    type?: string;
-    name?: string;
-};
+import * as v from "@party-stack/ontology/values";
 
 export type Task = {
     createdAt: v.timestamp;
     completedAt: v.timestamp;
-    attachments: Array<attachment>;
+    attachments: Array<v.attachment>;
     createdBy: string;
     location: v.geopoint;
     id: string;
@@ -25,7 +18,7 @@ export type CompleteTaskParameters = {
     __now?: v.timestamp;
 };
 export type CreateTaskParameters = {
-    attachments?: Array<attachment> | null;
+    attachments?: Array<v.attachment> | null;
     location?: v.geopoint | null;
     title: string;
     "__uuid_9131b78a-d4a1-443b-9fca-a3f70c2355ef"?: string;
