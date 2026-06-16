@@ -20,7 +20,7 @@ describe("createFoundryCodec", () => {
             ],
             linkTypes: [],
             actionTypes: [],
-            queryTypes: [],
+            queryFunctionTypes: [],
         });
 
         expect(codec.encodeValue(o.attachment({}), { id: "ri.attachments.main.attachment.1" })).toBe(
@@ -62,7 +62,7 @@ describe("createFoundryCodec", () => {
             ],
             linkTypes: [],
             actionTypes: [],
-            queryTypes: [],
+            queryFunctionTypes: [],
         });
 
         expect(

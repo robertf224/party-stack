@@ -1,4 +1,4 @@
-import type { QueryParameterDef, QueryTypeDef, TypeDef } from "@party-stack/ontology";
+import type { QueryFunctionParameterDef, QueryFunctionTypeDef, TypeDef } from "@party-stack/ontology";
 import type { QueryDataType, QueryParameterV2, QueryTypeV2 } from "@osdk/foundry.ontologies";
 
 function stringType(): TypeDef {
@@ -98,7 +98,7 @@ function convertQueryDataType(type: QueryDataType): TypeDef {
     }
 }
 
-function convertQueryParameter(name: string, parameter: QueryParameterV2): QueryParameterDef {
+function convertQueryFunctionParameter(name: string, parameter: QueryParameterV2): QueryFunctionParameterDef {
     return {
         name,
         displayName: name,
@@ -107,13 +107,13 @@ function convertQueryParameter(name: string, parameter: QueryParameterV2): Query
     };
 }
 
-export function convertFoundryMetaQueryType(query: QueryTypeV2): QueryTypeDef {
+export function convertFoundryMetaQueryFunctionType(query: QueryTypeV2): QueryFunctionTypeDef {
     return {
         name: query.apiName,
         displayName: query.displayName ?? query.apiName,
         description: query.description,
         parameters: Object.entries(query.parameters).map(([name, parameter]) =>
-            convertQueryParameter(name, parameter)
+            convertQueryFunctionParameter(name, parameter)
         ),
         returnType: convertQueryDataType(query.output),
     };

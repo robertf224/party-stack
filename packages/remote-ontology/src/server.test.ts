@@ -39,7 +39,7 @@ const ir: OntologyIR = {
             ],
         },
     ],
-    queryTypes: [
+    queryFunctionTypes: [
         {
             name: "greet",
             displayName: "Greet",
@@ -80,7 +80,7 @@ describe("remote ontology server policy projection", () => {
             applyAction: async (_actionType, parameters) => {
                 appliedParameters = parameters;
             },
-            runQuery: async (_queryType, parameters) => `Hello ${parameters.name}`,
+            runQueryFunction: async (_queryFunctionType, parameters) => `Hello ${parameters.name}`,
         };
         const server = createRemoteOntologyServer<any, any>({
             ir,
@@ -140,7 +140,7 @@ describe("remote ontology server policy projection", () => {
                 name: "test",
                 getCollectionOptions: readyCollectionOptions,
                 applyAction: async () => {},
-                runQuery: async () => undefined,
+                runQueryFunction: async () => undefined,
             },
             getContext: () => ({ user: { email: "alice@example.com" }, serviceUser: "svc" }),
             policy: {
@@ -184,7 +184,7 @@ describe("remote ontology server policy projection", () => {
                 name: "test",
                 getCollectionOptions: readyCollectionOptions,
                 applyAction: async () => {},
-                runQuery: async () => undefined,
+                runQueryFunction: async () => undefined,
             },
             getContext: () => ({ user: { email: "alice@example.com" }, serviceUser: "svc" }),
             policy: {
@@ -212,25 +212,25 @@ describe("remote ontology server policy projection", () => {
         expect(step.value.values).toEqual([]);
     });
 
-    it("runs queries through the remote query endpoint", async () => {
+    it("runs query functions through the remote query function endpoint", async () => {
         const server = createRemoteOntologyServer<any, any>({
             ir,
             adapter: {
                 name: "test",
                 getCollectionOptions: readyCollectionOptions,
                 applyAction: async () => {},
-                runQuery: async (_queryType, parameters) => `Hello ${parameters.name}`,
+                runQueryFunction: async (_queryFunctionType, parameters) => `Hello ${parameters.name}`,
             },
             policy: {
-                canRunQuery: () => true,
+                canRunQueryFunction: () => true,
             },
         });
 
         const response = await server.handleRequest(
-            new Request("http://example.test/run-query", {
+            new Request("http://example.test/run-query-function", {
                 method: "POST",
                 body: serializeRemoteOntologyJson({
-                    queryType: "greet",
+                    queryFunctionType: "greet",
                     parameters: { name: "Alice" },
                 }),
             })

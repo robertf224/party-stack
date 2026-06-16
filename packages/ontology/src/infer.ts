@@ -45,8 +45,8 @@ type ActionTypes<Ontology> = Ontology extends { readonly actionTypes: infer Acti
     ? ArrayElement<ActionTypes>
     : never;
 
-type QueryTypes<Ontology> = Ontology extends { readonly queryTypes: infer QueryTypes }
-    ? ArrayElement<QueryTypes>
+type QueryFunctionTypes<Ontology> = Ontology extends { readonly queryFunctionTypes: infer QueryFunctionTypes }
+    ? ArrayElement<QueryFunctionTypes>
     : never;
 
 type ObjectTypeName<Ontology> =
@@ -55,8 +55,8 @@ type ObjectTypeName<Ontology> =
 type ActionTypeName<Ontology> =
     ActionTypes<Ontology> extends { readonly name: infer Name extends PropertyKey } ? Name : never;
 
-type QueryTypeName<Ontology> =
-    QueryTypes<Ontology> extends { readonly name: infer Name extends PropertyKey } ? Name : never;
+type QueryFunctionTypeName<Ontology> =
+    QueryFunctionTypes<Ontology> extends { readonly name: infer Name extends PropertyKey } ? Name : never;
 
 type NamedTypeByName<Ontology, Name extends PropertyKey> = Extract<
     NamedTypes<Ontology>,
@@ -73,8 +73,8 @@ type ActionTypeByName<Ontology, Name extends PropertyKey> = Extract<
     { readonly name: Name }
 >;
 
-type QueryTypeByName<Ontology, Name extends PropertyKey> = Extract<
-    QueryTypes<Ontology>,
+type QueryFunctionTypeByName<Ontology, Name extends PropertyKey> = Extract<
+    QueryFunctionTypes<Ontology>,
     { readonly name: Name }
 >;
 
@@ -276,11 +276,11 @@ type InferActionParameters<Parameters, Ontology> =
               }
           >;
 
-type QueryParameters<QueryType> = QueryType extends { readonly parameters: infer Parameters }
+type QueryParameters<QueryFunctionType> = QueryFunctionType extends { readonly parameters: infer Parameters }
     ? Parameters
     : never;
 
-type QueryReturnType<QueryType> = QueryType extends { readonly returnType: infer ReturnType }
+type QueryReturnType<QueryFunctionType> = QueryFunctionType extends { readonly returnType: infer ReturnType }
     ? ReturnType
     : never;
 
@@ -351,10 +351,10 @@ export type InferOntology<Ontology> = {
             parameters: InferActionParameters<ActionParameters<ActionTypeByName<Ontology, Name>>, Ontology>;
         };
     };
-    queryTypes: {
-        [Name in QueryTypeName<Ontology>]: {
-            parameters: InferQueryParameters<QueryParameters<QueryTypeByName<Ontology, Name>>, Ontology>;
-            returnType: InferType<QueryReturnType<QueryTypeByName<Ontology, Name>>, Ontology>;
+    queryFunctionTypes: {
+        [Name in QueryFunctionTypeName<Ontology>]: {
+            parameters: InferQueryParameters<QueryParameters<QueryFunctionTypeByName<Ontology, Name>>, Ontology>;
+            returnType: InferType<QueryReturnType<QueryFunctionTypeByName<Ontology, Name>>, Ontology>;
         };
     };
 } & OntologyDefinition;

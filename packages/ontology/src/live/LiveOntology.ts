@@ -24,7 +24,7 @@ export interface OntologyDefinition {
             parameters: Record<string, unknown>;
         }
     >;
-    queryTypes: Record<
+    queryFunctionTypes: Record<
         string,
         {
             parameters: Record<string, unknown>;
@@ -44,7 +44,7 @@ export type LiveOntologyAction<Parameters extends Record<string, unknown> = Reco
     parameters: Parameters
 ) => LiveOntologyActionExecution;
 
-export type LiveOntologyQuery<
+export type LiveOntologyQueryFunction<
     Parameters extends Record<string, unknown> = Record<string, unknown>,
     Return = unknown,
 > = (parameters: Parameters) => Promise<Return>;
@@ -59,17 +59,17 @@ export type LiveOntologyActions<ActionTypes extends OntologyDefinition["actionTy
     [ActionTypeName in keyof ActionTypes]: LiveOntologyAction<ActionTypes[ActionTypeName]["parameters"]>;
 };
 
-export type LiveOntologyQueries<QueryTypes extends OntologyDefinition["queryTypes"]> = {
-    [QueryTypeName in keyof QueryTypes]: LiveOntologyQuery<
-        QueryTypes[QueryTypeName]["parameters"],
-        QueryTypes[QueryTypeName]["returnType"]
+export type LiveOntologyQueryFunctions<QueryFunctionTypes extends OntologyDefinition["queryFunctionTypes"]> = {
+    [QueryFunctionTypeName in keyof QueryFunctionTypes]: LiveOntologyQueryFunction<
+        QueryFunctionTypes[QueryFunctionTypeName]["parameters"],
+        QueryFunctionTypes[QueryFunctionTypeName]["returnType"]
     >;
 };
 
 export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefinition> {
     objects: LiveOntologyObjects<Ontology["objectTypes"]>;
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
-    queries: LiveOntologyQueries<Ontology["queryTypes"]>;
+    queryFunctions: LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>;
     attachments?: LiveOntologyAttachments;
     cleanup: () => Promise<void>;
 }
@@ -204,12 +204,12 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
             },
         ])
     );
-    const queries = Object.fromEntries(
-        opts.ir.queryTypes.map((queryType) => [
-            queryType.name,
+    const queryFunctions = Object.fromEntries(
+        opts.ir.queryFunctionTypes.map((queryFunctionType) => [
+            queryFunctionType.name,
             (parameters: Record<string, unknown>) => {
                 const context = opts.getContext?.() ?? {};
-                return opts.adapter.runQuery(queryType.name, parameters, {
+                return opts.adapter.runQueryFunction(queryFunctionType.name, parameters, {
                     objects: objects as Record<string, Collection<Record<string, unknown>>>,
                     context,
                 });
@@ -220,7 +220,7 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
     return {
         objects: objects as unknown as LiveOntologyObjects<Ontology["objectTypes"]>,
         actions: actions as unknown as LiveOntologyActions<Ontology["actionTypes"]>,
-        queries: queries as unknown as LiveOntologyQueries<Ontology["queryTypes"]>,
+        queryFunctions: queryFunctions as unknown as LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>,
         attachments,
         cleanup: async () => {
             await Promise.all(Object.values(objects).map((collection) => collection.cleanup()));

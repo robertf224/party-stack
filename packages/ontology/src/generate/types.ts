@@ -242,22 +242,22 @@ function addOntologyAggregateType(
     });
 
     properties.push({
-        name: "queryTypes",
+        name: "queryFunctionTypes",
         type:
-            ir.queryTypes.length === 0
+            ir.queryFunctionTypes.length === 0
                 ? "Record<never, never>"
                 : Writers.objectType({
-                      properties: ir.queryTypes.map((queryType) => ({
-                          name: renderPropertyName(queryType.name),
+                      properties: ir.queryFunctionTypes.map((queryFunctionType) => ({
+                          name: renderPropertyName(queryFunctionType.name),
                           type: Writers.objectType({
                               properties: [
                                   {
                                       name: "parameters",
-                                      type: `${pascalCase(queryType.name)}Parameters`,
+                                      type: `${pascalCase(queryFunctionType.name)}Parameters`,
                                   },
                                   {
                                       name: "returnType",
-                                      type: `${pascalCase(queryType.name)}Return`,
+                                      type: `${pascalCase(queryFunctionType.name)}Return`,
                                   },
                               ],
                           }),
@@ -299,13 +299,13 @@ function addActionParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: 
 
 function addQueryParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: OntologyIR): void {
     const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
-    for (const queryType of ir.queryTypes) {
+    for (const queryFunctionType of ir.queryFunctionTypes) {
         sourceFile.addTypeAlias({
-            name: `${pascalCase(queryType.name)}Parameters`,
+            name: `${pascalCase(queryFunctionType.name)}Parameters`,
             isExported: true,
             type: withWriter(
                 Writers.objectType({
-                    properties: queryType.parameters.map((parameter) => {
+                    properties: queryFunctionType.parameters.map((parameter) => {
                         const parameterType = parameter.type;
                         const isOptional = parameterType.kind === "optional";
                         const type = isOptional ? parameterType.value.type : parameterType;
@@ -320,10 +320,10 @@ function addQueryParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: O
             ),
         });
         sourceFile.addTypeAlias({
-            name: `${pascalCase(queryType.name)}Return`,
+            name: `${pascalCase(queryFunctionType.name)}Return`,
             isExported: true,
-            type: generateForTypeDef(queryType.returnType, { objectTypes }),
-            docs: buildJsDocs({ description: queryType.description, deprecated: queryType.deprecated }),
+            type: generateForTypeDef(queryFunctionType.returnType, { objectTypes }),
+            docs: buildJsDocs({ description: queryFunctionType.description, deprecated: queryFunctionType.deprecated }),
         });
     }
 }

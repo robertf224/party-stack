@@ -3,17 +3,17 @@ import { FieldPath, LoadSubsetOptions, parseWhereExpression } from "@tanstack/db
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
 import type { OntologyClient } from "@party-stack/foundry-client";
-import type { OntologyCollectionOptions, QueryTypeDef } from "@party-stack/ontology";
+import type { OntologyCollectionOptions, QueryFunctionTypeDef } from "@party-stack/ontology";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
-import { convertFoundryMetaQueryType } from "./convertMetaQueryType.js";
+import { convertFoundryMetaQueryFunctionType } from "./convertMetaQueryFunctionType.js";
 import type { QueryTypeV2 } from "@osdk/foundry.ontologies";
 
-export interface QueryTypeCollectionOpts {
+export interface QueryFunctionTypeCollectionOpts {
     client: OntologyClient;
     queryClient?: QueryClient;
 }
 
-async function listQueryTypes(opts: QueryTypeCollectionOpts): Promise<QueryTypeV2[]> {
+async function listQueryFunctionTypes(opts: QueryFunctionTypeCollectionOpts): Promise<QueryTypeV2[]> {
     return AsyncIterable.toArray(
         AsyncIterable.fromPagination(
             (pageSize, pageToken: string | undefined) =>
@@ -28,7 +28,7 @@ async function listQueryTypes(opts: QueryTypeCollectionOpts): Promise<QueryTypeV
     );
 }
 
-async function getQueryTypes(opts: QueryTypeCollectionOpts, names: string[]): Promise<QueryTypeV2[]> {
+async function getQueryFunctionTypes(opts: QueryFunctionTypeCollectionOpts, names: string[]): Promise<QueryTypeV2[]> {
     const uniqueNames = Array.from(new Set(names));
     if (uniqueNames.length === 0) return [];
     return Promise.all(
@@ -36,32 +36,32 @@ async function getQueryTypes(opts: QueryTypeCollectionOpts, names: string[]): Pr
     );
 }
 
-export function queryTypeCollectionOptions(opts: QueryTypeCollectionOpts): OntologyCollectionOptions {
-    return queryCollectionOptions<QueryTypeDef>({
+export function queryFunctionTypeCollectionOptions(opts: QueryFunctionTypeCollectionOpts): OntologyCollectionOptions {
+    return queryCollectionOptions<QueryFunctionTypeDef>({
         queryClient: opts.queryClient ?? new QueryClient(),
         getKey: (row: { name: string }) => row.name,
-        queryKey: ["foundry", "ontology", "queryTypes"],
+        queryKey: ["foundry", "ontology", "queryFunctionTypes"],
         syncMode: "on-demand",
-        queryFn: async (ctx): Promise<QueryTypeDef[]> => {
-            const query = convertQueryTypeQuery(ctx.meta?.loadSubsetOptions);
-            const queryTypes =
+        queryFn: async (ctx): Promise<QueryFunctionTypeDef[]> => {
+            const query = convertQueryFunctionTypeQuery(ctx.meta?.loadSubsetOptions);
+            const queryFunctionTypes =
                 query.type === "getBatch"
-                    ? await getQueryTypes(opts, query.names)
-                    : await listQueryTypes(opts);
-            return queryTypes.map(convertFoundryMetaQueryType);
+                    ? await getQueryFunctionTypes(opts, query.names)
+                    : await listQueryFunctionTypes(opts);
+            return queryFunctionTypes.map(convertFoundryMetaQueryFunctionType);
         },
     }) as unknown as OntologyCollectionOptions;
 }
 
-type QueryTypeQuery = { type: "getBatch"; names: string[] } | { type: "list" };
+type QueryFunctionTypeQuery = { type: "getBatch"; names: string[] } | { type: "list" };
 
-function convertQueryTypeQuery(options?: LoadSubsetOptions): QueryTypeQuery {
+function convertQueryFunctionTypeQuery(options?: LoadSubsetOptions): QueryFunctionTypeQuery {
     if (!options?.where) {
         return { type: "list" };
     }
 
     const batchQuery =
-        parseWhereExpression<QueryTypeQuery | undefined>(options.where, {
+        parseWhereExpression<QueryFunctionTypeQuery | undefined>(options.where, {
             handlers: {
                 eq: (field: FieldPath, value: unknown) => {
                     if (field.join(".") === "name") {

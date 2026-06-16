@@ -89,7 +89,7 @@ describe("generateTypes", () => {
             ],
             linkTypes: [],
             actionTypes: [],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
 
         const output = generateTypes(ontology, { outputTypeName: "TestOntology" });
@@ -144,7 +144,7 @@ describe("generateTypes", () => {
                     logic: [],
                 },
             ],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
 
         const output = generateTypes(ontology, { outputTypeName: "TestOntology" });
@@ -184,7 +184,7 @@ describe("generateTypes", () => {
                     logic: [],
                 },
             ],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
 
         const output = generateTypes(ontology, { outputTypeName: "TestOntology" });
@@ -214,7 +214,7 @@ describe("generateTypes", () => {
                     logic: [],
                 },
             ],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
 
         const output = generateTypes(ontology, { outputTypeName: "TestOntology" });
@@ -223,13 +223,13 @@ describe("generateTypes", () => {
         expect(output).toContain('"create-task": {');
     });
 
-    it("generates query type parameter and return types", () => {
+    it("generates query function type parameter and return types", () => {
         const ontology: OntologyIR = {
             types: [],
             objectTypes: [],
             linkTypes: [],
             actionTypes: [],
-            queryTypes: [
+            queryFunctionTypes: [
                 {
                     name: "searchPosts",
                     displayName: "Search Posts",
@@ -252,7 +252,7 @@ describe("generateTypes", () => {
         expect(output).toContain("query: string;");
         expect(output).toContain("limit?: v.integer | undefined;");
         expect(output).toContain("export type SearchPostsReturn = Array<string>;");
-        expect(output).toContain("queryTypes: {");
+        expect(output).toContain("queryFunctionTypes: {");
         expect(output).toContain("searchPosts: {");
         expect(output).toContain("parameters: SearchPostsParameters;");
         expect(output).toContain("returnType: SearchPostsReturn;");

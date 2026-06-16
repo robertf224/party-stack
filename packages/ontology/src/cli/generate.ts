@@ -85,7 +85,7 @@ function isTypeOnlyOntology(ontology: OntologyIR): boolean {
         ontology.objectTypes.length === 0 &&
         ontology.linkTypes.length === 0 &&
         ontology.actionTypes.length === 0 &&
-        ontology.queryTypes.length === 0
+        ontology.queryFunctionTypes.length === 0
     );
 }
 

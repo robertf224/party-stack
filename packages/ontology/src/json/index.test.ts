@@ -40,7 +40,7 @@ const ir = {
             logic: [],
         },
     ],
-    queryTypes: [
+    queryFunctionTypes: [
         {
             name: "getPost",
             displayName: "Get post",
@@ -89,7 +89,7 @@ describe("ontology JSON codec", () => {
         expect(decode({ ir, target: { kind: "object", name: "Post" }, value: encoded })).toEqual(object);
     });
 
-    it("encodes and decodes action and query parameter objects by name", () => {
+    it("encodes and decodes action and query function parameter objects by name", () => {
         const value = {
             metadata: {
                 publishedOn: Temporal.PlainDate.from("2026-06-09"),
@@ -132,7 +132,7 @@ describe("ontology JSON codec", () => {
         expect(
             decode({
                 ir,
-                target: { kind: "queryReturn", queryType: "getPost" },
+                target: { kind: "queryFunctionReturn", queryFunctionType: "getPost" },
                 value: encoded,
             })
         ).toEqual(value);

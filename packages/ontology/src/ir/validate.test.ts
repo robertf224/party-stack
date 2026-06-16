@@ -23,7 +23,7 @@ const emptyOntology: OntologyIR = {
     objectTypes: [],
     linkTypes: [],
     actionTypes: [],
-    queryTypes: [],
+    queryFunctionTypes: [],
 };
 
 const minimalObjectType = (overrides?: Partial<OntologyIR["objectTypes"][number]>) => ({
@@ -149,10 +149,10 @@ describe("Ontology Validation", () => {
             expect(getErrors(result)).toContain('Duplicate property name: "id".');
         });
 
-        it("should detect duplicate query type names and parameters", () => {
+        it("should detect duplicate query function type names and parameters", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
-                queryTypes: [
+                queryFunctionTypes: [
                     {
                         name: "search",
                         displayName: "Search",
@@ -173,8 +173,8 @@ describe("Ontology Validation", () => {
 
             const result = validate(ontology);
             expectErr(result, 2);
-            expect(getErrors(result)).toContain('Duplicate query parameter name: "query".');
-            expect(getErrors(result)).toContain('Duplicate query type name: "search".');
+            expect(getErrors(result)).toContain('Duplicate query function parameter name: "query".');
+            expect(getErrors(result)).toContain('Duplicate query function type name: "search".');
         });
     });
 
@@ -289,10 +289,10 @@ describe("Ontology Validation", () => {
             expect(getErrors(result)).toContain('Unknown value type reference: "UnknownType".');
         });
 
-        it("should detect unknown value type references in query types", () => {
+        it("should detect unknown value type references in query function types", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
-                queryTypes: [
+                queryFunctionTypes: [
                     {
                         name: "lookup",
                         displayName: "Lookup",

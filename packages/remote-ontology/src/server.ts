@@ -31,8 +31,8 @@ import type {
     RemoteDescribeRequest,
     RemoteLoadSubsetRequest,
     RemoteLoadSubsetResponse,
-    RemoteRunQueryRequest,
-    RemoteRunQueryResponse,
+    RemoteRunQueryFunctionRequest,
+    RemoteRunQueryFunctionResponse,
     RemoteOntologyEndpoint,
     RemoteOntologyDescription,
     RemoteLoadSubsetOptions,
@@ -132,17 +132,17 @@ export type RemoteOntologyApplyActionRequest<
     };
 }[Extract<keyof Ontology["actionTypes"], string>];
 
-export type RemoteOntologyRunQueryRequest<
+export type RemoteOntologyRunQueryFunctionRequest<
     Ontology extends OntologyDefinition = OntologyDefinition,
 > = {
-    [QueryTypeName in Extract<
-        keyof Ontology["queryTypes"],
+    [QueryFunctionTypeName in Extract<
+        keyof Ontology["queryFunctionTypes"],
         string
     >]: {
-        queryType: QueryTypeName;
-        parameters: Ontology["queryTypes"][QueryTypeName]["parameters"];
+        queryFunctionType: QueryFunctionTypeName;
+        parameters: Ontology["queryFunctionTypes"][QueryFunctionTypeName]["parameters"];
     };
-}[Extract<keyof Ontology["queryTypes"], string>];
+}[Extract<keyof Ontology["queryFunctionTypes"], string>];
 
 export interface RemoteOntologyPolicy<
     Context,
@@ -157,9 +157,9 @@ export interface RemoteOntologyPolicy<
         request: RemoteOntologyApplyActionRequest<Ontology>,
         opts: RemoteOntologyCanApplyActionOptions<Ontology>
     ) => boolean | Promise<boolean>;
-    canRunQuery?: (
+    canRunQueryFunction?: (
         ctx: Context,
-        request: RemoteOntologyRunQueryRequest<Ontology>,
+        request: RemoteOntologyRunQueryFunctionRequest<Ontology>,
         opts: RemoteOntologyCanRunQueryOptions<Ontology>
     ) => boolean | Promise<boolean>;
 }
@@ -616,24 +616,24 @@ async function handleApplyAction<
     };
 }
 
-async function handleRunQuery<
+async function handleRunQueryFunction<
     Context,
     Ontology extends OntologyDefinition = OntologyDefinition,
 >(
     ctx: Context,
     opts: CreateRemoteOntologyServerOptions<Context, Ontology>,
-    request: RemoteRunQueryRequest
-): Promise<RemoteRunQueryResponse> {
+    request: RemoteRunQueryFunctionRequest
+): Promise<RemoteRunQueryFunctionResponse> {
     const ir = await resolveValue(opts.ir, ctx);
-    const queryTypeDef = ir.queryTypes.find((candidate) => candidate.name === request.queryType);
-    if (!queryTypeDef) {
-        throw new Error(`Unknown query type "${request.queryType}".`);
+    const queryFunctionTypeDef = ir.queryFunctionTypes.find((candidate) => candidate.name === request.queryFunctionType);
+    if (!queryFunctionTypeDef) {
+        throw new Error(`Unknown query function type "${request.queryFunctionType}".`);
     }
 
     const adapter = await resolveValue(opts.adapter, ctx);
     const parameters = decode({
         ir,
-        target: { kind: "queryParameters", queryType: request.queryType },
+        target: { kind: "queryFunctionParameters", queryFunctionType: request.queryFunctionType },
         value: request.parameters,
     }) as Record<string, unknown>;
     const ontology = createLiveOntology<Ontology>({
@@ -644,29 +644,29 @@ async function handleRunQuery<
 
     try {
         await waitForLiveOntologyReady(ontology);
-        const canRun = await opts.policy?.canRunQuery?.(
+        const canRun = await opts.policy?.canRunQueryFunction?.(
             ctx,
             {
-                queryType: request.queryType,
+                queryFunctionType: request.queryFunctionType,
                 parameters,
-            } as RemoteOntologyRunQueryRequest<Ontology>,
+            } as RemoteOntologyRunQueryFunctionRequest<Ontology>,
             {
                 objects: ontology.objects,
             }
         );
         if (canRun !== true) {
-            throw new RemoteOntologyForbiddenError(`Query type "${request.queryType}" is not allowed.`);
+            throw new RemoteOntologyForbiddenError(`Query function type "${request.queryFunctionType}" is not allowed.`);
         }
 
-        const query = ontology.queries[request.queryType];
-        if (!query) {
-            throw new Error(`Unknown query type "${request.queryType}".`);
+        const queryFunction = ontology.queryFunctions[request.queryFunctionType];
+        if (!queryFunction) {
+            throw new Error(`Unknown query function type "${request.queryFunctionType}".`);
         }
-        const value = await query(parameters);
+        const value = await queryFunction(parameters);
         return {
             value: encode({
                 ir,
-                target: { kind: "queryReturn", queryType: request.queryType },
+                target: { kind: "queryFunctionReturn", queryFunctionType: request.queryFunctionType },
                 value,
             }),
         };
@@ -803,11 +803,11 @@ export function createRemoteOntologyServer<
                     input as RemoteApplyActionRequest,
                     uploads
                 )) as RemoteOntologyResponseByEndpoint[TEndpoint];
-            case "run-query":
-                return (await handleRunQuery(
+            case "run-query-function":
+                return (await handleRunQueryFunction(
                     ctx,
                     opts,
-                    input as RemoteRunQueryRequest
+                    input as RemoteRunQueryFunctionRequest
                 )) as RemoteOntologyResponseByEndpoint[TEndpoint];
             case "attachment-metadata":
                 return (

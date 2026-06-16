@@ -6,7 +6,7 @@ import type {
     OntologyIR,
     PropertyAssignment,
     PropertyDef,
-    QueryTypeDef,
+    QueryFunctionTypeDef,
     TypeDef,
     ValueReferenceExpression,
 } from "./generated/types.js";
@@ -492,8 +492,8 @@ function validateAction(
     return errors;
 }
 
-function validateQueryType(
-    queryType: QueryTypeDef,
+function validateQueryFunctionType(
+    queryFunctionType: QueryFunctionTypeDef,
     path: ValidationPathElement[],
     valueTypeNames: Set<string>,
     objectTypeNames: Set<string>
@@ -501,13 +501,13 @@ function validateQueryType(
     const errors: ValidationError[] = [];
     const seenParameters = new Set<string>();
 
-    for (let index = 0; index < queryType.parameters.length; index++) {
-        const parameter = queryType.parameters[index]!;
+    for (let index = 0; index < queryFunctionType.parameters.length; index++) {
+        const parameter = queryFunctionType.parameters[index]!;
         const parameterPath = [...path, "parameters", index];
 
         if (seenParameters.has(parameter.name)) {
             errors.push({
-                message: `Duplicate query parameter name: "${parameter.name}".`,
+                message: `Duplicate query function parameter name: "${parameter.name}".`,
                 path: [...parameterPath, "name"],
             });
         }
@@ -516,7 +516,7 @@ function validateQueryType(
         errors.push(...validateTypeDef(parameter.type, [...parameterPath, "type"], valueTypeNames, objectTypeNames));
     }
 
-    errors.push(...validateTypeDef(queryType.returnType, [...path, "returnType"], valueTypeNames, objectTypeNames));
+    errors.push(...validateTypeDef(queryFunctionType.returnType, [...path, "returnType"], valueTypeNames, objectTypeNames));
 
     return errors;
 }
@@ -632,20 +632,20 @@ export function validate(ontology: OntologyIR): ValidationResult {
         errors.push(...validateAction(action, actionPath, valueTypes, objectTypes));
     }
 
-    const queryTypeNames = new Set<string>();
-    for (let i = 0; i < ontology.queryTypes.length; i++) {
-        const queryType = ontology.queryTypes[i]!;
-        const queryTypePath = ["queryTypes", i] as ValidationPathElement[];
+    const queryFunctionTypeNames = new Set<string>();
+    for (let i = 0; i < ontology.queryFunctionTypes.length; i++) {
+        const queryFunctionType = ontology.queryFunctionTypes[i]!;
+        const queryFunctionTypePath = ["queryFunctionTypes", i] as ValidationPathElement[];
 
-        if (queryTypeNames.has(queryType.name)) {
+        if (queryFunctionTypeNames.has(queryFunctionType.name)) {
             errors.push({
-                message: `Duplicate query type name: "${queryType.name}".`,
-                path: [...queryTypePath, "name"],
+                message: `Duplicate query function type name: "${queryFunctionType.name}".`,
+                path: [...queryFunctionTypePath, "name"],
             });
         }
-        queryTypeNames.add(queryType.name);
+        queryFunctionTypeNames.add(queryFunctionType.name);
 
-        errors.push(...validateQueryType(queryType, queryTypePath, valueTypeNames, objectTypeNames));
+        errors.push(...validateQueryFunctionType(queryFunctionType, queryFunctionTypePath, valueTypeNames, objectTypeNames));
     }
 
     return errors.length === 0 ? { kind: "ok" } : { kind: "err", errors };

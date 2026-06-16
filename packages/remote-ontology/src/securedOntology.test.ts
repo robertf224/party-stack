@@ -64,7 +64,7 @@ const ir: OntologyIR = {
             ],
         },
     ],
-    queryTypes: [
+    queryFunctionTypes: [
         {
             name: "publicSearch",
             displayName: "Public search",

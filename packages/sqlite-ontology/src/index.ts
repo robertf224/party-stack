@@ -538,8 +538,8 @@ export function createSQLiteOntologyAdapter(opts: CreateSQLiteOntologyAdapterOpt
 
             await transaction.isPersisted.promise;
         },
-        runQuery: (name) =>
-            Promise.reject(new Error(`SQLite ontology adapter cannot run query type "${name}".`)),
+        runQueryFunction: (name) =>
+            Promise.reject(new Error(`SQLite ontology adapter cannot run query function type "${name}".`)),
         attachments: createAttachmentsAdapter(opts.database),
     };
 }

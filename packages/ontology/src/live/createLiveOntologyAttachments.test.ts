@@ -21,7 +21,7 @@ const ir: OntologyIR = {
     ],
     linkTypes: [],
     actionTypes: [],
-    queryTypes: [],
+    queryFunctionTypes: [],
 };
 
 describe("createLiveOntologyAttachments", () => {
@@ -39,7 +39,7 @@ describe("createLiveOntologyAttachments", () => {
                 },
             }),
             applyAction: () => Promise.resolve(),
-            runQuery: () => Promise.reject(new Error("unexpected query run")),
+            runQueryFunction: () => Promise.reject(new Error("unexpected query run")),
             attachments: {
                 generateAttachmentId: () => "attachment-1",
                 materializeAttachment: async (attachment, blob) => {

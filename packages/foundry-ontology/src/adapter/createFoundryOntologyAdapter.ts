@@ -222,13 +222,13 @@ export function createFoundryOntologyAdapter(opts: {
                 );
             }
         },
-        runQuery: async (name, parameters) => {
-            const queryType = opts.ir.queryTypes.find((candidate) => candidate.name === name);
-            if (!queryType) {
-                throw new Error(`Unknown Foundry query type "${name}".`);
+        runQueryFunction: async (name, parameters) => {
+            const queryFunctionType = opts.ir.queryFunctionTypes.find((candidate) => candidate.name === name);
+            if (!queryFunctionType) {
+                throw new Error(`Unknown Foundry query function type "${name}".`);
             }
 
-            const parameterTypes = new Map(queryType.parameters.map((parameter) => [parameter.name, parameter.type]));
+            const parameterTypes = new Map(queryFunctionType.parameters.map((parameter) => [parameter.name, parameter.type]));
             const requestParameters: Record<string, unknown> = {};
             for (const [parameterName, value] of Object.entries(parameters)) {
                 if (value === undefined) continue;
@@ -245,7 +245,7 @@ export function createFoundryOntologyAdapter(opts: {
                 }
             );
 
-            return codec.decodeValue(queryType.returnType, result.value);
+            return codec.decodeValue(queryFunctionType.returnType, result.value);
         },
         attachments,
     };

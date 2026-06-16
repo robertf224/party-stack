@@ -10,7 +10,7 @@ describe("unwrapValueType", () => {
             objectTypes: [],
             linkTypes: [],
             actionTypes: [],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
         const type = o.optional({
             type: o.list({
@@ -40,7 +40,7 @@ describe("unwrapValueType", () => {
             objectTypes: [],
             linkTypes: [],
             actionTypes: [],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
 
         expect(unwrapValueType(ir, o.ref({ name: "AttachmentList" }))).toEqual(o.attachment({}));
@@ -52,7 +52,7 @@ describe("unwrapValueType", () => {
             objectTypes: [],
             linkTypes: [],
             actionTypes: [],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
 
         expect(() => unwrapValueType(ir, o.ref({ name: "MissingType" }))).toThrow(
@@ -71,7 +71,7 @@ describe("resolveType", () => {
             objectTypes: [],
             linkTypes: [],
             actionTypes: [],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
 
         expect(resolveType(ir, o.ref({ name: "AttachmentAlias" }))).toEqual(o.attachment({}));
@@ -83,7 +83,7 @@ describe("resolveType", () => {
             objectTypes: [],
             linkTypes: [],
             actionTypes: [],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
 
         expect(() => resolveType(ir, o.ref({ name: "MissingType" }))).toThrow(
@@ -125,7 +125,7 @@ describe("getTargetValueType", () => {
             ],
             linkTypes: [],
             actionTypes: [],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
 
         expect(getTargetValueType(ir, { objectType: "Post", property: "attachments" })).toEqual(
@@ -139,7 +139,7 @@ describe("getTargetValueType", () => {
             objectTypes: [],
             linkTypes: [],
             actionTypes: [],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
 
         expect(() => getTargetValueType(ir, { objectType: "Post", property: "attachments" })).toThrow(
@@ -161,7 +161,7 @@ describe("getTargetValueType", () => {
             ],
             linkTypes: [],
             actionTypes: [],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
 
         expect(() => getTargetValueType(ir, { objectType: "Post", property: "attachments" })).toThrow(

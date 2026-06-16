@@ -71,7 +71,7 @@ export type BlogOntology = {
             parameters: CreatePostParameters;
         };
     };
-    queryTypes: {
+    queryFunctionTypes: {
         searchPosts: {
             parameters: SearchPostsParameters;
             returnType: SearchPostsReturn;

@@ -83,9 +83,9 @@ export function createRemoteOntologyAdapter(opts: CreateRemoteOntologyAdapterOpt
                 })
             );
         },
-        runQuery: async (queryType, parameters) => {
-            const response = await transport.runQuery({
-                queryType,
+        runQueryFunction: async (queryFunctionType, parameters) => {
+            const response = await transport.runQueryFunction({
+                queryFunctionType,
                 parameters,
             });
             return response.value;

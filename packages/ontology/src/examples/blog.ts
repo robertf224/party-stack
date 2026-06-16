@@ -314,7 +314,7 @@ export default {
             ],
         },
     ],
-    queryTypes: [
+    queryFunctionTypes: [
         {
             name: "searchPosts",
             displayName: "Search Posts",

@@ -790,15 +790,15 @@ export default {
             }),
         },
         {
-            name: "QueryParameterDef",
-            description: "A parameter accepted by a query type.",
+            name: "QueryFunctionParameterDef",
+            description: "A parameter accepted by a query function type.",
             type: o.struct({
                 fields: [
                     {
                         name: "name",
                         displayName: "Name",
                         type: o.string({}),
-                        description: "The query parameter's programmatic name.",
+                        description: "The query function parameter's programmatic name.",
                     },
                     {
                         name: "displayName",
@@ -826,15 +826,15 @@ export default {
             }),
         },
         {
-            name: "QueryTypeDef",
-            description: "A runnable query type in the ontology.",
+            name: "QueryFunctionTypeDef",
+            description: "A runnable query function type in the ontology.",
             type: o.struct({
                 fields: [
                     {
                         name: "name",
                         displayName: "Name",
                         type: o.string({}),
-                        description: "The query type's programmatic name.",
+                        description: "The query function type's programmatic name.",
                     },
                     {
                         name: "displayName",
@@ -845,14 +845,14 @@ export default {
                     {
                         name: "parameters",
                         displayName: "Parameters",
-                        type: o.list({ elementType: o.ref({ name: "QueryParameterDef" }) }),
-                        description: "The query type's parameters.",
+                        type: o.list({ elementType: o.ref({ name: "QueryFunctionParameterDef" }) }),
+                        description: "The query function type's parameters.",
                     },
                     {
                         name: "returnType",
                         displayName: "Return type",
                         type: o.ref({ name: "TypeDef" }),
-                        description: "The query type's return type.",
+                        description: "The query function type's return type.",
                     },
                     {
                         name: "description",
@@ -898,10 +898,10 @@ export default {
                         description: "Action type definitions.",
                     },
                     {
-                        name: "queryTypes",
-                        displayName: "Query types",
-                        type: o.list({ elementType: o.ref({ name: "QueryTypeDef" }) }),
-                        description: "Query type definitions.",
+                        name: "queryFunctionTypes",
+                        displayName: "Query function types",
+                        type: o.list({ elementType: o.ref({ name: "QueryFunctionTypeDef" }) }),
+                        description: "Query function type definitions.",
                     },
                 ],
             }),
@@ -910,5 +910,5 @@ export default {
     objectTypes: [],
     linkTypes: [],
     actionTypes: [],
-    queryTypes: [],
+    queryFunctionTypes: [],
 } satisfies OntologyIR;

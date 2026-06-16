@@ -83,7 +83,7 @@ describe("Infer", () => {
                 logic: [],
             },
         ],
-        queryTypes: [
+        queryFunctionTypes: [
             {
                 name: "searchTasks",
                 displayName: "Search Tasks",
@@ -124,11 +124,11 @@ describe("Infer", () => {
             notes?: string | null;
             createdAt?: timestamp;
         }>();
-        expectTypeOf<InferredOntology["queryTypes"]["searchTasks"]["parameters"]>().toEqualTypeOf<{
+        expectTypeOf<InferredOntology["queryFunctionTypes"]["searchTasks"]["parameters"]>().toEqualTypeOf<{
             query: string;
             limit?: number;
         }>();
-        expectTypeOf<InferredOntology["queryTypes"]["searchTasks"]["returnType"]>().toEqualTypeOf<
+        expectTypeOf<InferredOntology["queryFunctionTypes"]["searchTasks"]["returnType"]>().toEqualTypeOf<
             string[]
         >();
     });

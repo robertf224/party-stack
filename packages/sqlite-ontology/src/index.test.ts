@@ -119,7 +119,7 @@ const ir: OntologyIR = {
             ],
         },
     ],
-    queryTypes: [],
+    queryFunctionTypes: [],
 };
 
 describe("createSQLiteOntologyAdapter", () => {

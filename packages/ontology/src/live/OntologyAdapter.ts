@@ -52,7 +52,7 @@ export interface OntologyAdapter {
         parameters: Record<string, unknown>,
         live: ApplyActionLiveOpts
     ) => Promise<void>;
-    runQuery: (
+    runQueryFunction: (
         name: string,
         parameters: Record<string, unknown>,
         live: RunQueryLiveOpts

@@ -8,6 +8,6 @@ export interface OntologyConfig<Opts = unknown> {
     adapter: OntologyConfigAdapter<Opts>;
     objectTypeNames: string[];
     actionTypeNames: string[];
-    queryTypeNames?: string[];
+    queryFunctionTypeNames?: string[];
     opts?: Opts;
 }

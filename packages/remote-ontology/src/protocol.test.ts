@@ -31,7 +31,7 @@ describe("createHttpRemoteOntologyTransport", () => {
                     logic: [],
                 },
             ],
-            queryTypes: [],
+            queryFunctionTypes: [],
         };
         let applyActionBody: unknown;
         const fetchImpl: typeof fetch = async (input, init) => {

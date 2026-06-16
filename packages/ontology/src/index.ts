@@ -9,6 +9,6 @@ export type {
     ObjectType as MetaObjectType,
     ValueType as MetaValueType,
     ActionType as MetaActionType,
-    QueryType as MetaQueryType,
+    QueryFunctionType as MetaQueryFunctionType,
 } from "./meta/generated/types.js";
 export { createMetaLiveOntology } from "./meta/generated/live.js";

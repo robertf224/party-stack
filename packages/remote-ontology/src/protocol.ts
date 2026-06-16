@@ -12,7 +12,7 @@ export type RemoteOntologyEndpoint =
     | "describe"
     | "load-subset"
     | "apply-action"
-    | "run-query"
+    | "run-query-function"
     | "attachment-metadata"
     | "attachment-content";
 
@@ -39,12 +39,12 @@ export interface RemoteApplyActionResponse {
     invalidatedObjectTypes?: string[];
 }
 
-export interface RemoteRunQueryRequest {
-    queryType: string;
+export interface RemoteRunQueryFunctionRequest {
+    queryFunctionType: string;
     parameters: Record<string, unknown>;
 }
 
-export interface RemoteRunQueryResponse {
+export interface RemoteRunQueryFunctionResponse {
     value: unknown;
 }
 
@@ -72,10 +72,10 @@ export interface RemoteOntologyTransport {
         request: RemoteApplyActionRequest,
         options?: RemoteOntologyTransportOptions
     ) => Promise<RemoteApplyActionResponse>;
-    runQuery: (
-        request: RemoteRunQueryRequest,
+    runQueryFunction: (
+        request: RemoteRunQueryFunctionRequest,
         options?: RemoteOntologyTransportOptions
-    ) => Promise<RemoteRunQueryResponse>;
+    ) => Promise<RemoteRunQueryFunctionResponse>;
     getAttachmentMetadata: (
         request: RemoteAttachmentRequest,
         options?: RemoteOntologyTransportOptions
@@ -90,7 +90,7 @@ export type RemoteOntologyRequestByEndpoint = {
     describe: RemoteDescribeRequest;
     "load-subset": RemoteLoadSubsetRequest;
     "apply-action": RemoteApplyActionRequest;
-    "run-query": RemoteRunQueryRequest;
+    "run-query-function": RemoteRunQueryFunctionRequest;
     "attachment-metadata": RemoteAttachmentRequest;
     "attachment-content": RemoteAttachmentRequest;
 };
@@ -99,7 +99,7 @@ export type RemoteOntologyResponseByEndpoint = {
     describe: RemoteOntologyDescription;
     "load-subset": RemoteLoadSubsetResponse;
     "apply-action": RemoteApplyActionResponse;
-    "run-query": RemoteRunQueryResponse;
+    "run-query-function": RemoteRunQueryFunctionResponse;
     "attachment-metadata": attachment & { size: number; type: string; name: string };
     "attachment-content": Blob;
 };
@@ -108,7 +108,7 @@ export type RemoteOntologyRequestEnvelope =
     | { endpoint: "describe"; input: RemoteDescribeRequest }
     | { endpoint: "load-subset"; input: RemoteLoadSubsetRequest }
     | { endpoint: "apply-action"; input: RemoteApplyActionRequest }
-    | { endpoint: "run-query"; input: RemoteRunQueryRequest }
+    | { endpoint: "run-query-function"; input: RemoteRunQueryFunctionRequest }
     | { endpoint: "attachment-metadata"; input: RemoteAttachmentRequest }
     | { endpoint: "attachment-content"; input: RemoteAttachmentRequest };
 
@@ -126,7 +126,7 @@ export const remoteOntologyEndpointSchema = z.enum([
     "describe",
     "load-subset",
     "apply-action",
-    "run-query",
+    "run-query-function",
     "attachment-metadata",
     "attachment-content",
 ]);
@@ -149,12 +149,12 @@ export const remoteApplyActionRequestSchema = z
     })
     .strict() satisfies z.ZodType<RemoteApplyActionRequest>;
 
-export const remoteRunQueryRequestSchema = z
+export const remoteRunQueryFunctionRequestSchema = z
     .object({
-        queryType: z.string().min(1),
+        queryFunctionType: z.string().min(1),
         parameters: recordSchema,
     })
-    .strict() satisfies z.ZodType<RemoteRunQueryRequest>;
+    .strict() satisfies z.ZodType<RemoteRunQueryFunctionRequest>;
 
 const attachmentSourceSchema = z
     .object({
@@ -193,9 +193,9 @@ const remoteOntologyRpc = {
         endpoint: "apply-action",
         schema: remoteApplyActionRequestSchema,
     },
-    runQuery: {
-        endpoint: "run-query",
-        schema: remoteRunQueryRequestSchema,
+    runQueryFunction: {
+        endpoint: "run-query-function",
+        schema: remoteRunQueryFunctionRequestSchema,
     },
     attachmentMetadata: {
         endpoint: "attachment-metadata",
@@ -218,8 +218,8 @@ export function parseRemoteOntologyRequest(
             return { endpoint, input: remoteOntologyRpc.loadSubset.schema.parse(input) };
         case "apply-action":
             return { endpoint, input: remoteOntologyRpc.applyAction.schema.parse(input) };
-        case "run-query":
-            return { endpoint, input: remoteOntologyRpc.runQuery.schema.parse(input) };
+        case "run-query-function":
+            return { endpoint, input: remoteOntologyRpc.runQueryFunction.schema.parse(input) };
         case "attachment-metadata":
             return { endpoint, input: remoteOntologyRpc.attachmentMetadata.schema.parse(input) };
         case "attachment-content":

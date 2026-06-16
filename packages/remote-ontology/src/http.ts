@@ -1,7 +1,7 @@
 import type {
     RemoteApplyActionResponse,
     RemoteAttachmentRequest,
-    RemoteRunQueryResponse,
+    RemoteRunQueryFunctionResponse,
     RemoteLoadSubsetResponse,
     RemoteOntologyDescription,
     RemoteOntologyTransport,
@@ -181,16 +181,16 @@ export function createHttpRemoteOntologyTransport(
                       options
                   );
         },
-        runQuery: async (request, options) => {
+        runQueryFunction: async (request, options) => {
             const ontology = getIr();
-            const response = await postJson<RemoteRunQueryResponse>(
+            const response = await postJson<RemoteRunQueryFunctionResponse>(
                 fetchImpl,
-                resolveEndpoint(opts.url, "run-query"),
+                resolveEndpoint(opts.url, "run-query-function"),
                 {
                     ...request,
                     parameters: encode({
                         ir: ontology,
-                        target: { kind: "queryParameters", queryType: request.queryType },
+                        target: { kind: "queryFunctionParameters", queryFunctionType: request.queryFunctionType },
                         value: request.parameters,
                     }) as Record<string, unknown>,
                 },
@@ -201,7 +201,7 @@ export function createHttpRemoteOntologyTransport(
                 ...response,
                 value: decode({
                     ir: ontology,
-                    target: { kind: "queryReturn", queryType: request.queryType },
+                    target: { kind: "queryFunctionReturn", queryFunctionType: request.queryFunctionType },
                     value: response.value,
                 }),
             };

@@ -25,7 +25,7 @@ const ir: OntologyIR = {
             logic: [],
         },
     ],
-    queryTypes: [
+    queryFunctionTypes: [
         {
             name: "greet",
             displayName: "Greet",
@@ -51,7 +51,7 @@ describe("createRemoteLiveOntology", () => {
                 appliedParameters = request.parameters;
                 return {};
             },
-            runQuery: async (request) => ({
+            runQueryFunction: async (request) => ({
                 value: `Hello ${request.parameters.name}`,
             }),
             getAttachmentMetadata: async (request) => ({
@@ -76,6 +76,6 @@ describe("createRemoteLiveOntology", () => {
             ownerEmail: "alice@example.com",
             dueDate: Temporal.PlainDate.from("2026-06-15"),
         });
-        await expect(ontology.queries.greet!({ name: "Alice" })).resolves.toBe("Hello Alice");
+        await expect(ontology.queryFunctions.greet!({ name: "Alice" })).resolves.toBe("Hello Alice");
     });
 });

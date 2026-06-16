@@ -9,14 +9,14 @@ type OntologyRecord = Record<string, unknown>;
 type TypeName<IR extends OntologyIR> = Extract<ArrayElement<IR["types"]>["name"], string>;
 type ObjectTypeName<IR extends OntologyIR> = Extract<ArrayElement<IR["objectTypes"]>["name"], string>;
 type ActionTypeName<IR extends OntologyIR> = Extract<ArrayElement<IR["actionTypes"]>["name"], string>;
-type QueryTypeName<IR extends OntologyIR> = Extract<ArrayElement<IR["queryTypes"]>["name"], string>;
+type QueryFunctionTypeName<IR extends OntologyIR> = Extract<ArrayElement<IR["queryFunctionTypes"]>["name"], string>;
 
 export type JsonTarget<IR extends OntologyIR> =
     | { kind: "type"; name: TypeName<IR> }
     | { kind: "object"; name: ObjectTypeName<IR> }
     | { kind: "actionParameters"; actionType: ActionTypeName<IR> }
-    | { kind: "queryParameters"; queryType: QueryTypeName<IR> }
-    | { kind: "queryReturn"; queryType: QueryTypeName<IR> };
+    | { kind: "queryFunctionParameters"; queryFunctionType: QueryFunctionTypeName<IR> }
+    | { kind: "queryFunctionReturn"; queryFunctionType: QueryFunctionTypeName<IR> };
 
 function assertRecord(value: unknown): asserts value is OntologyRecord {
     invariant(typeof value === "object" && value !== null && !Array.isArray(value), "Expected JSON object.");
@@ -44,10 +44,10 @@ function getActionType(ir: OntologyIR, name: string): OntologyIR["actionTypes"][
     return actionType;
 }
 
-function getQueryType(ir: OntologyIR, name: string): OntologyIR["queryTypes"][number] {
-    const queryType = ir.queryTypes.find((candidate) => candidate.name === name);
-    invariant(queryType, `Unknown query type "${name}".`);
-    return queryType;
+function getQueryFunctionType(ir: OntologyIR, name: string): OntologyIR["queryFunctionTypes"][number] {
+    const queryFunctionType = ir.queryFunctionTypes.find((candidate) => candidate.name === name);
+    invariant(queryFunctionType, `Unknown query function type "${name}".`);
+    return queryFunctionType;
 }
 
 function resolveTargetType<IR extends OntologyIR>(ir: IR, target: JsonTarget<IR>): TypeDef | undefined {
@@ -56,10 +56,10 @@ function resolveTargetType<IR extends OntologyIR>(ir: IR, target: JsonTarget<IR>
             return getNamedType(ir, target.name);
         case "object":
         case "actionParameters":
-        case "queryParameters":
+        case "queryFunctionParameters":
             return undefined;
-        case "queryReturn":
-            return getQueryType(ir, target.queryType).returnType;
+        case "queryFunctionReturn":
+            return getQueryFunctionType(ir, target.queryFunctionType).returnType;
     }
 }
 
@@ -199,8 +199,8 @@ export function decode<IR extends OntologyIR>(opts: {
     if (opts.target.kind === "actionParameters") {
         return decodeParameters(opts.ir, getActionType(opts.ir, opts.target.actionType).parameters, opts.value);
     }
-    if (opts.target.kind === "queryParameters") {
-        return decodeParameters(opts.ir, getQueryType(opts.ir, opts.target.queryType).parameters, opts.value);
+    if (opts.target.kind === "queryFunctionParameters") {
+        return decodeParameters(opts.ir, getQueryFunctionType(opts.ir, opts.target.queryFunctionType).parameters, opts.value);
     }
     return decodeValue(opts.ir, resolveTargetType(opts.ir, opts.target)!, opts.value);
 }
@@ -216,8 +216,8 @@ export function encode<IR extends OntologyIR>(opts: {
     if (opts.target.kind === "actionParameters") {
         return encodeParameters(opts.ir, getActionType(opts.ir, opts.target.actionType).parameters, opts.value);
     }
-    if (opts.target.kind === "queryParameters") {
-        return encodeParameters(opts.ir, getQueryType(opts.ir, opts.target.queryType).parameters, opts.value);
+    if (opts.target.kind === "queryFunctionParameters") {
+        return encodeParameters(opts.ir, getQueryFunctionType(opts.ir, opts.target.queryFunctionType).parameters, opts.value);
     }
     return encodeValue(opts.ir, resolveTargetType(opts.ir, opts.target)!, opts.value);
 }

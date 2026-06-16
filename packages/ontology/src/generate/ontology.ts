@@ -11,7 +11,7 @@ import type {
     ObjectTypeDef,
     PropertyAssignment,
     PropertyDef,
-    QueryTypeDef,
+    QueryFunctionTypeDef,
     StringConstraint,
     TypeDef,
     VariantDef,
@@ -386,16 +386,16 @@ function renderActionType(actionType: ActionTypeDef, ctx?: RenderContext): strin
     ]);
 }
 
-function renderQueryType(queryType: QueryTypeDef): string {
+function renderQueryFunctionType(queryFunctionType: QueryFunctionTypeDef): string {
     return renderObject([
-        { name: "name", value: renderPlainValue(queryType.name) },
-        { name: "displayName", value: renderPlainValue(queryType.displayName) },
+        { name: "name", value: renderPlainValue(queryFunctionType.name) },
+        { name: "displayName", value: renderPlainValue(queryFunctionType.displayName) },
         {
             name: "parameters",
             value: withWriter((writer) =>
                 writeArray(
                     writer,
-                    queryType.parameters.map((parameter) =>
+                    queryFunctionType.parameters.map((parameter) =>
                         renderObject([
                             { name: "name", value: renderPlainValue(parameter.name) },
                             { name: "displayName", value: renderPlainValue(parameter.displayName) },
@@ -410,9 +410,9 @@ function renderQueryType(queryType: QueryTypeDef): string {
                 )
             ),
         },
-        { name: "returnType", value: renderType(queryType.returnType) },
-        { name: "description", value: queryType.description ? renderPlainValue(queryType.description) : undefined },
-        { name: "deprecated", value: renderDeprecation(queryType.deprecated) },
+        { name: "returnType", value: renderType(queryFunctionType.returnType) },
+        { name: "description", value: queryFunctionType.description ? renderPlainValue(queryFunctionType.description) : undefined },
+        { name: "deprecated", value: renderDeprecation(queryFunctionType.deprecated) },
     ]);
 }
 
@@ -478,11 +478,11 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
                 ),
             },
             {
-                name: "queryTypes",
+                name: "queryFunctionTypes",
                 value: withWriter((arrayWriter) =>
                     writeArray(
                         arrayWriter,
-                        ir.queryTypes.map((queryType) => renderQueryType(queryType))
+                        ir.queryFunctionTypes.map((queryFunctionType) => renderQueryFunctionType(queryFunctionType))
                     )
                 ),
             },
