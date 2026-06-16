@@ -11,6 +11,10 @@
             "types": "./lib/utils/index.d.ts",
             "default": "./lib/utils/index.js"
         },
+        "./json": {
+            "types": "./lib/json/index.d.ts",
+            "default": "./lib/json/index.js"
+        },
         "./values": {
             "types": "./lib/utils/values.d.ts"
         }

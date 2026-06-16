@@ -8,7 +8,7 @@ import {
 } from "@tanstack/db";
 import { createInMemoryBlobStore } from "@party-stack/blobs";
 import { createLiveOntology } from "@party-stack/ontology";
-import { hydrateOntologyJsonValue, serializeOntologyJsonValue } from "@party-stack/ontology/utils";
+import { decode, encode } from "@party-stack/ontology/json";
 import type { LiveOntology, OntologyAdapter, OntologyDefinition, OntologyIR } from "@party-stack/ontology";
 import type { attachment } from "@party-stack/ontology/values";
 import {
@@ -225,14 +225,6 @@ function getObjectTypePrimaryKey(ir: OntologyIR, objectType: string): string {
         throw new Error(`Unknown ontology object type "${objectType}".`);
     }
     return objectTypeDef.primaryKey;
-}
-
-function getActionType(ir: OntologyIR, actionType: string): OntologyIR["actionTypes"][number] {
-    const actionTypeDef = ir.actionTypes.find((candidate) => candidate.name === actionType);
-    if (!actionTypeDef) {
-        throw new Error(`Unknown ontology action type "${actionType}".`);
-    }
-    return actionTypeDef;
 }
 
 async function resolveValue<Context, TValue>(
@@ -577,17 +569,11 @@ async function handleApplyAction<
 ): Promise<RemoteApplyActionResponse> {
     const ir = await resolveValue(opts.ir, ctx);
     const adapter = await resolveValue(opts.adapter, ctx);
-    const actionTypeDef = getActionType(ir, request.actionType);
-    const parameterTypes = new Map(actionTypeDef.parameters.map((parameter) => [parameter.name, parameter.type]));
-    const hydratedRequestParameters = Object.fromEntries(
-        Object.entries(request.parameters).map(([parameterName, value]) => {
-            const parameterType = parameterTypes.get(parameterName);
-            return [
-                parameterName,
-                parameterType ? hydrateOntologyJsonValue(ir, parameterType, value) : value,
-            ];
-        })
-    );
+    const hydratedRequestParameters = decode({
+        ir,
+        target: { kind: "actionParameters", actionType: request.actionType },
+        value: request.parameters,
+    }) as Record<string, unknown>;
     const parameters = await applyFixedActionParameterValues({
         ctx,
         actionType: request.actionType,
@@ -645,16 +631,11 @@ async function handleRunQuery<
     }
 
     const adapter = await resolveValue(opts.adapter, ctx);
-    const parameterTypes = new Map(queryTypeDef.parameters.map((parameter) => [parameter.name, parameter.type]));
-    const parameters = Object.fromEntries(
-        Object.entries(request.parameters).map(([parameterName, value]) => {
-            const parameterType = parameterTypes.get(parameterName);
-            return [
-                parameterName,
-                parameterType ? hydrateOntologyJsonValue(ir, parameterType, value) : value,
-            ];
-        })
-    );
+    const parameters = decode({
+        ir,
+        target: { kind: "queryParameters", queryType: request.queryType },
+        value: request.parameters,
+    }) as Record<string, unknown>;
     const ontology = createLiveOntology<Ontology>({
         ir,
         adapter,
@@ -683,7 +664,11 @@ async function handleRunQuery<
         }
         const value = await query(parameters);
         return {
-            value: serializeOntologyJsonValue(ir, queryTypeDef.returnType, value),
+            value: encode({
+                ir,
+                target: { kind: "queryReturn", queryType: request.queryType },
+                value,
+            }),
         };
     } finally {
         await ontology.cleanup();

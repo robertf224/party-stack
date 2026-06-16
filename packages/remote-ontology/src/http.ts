@@ -7,12 +7,8 @@ import type {
     RemoteOntologyTransport,
     RemoteOntologyTransportOptions,
 } from "./protocol.js";
-import type { OntologyIR, TypeDef } from "@party-stack/ontology";
-import {
-    hydrateOntologyJsonObject,
-    hydrateOntologyJsonValue,
-    serializeOntologyJsonValue,
-} from "@party-stack/ontology/utils";
+import type { OntologyIR } from "@party-stack/ontology";
+import { decode, encode } from "@party-stack/ontology/json";
 import type { attachment } from "@party-stack/ontology/values";
 import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
 
@@ -30,38 +26,6 @@ function resolveEndpoint(baseUrl: string | URL, path: string): string {
         return new URL(path, normalizedBase).toString();
     }
     return `${normalizedBase}${path}`;
-}
-
-function getActionType(ir: OntologyIR, actionType: string): OntologyIR["actionTypes"][number] {
-    const actionTypeDef = ir.actionTypes.find((candidate) => candidate.name === actionType);
-    if (!actionTypeDef) {
-        throw new Error(`Unknown ontology action type "${actionType}".`);
-    }
-    return actionTypeDef;
-}
-
-function getQueryType(ir: OntologyIR, queryType: string): OntologyIR["queryTypes"][number] {
-    const queryTypeDef = ir.queryTypes.find((candidate) => candidate.name === queryType);
-    if (!queryTypeDef) {
-        throw new Error(`Unknown ontology query type "${queryType}".`);
-    }
-    return queryTypeDef;
-}
-
-function serializeParameters(
-    ir: OntologyIR,
-    parameterTypes: Map<string, TypeDef>,
-    parameters: Record<string, unknown>
-): Record<string, unknown> {
-    return Object.fromEntries(
-        Object.entries(parameters).map(([parameterName, value]) => {
-            const parameterType = parameterTypes.get(parameterName);
-            return [
-                parameterName,
-                parameterType ? serializeOntologyJsonValue(ir, parameterType, value) : value,
-            ];
-        })
-    );
 }
 
 async function postJson<TResponse>(
@@ -182,21 +146,23 @@ export function createHttpRemoteOntologyTransport(
             return {
                 ...response,
                 objects: response.objects.map((object) =>
-                    hydrateOntologyJsonObject({
+                    decode({
                         ir: getIr(),
-                        objectTypeName: response.objectType,
-                        object,
-                    })
+                        target: { kind: "object", name: response.objectType },
+                        value: object,
+                    }) as Record<string, unknown>
                 ),
             };
         },
         applyAction: (request, options) => {
             const ontology = getIr();
-            const actionTypeDef = getActionType(ontology, request.actionType);
-            const parameterTypes = new Map(actionTypeDef.parameters.map((parameter) => [parameter.name, parameter.type]));
             const body = {
                 ...request,
-                parameters: serializeParameters(ontology, parameterTypes, request.parameters),
+                parameters: encode({
+                    ir: ontology,
+                    target: { kind: "actionParameters", actionType: request.actionType },
+                    value: request.parameters,
+                }) as Record<string, unknown>,
             };
             const hasAttachments = options?.attachments && options.attachments.length > 0;
             return hasAttachments
@@ -217,21 +183,27 @@ export function createHttpRemoteOntologyTransport(
         },
         runQuery: async (request, options) => {
             const ontology = getIr();
-            const queryTypeDef = getQueryType(ontology, request.queryType);
-            const parameterTypes = new Map(queryTypeDef.parameters.map((parameter) => [parameter.name, parameter.type]));
             const response = await postJson<RemoteRunQueryResponse>(
                 fetchImpl,
                 resolveEndpoint(opts.url, "run-query"),
                 {
                     ...request,
-                    parameters: serializeParameters(ontology, parameterTypes, request.parameters),
+                    parameters: encode({
+                        ir: ontology,
+                        target: { kind: "queryParameters", queryType: request.queryType },
+                        value: request.parameters,
+                    }) as Record<string, unknown>,
                 },
                 getHeaders(),
                 options
             );
             return {
                 ...response,
-                value: hydrateOntologyJsonValue(ontology, queryTypeDef.returnType, response.value),
+                value: decode({
+                    ir: ontology,
+                    target: { kind: "queryReturn", queryType: request.queryType },
+                    value: response.value,
+                }),
             };
         },
         getAttachmentMetadata: (request: RemoteAttachmentRequest, options) =>

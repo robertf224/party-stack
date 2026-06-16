@@ -1,9 +1,6 @@
 import { applyActionLogic } from "@party-stack/ontology";
-import {
-    hydrateOntologyJsonObject,
-    resolveType,
-    serializeOntologyJsonObject,
-} from "@party-stack/ontology/utils";
+import { decode, encode } from "@party-stack/ontology/json";
+import { resolveType } from "@party-stack/ontology/utils";
 import { createTransaction, eq, queryOnce } from "@tanstack/db";
 import type {
     OntologyAdapter,
@@ -307,11 +304,11 @@ function persistObjectMutations(opts: {
             continue;
         }
 
-                const serializedObject = serializeOntologyJsonObject({
+        const serializedObject = encode({
             ir: opts.ir,
-            objectTypeName: opts.objectTypeName,
-            object: object!,
-        });
+            target: { kind: "object", name: opts.objectTypeName },
+            value: object!,
+        }) as OntologyRecord;
         upsert.run(String(primaryKeyValue), JSON.stringify(serializedObject));
     }
 }
@@ -394,11 +391,11 @@ function createCollectionOptions(opts: {
                 begin();
                 for (const row of rows) {
                     const parsedObject = JSON.parse(row.data) as OntologyRecord;
-                    const hydratedObject = hydrateOntologyJsonObject({
+                    const hydratedObject = decode({
                         ir: opts.ir,
-                        objectTypeName: opts.objectTypeName,
-                        object: parsedObject,
-                    });
+                        target: { kind: "object", name: opts.objectTypeName },
+                        value: parsedObject,
+                    }) as OntologyRecord;
                     const key = hydratedObject[objectType.primaryKey] as string | number;
                     persistedKeys.add(key);
                     write({
