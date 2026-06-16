@@ -51,6 +51,12 @@ export default {
                 displayName: "Action type",
                 pluralDisplayName: "Action types",
             },
+            QueryFunctionTypeDef: {
+                name: "QueryFunctionType",
+                primaryKey: "name",
+                displayName: "Query function type",
+                pluralDisplayName: "Query function types",
+            },
             NamedTypeDef: {
                 name: "ValueType",
                 primaryKey: "name",
@@ -80,4 +86,5 @@ export default {
         },
     ],
     actionTypes: [],
+    queryFunctionTypes: [],
 } satisfies OntologyIR;

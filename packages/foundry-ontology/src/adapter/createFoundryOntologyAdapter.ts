@@ -1,5 +1,5 @@
 import { invariant } from "@bobbyfidz/panic";
-import { Actions, AttachmentRid, Attachments } from "@osdk/foundry.ontologies";
+import { Actions, AttachmentRid, Attachments, Queries } from "@osdk/foundry.ontologies";
 import {
     type OntologyAdapter,
     type OntologyAttachmentsAdapter,
@@ -221,6 +221,31 @@ export function createFoundryOntologyAdapter(opts: {
                     targetCollections.map((collection) => collection.utils.awaitOperationId(operationId))
                 );
             }
+        },
+        runQueryFunction: async (name, parameters) => {
+            const queryFunctionType = opts.ir.queryFunctionTypes.find((candidate) => candidate.name === name);
+            if (!queryFunctionType) {
+                throw new Error(`Unknown Foundry query function type "${name}".`);
+            }
+
+            const parameterTypes = new Map(queryFunctionType.parameters.map((parameter) => [parameter.name, parameter.type]));
+            const requestParameters: Record<string, unknown> = {};
+            for (const [parameterName, value] of Object.entries(parameters)) {
+                if (value === undefined) continue;
+                const parameterType = parameterTypes.get(parameterName);
+                requestParameters[parameterName] = parameterType ? codec.encodeValue(parameterType, value) : value;
+            }
+
+            const result = await Queries.execute(
+                opts.client,
+                opts.client.ontologyRid,
+                name,
+                {
+                    parameters: requestParameters,
+                }
+            );
+
+            return codec.decodeValue(queryFunctionType.returnType, result.value);
         },
         attachments,
     };

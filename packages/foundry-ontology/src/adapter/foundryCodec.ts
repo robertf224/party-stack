@@ -21,6 +21,7 @@ export const createFoundryObjectDecoder = createFoundryCodec;
 
 export interface FoundryCodec {
     decodeObject: (objectType: string, object: OntologyObjectV2 | FoundryObjectRecord) => FoundryObjectRecord;
+    decodeValue: (type: TypeDef, value: unknown) => unknown;
     encodeValue: (type: TypeDef, value: unknown) => unknown;
 }
 
@@ -189,6 +190,7 @@ export function createFoundryCodec(ir: OntologyIR): FoundryCodec {
 
             return decodeObjectType(objectType, object);
         },
+        decodeValue,
         encodeValue,
     };
 }

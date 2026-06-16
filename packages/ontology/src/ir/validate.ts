@@ -6,6 +6,7 @@ import type {
     OntologyIR,
     PropertyAssignment,
     PropertyDef,
+    QueryFunctionTypeDef,
     TypeDef,
     ValueReferenceExpression,
 } from "./generated/types.js";
@@ -491,6 +492,35 @@ function validateAction(
     return errors;
 }
 
+function validateQueryFunctionType(
+    queryFunctionType: QueryFunctionTypeDef,
+    path: ValidationPathElement[],
+    valueTypeNames: Set<string>,
+    objectTypeNames: Set<string>
+): ValidationError[] {
+    const errors: ValidationError[] = [];
+    const seenParameters = new Set<string>();
+
+    for (let index = 0; index < queryFunctionType.parameters.length; index++) {
+        const parameter = queryFunctionType.parameters[index]!;
+        const parameterPath = [...path, "parameters", index];
+
+        if (seenParameters.has(parameter.name)) {
+            errors.push({
+                message: `Duplicate query function parameter name: "${parameter.name}".`,
+                path: [...parameterPath, "name"],
+            });
+        }
+        seenParameters.add(parameter.name);
+
+        errors.push(...validateTypeDef(parameter.type, [...parameterPath, "type"], valueTypeNames, objectTypeNames));
+    }
+
+    errors.push(...validateTypeDef(queryFunctionType.returnType, [...path, "returnType"], valueTypeNames, objectTypeNames));
+
+    return errors;
+}
+
 export function validate(ontology: OntologyIR): ValidationResult {
     const errors: ValidationError[] = [];
 
@@ -600,6 +630,22 @@ export function validate(ontology: OntologyIR): ValidationResult {
         actionNames.add(action.name);
 
         errors.push(...validateAction(action, actionPath, valueTypes, objectTypes));
+    }
+
+    const queryFunctionTypeNames = new Set<string>();
+    for (let i = 0; i < ontology.queryFunctionTypes.length; i++) {
+        const queryFunctionType = ontology.queryFunctionTypes[i]!;
+        const queryFunctionTypePath = ["queryFunctionTypes", i] as ValidationPathElement[];
+
+        if (queryFunctionTypeNames.has(queryFunctionType.name)) {
+            errors.push({
+                message: `Duplicate query function type name: "${queryFunctionType.name}".`,
+                path: [...queryFunctionTypePath, "name"],
+            });
+        }
+        queryFunctionTypeNames.add(queryFunctionType.name);
+
+        errors.push(...validateQueryFunctionType(queryFunctionType, queryFunctionTypePath, valueTypeNames, objectTypeNames));
     }
 
     return errors.length === 0 ? { kind: "ok" } : { kind: "err", errors };

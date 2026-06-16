@@ -64,6 +64,20 @@ const ir: OntologyIR = {
             ],
         },
     ],
+    queryFunctionTypes: [
+        {
+            name: "publicSearch",
+            displayName: "Public search",
+            parameters: [],
+            returnType: o.string({}),
+        },
+        {
+            name: "privateSearch",
+            displayName: "Private search",
+            parameters: [],
+            returnType: o.string({}),
+        },
+    ],
 };
 
 describe("secured ontology projection", () => {
@@ -168,6 +182,7 @@ describe("secured ontology projection", () => {
             value: o.Expression.contextReference({ path: ["user", "email"] }),
         });
     });
+
 });
 
 describe("fixed action parameter values", () => {

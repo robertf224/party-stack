@@ -1,18 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { Temporal } from "temporal-polyfill";
 import { o, type OntologyAdapter, type OntologyIR } from "@party-stack/ontology";
 import { createRemoteOntologyServer } from "./server.js";
 import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
 import type { RemoteOntologyDescription } from "./protocol.js";
-
-type TestOntology = {
-    objectTypes: {
-        Note: {
-            id: string;
-            ownerEmail: string;
-        };
-    };
-    actionTypes: Record<string, { parameters: Record<string, unknown> }>;
-};
 
 const ir: OntologyIR = {
     types: [],
@@ -25,6 +16,7 @@ const ir: OntologyIR = {
             parameters: [
                 { name: "title", displayName: "Title", type: o.string({}) },
                 { name: "ownerEmail", displayName: "Owner", type: o.string({}) },
+                { name: "dueDate", displayName: "Due date", type: o.date({}) },
             ],
             logic: [],
         },
@@ -47,19 +39,48 @@ const ir: OntologyIR = {
             ],
         },
     ],
+    queryFunctionTypes: [
+        {
+            name: "greet",
+            displayName: "Greet",
+            parameters: [{ name: "name", displayName: "Name", type: o.string({}) }],
+            returnType: o.string({}),
+        },
+    ],
 };
+
+const noteObjectType: OntologyIR["objectTypes"][number] = {
+    name: "Note",
+    displayName: "Note",
+    pluralDisplayName: "Notes",
+    primaryKey: "id",
+    properties: [
+        { name: "id", displayName: "ID", type: o.string({}) },
+        { name: "ownerEmail", displayName: "Owner", type: o.string({}) },
+    ],
+};
+
+function readyCollectionOptions(): ReturnType<OntologyAdapter["getCollectionOptions"]> {
+    return {
+        syncMode: "eager",
+        sync: {
+            sync: ({ markReady }) => {
+                markReady();
+            },
+        },
+    };
+}
 
 describe("remote ontology server policy projection", () => {
     it("describes the secured IR and applies server-owned action parameters last", async () => {
         let appliedParameters: Record<string, unknown> | undefined;
         const adapter: OntologyAdapter = {
             name: "test",
-            getCollectionOptions: () => {
-                throw new Error("Unexpected collection access.");
-            },
+            getCollectionOptions: readyCollectionOptions,
             applyAction: async (_actionType, parameters) => {
                 appliedParameters = parameters;
             },
+            runQueryFunction: async (_queryFunctionType, parameters) => `Hello ${parameters.name}`,
         };
         const server = createRemoteOntologyServer<any, any>({
             ir,
@@ -85,6 +106,7 @@ describe("remote ontology server policy projection", () => {
         const description = parseRemoteOntologyJson(await describeResponse.text()) as RemoteOntologyDescription;
         expect(description.ir.actionTypes[0]!.parameters.map((parameter) => parameter.name)).toEqual([
             "title",
+            "dueDate",
         ]);
 
         const applyResponse = await server.handleRequest(
@@ -95,6 +117,7 @@ describe("remote ontology server policy projection", () => {
                     parameters: {
                         title: "Hello",
                         ownerEmail: "mallory@example.com",
+                        dueDate: "2026-06-15",
                     },
                 }),
             })
@@ -103,39 +126,28 @@ describe("remote ontology server policy projection", () => {
         expect(appliedParameters).toEqual({
             title: "Hello",
             ownerEmail: "alice@example.com",
+            dueDate: Temporal.PlainDate.from("2026-06-15"),
         });
     });
 
     it("includes forwarded context in describe and preserves context references", async () => {
-        const server = createRemoteOntologyServer<any, TestOntology>({
+        const server = createRemoteOntologyServer<any, any>({
             ir: {
                 ...ir,
-                objectTypes: [
-                    {
-                        name: "Note",
-                        displayName: "Note",
-                        pluralDisplayName: "Notes",
-                        primaryKey: "id",
-                        properties: [
-                            { name: "id", displayName: "ID", type: o.string({}) },
-                            { name: "ownerEmail", displayName: "Owner", type: o.string({}) },
-                        ],
-                    },
-                ],
+                objectTypes: [noteObjectType],
             },
             adapter: {
                 name: "test",
-                getCollectionOptions: () => {
-                    throw new Error("Unexpected collection access.");
-                },
+                getCollectionOptions: readyCollectionOptions,
                 applyAction: async () => {},
+                runQueryFunction: async () => undefined,
             },
             getContext: () => ({ user: { email: "alice@example.com" }, serviceUser: "svc" }),
             policy: {
                 clientContext: "forward",
                 allowedObjectTypeProperties: {
                     Note: ["id", "ownerEmail"],
-                },
+                } as any,
             },
         });
 
@@ -163,35 +175,23 @@ describe("remote ontology server policy projection", () => {
     });
 
     it("returns projected context without preserving source context references", async () => {
-        const server = createRemoteOntologyServer<any, TestOntology>({
+        const server = createRemoteOntologyServer<any, any>({
             ir: {
                 ...ir,
-                objectTypes: [
-                    {
-                        name: "Note",
-                        displayName: "Note",
-                        pluralDisplayName: "Notes",
-                        primaryKey: "id",
-                        properties: [
-                            { name: "id", displayName: "ID", type: o.string({}) },
-                            { name: "ownerEmail", displayName: "Owner", type: o.string({}) },
-                        ],
-                    },
-                ],
+                objectTypes: [noteObjectType],
             },
             adapter: {
                 name: "test",
-                getCollectionOptions: () => {
-                    throw new Error("Unexpected collection access.");
-                },
+                getCollectionOptions: readyCollectionOptions,
                 applyAction: async () => {},
+                runQueryFunction: async () => undefined,
             },
             getContext: () => ({ user: { email: "alice@example.com" }, serviceUser: "svc" }),
             policy: {
                 clientContext: (ctx) => ({ user: ctx.user }),
                 allowedObjectTypeProperties: {
                     Note: ["id", "ownerEmail"],
-                },
+                } as any,
             },
         });
 
@@ -210,5 +210,33 @@ describe("remote ontology server policy projection", () => {
         expect(step.kind).toBe("createObject");
         if (step.kind !== "createObject") return;
         expect(step.value.values).toEqual([]);
+    });
+
+    it("runs query functions through the remote query function endpoint", async () => {
+        const server = createRemoteOntologyServer<any, any>({
+            ir,
+            adapter: {
+                name: "test",
+                getCollectionOptions: readyCollectionOptions,
+                applyAction: async () => {},
+                runQueryFunction: async (_queryFunctionType, parameters) => `Hello ${parameters.name}`,
+            },
+            policy: {
+                canRunQueryFunction: () => true,
+            },
+        });
+
+        const response = await server.handleRequest(
+            new Request("http://example.test/run-query-function", {
+                method: "POST",
+                body: serializeRemoteOntologyJson({
+                    queryFunctionType: "greet",
+                    parameters: { name: "Alice" },
+                }),
+            })
+        );
+
+        expect(response.status).toBe(200);
+        expect(parseRemoteOntologyJson(await response.text())).toEqual({ value: "Hello Alice" });
     });
 });

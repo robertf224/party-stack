@@ -83,6 +83,13 @@ export function createRemoteOntologyAdapter(opts: CreateRemoteOntologyAdapterOpt
                 })
             );
         },
+        runQueryFunction: async (queryFunctionType, parameters) => {
+            const response = await transport.runQueryFunction({
+                queryFunctionType,
+                parameters,
+            });
+            return response.value;
+        },
         attachments: {
             generateAttachmentId: () => crypto.randomUUID(),
             getAttachmentContent: (attachment) => transport.getAttachmentContent({ attachment }),

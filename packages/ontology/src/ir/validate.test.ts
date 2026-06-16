@@ -23,6 +23,7 @@ const emptyOntology: OntologyIR = {
     objectTypes: [],
     linkTypes: [],
     actionTypes: [],
+    queryFunctionTypes: [],
 };
 
 const minimalObjectType = (overrides?: Partial<OntologyIR["objectTypes"][number]>) => ({
@@ -147,6 +148,34 @@ describe("Ontology Validation", () => {
             expectErr(result, 1);
             expect(getErrors(result)).toContain('Duplicate property name: "id".');
         });
+
+        it("should detect duplicate query function type names and parameters", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                queryFunctionTypes: [
+                    {
+                        name: "search",
+                        displayName: "Search",
+                        parameters: [
+                            { name: "query", displayName: "Query", type: o.string({}) },
+                            { name: "query", displayName: "Query duplicate", type: o.string({}) },
+                        ],
+                        returnType: o.list({ elementType: o.string({}) }),
+                    },
+                    {
+                        name: "search",
+                        displayName: "Search duplicate",
+                        parameters: [],
+                        returnType: o.string({}),
+                    },
+                ],
+            };
+
+            const result = validate(ontology);
+            expectErr(result, 2);
+            expect(getErrors(result)).toContain('Duplicate query function parameter name: "query".');
+            expect(getErrors(result)).toContain('Duplicate query function type name: "search".');
+        });
     });
 
     describe("Link Validation", () => {
@@ -258,6 +287,31 @@ describe("Ontology Validation", () => {
             const result = validate(ontology);
             expectErr(result, 1);
             expect(getErrors(result)).toContain('Unknown value type reference: "UnknownType".');
+        });
+
+        it("should detect unknown value type references in query function types", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                queryFunctionTypes: [
+                    {
+                        name: "lookup",
+                        displayName: "Lookup",
+                        parameters: [
+                            {
+                                name: "filter",
+                                displayName: "Filter",
+                                type: o.ref({ name: "MissingFilter" }),
+                            },
+                        ],
+                        returnType: o.ref({ name: "MissingResult" }),
+                    },
+                ],
+            };
+
+            const result = validate(ontology);
+            expectErr(result, 2);
+            expect(getErrors(result)).toContain('Unknown value type reference: "MissingFilter".');
+            expect(getErrors(result)).toContain('Unknown value type reference: "MissingResult".');
         });
 
         it("should resolve refs to declared value types", () => {

@@ -435,6 +435,7 @@ describe("objectCollectionOptions", () => {
             ],
             linkTypes: [],
             actionTypes: [],
+            queryFunctionTypes: [],
         });
 
         const harness = createSyncHarness([], {

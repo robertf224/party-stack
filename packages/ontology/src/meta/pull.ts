@@ -1,7 +1,7 @@
 import { and, inArray, Query, queryOnce } from "@tanstack/db";
 import type { OntologyIR } from "../ir/generated/types.js";
 import type { LiveOntology } from "../live/LiveOntology.js";
-import type { MetaOntology, ObjectType, TypeDef } from "./generated/types.js";
+import type { ActionType, MetaOntology, ObjectType, QueryFunctionType, TypeDef } from "./generated/types.js";
 
 function getValueTypes(type: TypeDef): string[] {
     switch (type.kind) {
@@ -26,19 +26,31 @@ function getObjectTypeValueTypes(objectType: ObjectType): string[] {
     return Array.from(new Set(objectType.properties.flatMap((p) => getValueTypes(p.type))));
 }
 
+function getActionTypeValueTypes(actionType: ActionType): string[] {
+    return actionType.parameters.flatMap((parameter) => getValueTypes(parameter.type));
+}
+
+function getQueryFunctionTypeValueTypes(queryFunctionType: QueryFunctionType): string[] {
+    return [
+        ...queryFunctionType.parameters.flatMap((parameter) => getValueTypes(parameter.type)),
+        ...getValueTypes(queryFunctionType.returnType),
+    ];
+}
+
 // TODO: port this to pure queries once we can do some sort of explode operation.
 
 export interface PullOptions {
     objectTypeNames: string[];
     actionTypeNames: string[];
+    queryFunctionTypeNames: string[];
 }
 
 export async function pull(
     ontology: LiveOntology<MetaOntology>,
     options: PullOptions
 ): Promise<OntologyIR> {
-    const { ValueType, ObjectType, LinkType, ActionType } = ontology.objects;
-    const { objectTypeNames, actionTypeNames } = options;
+    const { ValueType, ObjectType, LinkType, ActionType, QueryFunctionType } = ontology.objects;
+    const { objectTypeNames, actionTypeNames, queryFunctionTypeNames } = options;
 
     const objectTypesQuery = new Query()
         .from({ ObjectType })
@@ -46,12 +58,7 @@ export async function pull(
 
     const objectTypes = await queryOnce(() => objectTypesQuery);
 
-    const valueTypeNames = Array.from(new Set(objectTypes.flatMap(getObjectTypeValueTypes)));
-
-    const [types, linkTypes, actionTypes] = await Promise.all([
-        queryOnce((q) =>
-            q.from({ ValueType }).where(({ ValueType }) => inArray(ValueType.name, valueTypeNames))
-        ),
+    const [linkTypes, actionTypes, queryFunctionTypes] = await Promise.all([
         queryOnce((q) =>
             q
                 .from({ LinkType })
@@ -63,12 +70,28 @@ export async function pull(
                 )
         ),
         queryOnce((q) => q.from({ ActionType }).where(({ ActionType }) => inArray(ActionType.name, actionTypeNames))),
+        queryOnce((q) =>
+            q.from({ QueryFunctionType }).where(({ QueryFunctionType }) => inArray(QueryFunctionType.name, queryFunctionTypeNames))
+        ),
     ]);
+
+    const valueTypeNames = Array.from(
+        new Set([
+            ...objectTypes.flatMap(getObjectTypeValueTypes),
+            ...actionTypes.flatMap(getActionTypeValueTypes),
+            ...queryFunctionTypes.flatMap(getQueryFunctionTypeValueTypes),
+        ])
+    );
+
+    const types = await queryOnce((q) =>
+        q.from({ ValueType }).where(({ ValueType }) => inArray(ValueType.name, valueTypeNames))
+    );
 
     return {
         types,
         objectTypes,
         linkTypes,
         actionTypes,
+        queryFunctionTypes,
     };
 }

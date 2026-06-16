@@ -1,5 +1,5 @@
 /**
- * Example live queries using generated ontology object sources.
+ * Example live query functions using generated ontology object sources.
  */
 import { Query, concat, createCollection, eq, liveQueryCollectionOptions } from "@tanstack/db";
 import { createBlogLiveOntology } from "./generated/live.js";

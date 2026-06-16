@@ -19,6 +19,11 @@ export interface ApplyActionLiveOpts {
     attachmentUploads?: OntologyActionAttachmentUpload[];
 }
 
+export interface RunQueryLiveOpts {
+    objects: Record<string, Collection<Record<string, unknown>>>;
+    context?: Record<string, unknown>;
+}
+
 export interface OntologyAttachmentsAdapter {
     generateAttachmentId: (
         blob: Blob,
@@ -47,6 +52,11 @@ export interface OntologyAdapter {
         parameters: Record<string, unknown>,
         live: ApplyActionLiveOpts
     ) => Promise<void>;
+    runQueryFunction: (
+        name: string,
+        parameters: Record<string, unknown>,
+        live: RunQueryLiveOpts
+    ) => Promise<unknown>;
     attachments?: OntologyAttachmentsAdapter;
     cleanup?: () => void | Promise<void>;
     // TODO: install/destroy

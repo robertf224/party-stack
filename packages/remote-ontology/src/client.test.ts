@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Temporal } from "temporal-polyfill";
 import { o, type OntologyIR } from "@party-stack/ontology";
 import { createRemoteLiveOntology } from "./client.js";
 import type { RemoteOntologyTransport } from "./protocol.js";
@@ -19,8 +20,17 @@ const ir: OntologyIR = {
                     type: o.string({}),
                     defaultValue: o.Expression.contextReference({ path: ["user", "email"] }),
                 },
+                { name: "dueDate", displayName: "Due date", type: o.date({}) },
             ],
             logic: [],
+        },
+    ],
+    queryFunctionTypes: [
+        {
+            name: "greet",
+            displayName: "Greet",
+            parameters: [{ name: "name", displayName: "Name", type: o.string({}) }],
+            returnType: o.string({}),
         },
     ],
 };
@@ -41,6 +51,9 @@ describe("createRemoteLiveOntology", () => {
                 appliedParameters = request.parameters;
                 return {};
             },
+            runQueryFunction: async (request) => ({
+                value: `Hello ${request.parameters.name}`,
+            }),
             getAttachmentMetadata: async (request) => ({
                 ...request.attachment,
                 size: 0,
@@ -54,12 +67,15 @@ describe("createRemoteLiveOntology", () => {
         await ontology.actions
             .createNote!({
                 title: "Hello",
+                dueDate: Temporal.PlainDate.from("2026-06-15"),
             })
             .mutationFn();
 
         expect(appliedParameters).toEqual({
             title: "Hello",
             ownerEmail: "alice@example.com",
+            dueDate: Temporal.PlainDate.from("2026-06-15"),
         });
+        await expect(ontology.queryFunctions.greet!({ name: "Alice" })).resolves.toBe("Hello Alice");
     });
 });

@@ -1,16 +1,20 @@
 import type {
     RemoteApplyActionResponse,
     RemoteAttachmentRequest,
+    RemoteRunQueryFunctionResponse,
     RemoteLoadSubsetResponse,
     RemoteOntologyDescription,
     RemoteOntologyTransport,
     RemoteOntologyTransportOptions,
 } from "./protocol.js";
+import type { OntologyIR } from "@party-stack/ontology";
+import { decode, encode } from "@party-stack/ontology/json";
 import type { attachment } from "@party-stack/ontology/values";
 import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
 
 export interface HttpRemoteOntologyTransportOptions {
     url: string | URL;
+    ir?: OntologyIR;
     fetch?: typeof fetch;
     headers?: HeadersInit | (() => HeadersInit);
 }
@@ -111,40 +115,96 @@ export function createHttpRemoteOntologyTransport(
 ): RemoteOntologyTransport {
     const fetchImpl = opts.fetch ?? globalThis.fetch;
     const getHeaders = () => (typeof opts.headers === "function" ? opts.headers() : opts.headers);
+    let ir = opts.ir;
+    const getIr = () => {
+        if (!ir) {
+            throw new Error("HTTP remote ontology transport must describe the ontology before typed requests.");
+        }
+        return ir;
+    };
+
     return {
-        describe: (options) =>
-            postJson<RemoteOntologyDescription>(
+        describe: async (options) => {
+            const description = await postJson<RemoteOntologyDescription>(
                 fetchImpl,
                 resolveEndpoint(opts.url, "describe"),
                 {},
                 getHeaders(),
                 options
-            ),
-        loadSubset: (request, options) =>
-            postJson<RemoteLoadSubsetResponse>(
+            );
+            ir = description.ir;
+            return description;
+        },
+        loadSubset: async (request, options) => {
+            const response = await postJson<RemoteLoadSubsetResponse>(
                 fetchImpl,
                 resolveEndpoint(opts.url, "load-subset"),
                 request,
                 getHeaders(),
                 options
-            ),
+            );
+            return {
+                ...response,
+                objects: response.objects.map((object) =>
+                    decode({
+                        ir: getIr(),
+                        target: { kind: "object", name: response.objectType },
+                        value: object,
+                    }) as Record<string, unknown>
+                ),
+            };
+        },
         applyAction: (request, options) => {
+            const ontology = getIr();
+            const body = {
+                ...request,
+                parameters: encode({
+                    ir: ontology,
+                    target: { kind: "actionParameters", actionType: request.actionType },
+                    value: request.parameters,
+                }) as Record<string, unknown>,
+            };
             const hasAttachments = options?.attachments && options.attachments.length > 0;
             return hasAttachments
                 ? postMultipart<RemoteApplyActionResponse>(
                       fetchImpl,
                       resolveEndpoint(opts.url, "apply-action"),
-                      request,
+                      body,
                       getHeaders(),
                       options
                   )
                 : postJson<RemoteApplyActionResponse>(
                       fetchImpl,
                       resolveEndpoint(opts.url, "apply-action"),
-                      request,
+                      body,
                       getHeaders(),
                       options
                   );
+        },
+        runQueryFunction: async (request, options) => {
+            const ontology = getIr();
+            const response = await postJson<RemoteRunQueryFunctionResponse>(
+                fetchImpl,
+                resolveEndpoint(opts.url, "run-query-function"),
+                {
+                    ...request,
+                    parameters: encode({
+                        ir: ontology,
+                        target: { kind: "queryFunctionParameters", queryFunctionType: request.queryFunctionType },
+                        value: request.parameters,
+                    }) as Record<string, unknown>,
+                },
+                getHeaders(),
+                options
+            );
+            return {
+                ...response,
+                value: decode({
+                    ir: ontology,
+                    target: { kind: "queryFunctionReturn", queryFunctionType: request.queryFunctionType },
+                    value: response.value,
+                }),
+            };
         },
         getAttachmentMetadata: (request: RemoteAttachmentRequest, options) =>
             postJson<attachment & { size: number; type: string; name: string }>(

@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { Temporal } from "temporal-polyfill";
 import type { LoadSubsetOptions } from "@tanstack/db";
 import type { OntologyIR } from "@party-stack/ontology";
 import type { attachment } from "@party-stack/ontology/values";
@@ -13,6 +12,7 @@ export type RemoteOntologyEndpoint =
     | "describe"
     | "load-subset"
     | "apply-action"
+    | "run-query-function"
     | "attachment-metadata"
     | "attachment-content";
 
@@ -39,6 +39,15 @@ export interface RemoteApplyActionResponse {
     invalidatedObjectTypes?: string[];
 }
 
+export interface RemoteRunQueryFunctionRequest {
+    queryFunctionType: string;
+    parameters: Record<string, unknown>;
+}
+
+export interface RemoteRunQueryFunctionResponse {
+    value: unknown;
+}
+
 export interface RemoteAttachmentRequest {
     attachment: attachment;
 }
@@ -63,6 +72,10 @@ export interface RemoteOntologyTransport {
         request: RemoteApplyActionRequest,
         options?: RemoteOntologyTransportOptions
     ) => Promise<RemoteApplyActionResponse>;
+    runQueryFunction: (
+        request: RemoteRunQueryFunctionRequest,
+        options?: RemoteOntologyTransportOptions
+    ) => Promise<RemoteRunQueryFunctionResponse>;
     getAttachmentMetadata: (
         request: RemoteAttachmentRequest,
         options?: RemoteOntologyTransportOptions
@@ -77,6 +90,7 @@ export type RemoteOntologyRequestByEndpoint = {
     describe: RemoteDescribeRequest;
     "load-subset": RemoteLoadSubsetRequest;
     "apply-action": RemoteApplyActionRequest;
+    "run-query-function": RemoteRunQueryFunctionRequest;
     "attachment-metadata": RemoteAttachmentRequest;
     "attachment-content": RemoteAttachmentRequest;
 };
@@ -85,6 +99,7 @@ export type RemoteOntologyResponseByEndpoint = {
     describe: RemoteOntologyDescription;
     "load-subset": RemoteLoadSubsetResponse;
     "apply-action": RemoteApplyActionResponse;
+    "run-query-function": RemoteRunQueryFunctionResponse;
     "attachment-metadata": attachment & { size: number; type: string; name: string };
     "attachment-content": Blob;
 };
@@ -93,86 +108,25 @@ export type RemoteOntologyRequestEnvelope =
     | { endpoint: "describe"; input: RemoteDescribeRequest }
     | { endpoint: "load-subset"; input: RemoteLoadSubsetRequest }
     | { endpoint: "apply-action"; input: RemoteApplyActionRequest }
+    | { endpoint: "run-query-function"; input: RemoteRunQueryFunctionRequest }
     | { endpoint: "attachment-metadata"; input: RemoteAttachmentRequest }
     | { endpoint: "attachment-content"; input: RemoteAttachmentRequest };
 
 const recordSchema = z.record(z.string(), z.unknown());
-const remoteJsonTypeKey = "$partyStackRemoteOntologyType";
-
-type RemoteJsonEncodedValue = {
-    [remoteJsonTypeKey]: "Temporal.Instant" | "Temporal.PlainDate";
-    value: string;
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
-function encodeRemoteJsonValue(value: unknown, seen: WeakSet<object>): unknown {
-    if (value instanceof Temporal.Instant) {
-        return {
-            [remoteJsonTypeKey]: "Temporal.Instant",
-            value: value.toString(),
-        } satisfies RemoteJsonEncodedValue;
-    }
-    if (value instanceof Temporal.PlainDate) {
-        return {
-            [remoteJsonTypeKey]: "Temporal.PlainDate",
-            value: value.toString(),
-        } satisfies RemoteJsonEncodedValue;
-    }
-    if (Array.isArray(value)) {
-        if (seen.has(value)) throw new TypeError("Cannot serialize circular remote ontology payload.");
-        seen.add(value);
-        const encoded = value.map((item) => encodeRemoteJsonValue(item, seen));
-        seen.delete(value);
-        return encoded;
-    }
-    if (isRecord(value)) {
-        if (seen.has(value)) throw new TypeError("Cannot serialize circular remote ontology payload.");
-        seen.add(value);
-        const encoded = Object.fromEntries(
-            Object.entries(value).map(([key, entry]) => [key, encodeRemoteJsonValue(entry, seen)])
-        );
-        seen.delete(value);
-        return encoded;
-    }
-    return value;
-}
-
-function isRemoteJsonEncodedValue(value: unknown): value is RemoteJsonEncodedValue {
-    return (
-        isRecord(value) &&
-        typeof value[remoteJsonTypeKey] === "string" &&
-        typeof value.value === "string"
-    );
-}
-
-function decodeRemoteJsonValue(_key: string, value: unknown): unknown {
-    if (!isRemoteJsonEncodedValue(value)) return value;
-
-    switch (value[remoteJsonTypeKey]) {
-        case "Temporal.Instant":
-            return Temporal.Instant.from(value.value);
-        case "Temporal.PlainDate":
-            return Temporal.PlainDate.from(value.value);
-        default:
-            return value;
-    }
-}
 
 export function serializeRemoteOntologyJson(value: unknown): string {
-    return JSON.stringify(encodeRemoteJsonValue(value, new WeakSet()));
+    return JSON.stringify(value);
 }
 
 export function parseRemoteOntologyJson(text: string): unknown {
-    return JSON.parse(text, decodeRemoteJsonValue);
+    return JSON.parse(text);
 }
 
 export const remoteOntologyEndpointSchema = z.enum([
     "describe",
     "load-subset",
     "apply-action",
+    "run-query-function",
     "attachment-metadata",
     "attachment-content",
 ]);
@@ -194,6 +148,13 @@ export const remoteApplyActionRequestSchema = z
         parameters: recordSchema,
     })
     .strict() satisfies z.ZodType<RemoteApplyActionRequest>;
+
+export const remoteRunQueryFunctionRequestSchema = z
+    .object({
+        queryFunctionType: z.string().min(1),
+        parameters: recordSchema,
+    })
+    .strict() satisfies z.ZodType<RemoteRunQueryFunctionRequest>;
 
 const attachmentSourceSchema = z
     .object({
@@ -232,6 +193,10 @@ const remoteOntologyRpc = {
         endpoint: "apply-action",
         schema: remoteApplyActionRequestSchema,
     },
+    runQueryFunction: {
+        endpoint: "run-query-function",
+        schema: remoteRunQueryFunctionRequestSchema,
+    },
     attachmentMetadata: {
         endpoint: "attachment-metadata",
         schema: remoteAttachmentRequestSchema,
@@ -253,6 +218,8 @@ export function parseRemoteOntologyRequest(
             return { endpoint, input: remoteOntologyRpc.loadSubset.schema.parse(input) };
         case "apply-action":
             return { endpoint, input: remoteOntologyRpc.applyAction.schema.parse(input) };
+        case "run-query-function":
+            return { endpoint, input: remoteOntologyRpc.runQueryFunction.schema.parse(input) };
         case "attachment-metadata":
             return { endpoint, input: remoteOntologyRpc.attachmentMetadata.schema.parse(input) };
         case "attachment-content":

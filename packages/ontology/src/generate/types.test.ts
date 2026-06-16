@@ -89,6 +89,7 @@ describe("generateTypes", () => {
             ],
             linkTypes: [],
             actionTypes: [],
+            queryFunctionTypes: [],
         };
 
         const output = generateTypes(ontology, { outputTypeName: "TestOntology" });
@@ -143,6 +144,7 @@ describe("generateTypes", () => {
                     logic: [],
                 },
             ],
+            queryFunctionTypes: [],
         };
 
         const output = generateTypes(ontology, { outputTypeName: "TestOntology" });
@@ -182,6 +184,7 @@ describe("generateTypes", () => {
                     logic: [],
                 },
             ],
+            queryFunctionTypes: [],
         };
 
         const output = generateTypes(ontology, { outputTypeName: "TestOntology" });
@@ -211,11 +214,47 @@ describe("generateTypes", () => {
                     logic: [],
                 },
             ],
+            queryFunctionTypes: [],
         };
 
         const output = generateTypes(ontology, { outputTypeName: "TestOntology" });
 
         expect(output).toContain('"__uuid_9131b78a-d4a1-443b-9fca-a3f70c2355ef"?: string;');
         expect(output).toContain('"create-task": {');
+    });
+
+    it("generates query function type parameter and return types", () => {
+        const ontology: OntologyIR = {
+            types: [],
+            objectTypes: [],
+            linkTypes: [],
+            actionTypes: [],
+            queryFunctionTypes: [
+                {
+                    name: "searchPosts",
+                    displayName: "Search Posts",
+                    parameters: [
+                        { name: "query", displayName: "Query", type: o.string({}) },
+                        {
+                            name: "limit",
+                            displayName: "Limit",
+                            type: o.optional({ type: o.integer({}) }),
+                        },
+                    ],
+                    returnType: o.list({ elementType: o.string({}) }),
+                },
+            ],
+        };
+
+        const output = generateTypes(ontology, { outputTypeName: "TestOntology" });
+
+        expect(output).toContain("export type SearchPostsParameters = {");
+        expect(output).toContain("query: string;");
+        expect(output).toContain("limit?: v.integer | undefined;");
+        expect(output).toContain("export type SearchPostsReturn = Array<string>;");
+        expect(output).toContain("queryFunctionTypes: {");
+        expect(output).toContain("searchPosts: {");
+        expect(output).toContain("parameters: SearchPostsParameters;");
+        expect(output).toContain("returnType: SearchPostsReturn;");
     });
 });

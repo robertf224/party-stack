@@ -247,4 +247,5 @@ export default {
             ],
         },
     ],
+    queryFunctionTypes: [],
 } satisfies OntologyIR;
