@@ -54,6 +54,12 @@ export type CreatePostParameters = {
     tags: Array<string>;
     createdAt?: v.timestamp;
 };
+export type SearchPostsParameters = {
+    query: string;
+    limit?: v.integer | undefined;
+};
+/** Search blog posts by query text. */
+export type SearchPostsReturn = Array<string>;
 export type BlogOntology = {
     objectTypes: {
         Author: Author;
@@ -63,6 +69,12 @@ export type BlogOntology = {
     actionTypes: {
         createPost: {
             parameters: CreatePostParameters;
+        };
+    };
+    queryTypes: {
+        searchPosts: {
+            parameters: SearchPostsParameters;
+            returnType: SearchPostsReturn;
         };
     };
 };

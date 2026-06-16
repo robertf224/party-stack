@@ -51,6 +51,12 @@ export default {
                 displayName: "Action type",
                 pluralDisplayName: "Action types",
             },
+            QueryTypeDef: {
+                name: "QueryType",
+                primaryKey: "name",
+                displayName: "Query type",
+                pluralDisplayName: "Query types",
+            },
             NamedTypeDef: {
                 name: "ValueType",
                 primaryKey: "name",
@@ -80,4 +86,5 @@ export default {
         },
     ],
     actionTypes: [],
+    queryTypes: [],
 } satisfies OntologyIR;

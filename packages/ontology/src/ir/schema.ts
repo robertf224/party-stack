@@ -790,6 +790,85 @@ export default {
             }),
         },
         {
+            name: "QueryParameterDef",
+            description: "A parameter accepted by a query type.",
+            type: o.struct({
+                fields: [
+                    {
+                        name: "name",
+                        displayName: "Name",
+                        type: o.string({}),
+                        description: "The query parameter's programmatic name.",
+                    },
+                    {
+                        name: "displayName",
+                        displayName: "Display name",
+                        type: o.string({}),
+                        description: "Human-readable name.",
+                    },
+                    {
+                        name: "type",
+                        displayName: "Type",
+                        type: o.ref({ name: "TypeDef" }),
+                    },
+                    {
+                        name: "description",
+                        displayName: "Description",
+                        type: o.optional({ type: o.string({}) }),
+                        description: "Optional description.",
+                    },
+                    {
+                        name: "deprecated",
+                        displayName: "Deprecated?",
+                        type: o.optional({ type: o.ref({ name: "Deprecation" }) }),
+                    },
+                ],
+            }),
+        },
+        {
+            name: "QueryTypeDef",
+            description: "A runnable query type in the ontology.",
+            type: o.struct({
+                fields: [
+                    {
+                        name: "name",
+                        displayName: "Name",
+                        type: o.string({}),
+                        description: "The query type's programmatic name.",
+                    },
+                    {
+                        name: "displayName",
+                        displayName: "Display name",
+                        type: o.string({}),
+                        description: "Human-readable name.",
+                    },
+                    {
+                        name: "parameters",
+                        displayName: "Parameters",
+                        type: o.list({ elementType: o.ref({ name: "QueryParameterDef" }) }),
+                        description: "The query type's parameters.",
+                    },
+                    {
+                        name: "returnType",
+                        displayName: "Return type",
+                        type: o.ref({ name: "TypeDef" }),
+                        description: "The query type's return type.",
+                    },
+                    {
+                        name: "description",
+                        displayName: "Description",
+                        type: o.optional({ type: o.string({}) }),
+                        description: "Optional description.",
+                    },
+                    {
+                        name: "deprecated",
+                        displayName: "Deprecated?",
+                        type: o.optional({ type: o.ref({ name: "Deprecation" }) }),
+                    },
+                ],
+            }),
+        },
+        {
             name: "OntologyIR",
             description: "The root ontology definition containing all type definitions.",
             type: o.struct({
@@ -818,6 +897,12 @@ export default {
                         type: o.list({ elementType: o.ref({ name: "ActionTypeDef" }) }),
                         description: "Action type definitions.",
                     },
+                    {
+                        name: "queryTypes",
+                        displayName: "Query types",
+                        type: o.list({ elementType: o.ref({ name: "QueryTypeDef" }) }),
+                        description: "Query type definitions.",
+                    },
                 ],
             }),
         },
@@ -825,4 +910,5 @@ export default {
     objectTypes: [],
     linkTypes: [],
     actionTypes: [],
+    queryTypes: [],
 } satisfies OntologyIR;

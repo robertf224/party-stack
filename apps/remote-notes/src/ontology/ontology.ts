@@ -157,6 +157,7 @@ export const notesOntology = {
             ],
         },
     ],
+    queryTypes: [],
 } satisfies OntologyIR;
 
 export default notesOntology;

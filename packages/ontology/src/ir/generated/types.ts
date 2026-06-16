@@ -308,6 +308,33 @@ export type ActionTypeDef = {
     deprecated?: Deprecation;
 };
 
+/** A parameter accepted by a query type. */
+export type QueryParameterDef = {
+    /** The query parameter's programmatic name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    type: TypeDef;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
+/** A runnable query type in the ontology. */
+export type QueryTypeDef = {
+    /** The query type's programmatic name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    /** The query type's parameters. */
+    parameters: Array<QueryParameterDef>;
+    /** The query type's return type. */
+    returnType: TypeDef;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
 /** The root ontology definition containing all type definitions. */
 export type OntologyIR = {
     /** Named, reusable value types. */
@@ -318,4 +345,6 @@ export type OntologyIR = {
     linkTypes: Array<LinkTypeDef>;
     /** Action type definitions. */
     actionTypes: Array<ActionTypeDef>;
+    /** Query type definitions. */
+    queryTypes: Array<QueryTypeDef>;
 };

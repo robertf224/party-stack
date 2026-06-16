@@ -11,6 +11,7 @@ import type {
     ObjectTypeDef,
     PropertyAssignment,
     PropertyDef,
+    QueryTypeDef,
     StringConstraint,
     TypeDef,
     VariantDef,
@@ -385,6 +386,36 @@ function renderActionType(actionType: ActionTypeDef, ctx?: RenderContext): strin
     ]);
 }
 
+function renderQueryType(queryType: QueryTypeDef): string {
+    return renderObject([
+        { name: "name", value: renderPlainValue(queryType.name) },
+        { name: "displayName", value: renderPlainValue(queryType.displayName) },
+        {
+            name: "parameters",
+            value: withWriter((writer) =>
+                writeArray(
+                    writer,
+                    queryType.parameters.map((parameter) =>
+                        renderObject([
+                            { name: "name", value: renderPlainValue(parameter.name) },
+                            { name: "displayName", value: renderPlainValue(parameter.displayName) },
+                            { name: "type", value: renderType(parameter.type) },
+                            {
+                                name: "description",
+                                value: parameter.description ? renderPlainValue(parameter.description) : undefined,
+                            },
+                            { name: "deprecated", value: renderDeprecation(parameter.deprecated) },
+                        ])
+                    )
+                )
+            ),
+        },
+        { name: "returnType", value: renderType(queryType.returnType) },
+        { name: "description", value: queryType.description ? renderPlainValue(queryType.description) : undefined },
+        { name: "deprecated", value: renderDeprecation(queryType.deprecated) },
+    ]);
+}
+
 export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}): string {
     const ontologyImportPath = opts.ontologyImportPath ?? "@party-stack/ontology";
     const project = new Project({ useInMemoryFileSystem: true });
@@ -444,6 +475,15 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
                 name: "actionTypes",
                 value: withWriter((arrayWriter) =>
                     writeArray(arrayWriter, renderedActionTypes)
+                ),
+            },
+            {
+                name: "queryTypes",
+                value: withWriter((arrayWriter) =>
+                    writeArray(
+                        arrayWriter,
+                        ir.queryTypes.map((queryType) => renderQueryType(queryType))
+                    )
                 ),
             },
         ]);

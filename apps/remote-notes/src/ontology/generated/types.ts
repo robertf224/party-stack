@@ -58,4 +58,5 @@ export type RemoteNotesOntology = {
             parameters: CreateNoteAttachmentParameters;
         };
     };
+    queryTypes: Record<never, never>;
 };

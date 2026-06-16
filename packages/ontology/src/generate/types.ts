@@ -241,6 +241,30 @@ function addOntologyAggregateType(
                   }),
     });
 
+    properties.push({
+        name: "queryTypes",
+        type:
+            ir.queryTypes.length === 0
+                ? "Record<never, never>"
+                : Writers.objectType({
+                      properties: ir.queryTypes.map((queryType) => ({
+                          name: renderPropertyName(queryType.name),
+                          type: Writers.objectType({
+                              properties: [
+                                  {
+                                      name: "parameters",
+                                      type: `${pascalCase(queryType.name)}Parameters`,
+                                  },
+                                  {
+                                      name: "returnType",
+                                      type: `${pascalCase(queryType.name)}Return`,
+                                  },
+                              ],
+                          }),
+                      })),
+                  }),
+    });
+
     sourceFile.addTypeAlias({
         name: outputTypeName,
         isExported: true,
@@ -273,6 +297,37 @@ function addActionParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: 
     }
 }
 
+function addQueryParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: OntologyIR): void {
+    const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
+    for (const queryType of ir.queryTypes) {
+        sourceFile.addTypeAlias({
+            name: `${pascalCase(queryType.name)}Parameters`,
+            isExported: true,
+            type: withWriter(
+                Writers.objectType({
+                    properties: queryType.parameters.map((parameter) => {
+                        const parameterType = parameter.type;
+                        const isOptional = parameterType.kind === "optional";
+                        const type = isOptional ? parameterType.value.type : parameterType;
+                        const renderedType = generateForTypeDef(type, { objectTypes });
+                        return {
+                            name: renderPropertyName(parameter.name),
+                            type: isOptional ? union([renderedType, "undefined"]) : renderedType,
+                            hasQuestionToken: isOptional,
+                        };
+                    }),
+                })
+            ),
+        });
+        sourceFile.addTypeAlias({
+            name: `${pascalCase(queryType.name)}Return`,
+            isExported: true,
+            type: generateForTypeDef(queryType.returnType, { objectTypes }),
+            docs: buildJsDocs({ description: queryType.description, deprecated: queryType.deprecated }),
+        });
+    }
+}
+
 export function generateTypes(ir: OntologyIR, opts: GenerateTypesOpts = {}): string {
     const outputTypeName = opts.outputTypeName ?? "GeneratedOntology";
     const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
@@ -282,6 +337,7 @@ export function generateTypes(ir: OntologyIR, opts: GenerateTypesOpts = {}): str
     const project = new Project({ useInMemoryFileSystem: true });
     const aggregateFile = project.createSourceFile("ontology-aggregate.ts", "");
     addActionParameterTypes(aggregateFile, ir);
+    addQueryParameterTypes(aggregateFile, ir);
     addOntologyAggregateType(aggregateFile, ir, outputTypeName);
     return `${typeDefinitions}\n\n${aggregateFile.getFullText().trim()}`.trim();
 }

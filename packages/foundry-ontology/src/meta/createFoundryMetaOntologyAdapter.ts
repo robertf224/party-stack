@@ -8,6 +8,7 @@ import {
     objectTypeCollectionOptions,
     valueTypeCollectionOptions,
 } from "./entityCollectionOptions.js";
+import { queryTypeCollectionOptions } from "./queryTypeCollectionOptions.js";
 
 export interface CreateFoundryMetaOntologyAdapterOpts {
     client: OntologyClient;
@@ -30,11 +31,16 @@ export function createFoundryMetaOntologyAdapter(
                     return linkTypeCollectionOptions(metadata);
                 case "ActionType":
                     return actionTypeCollectionOptions({ client: opts.client });
+                case "QueryType":
+                    return queryTypeCollectionOptions({ client: opts.client });
                 default:
                     throw new Error(`Unsupported Foundry metadata object type "${objectType}".`);
             }
         },
         applyAction: () => {
+            notImplemented();
+        },
+        runQuery: () => {
             notImplemented();
         },
         cleanup: async () => {

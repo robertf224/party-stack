@@ -314,4 +314,24 @@ export default {
             ],
         },
     ],
+    queryTypes: [
+        {
+            name: "searchPosts",
+            displayName: "Search Posts",
+            description: "Search blog posts by query text.",
+            parameters: [
+                {
+                    name: "query",
+                    displayName: "Query",
+                    type: o.string({}),
+                },
+                {
+                    name: "limit",
+                    displayName: "Limit",
+                    type: o.optional({ type: o.integer({}) }),
+                },
+            ],
+            returnType: o.list({ elementType: o.objectReference({ objectType: "Post" }) }),
+        },
+    ],
 } satisfies OntologyIR;

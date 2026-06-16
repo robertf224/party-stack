@@ -30,7 +30,10 @@ function isOntologyConfig(value: unknown): value is OntologyConfig {
         Array.isArray(value.objectTypeNames) &&
         value.objectTypeNames.every((entry) => typeof entry === "string") &&
         Array.isArray(value.actionTypeNames) &&
-        value.actionTypeNames.every((entry) => typeof entry === "string")
+        value.actionTypeNames.every((entry) => typeof entry === "string") &&
+        (value.queryTypeNames === undefined ||
+            (Array.isArray(value.queryTypeNames) &&
+                value.queryTypeNames.every((entry) => typeof entry === "string")))
     );
 }
 
@@ -65,6 +68,7 @@ export async function writePulledOntology(
         const ontology = await pull(liveOntology, {
             objectTypeNames: config.objectTypeNames,
             actionTypeNames: config.actionTypeNames,
+            queryTypeNames: config.queryTypeNames ?? [],
         });
         const output = generateOntology(ontology, { ontologyImportPath });
 

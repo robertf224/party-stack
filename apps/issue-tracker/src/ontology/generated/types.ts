@@ -49,4 +49,5 @@ export type IssueTrackerOntology = {
             parameters: ReopenTaskParameters;
         };
     };
+    queryTypes: Record<never, never>;
 };

@@ -83,6 +83,21 @@ describe("Infer", () => {
                 logic: [],
             },
         ],
+        queryTypes: [
+            {
+                name: "searchTasks",
+                displayName: "Search Tasks",
+                parameters: [
+                    { name: "query", displayName: "Query", type: o.string({}) },
+                    {
+                        name: "limit",
+                        displayName: "Limit",
+                        type: o.optional({ type: o.integer({}) }),
+                    },
+                ],
+                returnType: o.list({ elementType: o.objectReference({ objectType: "Task" }) }),
+            },
+        ],
     });
 
     it("infers an OntologyDefinition from an ontology IR value", () => {
@@ -109,6 +124,13 @@ describe("Infer", () => {
             notes?: string | null;
             createdAt?: timestamp;
         }>();
+        expectTypeOf<InferredOntology["queryTypes"]["searchTasks"]["parameters"]>().toEqualTypeOf<{
+            query: string;
+            limit?: number;
+        }>();
+        expectTypeOf<InferredOntology["queryTypes"]["searchTasks"]["returnType"]>().toEqualTypeOf<
+            string[]
+        >();
     });
 
     it("infers individual named type definitions against an ontology", () => {

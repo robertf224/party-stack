@@ -255,6 +255,18 @@ export type ActionLogicStep = v.Union<{
     deleteObject: DeleteObjectActionLogicStep;
 }>;
 
+/** A parameter accepted by a query type. */
+export type QueryParameterDef = {
+    /** The query parameter's programmatic name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    type: TypeDef;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
 /** A named type definition that can be referenced by other types. */
 export type ValueType = {
     /** The type's name for use in code. */
@@ -308,12 +320,29 @@ export type ActionType = {
     deprecated?: Deprecation;
 };
 
+/** A runnable query type in the ontology. */
+export type QueryType = {
+    /** The query type's programmatic name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    /** The query type's parameters. */
+    parameters: Array<QueryParameterDef>;
+    /** The query type's return type. */
+    returnType: TypeDef;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
 export type MetaOntology = {
     objectTypes: {
         ValueType: ValueType;
         ObjectType: ObjectType;
         LinkType: LinkType;
         ActionType: ActionType;
+        QueryType: QueryType;
     };
     actionTypes: Record<never, never>;
+    queryTypes: Record<never, never>;
 };

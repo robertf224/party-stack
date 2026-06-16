@@ -8,6 +8,7 @@ import {
 } from "@tanstack/db";
 import { createInMemoryBlobStore } from "@party-stack/blobs";
 import { createLiveOntology } from "@party-stack/ontology";
+import { hydrateOntologyJsonValue, serializeOntologyJsonValue } from "@party-stack/ontology/utils";
 import type { LiveOntology, OntologyAdapter, OntologyDefinition, OntologyIR } from "@party-stack/ontology";
 import type { attachment } from "@party-stack/ontology/values";
 import {
@@ -30,6 +31,8 @@ import type {
     RemoteDescribeRequest,
     RemoteLoadSubsetRequest,
     RemoteLoadSubsetResponse,
+    RemoteRunQueryRequest,
+    RemoteRunQueryResponse,
     RemoteOntologyEndpoint,
     RemoteOntologyDescription,
     RemoteLoadSubsetOptions,
@@ -129,6 +132,18 @@ export type RemoteOntologyApplyActionRequest<
     };
 }[Extract<keyof Ontology["actionTypes"], string>];
 
+export type RemoteOntologyRunQueryRequest<
+    Ontology extends OntologyDefinition = OntologyDefinition,
+> = {
+    [QueryTypeName in Extract<
+        keyof Ontology["queryTypes"],
+        string
+    >]: {
+        queryType: QueryTypeName;
+        parameters: Ontology["queryTypes"][QueryTypeName]["parameters"];
+    };
+}[Extract<keyof Ontology["queryTypes"], string>];
+
 export interface RemoteOntologyPolicy<
     Context,
     Ontology extends OntologyDefinition = OntologyDefinition,
@@ -141,6 +156,11 @@ export interface RemoteOntologyPolicy<
         ctx: Context,
         request: RemoteOntologyApplyActionRequest<Ontology>,
         opts: RemoteOntologyCanApplyActionOptions<Ontology>
+    ) => boolean | Promise<boolean>;
+    canRunQuery?: (
+        ctx: Context,
+        request: RemoteOntologyRunQueryRequest<Ontology>,
+        opts: RemoteOntologyCanRunQueryOptions<Ontology>
     ) => boolean | Promise<boolean>;
 }
 
@@ -159,6 +179,12 @@ export interface RemoteOntologyServer {
 }
 
 export interface RemoteOntologyCanApplyActionOptions<
+    Ontology extends OntologyDefinition = OntologyDefinition,
+> {
+    objects: LiveOntology<Ontology>["objects"];
+}
+
+export interface RemoteOntologyCanRunQueryOptions<
     Ontology extends OntologyDefinition = OntologyDefinition,
 > {
     objects: LiveOntology<Ontology>["objects"];
@@ -199,6 +225,14 @@ function getObjectTypePrimaryKey(ir: OntologyIR, objectType: string): string {
         throw new Error(`Unknown ontology object type "${objectType}".`);
     }
     return objectTypeDef.primaryKey;
+}
+
+function getActionType(ir: OntologyIR, actionType: string): OntologyIR["actionTypes"][number] {
+    const actionTypeDef = ir.actionTypes.find((candidate) => candidate.name === actionType);
+    if (!actionTypeDef) {
+        throw new Error(`Unknown ontology action type "${actionType}".`);
+    }
+    return actionTypeDef;
 }
 
 async function resolveValue<Context, TValue>(
@@ -543,10 +577,21 @@ async function handleApplyAction<
 ): Promise<RemoteApplyActionResponse> {
     const ir = await resolveValue(opts.ir, ctx);
     const adapter = await resolveValue(opts.adapter, ctx);
+    const actionTypeDef = getActionType(ir, request.actionType);
+    const parameterTypes = new Map(actionTypeDef.parameters.map((parameter) => [parameter.name, parameter.type]));
+    const hydratedRequestParameters = Object.fromEntries(
+        Object.entries(request.parameters).map(([parameterName, value]) => {
+            const parameterType = parameterTypes.get(parameterName);
+            return [
+                parameterName,
+                parameterType ? hydrateOntologyJsonValue(ir, parameterType, value) : value,
+            ];
+        })
+    );
     const parameters = await applyFixedActionParameterValues({
         ctx,
         actionType: request.actionType,
-        parameters: request.parameters,
+        parameters: hydratedRequestParameters,
         fixedActionParameterValues: opts.policy?.fixedActionParameterValues,
     });
     const blobStore = createInMemoryBlobStore(`remote-action:${crypto.randomUUID()}`);
@@ -583,6 +628,66 @@ async function handleApplyAction<
     return {
         invalidatedObjectTypes: ir.objectTypes.map((objectType) => objectType.name),
     };
+}
+
+async function handleRunQuery<
+    Context,
+    Ontology extends OntologyDefinition = OntologyDefinition,
+>(
+    ctx: Context,
+    opts: CreateRemoteOntologyServerOptions<Context, Ontology>,
+    request: RemoteRunQueryRequest
+): Promise<RemoteRunQueryResponse> {
+    const ir = await resolveValue(opts.ir, ctx);
+    const queryTypeDef = ir.queryTypes.find((candidate) => candidate.name === request.queryType);
+    if (!queryTypeDef) {
+        throw new Error(`Unknown query type "${request.queryType}".`);
+    }
+
+    const adapter = await resolveValue(opts.adapter, ctx);
+    const parameterTypes = new Map(queryTypeDef.parameters.map((parameter) => [parameter.name, parameter.type]));
+    const parameters = Object.fromEntries(
+        Object.entries(request.parameters).map(([parameterName, value]) => {
+            const parameterType = parameterTypes.get(parameterName);
+            return [
+                parameterName,
+                parameterType ? hydrateOntologyJsonValue(ir, parameterType, value) : value,
+            ];
+        })
+    );
+    const ontology = createLiveOntology<Ontology>({
+        ir,
+        adapter,
+        getContext: () => ctx as Record<string, unknown>,
+    });
+
+    try {
+        await waitForLiveOntologyReady(ontology);
+        const canRun = await opts.policy?.canRunQuery?.(
+            ctx,
+            {
+                queryType: request.queryType,
+                parameters,
+            } as RemoteOntologyRunQueryRequest<Ontology>,
+            {
+                objects: ontology.objects,
+            }
+        );
+        if (canRun !== true) {
+            throw new RemoteOntologyForbiddenError(`Query type "${request.queryType}" is not allowed.`);
+        }
+
+        const query = ontology.queries[request.queryType];
+        if (!query) {
+            throw new Error(`Unknown query type "${request.queryType}".`);
+        }
+        const value = await query(parameters);
+        return {
+            value: serializeOntologyJsonValue(ir, queryTypeDef.returnType, value),
+        };
+    } finally {
+        await ontology.cleanup();
+    }
 }
 
 async function handleAttachmentRead<
@@ -712,6 +817,12 @@ export function createRemoteOntologyServer<
                     opts,
                     input as RemoteApplyActionRequest,
                     uploads
+                )) as RemoteOntologyResponseByEndpoint[TEndpoint];
+            case "run-query":
+                return (await handleRunQuery(
+                    ctx,
+                    opts,
+                    input as RemoteRunQueryRequest
                 )) as RemoteOntologyResponseByEndpoint[TEndpoint];
             case "attachment-metadata":
                 return (

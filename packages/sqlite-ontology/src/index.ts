@@ -1,14 +1,16 @@
 import { applyActionLogic } from "@party-stack/ontology";
-import { resolveType } from "@party-stack/ontology/utils";
+import {
+    hydrateOntologyJsonObject,
+    resolveType,
+    serializeOntologyJsonObject,
+} from "@party-stack/ontology/utils";
 import { createTransaction, eq, queryOnce } from "@tanstack/db";
-import { Temporal } from "temporal-polyfill";
 import type {
     OntologyAdapter,
     OntologyAttachmentsAdapter,
     OntologyCollectionOptions,
     OntologyIR,
     ObjectTypeDef,
-    TypeDef,
 } from "@party-stack/ontology";
 import type { attachment } from "@party-stack/ontology/values";
 import type { Collection, PendingMutation, SyncConfig } from "@tanstack/db";
@@ -189,111 +191,6 @@ function ensureSchema(opts: {
     }
 }
 
-function hydrateValue(ir: OntologyIR, type: TypeDef, value: unknown): unknown {
-    if (value === undefined || value === null) return value;
-    const resolvedType = resolveType(ir, type);
-
-    switch (resolvedType.kind) {
-        case "timestamp":
-            return typeof value === "string" ? Temporal.Instant.from(value) : value;
-        case "date":
-            return typeof value === "string" ? Temporal.PlainDate.from(value) : value;
-        case "optional":
-            return hydrateValue(ir, resolvedType.value.type, value);
-        case "list":
-            return Array.isArray(value)
-                ? value.map((item) => hydrateValue(ir, resolvedType.value.elementType, item))
-                : value;
-        case "map":
-            if (typeof value !== "object" || value === null) return value;
-            return Object.fromEntries(
-                Object.entries(value).map(([key, entry]) => [
-                    key,
-                    hydrateValue(ir, resolvedType.value.valueType, entry),
-                ])
-            );
-        case "struct":
-            if (typeof value !== "object" || value === null) return value;
-            return Object.fromEntries(
-                Object.entries(value).map(([key, entry]) => {
-                    const field = resolvedType.value.fields.find((candidate) => candidate.name === key);
-                    return [key, field ? hydrateValue(ir, field.type, entry) : entry];
-                })
-            );
-        default:
-            return value;
-    }
-}
-
-function serializeValue(ir: OntologyIR, type: TypeDef, value: unknown): unknown {
-    if (value === undefined || value === null) return value;
-    const resolvedType = resolveType(ir, type);
-
-    switch (resolvedType.kind) {
-        case "timestamp":
-        case "date":
-            return typeof value === "object" &&
-                value !== null &&
-                typeof (value as { toString?: unknown }).toString === "function"
-                ? (value as { toString: () => string }).toString()
-                : value;
-        case "optional":
-            return serializeValue(ir, resolvedType.value.type, value);
-        case "list":
-            return Array.isArray(value)
-                ? value.map((item) => serializeValue(ir, resolvedType.value.elementType, item))
-                : value;
-        case "map":
-            if (typeof value !== "object" || value === null) return value;
-            return Object.fromEntries(
-                Object.entries(value).map(([key, entry]) => [
-                    key,
-                    serializeValue(ir, resolvedType.value.valueType, entry),
-                ])
-            );
-        case "struct":
-            if (typeof value !== "object" || value === null) return value;
-            return Object.fromEntries(
-                Object.entries(value).map(([key, entry]) => {
-                    const field = resolvedType.value.fields.find((candidate) => candidate.name === key);
-                    return [key, field ? serializeValue(ir, field.type, entry) : entry];
-                })
-            );
-        default:
-            return value;
-    }
-}
-
-function hydrateObjectRecord(opts: {
-    ir: OntologyIR;
-    objectTypeName: string;
-    object: OntologyRecord;
-}): OntologyRecord {
-    const objectType = opts.ir.objectTypes.find((candidate) => candidate.name === opts.objectTypeName);
-    if (!objectType) return opts.object;
-    return Object.fromEntries(
-        Object.entries(opts.object).map(([key, value]) => {
-            const property = objectType.properties.find((candidate) => candidate.name === key);
-            return [key, property ? hydrateValue(opts.ir, property.type, value) : value];
-        })
-    );
-}
-
-function serializeObjectRecord(opts: {
-    ir: OntologyIR;
-    objectTypeName: string;
-    object: OntologyRecord;
-}): OntologyRecord {
-    const objectType = opts.ir.objectTypes.find((candidate) => candidate.name === opts.objectTypeName);
-    if (!objectType) return opts.object;
-    return Object.fromEntries(
-        Object.entries(opts.object).map(([key, value]) => {
-            const property = objectType.properties.find((candidate) => candidate.name === key);
-            return [key, property ? serializeValue(opts.ir, property.type, value) : value];
-        })
-    );
-}
-
 async function loadActionReferenceObjects(opts: {
     ir: OntologyIR;
     actionTypeName: string;
@@ -410,7 +307,7 @@ function persistObjectMutations(opts: {
             continue;
         }
 
-        const serializedObject = serializeObjectRecord({
+                const serializedObject = serializeOntologyJsonObject({
             ir: opts.ir,
             objectTypeName: opts.objectTypeName,
             object: object!,
@@ -497,7 +394,7 @@ function createCollectionOptions(opts: {
                 begin();
                 for (const row of rows) {
                     const parsedObject = JSON.parse(row.data) as OntologyRecord;
-                    const hydratedObject = hydrateObjectRecord({
+                    const hydratedObject = hydrateOntologyJsonObject({
                         ir: opts.ir,
                         objectTypeName: opts.objectTypeName,
                         object: parsedObject,
@@ -644,6 +541,8 @@ export function createSQLiteOntologyAdapter(opts: CreateSQLiteOntologyAdapterOpt
 
             await transaction.isPersisted.promise;
         },
+        runQuery: (name) =>
+            Promise.reject(new Error(`SQLite ontology adapter cannot run query type "${name}".`)),
         attachments: createAttachmentsAdapter(opts.database),
     };
 }

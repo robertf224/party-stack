@@ -6,6 +6,7 @@ import type {
     OntologyIR,
     PropertyAssignment,
     PropertyDef,
+    QueryTypeDef,
     TypeDef,
     ValueReferenceExpression,
 } from "./generated/types.js";
@@ -491,6 +492,35 @@ function validateAction(
     return errors;
 }
 
+function validateQueryType(
+    queryType: QueryTypeDef,
+    path: ValidationPathElement[],
+    valueTypeNames: Set<string>,
+    objectTypeNames: Set<string>
+): ValidationError[] {
+    const errors: ValidationError[] = [];
+    const seenParameters = new Set<string>();
+
+    for (let index = 0; index < queryType.parameters.length; index++) {
+        const parameter = queryType.parameters[index]!;
+        const parameterPath = [...path, "parameters", index];
+
+        if (seenParameters.has(parameter.name)) {
+            errors.push({
+                message: `Duplicate query parameter name: "${parameter.name}".`,
+                path: [...parameterPath, "name"],
+            });
+        }
+        seenParameters.add(parameter.name);
+
+        errors.push(...validateTypeDef(parameter.type, [...parameterPath, "type"], valueTypeNames, objectTypeNames));
+    }
+
+    errors.push(...validateTypeDef(queryType.returnType, [...path, "returnType"], valueTypeNames, objectTypeNames));
+
+    return errors;
+}
+
 export function validate(ontology: OntologyIR): ValidationResult {
     const errors: ValidationError[] = [];
 
@@ -600,6 +630,22 @@ export function validate(ontology: OntologyIR): ValidationResult {
         actionNames.add(action.name);
 
         errors.push(...validateAction(action, actionPath, valueTypes, objectTypes));
+    }
+
+    const queryTypeNames = new Set<string>();
+    for (let i = 0; i < ontology.queryTypes.length; i++) {
+        const queryType = ontology.queryTypes[i]!;
+        const queryTypePath = ["queryTypes", i] as ValidationPathElement[];
+
+        if (queryTypeNames.has(queryType.name)) {
+            errors.push({
+                message: `Duplicate query type name: "${queryType.name}".`,
+                path: [...queryTypePath, "name"],
+            });
+        }
+        queryTypeNames.add(queryType.name);
+
+        errors.push(...validateQueryType(queryType, queryTypePath, valueTypeNames, objectTypeNames));
     }
 
     return errors.length === 0 ? { kind: "ok" } : { kind: "err", errors };
