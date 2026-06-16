@@ -1,12 +1,6 @@
 import { invariant } from "@bobbyfidz/panic";
+import type { OntologyAttachmentCreateTarget } from "./targets.js";
 import type { OntologyIR, TypeDef } from "../ir/generated/types.js";
-
-// TODO: clean this up a bit when we have a better notion of paths
-
-export interface OntologyPropertyTarget {
-    objectType: string;
-    property: string;
-}
 
 export function unwrapType(type: TypeDef): { type: TypeDef; isOptional: boolean } {
     if (type.kind === "optional") {
@@ -35,10 +29,33 @@ export function unwrapValueType(ir: OntologyIR, type: TypeDef): TypeDef {
     return resolvedType === type ? type : unwrapValueType(ir, resolvedType);
 }
 
-export function getTargetValueType(ir: OntologyIR, target: OntologyPropertyTarget): TypeDef {
+function getObjectPropertyValueType(
+    ir: OntologyIR,
+    target: { objectType: string; property: string }
+): TypeDef {
     const objectType = ir.objectTypes.find((candidate) => candidate.name === target.objectType);
     invariant(objectType !== undefined, `Unknown object type "${target.objectType}".`);
     const property = objectType.properties.find((candidate) => candidate.name === target.property);
     invariant(property !== undefined, `Unknown property "${target.property}" on "${target.objectType}".`);
     return unwrapValueType(ir, property.type);
+}
+
+function getActionParameterValueType(
+    ir: OntologyIR,
+    target: { actionType: string; parameter: string }
+): TypeDef {
+    const actionType = ir.actionTypes.find((candidate) => candidate.name === target.actionType);
+    invariant(actionType !== undefined, `Unknown action type "${target.actionType}".`);
+    const parameter = actionType.parameters.find((candidate) => candidate.name === target.parameter);
+    invariant(parameter !== undefined, `Unknown parameter "${target.parameter}" on "${target.actionType}".`);
+    return unwrapValueType(ir, parameter.type);
+}
+
+export function getTargetValueType(ir: OntologyIR, target: OntologyAttachmentCreateTarget): TypeDef {
+    switch (target.kind) {
+        case "objectProperty":
+            return getObjectPropertyValueType(ir, target);
+        case "actionParameter":
+            return getActionParameterValueType(ir, target);
+    }
 }

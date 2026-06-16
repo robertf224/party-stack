@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { LoadSubsetOptions } from "@tanstack/db";
-import type { OntologyIR } from "@party-stack/ontology";
+import type { OntologyAttachmentIdMapping, OntologyAttachmentUpload, OntologyIR } from "@party-stack/ontology";
 import type { attachment } from "@party-stack/ontology/values";
 
 export interface RemoteOntologyDescription {
@@ -37,6 +37,7 @@ export interface RemoteApplyActionRequest {
 
 export interface RemoteApplyActionResponse {
     invalidatedObjectTypes?: string[];
+    attachmentIdMappings?: OntologyAttachmentIdMapping[];
 }
 
 export interface RemoteRunQueryFunctionRequest {
@@ -52,14 +53,9 @@ export interface RemoteAttachmentRequest {
     attachment: attachment;
 }
 
-export interface RemoteAttachmentUpload {
-    attachment: attachment;
-    blob: Blob;
-}
-
 export interface RemoteOntologyTransportOptions {
     signal?: AbortSignal;
-    attachments?: RemoteAttachmentUpload[];
+    attachments?: OntologyAttachmentUpload[];
 }
 
 export interface RemoteOntologyTransport {

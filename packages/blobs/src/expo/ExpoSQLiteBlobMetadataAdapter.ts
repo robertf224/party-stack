@@ -9,6 +9,7 @@ export interface ExpoSQLiteBlobMetadataAdapterOptions {
 
 interface BlobRefRow {
     id: string;
+    remote_id: string | null;
     type: string;
     size: number;
     name: string | null;
@@ -29,6 +30,7 @@ function sqlIdentifier(name: string): string {
 function rowToBlobRef(row: BlobRefRow): BlobRef {
     return {
         id: row.id,
+        remoteId: row.remote_id ?? undefined,
         type: row.type,
         size: row.size,
         name: row.name ?? undefined,
@@ -68,6 +70,7 @@ export class ExpoSQLiteBlobMetadataAdapter implements BlobMetadataAdapter {
                     PRAGMA journal_mode = WAL;
                     CREATE TABLE IF NOT EXISTS ${table} (
                         id TEXT PRIMARY KEY NOT NULL,
+                        remote_id TEXT,
                         type TEXT NOT NULL,
                         size INTEGER NOT NULL,
                         name TEXT,
@@ -81,6 +84,14 @@ export class ExpoSQLiteBlobMetadataAdapter implements BlobMetadataAdapter {
                     CREATE INDEX IF NOT EXISTS ${this.indexName("last_accessed_at_idx")} ON ${table}(last_accessed_at);
                     CREATE INDEX IF NOT EXISTS ${this.indexName("updated_at_idx")} ON ${table}(updated_at);
                 `);
+                const columns = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+                const columnNames = new Set(columns.map((column) => column.name));
+                if (!columnNames.has("remote_id")) {
+                    await db.execAsync(`ALTER TABLE ${table} ADD COLUMN remote_id TEXT;`);
+                }
+                await db.execAsync(
+                    `CREATE INDEX IF NOT EXISTS ${this.indexName("remote_id_idx")} ON ${table}(remote_id);`
+                );
                 return db;
             }
         );
@@ -93,6 +104,7 @@ export class ExpoSQLiteBlobMetadataAdapter implements BlobMetadataAdapter {
             `
                 INSERT INTO ${this.table()} (
                     id,
+                    remote_id,
                     type,
                     size,
                     name,
@@ -102,8 +114,9 @@ export class ExpoSQLiteBlobMetadataAdapter implements BlobMetadataAdapter {
                     updated_at,
                     error
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
+                    remote_id = excluded.remote_id,
                     type = excluded.type,
                     size = excluded.size,
                     name = excluded.name,
@@ -115,6 +128,7 @@ export class ExpoSQLiteBlobMetadataAdapter implements BlobMetadataAdapter {
             `,
             [
                 ref.id,
+                ref.remoteId ?? null,
                 ref.type,
                 ref.size,
                 ref.name ?? null,
@@ -132,6 +146,15 @@ export class ExpoSQLiteBlobMetadataAdapter implements BlobMetadataAdapter {
         const row = await db.getFirstAsync<BlobRefRow>(
             `SELECT * FROM ${this.table()} WHERE id = ?`,
             id
+        );
+        return row ? rowToBlobRef(row) : undefined;
+    }
+
+    async getByRemoteId(remoteId: string): Promise<BlobRef | undefined> {
+        const db = await this.db();
+        const row = await db.getFirstAsync<BlobRefRow>(
+            `SELECT * FROM ${this.table()} WHERE remote_id = ?`,
+            remoteId
         );
         return row ? rowToBlobRef(row) : undefined;
     }

@@ -7,16 +7,25 @@ export type OntologyCollectionOptions = Omit<
     "getKey"
 >;
 
-export interface OntologyActionAttachmentUpload {
+export interface OntologyAttachmentUpload {
     attachment: v.attachment;
     blob: Blob;
-    target: AttachmentTypeDef;
+    target?: AttachmentTypeDef;
+}
+
+export interface OntologyAttachmentIdMapping {
+    localId: string;
+    remoteId: string;
+}
+
+export interface OntologyApplyActionResult {
+    attachmentIdMappings?: OntologyAttachmentIdMapping[];
 }
 
 export interface ApplyActionLiveOpts {
     objects: Record<string, Collection<Record<string, unknown>>>;
     context?: Record<string, unknown>;
-    attachmentUploads?: OntologyActionAttachmentUpload[];
+    attachmentUploads?: OntologyAttachmentUpload[];
 }
 
 export interface RunQueryLiveOpts {
@@ -25,7 +34,7 @@ export interface RunQueryLiveOpts {
 }
 
 export interface OntologyAttachmentsAdapter {
-    generateAttachmentId: (
+    generateAttachmentId?: (
         blob: Blob,
         opts: {
             target?: AttachmentTypeDef;
@@ -37,7 +46,7 @@ export interface OntologyAttachmentsAdapter {
         opts: {
             target?: AttachmentTypeDef;
         }
-    ) => Promise<void>;
+    ) => Promise<OntologyAttachmentIdMapping | void>;
     getAttachmentContent: (attachment: v.attachment) => Promise<Blob>;
     getAttachmentMetadata: (attachment: v.attachment) => Promise<v.attachment & { size: number; type: string; name: string }>;
 }
@@ -51,7 +60,7 @@ export interface OntologyAdapter {
         name: string,
         parameters: Record<string, unknown>,
         live: ApplyActionLiveOpts
-    ) => Promise<void>;
+    ) => Promise<OntologyApplyActionResult | void>;
     runQueryFunction: (
         name: string,
         parameters: Record<string, unknown>,

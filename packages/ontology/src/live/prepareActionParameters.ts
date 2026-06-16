@@ -1,7 +1,7 @@
 import { invariant } from "@bobbyfidz/panic";
 import type { BlobManager } from "@party-stack/blobs";
 import { resolveType } from "../utils/types.js";
-import type { OntologyAdapter } from "./OntologyAdapter.js";
+import type { OntologyAdapter, OntologyAttachmentUpload } from "./OntologyAdapter.js";
 import type {
     AttachmentTypeDef,
     ListTypeDef,
@@ -23,13 +23,9 @@ interface ActionAttachment {
     target: AttachmentTypeDef;
 }
 
-export interface ActionAttachmentUpload extends ActionAttachment {
-    blob: Blob;
-}
-
 export interface PreparedActionParameters {
     parameters: Record<string, unknown>;
-    attachmentUploads: ActionAttachmentUpload[];
+    attachmentUploads: OntologyAttachmentUpload[];
 }
 
 function isAttachment(value: unknown): value is attachment {
@@ -48,7 +44,11 @@ function collectAttachment(
     });
 }
 
-function collectList(opts: MaterializeValueOptions, type: ListTypeDef, attachments: ActionAttachment[]) {
+function collectList(
+    opts: MaterializeValueOptions,
+    type: ListTypeDef,
+    attachments: ActionAttachment[]
+) {
     if (!Array.isArray(opts.value)) return;
     for (const value of opts.value) {
         collectValue(
@@ -62,7 +62,11 @@ function collectList(opts: MaterializeValueOptions, type: ListTypeDef, attachmen
     }
 }
 
-function collectMap(opts: MaterializeValueOptions, type: MapTypeDef, attachments: ActionAttachment[]) {
+function collectMap(
+    opts: MaterializeValueOptions,
+    type: MapTypeDef,
+    attachments: ActionAttachment[]
+) {
     if (typeof opts.value !== "object" || opts.value === null) return;
     for (const value of Object.values(opts.value as Record<string, unknown>)) {
         collectValue(
@@ -76,7 +80,11 @@ function collectMap(opts: MaterializeValueOptions, type: MapTypeDef, attachments
     }
 }
 
-function collectStruct(opts: MaterializeValueOptions, type: StructTypeDef, attachments: ActionAttachment[]) {
+function collectStruct(
+    opts: MaterializeValueOptions,
+    type: StructTypeDef,
+    attachments: ActionAttachment[]
+) {
     if (typeof opts.value !== "object" || opts.value === null) return;
     const fieldsByName = new Map(type.fields.map((field) => [field.name, field.type]));
     for (const [key, value] of Object.entries(opts.value as Record<string, unknown>)) {
@@ -93,7 +101,10 @@ function collectStruct(opts: MaterializeValueOptions, type: StructTypeDef, attac
     }
 }
 
-function collectValue(opts: MaterializeValueOptions, attachments: ActionAttachment[]): void {
+function collectValue(
+    opts: MaterializeValueOptions,
+    attachments: ActionAttachment[]
+): void {
     if (opts.value === undefined || opts.value === null) return;
 
     const type = resolveType(opts.ir, opts.type);
@@ -147,7 +158,7 @@ function collectActionAttachments(opts: {
 async function collectActionAttachmentUploads(opts: {
     attachments: ActionAttachment[];
     blobManager?: BlobManager;
-}): Promise<ActionAttachmentUpload[]> {
+}): Promise<OntologyAttachmentUpload[]> {
     if (opts.attachments.length === 0) return [];
     const blobManager = opts.blobManager;
     invariant(blobManager, "Missing required BlobManager for collecting attachment uploads.");

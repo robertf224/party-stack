@@ -7,12 +7,12 @@ import type {
     OntologyAttachmentsAdapter,
     OntologyCollectionOptions,
     OntologyIR,
+    OntologyObject,
     ObjectTypeDef,
 } from "@party-stack/ontology";
 import type { attachment } from "@party-stack/ontology/values";
 import type { Collection, PendingMutation, SyncConfig } from "@tanstack/db";
 
-type OntologyRecord = Record<string, unknown>;
 type BetterSqlite3Database = {
     exec: (sql: string) => void;
     prepare: (sql: string) => {
@@ -22,7 +22,7 @@ type BetterSqlite3Database = {
     };
     transaction: (fn: () => void) => () => void;
 };
-type OntologyCollection = Collection<OntologyRecord>;
+type OntologyCollection = Collection<OntologyObject>;
 
 interface AttachmentRow {
     id: string;
@@ -228,23 +228,23 @@ async function loadActionReferenceObjects(opts: {
 }
 
 function collectCollectionMutations(opts: {
-    transaction: { mutations: Array<PendingMutation<OntologyRecord>> },
-    collection: Collection<OntologyRecord>;
-}): Array<PendingMutation<OntologyRecord>> {
+    transaction: { mutations: Array<PendingMutation<OntologyObject>> },
+    collection: Collection<OntologyObject>;
+}): Array<PendingMutation<OntologyObject>> {
     return opts.transaction.mutations.filter((mutation) => mutation.collection === opts.collection);
 }
 
-function getMutationObject(mutation: PendingMutation<OntologyRecord>): OntologyRecord | undefined {
-    const candidate = mutation as PendingMutation<OntologyRecord> & {
-        modified?: OntologyRecord;
-        original?: OntologyRecord;
-        changes?: OntologyRecord;
+function getMutationObject(mutation: PendingMutation<OntologyObject>): OntologyObject | undefined {
+    const candidate = mutation as PendingMutation<OntologyObject> & {
+        modified?: OntologyObject;
+        original?: OntologyObject;
+        changes?: OntologyObject;
     };
     return candidate.modified ?? candidate.original ?? candidate.changes;
 }
 
-function getMutationType(mutation: PendingMutation<OntologyRecord>): "insert" | "update" | "delete" {
-    const type = (mutation as PendingMutation<OntologyRecord> & { type?: unknown }).type;
+function getMutationType(mutation: PendingMutation<OntologyObject>): "insert" | "update" | "delete" {
+    const type = (mutation as PendingMutation<OntologyObject> & { type?: unknown }).type;
     if (type === "insert" || type === "update" || type === "delete") return type;
     throw new Error("Unknown TanStack DB mutation type.");
 }
@@ -252,7 +252,7 @@ function getMutationType(mutation: PendingMutation<OntologyRecord>): "insert" | 
 function getPrimaryKeyValue(opts: {
     objectTypeName: string;
     primaryKey: string;
-    object: OntologyRecord | undefined;
+    object: OntologyObject | undefined;
 }): string | number {
     const primaryKeyValue = opts.object?.[opts.primaryKey];
     if (typeof primaryKeyValue !== "string" && typeof primaryKeyValue !== "number") {
@@ -268,7 +268,7 @@ function persistObjectMutations(opts: {
     adapterName: string;
     ir: OntologyIR;
     objectTypeName: string;
-    mutations: Array<PendingMutation<OntologyRecord>>;
+    mutations: Array<PendingMutation<OntologyObject>>;
 }): void {
     if (opts.mutations.length === 0) return;
 
@@ -308,7 +308,7 @@ function persistObjectMutations(opts: {
             ir: opts.ir,
             target: { kind: "object", name: opts.objectTypeName },
             value: object!,
-        }) as OntologyRecord;
+        }) as OntologyObject;
         upsert.run(String(primaryKeyValue), JSON.stringify(serializedObject));
     }
 }
@@ -377,7 +377,7 @@ function createCollectionOptions(opts: {
         objectTypeName: opts.objectTypeName,
     });
 
-    const sync: SyncConfig<OntologyRecord, string | number> = {
+    const sync: SyncConfig<OntologyObject, string | number> = {
         sync: ({ begin, collection, commit, markReady, write }) => {
             const load = () => {
                 const rows = opts.database
@@ -390,12 +390,12 @@ function createCollectionOptions(opts: {
 
                 begin();
                 for (const row of rows) {
-                    const parsedObject = JSON.parse(row.data) as OntologyRecord;
+                    const parsedObject = JSON.parse(row.data) as OntologyObject;
                     const hydratedObject = decode({
                         ir: opts.ir,
                         target: { kind: "object", name: opts.objectTypeName },
                         value: parsedObject,
-                    }) as OntologyRecord;
+                    }) as OntologyObject;
                     const key = hydratedObject[objectType.primaryKey] as string | number;
                     persistedKeys.add(key);
                     write({
@@ -504,7 +504,7 @@ export function createSQLiteOntologyAdapter(opts: CreateSQLiteOntologyAdapterOpt
                 collections,
             });
 
-            const transaction = createTransaction<OntologyRecord>({
+            const transaction = createTransaction<OntologyObject>({
                 mutationFn: async ({ transaction }) => {
                     const attachmentRows = await prepareAttachmentRows(live.attachmentUploads);
                     const persistTransaction = opts.database.transaction(() => {

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { Temporal } from "temporal-polyfill";
-import { o, type OntologyAdapter, type OntologyIR } from "@party-stack/ontology";
+import {
+    o,
+    type OntologyAdapter,
+    type OntologyIR,
+} from "@party-stack/ontology";
 import { createRemoteOntologyServer } from "./server.js";
 import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
 import type { RemoteOntologyDescription } from "./protocol.js";

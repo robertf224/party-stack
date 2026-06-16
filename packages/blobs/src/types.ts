@@ -4,6 +4,7 @@ export type BlobState = "staging" | "staged" | "uploading" | "persisted" | "cach
 
 export interface BlobRef {
     id: string;
+    remoteId?: string;
     type: string;
     size: number;
     name?: string;
@@ -24,6 +25,7 @@ export interface BlobBytesAdapter {
 export interface BlobMetadataAdapter {
     put: (ref: BlobRef) => Promise<void>;
     get: (id: string) => Promise<BlobRef | undefined>;
+    getByRemoteId: (remoteId: string) => Promise<BlobRef | undefined>;
     delete: (id: string) => Promise<void>;
     list: (opts?: { state?: BlobState }) => Promise<BlobRef[]>;
 }
@@ -38,7 +40,7 @@ export interface BlobStore {
     read: (id: string) => Promise<Blob>;
     list: (opts?: { state?: BlobState }) => Promise<BlobRef[]>;
     markUploading: (id: string) => Promise<BlobRef>;
-    markPersisted: (id: string) => Promise<BlobRef>;
+    markUploaded: (id: string, opts?: { remoteId?: string }) => Promise<BlobRef>;
     markFailed: (id: string, error?: unknown) => Promise<BlobRef>;
     purge: (id: string) => Promise<void>;
     reconcile: () => Promise<void>;
@@ -71,8 +73,11 @@ export interface BlobManager {
     stage: (id: string, blob: Blob | File) => Promise<BlobRef>;
     metadata: (id: string, opts?: BlobReadOptions) => Promise<BlobRemoteMetadata>;
     blob: (id: string, opts?: BlobReadOptions) => Promise<Blob>;
-    withUploadTracking: (id: string, uploadFn: (blob: Blob) => Promise<void>) => Promise<void>;
-    lease: (id: string) => () => void;
+    withUploadTracking: (
+        id: string,
+        uploadFn: (blob: Blob) => Promise<{ remoteId?: string } | void>
+    ) => Promise<void>;
+    markUploaded: (id: string, opts?: { remoteId?: string }) => Promise<BlobRef>;
 }
 
 export interface BlobManagerOptions {

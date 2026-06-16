@@ -1,23 +1,34 @@
 import { invariant } from "@bobbyfidz/panic";
 import type { BlobManager } from "@party-stack/blobs";
-import { getTargetValueType, type OntologyPropertyTarget } from "../utils/types.js";
+import { getTargetValueType } from "../utils/types.js";
 import * as v from "../utils/values.js";
 import type { OntologyAttachmentsAdapter } from "./OntologyAdapter.js";
 import type { OntologyIR } from "../ir/index.js";
+import type { OntologyAttachmentCreateTarget } from "../utils/targets.js";
+
+export interface LiveOntologyEagerAttachmentCreation {
+    attachment: v.attachment;
+    isMaterialized?: Promise<void>;
+}
+
+interface LiveOntologyAttachmentCreateOptions {
+    target?: OntologyAttachmentCreateTarget;
+    eager?: boolean;
+}
+
+type LiveOntologyAttachmentCreateResult<Options extends LiveOntologyAttachmentCreateOptions | undefined> = {
+    attachment: v.attachment;
+} & (Options extends { eager: true } ? { isMaterialized?: Promise<void> } : { isMaterialized?: never });
 
 export interface LiveOntologyAttachments {
-    create: (
+    create: <Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined>(
         blob: Blob | File,
-        opts: {
-            target: OntologyPropertyTarget;
-            eager?: boolean;
-        }
-    ) => Promise<v.attachment>;
+        opts?: Options
+    ) => Promise<LiveOntologyAttachmentCreateResult<Options>>;
     metadata: (
         attachment: v.attachment
     ) => Promise<v.attachment & { size: number; type: string; name: string }>;
     blob: (attachment: v.attachment) => Promise<Blob>;
-    lease: (attachment: v.attachment) => () => void;
 }
 
 export function createLiveOntologyAttachments(opts: {
@@ -27,36 +38,51 @@ export function createLiveOntologyAttachments(opts: {
 }): LiveOntologyAttachments {
     const { attachmentsAdapter, blobManager } = opts;
 
-    return {
-        create: async (blob, { target, eager }) => {
-            const targetType = getTargetValueType(opts.ir, target);
-            invariant(
-                targetType.kind === "attachment",
-                `Target property ${target.objectType}.${target.property} is not an attachment.`
+    const create = async <Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined>(
+        blob: Blob | File,
+        createOpts?: Options
+    ): Promise<LiveOntologyAttachmentCreateResult<Options>> => {
+        const normalizedOpts: LiveOntologyAttachmentCreateOptions = createOpts ?? {};
+        const targetType = normalizedOpts.target
+            ? getTargetValueType(opts.ir, normalizedOpts.target)
+            : undefined;
+        invariant(
+            targetType === undefined || targetType.kind === "attachment",
+            "Target is not an attachment."
+        );
+        const id =
+            targetType?.kind === "attachment" && attachmentsAdapter.generateAttachmentId
+                ? await attachmentsAdapter.generateAttachmentId(blob, {
+                      target: targetType.value,
+                  })
+                : crypto.randomUUID();
+        const ref = await blobManager.stage(id, blob);
+        const attachment = {
+            id: ref.id,
+            size: ref.size,
+            type: ref.type,
+            name: ref.name,
+        };
+        const materializeAttachment = attachmentsAdapter.materializeAttachment;
+        if (normalizedOpts.eager && materializeAttachment) {
+            const promise = blobManager.withUploadTracking(ref.id, (blob) =>
+                materializeAttachment(attachment, blob, {
+                    target: targetType?.kind === "attachment" ? targetType.value : undefined,
+                })
             );
-            const id = await attachmentsAdapter.generateAttachmentId(blob, {
-                target: targetType.value,
-            });
-            const ref = await blobManager.stage(id, blob);
-            const attachment = {
-                id: ref.id,
-                size: ref.size,
-                type: ref.type,
-                name: ref.name,
-            };
-            const materializeAttachment = attachmentsAdapter.materializeAttachment;
-            if (eager && materializeAttachment) {
-                await blobManager.withUploadTracking(ref.id, (blob) =>
-                    materializeAttachment(attachment, blob, {
-                        target: targetType.value,
-                    })
-                );
-            }
-            return attachment;
-        },
+            void promise.catch(() => undefined);
+            return {
+                attachment,
+                isMaterialized: promise,
+            } as unknown as LiveOntologyAttachmentCreateResult<Options>;
+        }
+        return { attachment } as LiveOntologyAttachmentCreateResult<Options>;
+    };
+
+    return {
+        create,
         metadata: (attachment) =>
             blobManager.metadata(attachment.id, { meta: { source: attachment.source } }),
         blob: (attachment) => blobManager.blob(attachment.id, { meta: { source: attachment.source } }),
-        lease: (attachment) => blobManager.lease(attachment.id),
     };
 }

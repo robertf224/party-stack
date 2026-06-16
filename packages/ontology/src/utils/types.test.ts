@@ -128,9 +128,13 @@ describe("getTargetValueType", () => {
             queryFunctionTypes: [],
         };
 
-        expect(getTargetValueType(ir, { objectType: "Post", property: "attachments" })).toEqual(
-            o.attachment({})
-        );
+        expect(
+            getTargetValueType(ir, {
+                kind: "objectProperty",
+                objectType: "Post",
+                property: "attachments",
+            })
+        ).toEqual(o.attachment({}));
     });
 
     it("throws when the object type is missing", () => {
@@ -142,9 +146,13 @@ describe("getTargetValueType", () => {
             queryFunctionTypes: [],
         };
 
-        expect(() => getTargetValueType(ir, { objectType: "Post", property: "attachments" })).toThrow(
-            'Unknown object type "Post".'
-        );
+        expect(() =>
+            getTargetValueType(ir, {
+                kind: "objectProperty",
+                objectType: "Post",
+                property: "attachments",
+            })
+        ).toThrow('Unknown object type "Post".');
     });
 
     it("throws when the property is missing", () => {
@@ -164,8 +172,12 @@ describe("getTargetValueType", () => {
             queryFunctionTypes: [],
         };
 
-        expect(() => getTargetValueType(ir, { objectType: "Post", property: "attachments" })).toThrow(
-            'Unknown property "attachments" on "Post".'
-        );
+        expect(() =>
+            getTargetValueType(ir, {
+                kind: "objectProperty",
+                objectType: "Post",
+                property: "attachments",
+            })
+        ).toThrow('Unknown property "attachments" on "Post".');
     });
 });

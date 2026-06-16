@@ -9,7 +9,14 @@ import {
 import { createInMemoryBlobStore } from "@party-stack/blobs";
 import { createLiveOntology } from "@party-stack/ontology";
 import { decode, encode } from "@party-stack/ontology/json";
-import type { LiveOntology, OntologyAdapter, OntologyDefinition, OntologyIR } from "@party-stack/ontology";
+import type {
+    LiveOntology,
+    OntologyAdapter,
+    OntologyApplyActionResult,
+    OntologyAttachmentUpload,
+    OntologyDefinition,
+    OntologyIR,
+} from "@party-stack/ontology";
 import type { attachment } from "@party-stack/ontology/values";
 import {
     parseRemoteOntologyJson,
@@ -27,7 +34,6 @@ import type {
     RemoteApplyActionRequest,
     RemoteApplyActionResponse,
     RemoteAttachmentRequest,
-    RemoteAttachmentUpload,
     RemoteDescribeRequest,
     RemoteLoadSubsetRequest,
     RemoteLoadSubsetResponse,
@@ -271,7 +277,7 @@ async function parseRequestBody(
     endpoint: RemoteOntologyEndpoint
 ): Promise<{
     input: RemoteOntologyRequestByEndpoint[RemoteOntologyEndpoint];
-    uploads: RemoteAttachmentUpload[];
+    uploads: OntologyAttachmentUpload[];
 }> {
     const contentType = request.headers.get("content-type") ?? "";
     if (endpoint === "apply-action" && contentType.includes("multipart/form-data")) {
@@ -280,7 +286,7 @@ async function parseRequestBody(
         if (typeof payload !== "string") {
             throw new Error("Multipart remote ontology request is missing a payload.");
         }
-        const uploads: RemoteAttachmentUpload[] = [];
+        const uploads: OntologyAttachmentUpload[] = [];
         for (const [key, value] of formData.entries()) {
             if (!key.startsWith("attachment:") || typeof value === "string") continue;
             const blob = new Blob([await value.arrayBuffer()], { type: value.type });
@@ -482,6 +488,7 @@ async function handleLoadSubset<
         adapter,
         getContext: () => ctx as Record<string, unknown>,
     });
+    let actionResult: OntologyApplyActionResult | void;
     try {
         await waitForLiveOntologyReady(ontology);
         const collection = ontology.objects[
@@ -565,7 +572,7 @@ async function handleApplyAction<
     ctx: Context,
     opts: CreateRemoteOntologyServerOptions<Context, Ontology>,
     request: RemoteApplyActionRequest,
-    uploads: RemoteAttachmentUpload[] = []
+    uploads: OntologyAttachmentUpload[] = []
 ): Promise<RemoteApplyActionResponse> {
     const ir = await resolveValue(opts.ir, ctx);
     const adapter = await resolveValue(opts.adapter, ctx);
@@ -588,6 +595,7 @@ async function handleApplyAction<
         blobStore: () => blobStore,
         getContext: () => ctx as Record<string, unknown>,
     });
+    let actionResult: OntologyApplyActionResult | void;
 
     try {
         await waitForLiveOntologyReady(ontology);
@@ -606,13 +614,14 @@ async function handleApplyAction<
         if (!action) {
             throw new Error(`Unknown action "${request.actionType}".`);
         }
-        await action(parameters).mutationFn();
+        actionResult = await action(parameters).mutationFn();
     } finally {
         await ontology.cleanup();
     }
 
     return {
         invalidatedObjectTypes: ir.objectTypes.map((objectType) => objectType.name),
+        attachmentIdMappings: actionResult?.attachmentIdMappings,
     };
 }
 
@@ -694,9 +703,6 @@ async function handleAttachmentRead<
     const ir = await resolveValue(opts.ir, ctx);
     getObjectTypePrimaryKey(ir, source.objectType);
     const adapter = await resolveValue(opts.adapter, ctx);
-    if (!adapter.attachments) {
-        throw new Error("Remote ontology adapter does not support attachments.");
-    }
 
     const allowedProperties = opts.policy?.allowedObjectTypeProperties?.[
         source.objectType as ObjectTypeName<Ontology>
@@ -762,10 +768,10 @@ async function handleAttachmentRead<
             throw new RemoteOntologyForbiddenError("Attachment is not readable.");
         }
 
-        const attachment = await adapter.attachments.getAttachmentMetadata(request.attachment);
+        const attachment = await ontology.attachments.metadata(request.attachment);
         return {
             attachment,
-            blob: await adapter.attachments.getAttachmentContent(request.attachment),
+            blob: await ontology.attachments.blob(request.attachment),
         };
     } finally {
         await ontology.cleanup();
@@ -781,7 +787,7 @@ export function createRemoteOntologyServer<
         ctx: Context,
         endpoint: TEndpoint,
         input: RemoteOntologyRequestByEndpoint[TEndpoint],
-        uploads: RemoteAttachmentUpload[] = []
+        uploads: OntologyAttachmentUpload[] = []
     ): Promise<RemoteOntologyResponseByEndpoint[TEndpoint]> {
         switch (endpoint) {
             case "describe":

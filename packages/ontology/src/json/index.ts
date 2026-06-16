@@ -2,23 +2,23 @@ import { invariant } from "@bobbyfidz/panic";
 import { Temporal } from "temporal-polyfill";
 import { resolveType } from "../utils/types.js";
 import type { OntologyIR, TypeDef } from "../ir/generated/types.js";
-
-type ArrayElement<T> = T extends readonly (infer Element)[] ? Element : never;
-type OntologyRecord = Record<string, unknown>;
-
-type TypeName<IR extends OntologyIR> = Extract<ArrayElement<IR["types"]>["name"], string>;
-type ObjectTypeName<IR extends OntologyIR> = Extract<ArrayElement<IR["objectTypes"]>["name"], string>;
-type ActionTypeName<IR extends OntologyIR> = Extract<ArrayElement<IR["actionTypes"]>["name"], string>;
-type QueryFunctionTypeName<IR extends OntologyIR> = Extract<ArrayElement<IR["queryFunctionTypes"]>["name"], string>;
+import type { OntologyObject } from "../utils/OntologyObject.js";
+import type {
+    OntologyActionParametersTarget,
+    OntologyObjectTarget,
+    OntologyQueryFunctionParametersTarget,
+    OntologyQueryFunctionReturnTarget,
+    OntologyTypeTarget,
+} from "../utils/targets.js";
 
 export type JsonTarget<IR extends OntologyIR> =
-    | { kind: "type"; name: TypeName<IR> }
-    | { kind: "object"; name: ObjectTypeName<IR> }
-    | { kind: "actionParameters"; actionType: ActionTypeName<IR> }
-    | { kind: "queryFunctionParameters"; queryFunctionType: QueryFunctionTypeName<IR> }
-    | { kind: "queryFunctionReturn"; queryFunctionType: QueryFunctionTypeName<IR> };
+    | OntologyTypeTarget<IR>
+    | OntologyObjectTarget<IR>
+    | OntologyActionParametersTarget<IR>
+    | OntologyQueryFunctionParametersTarget<IR>
+    | OntologyQueryFunctionReturnTarget<IR>;
 
-function assertRecord(value: unknown): asserts value is OntologyRecord {
+function assertRecord(value: unknown): asserts value is OntologyObject {
     invariant(typeof value === "object" && value !== null && !Array.isArray(value), "Expected JSON object.");
 }
 
@@ -138,7 +138,7 @@ function encodeValue(ir: OntologyIR, type: TypeDef, value: unknown): unknown {
     }
 }
 
-function decodeObject(ir: OntologyIR, objectTypeName: string, value: unknown): OntologyRecord {
+function decodeObject(ir: OntologyIR, objectTypeName: string, value: unknown): OntologyObject {
     assertRecord(value);
     const objectType = getObjectType(ir, objectTypeName);
     return Object.fromEntries(
@@ -149,7 +149,7 @@ function decodeObject(ir: OntologyIR, objectTypeName: string, value: unknown): O
     );
 }
 
-function encodeObject(ir: OntologyIR, objectTypeName: string, value: unknown): OntologyRecord {
+function encodeObject(ir: OntologyIR, objectTypeName: string, value: unknown): OntologyObject {
     assertRecord(value);
     const objectType = getObjectType(ir, objectTypeName);
     return Object.fromEntries(
@@ -164,7 +164,7 @@ function decodeParameters(
     ir: OntologyIR,
     parameters: { name: string; type: TypeDef }[],
     value: unknown
-): OntologyRecord {
+): OntologyObject {
     assertRecord(value);
     return Object.fromEntries(
         Object.entries(value).map(([key, entry]) => {
@@ -178,7 +178,7 @@ function encodeParameters(
     ir: OntologyIR,
     parameters: { name: string; type: TypeDef }[],
     value: unknown
-): OntologyRecord {
+): OntologyObject {
     assertRecord(value);
     return Object.fromEntries(
         Object.entries(value).map(([key, entry]) => {

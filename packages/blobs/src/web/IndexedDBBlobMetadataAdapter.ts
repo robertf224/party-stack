@@ -17,13 +17,26 @@ export class IndexedDBBlobMetadataAdapter implements BlobMetadataAdapter {
 
     private db(): Promise<IDBDatabase> {
         this.dbPromise ??= new Promise((resolve, reject) => {
-            const request = indexedDB.open(this.databaseName, 1);
+            const request = indexedDB.open(this.databaseName, 2);
 
             request.onupgradeneeded = () => {
                 const db = request.result;
+                const transaction = request.transaction;
+                if (!transaction) {
+                    reject(new Error("Missing IndexedDB upgrade transaction."));
+                    return;
+                }
+                let store: IDBObjectStore;
                 if (!db.objectStoreNames.contains(this.storeName)) {
-                    const store = db.createObjectStore(this.storeName, { keyPath: "id" });
+                    store = db.createObjectStore(this.storeName, { keyPath: "id" });
+                } else {
+                    store = transaction.objectStore(this.storeName);
+                }
+                if (!store.indexNames.contains("state")) {
                     store.createIndex("state", "state");
+                }
+                if (!store.indexNames.contains("remoteId")) {
+                    store.createIndex("remoteId", "remoteId");
                 }
             };
             request.onsuccess = () => resolve(request.result);
@@ -45,6 +58,13 @@ export class IndexedDBBlobMetadataAdapter implements BlobMetadataAdapter {
     async get(id: string): Promise<BlobRef | undefined> {
         const store = await this.store("readonly");
         return requestToPromise(store.get(id) as IDBRequest<BlobRef | undefined>);
+    }
+
+    async getByRemoteId(remoteId: string): Promise<BlobRef | undefined> {
+        const store = await this.store("readonly");
+        return requestToPromise(
+            store.index("remoteId").get(remoteId) as IDBRequest<BlobRef | undefined>
+        );
     }
 
     async list(opts?: { state?: BlobState }): Promise<BlobRef[]> {

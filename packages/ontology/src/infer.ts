@@ -1,6 +1,16 @@
 import type { NamedTypeDef, OntologyIR, TypeDef } from "./ir/generated/types.js";
 import type { OntologyDefinition } from "./live/LiveOntology.js";
 import type {
+    ActionTypeName,
+    ActionTypes,
+    ArrayElement,
+    NamedTypes,
+    ObjectTypeName,
+    ObjectTypes,
+    QueryFunctionTypeName,
+    QueryFunctionTypes,
+} from "./utils/typeNames.js";
+import type {
     attachment,
     date,
     double,
@@ -27,36 +37,11 @@ export type MutableDeep<T> = T extends (...args: never[]) => unknown
         ? { -readonly [K in keyof T]: MutableDeep<T[K]> }
         : T;
 
-type ArrayElement<T> = T extends readonly (infer Element)[] ? Element : never;
-
 type FlattenObject<T> = { [K in keyof T]: T[K] } & {};
 
 type TypeKind<Type> = Type extends { readonly kind: infer Kind extends string } ? Kind : never;
 
 type TypeValue<Type> = Type extends { readonly value: infer Value } ? Value : never;
-
-type NamedTypes<Ontology> = Ontology extends { readonly types: infer Types } ? ArrayElement<Types> : never;
-
-type ObjectTypes<Ontology> = Ontology extends { readonly objectTypes: infer ObjectTypes }
-    ? ArrayElement<ObjectTypes>
-    : never;
-
-type ActionTypes<Ontology> = Ontology extends { readonly actionTypes: infer ActionTypes }
-    ? ArrayElement<ActionTypes>
-    : never;
-
-type QueryFunctionTypes<Ontology> = Ontology extends { readonly queryFunctionTypes: infer QueryFunctionTypes }
-    ? ArrayElement<QueryFunctionTypes>
-    : never;
-
-type ObjectTypeName<Ontology> =
-    ObjectTypes<Ontology> extends { readonly name: infer Name extends PropertyKey } ? Name : never;
-
-type ActionTypeName<Ontology> =
-    ActionTypes<Ontology> extends { readonly name: infer Name extends PropertyKey } ? Name : never;
-
-type QueryFunctionTypeName<Ontology> =
-    QueryFunctionTypes<Ontology> extends { readonly name: infer Name extends PropertyKey } ? Name : never;
 
 type NamedTypeByName<Ontology, Name extends PropertyKey> = Extract<
     NamedTypes<Ontology>,
