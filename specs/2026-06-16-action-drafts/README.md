@@ -1,10 +1,10 @@
-# Action Drafts
+# Action drafts
 
 ## Summary
 
-Action drafts are a proposed userspace ergonomics layer for building and retaining pending ontology action parameters before an action is submitted. They should make product code feel like it is working with a durable form/draft, while still using the existing live ontology, blob manager, and adapter boundaries underneath.
+Action drafts are a proposed userspace ergonomics layer for building and retaining pending ontology action parameters before an action is submitted. They should make product code feel like it is working with a durable form/draft.
 
-The main motivation is attachment-heavy workflows. Plain `ontology.attachments.create()` can stay target-optional and provider-agnostic: it stages local bytes and returns an attachment value. A draft layer can add the missing product ergonomics by knowing which action is being edited, deriving attachment targets from action parameters when possible, and exposing draft-scoped blob retention.
+One motivation is attachment-heavy workflows. Plain `ontology.attachments.create()` can stay target-optional and provider-agnostic: it stages local bytes and returns an attachment value. A draft layer can add the missing product ergonomics by knowing which action is being edited, deriving attachment targets from action parameters when possible, and exposing draft-scoped blob retention.
 
 This spec is intentionally about action drafts generally, not a new core attachment API. Drafts should compose with live ontology instead of replacing it.
 
@@ -24,17 +24,17 @@ The attachment redesign landed on a few constraints that shape this design:
 - Let product code bind form state to an ontology action before submitting it.
 - Make draft-scoped attachment creation ergonomic, including automatic target inference when the action parameter is unambiguous.
 - Retain staged blobs while a draft still references them.
-- Keep the draft layer optional and replaceable by app-specific durable state, offline transaction queues, or future libraries.
+- Keep draft layer state persistence optional and pluggable.
 - Preserve the current adapter boundary: adapters receive resolved action parameters and attachment uploads; they do not need to know about draft UI state.
 
-## Non-Goals
+## Non-goals
 
-- Do not add a required draft system to core live ontology in this pass.
+- Do not add a required draft system to core live ontology.
 - Do not make blob storage depend on TanStack DB or any particular durable-state library.
 - Do not require all providers to support eager materialization.
 - Do not model arbitrary upload-session state yet. Action-owned provider logic can handle that until a repeated pattern emerges.
 
-## Proposed API Sketch
+## Proposed API sketch
 
 A React-oriented draft layer could look like this:
 
@@ -82,7 +82,7 @@ const { attachment } = await draft.attachments.create(file);
 
 If there are multiple candidate parameters, the draft helper should require the caller to specify one rather than guessing.
 
-## Draft Object Shape
+## Draft object shape
 
 A draft action helper might expose:
 
@@ -113,7 +113,7 @@ interface DraftAttachments {
 
 The draft owns parameter state, not persisted ontology objects. Calling `submit()` runs the live ontology action with the current draft parameters.
 
-## Attachment Target Inference
+## Attachment target inference
 
 Draft attachment creation can resolve targets in this order:
 
@@ -149,7 +149,7 @@ Durable drafts can use any persistence layer. For example, an app might store dr
 
 For providers that upload as part of `applyAction`, the draft layer should not need special provider code. It only supplies the action parameters and keeps referenced blobs retained until the action is no longer pending.
 
-## Open Questions
+## Open questions
 
 - Where should a reusable React implementation live: an `ontology-react` package, an app-local helper, or a separate drafts package?
 - How durable should default drafts be? A hook-only implementation is simple, but durable drafts likely need storage decisions from the host app.
