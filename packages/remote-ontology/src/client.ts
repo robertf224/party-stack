@@ -82,6 +82,9 @@ export function createRemoteOntologyAdapter(opts: CreateRemoteOntologyAdapterOpt
                     return collection.utils.refetch({ throwOnError: true });
                 })
             );
+            return {
+                attachmentIdMappings: response.attachmentIdMappings,
+            };
         },
         runQueryFunction: async (queryFunctionType, parameters) => {
             const response = await transport.runQueryFunction({

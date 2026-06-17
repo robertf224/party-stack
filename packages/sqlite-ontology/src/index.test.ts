@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { createLiveOntology, o, type OntologyIR } from "@party-stack/ontology";
 import { afterEach, describe, expect, it } from "vitest";
+import type { attachment as OntologyAttachment } from "@party-stack/ontology/values";
 import { createSQLiteOntologyAdapter } from "./index.js";
 
 interface TestDatabase {
@@ -178,15 +179,17 @@ describe("createSQLiteOntologyAdapter", () => {
             id: "note-1",
             title: "Hello",
         }).mutationFn();
-        const attachment = await ontology.attachments!.create(
+        const creation = await ontology.attachments.create(
             new File(["hello attachment"], "hello.txt", { type: "text/plain" }),
             {
                 target: {
+                    kind: "objectProperty",
                     objectType: "NoteAttachment",
                     property: "attachment",
                 },
             }
         );
+        const attachment = creation.attachment as unknown as OntologyAttachment;
 
         await ontology.actions.createNoteAttachment!({
             id: "attachment-object-1",
@@ -194,8 +197,8 @@ describe("createSQLiteOntologyAdapter", () => {
             attachment,
         }).mutationFn();
 
-        const metadata = await ontology.attachments!.metadata(attachment);
-        const blob = await ontology.attachments!.blob(attachment);
+        const metadata = await ontology.attachments.metadata(attachment);
+        const blob = await ontology.attachments.blob(attachment);
 
         expect(metadata).toMatchObject({
             name: "hello.txt",

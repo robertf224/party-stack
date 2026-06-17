@@ -8,7 +8,6 @@ export function defaultEvictionStrategy(
     context: BlobEvictionContext
 ): string[] {
     const unretained = candidates.filter((candidate) => !candidate.retained);
-    const released = unretained.filter((candidate) => candidate.releasedAt !== undefined);
     const expired = context.cacheMaxAgeMs
         ? unretained.filter(
               (candidate) =>
@@ -18,7 +17,7 @@ export function defaultEvictionStrategy(
           )
         : [];
     const selected = new Map(
-        [...released, ...expired].map((candidate) => [candidate.ref.id, candidate])
+        expired.map((candidate) => [candidate.ref.id, candidate])
     );
 
     if (context.maxCacheBytes !== undefined) {

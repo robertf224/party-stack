@@ -38,11 +38,17 @@ export function createBlobStore(opts: CreateBlobStoreOptions): BlobStore {
     const bytes = opts.bytes(opts.name);
     const metadata = opts.metadata(opts.name);
 
+    const resolveRef = async (id: string): Promise<BlobRef | undefined> => {
+        const ref = await metadata.get(id);
+        if (ref) return ref;
+        return metadata.getByRemoteId(id);
+    };
+
     const updateRef = async (
         id: string,
         update: (ref: BlobRef, timestamp: number) => BlobRef
     ): Promise<BlobRef> => {
-        const existing = await metadata.get(id);
+        const existing = await resolveRef(id);
         if (!existing) {
             throw new Error(`Blob metadata not found for "${id}".`);
         }
@@ -52,7 +58,7 @@ export function createBlobStore(opts: CreateBlobStoreOptions): BlobStore {
     };
 
     const touch = async (id: string): Promise<BlobRef | undefined> => {
-        const ref = await metadata.get(id);
+        const ref = await resolveRef(id);
         if (!ref) {
             return undefined;
         }
@@ -111,8 +117,10 @@ export function createBlobStore(opts: CreateBlobStoreOptions): BlobStore {
         },
 
         async read(id) {
-            const blob = await bytes.read(id);
-            await touch(id);
+            const ref = await resolveRef(id);
+            const resolvedId = ref?.id ?? id;
+            const blob = await bytes.read(resolvedId);
+            await touch(resolvedId);
             return blob;
         },
 
@@ -129,9 +137,10 @@ export function createBlobStore(opts: CreateBlobStoreOptions): BlobStore {
             }));
         },
 
-        markPersisted(id) {
+        markUploaded(id, markOpts) {
             return updateRef(id, (ref, timestamp) => ({
                 ...ref,
+                remoteId: markOpts?.remoteId ?? ref.remoteId,
                 state: "persisted",
                 updatedAt: timestamp,
                 error: undefined,
@@ -148,7 +157,9 @@ export function createBlobStore(opts: CreateBlobStoreOptions): BlobStore {
         },
 
         async purge(id) {
-            await Promise.all([metadata.delete(id), bytes.delete(id)]);
+            const ref = await resolveRef(id);
+            const resolvedId = ref?.id ?? id;
+            await Promise.all([metadata.delete(resolvedId), bytes.delete(resolvedId)]);
         },
 
         async reconcile() {

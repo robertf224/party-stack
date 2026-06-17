@@ -1,4 +1,9 @@
-import { createBlobManager, createInMemoryBlobStore, type BlobStoreProvider } from "@party-stack/blobs";
+import {
+    createBlobManager,
+    createInMemoryBlobStore,
+    type BlobManager,
+    type BlobStoreProvider,
+} from "@party-stack/blobs";
 import { BasicIndex, Collection, createCollection } from "@tanstack/db";
 import { applyActionLogic } from "./applyActionLogic.js";
 import { decorateObjectAttachmentSources } from "./attachmentSources.js";
@@ -8,14 +13,17 @@ import {
 } from "./createLiveOntologyAttachments.js";
 import { resolveActionParameters } from "./expression.js";
 import { prepareActionParameters } from "./prepareActionParameters.js";
-import type { OntologyAdapter } from "./OntologyAdapter.js";
+import type {
+    OntologyAdapter,
+    OntologyApplyActionResult,
+    OntologyAttachmentsAdapter,
+} from "./OntologyAdapter.js";
 import type { PreparedActionParameters } from "./prepareActionParameters.js";
 import type { OntologyIR } from "../ir/index.js";
+import type { OntologyObject } from "../utils/OntologyObject.js";
 import type { attachment } from "../utils/values.js";
 
 export type { LiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
-
-export type OntologyObject = Record<string, unknown>;
 export interface OntologyDefinition {
     objectTypes: Record<string, OntologyObject>;
     actionTypes: Record<
@@ -36,7 +44,7 @@ export interface OntologyDefinition {
 export type OntologyCollection<T extends OntologyObject> = Collection<T>;
 
 export interface LiveOntologyActionExecution {
-    mutationFn: () => Promise<void>;
+    mutationFn: () => Promise<OntologyApplyActionResult | void>;
     mutator: () => void;
 }
 
@@ -70,7 +78,7 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
     objects: LiveOntologyObjects<Ontology["objectTypes"]>;
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
     queryFunctions: LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>;
-    attachments?: LiveOntologyAttachments;
+    attachments: LiveOntologyAttachments;
     cleanup: () => Promise<void>;
 }
 
@@ -113,37 +121,39 @@ function decorateCollectionSync(opts: {
     };
 }
 
+const unsupportedOntologyAttachmentsAdapter: OntologyAttachmentsAdapter = {
+    getAttachmentContent: (attachment) =>
+        Promise.reject(new Error(`Ontology adapter cannot read attachment content for "${attachment.id}".`)),
+    getAttachmentMetadata: (attachment) =>
+        Promise.reject(new Error(`Ontology adapter cannot read attachment metadata for "${attachment.id}".`)),
+};
+
 export function createLiveOntology<Ontology extends OntologyDefinition = OntologyDefinition>(
     opts: LiveOntologyOpts
 ): LiveOntology<Ontology> {
     const ontologyId = opts.id ?? crypto.randomUUID();
     const blobStore = (opts.blobStore ?? createInMemoryBlobStore)(ontologyId);
-    const attachmentsAdapter = opts.adapter.attachments;
-    const blobManager = attachmentsAdapter
-        ? createBlobManager({
-              store: blobStore,
-              remote: {
-                  blob: (id, readOptions) =>
-                      attachmentsAdapter.getAttachmentContent({
-                          id,
-                          source: readOptions?.meta?.source as attachment["source"],
-                      }),
-                  metadata: (id, readOptions) =>
-                      attachmentsAdapter.getAttachmentMetadata({
-                          id,
-                          source: readOptions?.meta?.source as attachment["source"],
-                      }),
-              },
-          })
-        : undefined;
-    const attachments =
-        attachmentsAdapter && blobManager
-            ? createLiveOntologyAttachments({
-                  ir: opts.ir,
-                  attachmentsAdapter,
-                  blobManager,
-              })
-            : undefined;
+    const attachmentsAdapter = opts.adapter.attachments ?? unsupportedOntologyAttachmentsAdapter;
+    const blobManager: BlobManager = createBlobManager({
+        store: blobStore,
+        remote: {
+            blob: (id, readOptions) =>
+                attachmentsAdapter.getAttachmentContent({
+                    id,
+                    source: readOptions?.meta?.source as attachment["source"],
+                }),
+            metadata: (id, readOptions) =>
+                attachmentsAdapter.getAttachmentMetadata({
+                    id,
+                    source: readOptions?.meta?.source as attachment["source"],
+                }),
+        },
+    });
+    const attachments = createLiveOntologyAttachments({
+        ir: opts.ir,
+        attachmentsAdapter,
+        blobManager,
+    });
     const objects = Object.fromEntries(
         opts.ir.objectTypes.map((objectType) => {
             const collectionOptions = decorateCollectionSync({
@@ -185,11 +195,19 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
                             adapter: opts.adapter,
                             blobManager,
                         });
-                        await opts.adapter.applyAction(action.name, preparedAction.parameters, {
+                        const result = await opts.adapter.applyAction(action.name, preparedAction.parameters, {
                             objects: objects as Record<string, Collection<Record<string, unknown>>>,
                             context,
                             attachmentUploads: preparedAction.attachmentUploads,
                         });
+                        await Promise.all(
+                            (result?.attachmentIdMappings ?? []).map((mapping) =>
+                                blobManager.markUploaded(mapping.localId, {
+                                    remoteId: mapping.remoteId,
+                                })
+                            )
+                        );
+                        return result;
                     },
                     mutator: () => {
                         applyActionLogic({

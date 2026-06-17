@@ -29,7 +29,7 @@ describe("createBlobStore", () => {
         const store = createInMemoryBlobStore("test");
         await store.stage("local-id", new Blob(["hello"]));
 
-        const ref = await store.markPersisted("local-id");
+        const ref = await store.markUploaded("local-id");
 
         expect(ref).toMatchObject({
             id: "local-id",
@@ -83,6 +83,32 @@ describe("createBlobStore", () => {
             state: "staged",
         });
     });
+
+    it("resolves remotely mapped ids to local bytes and metadata", async () => {
+        const metadata = new InMemoryBlobMetadataAdapter();
+        const store = createBlobStore({
+            name: "test",
+            bytes: () => new InMemoryBlobBytesAdapter(),
+            metadata: () => metadata,
+        });
+        await store.stage("local-id", new Blob(["hello"], { type: "text/plain" }));
+
+        const ref = await store.markUploaded("local-id", { remoteId: "remote-id" });
+
+        expect(ref).toMatchObject({
+            id: "local-id",
+            remoteId: "remote-id",
+            state: "persisted",
+        });
+        await expect(store.get("remote-id")).resolves.toMatchObject({
+            id: "local-id",
+            remoteId: "remote-id",
+        });
+        metadata.list = () => Promise.reject(new Error("unexpected metadata scan"));
+        await expect(store.read("remote-id")).resolves.toBeInstanceOf(Blob);
+        await store.purge("remote-id");
+        await expect(store.get("local-id")).resolves.toBeUndefined();
+    });
 });
 
 describe("createBlobManager", () => {
@@ -126,53 +152,6 @@ describe("createBlobManager", () => {
         await expect(store.get("remote-id")).resolves.toBeUndefined();
     });
 
-    it("evicts blobs after leases are released with the default eviction policy", async () => {
-        const store = createInMemoryBlobStore("test", { now: () => 100 });
-        const scheduled: Array<() => void> = [];
-        const manager = createBlobManager({
-            store,
-            remote: {
-                metadata: (id) => Promise.resolve({ id, size: 6, type: "text/plain", name: "remote.txt" }),
-                blob: () => Promise.resolve(new Blob(["remote"], { type: "text/plain" })),
-            },
-            gcScheduler: (run) => scheduled.push(run),
-            gcReleaseBufferSize: 0,
-        });
-
-        const releaseLease = manager.lease("remote-id");
-        await manager.blob("remote-id");
-        releaseLease();
-        scheduled.forEach((run) => run());
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        await expect(store.get("remote-id")).resolves.toBeUndefined();
-    });
-
-    it("keeps leased blobs during default eviction", async () => {
-        const store = createInMemoryBlobStore("test", { now: () => 100 });
-        const scheduled: Array<() => void> = [];
-        const manager = createBlobManager({
-            store,
-            remote: {
-                metadata: (id) => Promise.resolve({ id, size: 6, type: "text/plain", name: "remote.txt" }),
-                blob: () => Promise.resolve(new Blob(["remote"], { type: "text/plain" })),
-            },
-            gcScheduler: (run) => scheduled.push(run),
-            gcReleaseBufferSize: 0,
-        });
-
-        const releaseLease = manager.lease("remote-id");
-        await manager.blob("remote-id");
-        scheduled.forEach((run) => run());
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        await expect(store.get("remote-id")).resolves.toMatchObject({
-            id: "remote-id",
-            state: "cached",
-        });
-        releaseLease();
-    });
-
     it("keeps blobs retained by external providers during GC", async () => {
         const store = createInMemoryBlobStore("test", { now: () => 100 });
         const scheduled: Array<() => void> = [];
@@ -188,8 +167,7 @@ describe("createBlobManager", () => {
         });
 
         await manager.stage("local-id", new Blob(["hello"]));
-        const releaseLease = manager.lease("local-id");
-        releaseLease();
+        await manager.blob("remote-id");
         scheduled.forEach((run) => run());
         await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -199,7 +177,7 @@ describe("createBlobManager", () => {
         });
     });
 
-    it("keeps leased blobs during GC", async () => {
+    it("keeps blobs retained by remote id during GC", async () => {
         const store = createInMemoryBlobStore("test", { now: () => 100 });
         const scheduled: Array<() => void> = [];
         const manager = createBlobManager({
@@ -211,13 +189,14 @@ describe("createBlobManager", () => {
             },
             gcScheduler: (run) => scheduled.push(run),
             gcReleaseBufferSize: 0,
+            retentionProviders: [() => ["remote-local-id"]],
             evictionStrategy: (candidates) =>
                 candidates
                     .filter((candidate) => !candidate.retained)
                     .map((candidate) => candidate.ref.id),
         });
         await manager.stage("local-id", new Blob(["hello"]));
-        const releaseLease = manager.lease("local-id");
+        await manager.markUploaded("local-id", { remoteId: "remote-local-id" });
 
         await manager.blob("remote-id");
         scheduled.forEach((run) => run());
@@ -225,9 +204,9 @@ describe("createBlobManager", () => {
 
         await expect(store.get("local-id")).resolves.toMatchObject({
             id: "local-id",
-            state: "staged",
+            remoteId: "remote-local-id",
+            state: "persisted",
         });
-        releaseLease();
     });
 
     it("uploads staged blobs and updates lifecycle state", async () => {
@@ -250,6 +229,27 @@ describe("createBlobManager", () => {
 
         await expect(store.get("local-id")).resolves.toMatchObject({
             id: "local-id",
+            remoteId: undefined,
+            state: "persisted",
+        });
+    });
+
+    it("marks action-owned uploads as persisted with remote ids", async () => {
+        const store = createInMemoryBlobStore("test");
+        const manager = createBlobManager({
+            store,
+            remote: {
+                metadata: (id) => Promise.resolve({ id, size: 0, type: "", name: "" }),
+                blob: () => Promise.reject(new Error("unexpected remote read")),
+            },
+        });
+        await manager.stage("local-id", new Blob(["hello"]));
+
+        await manager.markUploaded("local-id", { remoteId: "remote-id" });
+
+        await expect(store.get("remote-id")).resolves.toMatchObject({
+            id: "local-id",
+            remoteId: "remote-id",
             state: "persisted",
         });
     });

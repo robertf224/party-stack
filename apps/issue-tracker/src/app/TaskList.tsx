@@ -110,9 +110,7 @@ const AttachmentStatusBadge: React.FC<{
                     className="h-3 w-3 animate-spin rounded-full border-2 border-current border-r-transparent"
                 />
             )}
-            {meta.icon === "dot" && (
-                <span aria-hidden="true" className="h-2 w-2 rounded-full bg-current" />
-            )}
+            {meta.icon === "dot" && <span aria-hidden="true" className="h-2 w-2 rounded-full bg-current" />}
             <span className={showLabel ? "" : "sr-only"}>{accessibleLabel}</span>
         </span>
     );
@@ -143,14 +141,10 @@ const TaskAttachmentPreview: React.FC<{
 
     useEffect(() => {
         const attachments = ontology.attachments;
-        if (!attachments) {
-            return;
-        }
 
         let cancelled = false;
         let objectUrl: string | undefined;
 
-        const releaseLease = attachments.lease(attachment);
         void Promise.all([attachments.metadata(attachment), attachments.blob(attachment)])
             .then(([metadata, blob]) => {
                 const nextObjectUrl = URL.createObjectURL(blob);
@@ -172,7 +166,6 @@ const TaskAttachmentPreview: React.FC<{
 
         return () => {
             cancelled = true;
-            releaseLease();
             if (objectUrl) {
                 URL.revokeObjectURL(objectUrl);
             }
@@ -270,19 +263,68 @@ export const TaskList: React.FC = () => {
         }
         setSelectedImage({ file, status: eagerMaterialization ? "uploading" : "deferred" });
 
-        void ontology.attachments!
-            .create(file, {
-                target: { objectType: "Task", property: "attachments" },
-                eager: eagerMaterialization,
+        if (eagerMaterialization) {
+            void ontology
+                .attachments.create(file, {
+                    target: { kind: "objectProperty", objectType: "Task", property: "attachment" },
+                    eager: true,
+                })
+                .then(({ attachment, isMaterialized }) => {
+                    if (imageUploadRequestId.current !== requestId) {
+                        return;
+                    }
+                    setSelectedImage({
+                        file,
+                        attachment,
+                        status: isMaterialized ? "uploading" : "deferred",
+                    });
+                    if (isMaterialized) {
+                        void isMaterialized
+                            .then(() => {
+                                if (imageUploadRequestId.current !== requestId) {
+                                    return;
+                                }
+                                setSelectedImage({ file, attachment, status: "ready" });
+                            })
+                            .catch((error: unknown) => {
+                                if (imageUploadRequestId.current !== requestId) {
+                                    return;
+                                }
+                                setSelectedImage({
+                                    file,
+                                    attachment,
+                                    status: "failed",
+                                    error: error instanceof Error ? error.message : "Upload failed",
+                                });
+                            });
+                    }
+                })
+                .catch((error: unknown) => {
+                    if (imageUploadRequestId.current !== requestId) {
+                        return;
+                    }
+                    setSelectedImage({
+                        file,
+                        status: "failed",
+                        error: error instanceof Error ? error.message : "Upload failed",
+                    });
+                });
+            return;
+        }
+
+        void ontology
+            .attachments.create(file, {
+                target: { kind: "objectProperty", objectType: "Task", property: "attachment" },
+                eager: false,
             })
-            .then((attachment) => {
+            .then(({ attachment }) => {
                 if (imageUploadRequestId.current !== requestId) {
                     return;
                 }
                 setSelectedImage({
                     file,
                     attachment,
-                    status: eagerMaterialization ? "ready" : "deferred",
+                    status: "deferred",
                 });
             })
             .catch((error: unknown) => {
@@ -385,7 +427,7 @@ export const TaskList: React.FC = () => {
                                     className="rounded-lg bg-zinc-900 px-4 py-2 font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-100 dark:text-black"
                                     disabled={
                                         !title.trim() ||
-                                        selectedImage?.status === "uploading" ||
+                                        (selectedImage !== null && !selectedImage.attachment) ||
                                         selectedImage?.status === "failed"
                                     }
                                     type="submit"

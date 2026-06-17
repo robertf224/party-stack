@@ -3,8 +3,6 @@ import type { BlobRetentionProvider, BlobState, BlobStore } from "../types.js";
 
 export interface CollectBlobGarbageOptions {
     store: Pick<BlobStore, "list" | "purge">;
-    leaseCounts: ReadonlyMap<string, number>;
-    releaseBuffer: Map<string, number>;
     evictionStrategy: BlobEvictionStrategy;
     now: number;
     cacheMaxAgeMs?: number;
@@ -28,8 +26,7 @@ export async function collectBlobGarbage(opts: CollectBlobGarbageOptions): Promi
         .map(
             (ref): BlobEvictionCandidate => ({
                 ref,
-                retained: (opts.leaseCounts.get(ref.id) ?? 0) > 0 || retainedIds.has(ref.id),
-                releasedAt: opts.releaseBuffer.get(ref.id),
+                retained: retainedIds.has(ref.id) || (ref.remoteId !== undefined && retainedIds.has(ref.remoteId)),
             })
         );
     const ids = opts.evictionStrategy(candidates, {
@@ -38,7 +35,4 @@ export async function collectBlobGarbage(opts: CollectBlobGarbageOptions): Promi
         maxCacheBytes: opts.maxCacheBytes,
     });
     await Promise.all(ids.map((id) => opts.store.purge(id)));
-    for (const id of ids) {
-        opts.releaseBuffer.delete(id);
-    }
 }

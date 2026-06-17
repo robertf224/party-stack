@@ -415,13 +415,9 @@ function NoteEditor({
 
     async function createImageAttachmentMarkdown(file: File): Promise<string | undefined> {
         if (!file.type.startsWith("image/")) return undefined;
-        if (!ontology.attachments) {
-            setSaveStatus("error");
-            return undefined;
-        }
 
-        const createdAttachment = await ontology.attachments.create(file, {
-            target: { objectType: "NoteAttachment", property: "attachment" },
+        const { attachment: createdAttachment } = await ontology.attachments.create(file, {
+            target: { kind: "objectProperty", objectType: "NoteAttachment", property: "attachment" },
         });
         const attachmentForUrl = {
             ...createdAttachment,

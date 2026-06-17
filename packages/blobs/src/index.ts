@@ -29,9 +29,9 @@ export type {
     BlobStoreProvider,
 } from "./types.js";
 
-function toMetadata(ref: BlobRef): BlobRemoteMetadata {
+function toMetadata(ref: BlobRef, id = ref.id): BlobRemoteMetadata {
     return {
-        id: ref.id,
+        id,
         size: ref.size,
         type: ref.type,
         name: ref.name ?? "",
@@ -39,11 +39,7 @@ function toMetadata(ref: BlobRef): BlobRemoteMetadata {
 }
 
 export function createBlobManager(opts: BlobManagerOptions): BlobManager {
-    const now = () => opts.now?.() ?? Date.now();
-    const leaseCounts = new Map<string, number>();
-    const releaseBuffer = new Map<string, number>();
     const uploads = new Map<string, Promise<void>>();
-    const gcReleaseBufferSize = opts.gcReleaseBufferSize ?? 10;
     const evictionStrategy: BlobEvictionStrategy = opts.evictionStrategy ?? defaultEvictionStrategy;
     let gcScheduled = false;
     const reconcilePromise = opts.store.reconcile();
@@ -67,32 +63,12 @@ export function createBlobManager(opts: BlobManagerOptions): BlobManager {
     const collectGarbage = () =>
         collectBlobGarbage({
             store: opts.store,
-            leaseCounts,
-            releaseBuffer,
             evictionStrategy,
-            now: now(),
+            now: opts.now?.() ?? Date.now(),
             cacheMaxAgeMs: opts.cacheMaxAgeMs,
             maxCacheBytes: opts.maxCacheBytes,
             retentionProviders: opts.retentionProviders,
         });
-
-    const addLease = (id: string) => {
-        leaseCounts.set(id, (leaseCounts.get(id) ?? 0) + 1);
-        releaseBuffer.delete(id);
-    };
-
-    const removeLease = (id: string) => {
-        const count = leaseCounts.get(id) ?? 0;
-        if (count <= 1) {
-            leaseCounts.delete(id);
-            releaseBuffer.set(id, now());
-            if (releaseBuffer.size > gcReleaseBufferSize) {
-                scheduleGC();
-            }
-            return;
-        }
-        leaseCounts.set(id, count - 1);
-    };
 
     return {
         async stage(id, blob) {
@@ -104,7 +80,7 @@ export function createBlobManager(opts: BlobManagerOptions): BlobManager {
             await reconcilePromise;
             const ref = await opts.store.get(id);
             if (ref) {
-                return toMetadata(ref);
+                return toMetadata(ref, id);
             }
             return opts.remote.metadata(id, readOptions);
         },
@@ -126,7 +102,10 @@ export function createBlobManager(opts: BlobManagerOptions): BlobManager {
             return blob;
         },
 
-        withUploadTracking(id: string, callback: (blob: Blob) => Promise<void>): Promise<void> {
+        withUploadTracking(
+            id: string,
+            callback: (blob: Blob) => Promise<{ remoteId?: string } | void>
+        ): Promise<void> {
             const run = async (): Promise<void> => {
                 await reconcilePromise;
                 const existingRef = await opts.store.get(id);
@@ -138,8 +117,8 @@ export function createBlobManager(opts: BlobManagerOptions): BlobManager {
                 try {
                     const blob = await opts.store.read(id);
                     await opts.store.markUploading(id);
-                    await callback(blob);
-                    await opts.store.markPersisted(id);
+                    const result = await callback(blob);
+                    await opts.store.markUploaded(id, result ?? undefined);
                 } catch (error) {
                     await opts.store.markFailed(id, error);
                     throw error;
@@ -163,11 +142,9 @@ export function createBlobManager(opts: BlobManagerOptions): BlobManager {
             return upload;
         },
 
-        lease(id) {
-            addLease(id);
-            return () => {
-                removeLease(id);
-            };
+        async markUploaded(id, markOpts) {
+            await reconcilePromise;
+            return opts.store.markUploaded(id, markOpts);
         },
     };
 }

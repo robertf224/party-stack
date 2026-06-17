@@ -1,7 +1,7 @@
 import { get } from "lodash-es";
 import { Temporal } from "temporal-polyfill";
 import { resolveType, unwrapType } from "../utils/types.js";
-import type { OntologyCollection, OntologyObject } from "./LiveOntology.js";
+import type { OntologyCollection } from "./LiveOntology.js";
 import type {
     Expression,
     ObjectTypeDef,
@@ -9,6 +9,7 @@ import type {
     TypeDef,
     ValueReferenceExpression,
 } from "../ir/index.js";
+import type { OntologyObject } from "../utils/OntologyObject.js";
 
 function getActionType(ir: OntologyIR, actionTypeName: string) {
     return ir.actionTypes.find((actionType) => actionType.name === actionTypeName)!;
