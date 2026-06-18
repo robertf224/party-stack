@@ -4,7 +4,7 @@ Utilities for interacting with Palantir's Apollo platform.
 
 ## Helm chart product releases
 
-Use `createHelmChartProductRelease` for the newer Apollo product-release manifest flow when a release needs manifest extensions such as product dependencies or rollout settings.
+Use `createHelmChartProductRelease` for the Apollo product-release manifest flow when a release needs manifest extensions such as product dependencies or rollout settings.
 
 ```ts
 import { createHelmChartProductRelease } from "@bobbyfidz/apollo";
@@ -34,6 +34,6 @@ await createHelmChartProductRelease({
 });
 ```
 
-The helper writes an Apollo product manifest and invokes the documented `apollo-cli product-release create` command. The Apollo docs currently document CLI creation, not a stable REST create endpoint; `searchProductReleases` uses the catalog API for read-side checks when a space ID is available.
+The helper writes an Apollo product manifest and publishes it through the `createProductReleaseFromManifestV2` GraphQL mutation. By default it posts to `/graphql-gateway/api/graphql` on `apolloUrl`; pass `graphqlUrl` or `graphqlPath` if a Hub exposes GraphQL elsewhere.
 
 If your Apollo Hub requires container image metadata, pass the images through `artifacts`. This helper does not render the Helm chart to auto-discover images the way `apollo-cli product-release helm-chart init` does.

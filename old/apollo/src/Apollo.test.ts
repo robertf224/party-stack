@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createHelmChartProductManifest } from "./Apollo.js";
+import { createHelmChartProductManifest, serializeHelmChartProductManifest } from "./Apollo.js";
 
 describe("createHelmChartProductManifest", () => {
     it("builds a helm chart product release manifest with Apollo extensions", () => {
@@ -58,5 +58,18 @@ describe("createHelmChartProductManifest", () => {
                 "resource-readiness-timeout": "1h",
             },
         });
+    });
+
+    it("serializes the manifest as YAML for Apollo GraphQL", () => {
+        const manifest = createHelmChartProductManifest({
+            mavenCoordinate: "com.example:my-product:1.2.3",
+            helmRepositoryUrl: "oci://ghcr.io/example/my-product-chart",
+            helmChartName: "oci://ghcr.io/example/my-product-chart",
+            helmChartVersion: "1.2.3",
+            rolloutStrategy: "manageRollout",
+        });
+
+        expect(serializeHelmChartProductManifest(manifest)).toContain("product-type: helm-chart.v1");
+        expect(serializeHelmChartProductManifest(manifest)).toContain("rollout-strategy: manageRollout");
     });
 });

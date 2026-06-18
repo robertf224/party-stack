@@ -5,11 +5,13 @@ import { promisify } from "util";
 import { BinaryDownload } from "@bobbyfidz/binaries";
 import { invariant } from "@bobbyfidz/panic";
 import { Pathnames, Urls } from "@bobbyfidz/urls";
+import * as YAML from "yaml";
 
 const execFileAsync = promisify(execFile);
 
 const BINARY_NAME = "apollo-cli";
 const VERSION = "0.538.0";
+const DEFAULT_GRAPHQL_PATH = "/graphql-gateway/api/graphql";
 
 export type ApolloAuth =
     | {
@@ -79,6 +81,41 @@ export interface CreateHelmChartProductManifestOptions {
     imagePrePullConfigTimeout?: string;
     extensions?: Record<string, unknown>;
 }
+
+interface GraphqlResponse<TData> {
+    data?: TData;
+    errors?: Array<{
+        message: string;
+    }>;
+}
+
+interface ApolloProductReleaseCreated {
+    __typename: "ApolloProductRelease";
+    rid: string;
+    mavenCoordinate: string;
+}
+
+interface ApolloProductReleaseFailedToDeserializeManifest {
+    __typename: "ApolloProductReleaseFailedToDeserializeManifest";
+    message: string;
+}
+
+interface ApolloProductReleaseRejected {
+    __typename: "ApolloProductReleaseRejected";
+    mavenCoordinate: string;
+    rejectionReasons: Array<{
+        message: string;
+        metadata: Array<{
+            key: string;
+            value: string;
+        }>;
+    }>;
+}
+
+type ApolloCreateProductReleaseResult =
+    | ApolloProductReleaseCreated
+    | ApolloProductReleaseFailedToDeserializeManifest
+    | ApolloProductReleaseRejected;
 
 export async function getAccessToken(opts: { apolloUrl: string; auth: ApolloAuth }): Promise<string> {
     if (opts.auth.type === "static") {
@@ -229,6 +266,55 @@ async function executeApolloCli(opts: {
     }
 }
 
+function getGraphqlUrl(opts: { apolloUrl: string; graphqlUrl?: string; graphqlPath?: string }): string {
+    if (opts.graphqlUrl !== undefined) {
+        return opts.graphqlUrl;
+    }
+
+    return new URL(opts.graphqlPath ?? DEFAULT_GRAPHQL_PATH, opts.apolloUrl).toString();
+}
+
+async function executeGraphql<TData>(opts: {
+    apolloUrl: string;
+    auth: ApolloAuth;
+    graphqlUrl?: string;
+    graphqlPath?: string;
+    query: string;
+    variables: Record<string, unknown>;
+}): Promise<TData> {
+    const token = await getAccessToken({ apolloUrl: opts.apolloUrl, auth: opts.auth });
+    const response = await fetch(
+        getGraphqlUrl({
+            apolloUrl: opts.apolloUrl,
+            graphqlUrl: opts.graphqlUrl,
+            graphqlPath: opts.graphqlPath,
+        }),
+        {
+            method: "POST",
+            body: JSON.stringify({
+                query: opts.query,
+                variables: opts.variables,
+            }),
+            headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+            },
+        }
+    );
+
+    if (!response.ok) {
+        throw new Error(`Apollo GraphQL request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const body = (await response.json()) as GraphqlResponse<TData>;
+    if (body.errors !== undefined && body.errors.length > 0) {
+        throw new Error(`Apollo GraphQL request failed: ${body.errors.map((error) => error.message).join("; ")}`);
+    }
+
+    invariant(body.data, "Apollo GraphQL response did not include data.");
+    return body.data;
+}
+
 function parseMavenCoordinate(mavenCoordinate: string): {
     productGroup: string;
     productName: string;
@@ -297,12 +383,16 @@ export function createHelmChartProductManifest(opts: CreateHelmChartProductManif
     };
 }
 
+export function serializeHelmChartProductManifest(manifest: HelmChartProductManifest): string {
+    return YAML.stringify(manifest);
+}
+
 export async function writeHelmChartProductManifest(
     manifest: HelmChartProductManifest,
     manifestPath: string
 ): Promise<void> {
     await mkdir(path.dirname(manifestPath), { recursive: true });
-    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await writeFile(manifestPath, serializeHelmChartProductManifest(manifest));
 }
 
 export async function publishHelmChart(opts: {
@@ -348,29 +438,68 @@ export async function createHelmChartProductRelease(opts: CreateHelmChartProduct
     outputDir?: string;
     cwd?: string;
     spaceId?: string;
-}): Promise<{ manifest: HelmChartProductManifest; manifestPath: string }> {
+    graphqlUrl?: string;
+    graphqlPath?: string;
+}): Promise<{ manifest: HelmChartProductManifest; manifestPath: string; productRelease: ApolloProductReleaseCreated }> {
     const manifest = createHelmChartProductManifest(opts);
     const outputDir = opts.outputDir ?? path.join(process.cwd(), ".apollo-product-release", manifest["product-version"]);
     const manifestPath = path.join(outputDir, "manifest.yml");
 
     await writeHelmChartProductManifest(manifest, manifestPath);
-    await executeApolloCli({
+    const data = await executeGraphql<{
+        apollo: {
+            createProductReleaseFromManifestV2: ApolloCreateProductReleaseResult;
+        };
+    }>({
         apolloUrl: opts.apolloUrl,
         auth: opts.auth,
-        args: [
-            "product-release",
-            "create",
-            "--apollo-url",
-            opts.apolloUrl,
-            ...getApolloAuthArgs(opts.auth),
-            ...(opts.spaceId === undefined ? [] : ["--space-id", opts.spaceId]),
-            "--manifest",
-            manifestPath,
-        ],
-        cwd: opts.cwd,
+        graphqlUrl: opts.graphqlUrl,
+        graphqlPath: opts.graphqlPath,
+        query: `
+            mutation CreateApolloProductReleaseFromManifest($spaceId: String, $productReleaseManifest: String!) {
+                apollo {
+                    createProductReleaseFromManifestV2(spaceId: $spaceId, productReleaseManifest: $productReleaseManifest) {
+                        __typename
+                        ... on ApolloProductRelease {
+                            rid
+                            mavenCoordinate
+                        }
+                        ... on ApolloProductReleaseFailedToDeserializeManifest {
+                            message
+                        }
+                        ... on ApolloProductReleaseRejected {
+                            mavenCoordinate
+                            rejectionReasons {
+                                message
+                                metadata {
+                                    key
+                                    value
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        `,
+        variables: {
+            ...(opts.spaceId === undefined ? {} : { spaceId: opts.spaceId }),
+            productReleaseManifest: serializeHelmChartProductManifest(manifest),
+        },
     });
 
-    return { manifest, manifestPath };
+    const productRelease = data.apollo.createProductReleaseFromManifestV2;
+    switch (productRelease.__typename) {
+        case "ApolloProductRelease":
+            return { manifest, manifestPath, productRelease };
+        case "ApolloProductReleaseFailedToDeserializeManifest":
+            throw new Error(`Apollo failed to deserialize product release manifest: ${productRelease.message}`);
+        case "ApolloProductReleaseRejected":
+            throw new Error(
+                `Apollo rejected product release ${productRelease.mavenCoordinate}: ${productRelease.rejectionReasons
+                    .map((reason) => reason.message)
+                    .join("; ")}`
+            );
+    }
 }
 
 export async function searchProductReleases(opts: {
