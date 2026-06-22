@@ -19,7 +19,8 @@
     "dependencies": {
         "@bobbyfidz/binaries": "^0.4.0",
         "@bobbyfidz/panic": "^0.1.0",
-        "@bobbyfidz/urls": "^0.2.1"
+        "@bobbyfidz/urls": "^0.2.1",
+        "yaml": "^2.9.0"
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",
