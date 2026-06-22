@@ -1,5 +1,11 @@
 # @bobbyfidz/apollo
 
+## 0.3.0
+
+### Minor Changes
+
+- 26961bb: Add Apollo Helm chart product-release manifest helpers with typed auth, GraphQL release creation, product dependencies, rollout extensions, and catalog search support.
+
 ## 0.2.2
 
 ### Patch Changes
