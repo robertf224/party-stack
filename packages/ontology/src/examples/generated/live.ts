@@ -3,17 +3,20 @@
 import { createLiveOntology, type LiveOntology } from "../../index.js";
 import ontology from "../blog.js";
 import type { BlogOntology } from "./types.js";
-import type { LiveOntologyOpts, OntologyAdapter } from "../../index.js";
+import type { CreateLiveOntologyOpts, OntologyAdapter } from "../../index.js";
 
-export function createBlogLiveOntology(
+export function createBlogLiveOntology<
+    Context extends Record<string, unknown> = Record<string, unknown>,
+>(
     adapter: OntologyAdapter,
-    opts?: Pick<LiveOntologyOpts, "blobStore" | "getContext" | "id">
+    opts?: Pick<CreateLiveOntologyOpts<Context>, "blobStore" | "context" | "getUserId" | "id">
 ): LiveOntology<BlogOntology> {
-    return createLiveOntology<BlogOntology>({
+    return createLiveOntology<BlogOntology, Context>({
         ir: ontology,
         adapter,
         id: opts?.id,
         blobStore: opts?.blobStore,
-        getContext: opts?.getContext,
+        context: opts?.context,
+        getUserId: opts?.getUserId,
     });
 }

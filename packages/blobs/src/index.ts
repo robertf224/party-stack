@@ -1,32 +1,20 @@
 import { invariant } from "@bobbyfidz/panic";
 import { collectBlobGarbage, defaultEvictionStrategy } from "./gc/index.js";
 import type { BlobEvictionStrategy } from "./gc/index.js";
-import type {
-    BlobManager,
-    BlobManagerOptions,
-    BlobRemoteMetadata,
-    BlobRef,
-} from "./types.js";
+import type { BlobManager, BlobManagerOptions, BlobRemoteMetadata, BlobRef } from "./types.js";
 
 export * from "./gc/index.js";
-export {
-    createInMemoryBlobBytesAdapter,
-    createInMemoryBlobMetadataAdapter,
-    createInMemoryBlobStore,
-} from "./memory/index.js";
+export { createInMemoryBlobStore } from "./memory/index.js";
 export type { CreateInMemoryBlobStoreOptions } from "./memory/index.js";
 export type {
     BlobManager,
     BlobManagerOptions,
-    BlobBytesAdapterProvider,
-    BlobMetadataAdapterProvider,
     BlobRef,
     BlobRemoteMetadata,
     BlobRemoteSource,
     BlobRetentionProvider,
     BlobState,
     BlobStore,
-    BlobStoreProvider,
 } from "./types.js";
 
 function toMetadata(ref: BlobRef, id = ref.id): BlobRemoteMetadata {

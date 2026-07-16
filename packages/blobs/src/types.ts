@@ -30,9 +30,6 @@ export interface BlobMetadataAdapter {
     list: (opts?: { state?: BlobState }) => Promise<BlobRef[]>;
 }
 
-export type BlobBytesAdapterProvider = (name: string) => BlobBytesAdapter;
-export type BlobMetadataAdapterProvider = (name: string) => BlobMetadataAdapter;
-
 export interface BlobStore {
     stage: (id: string, blob: Blob | File) => Promise<BlobRef>;
     cache: (id: string, blob: Blob | File) => Promise<BlobRef>;
@@ -47,11 +44,7 @@ export interface BlobStore {
     withUploadLock?: <T>(id: string, callback: () => Promise<T>) => Promise<T>;
 }
 
-export type BlobStoreProvider = (name: string) => BlobStore;
-
-export type BlobRetentionProvider = () =>
-    | Iterable<string>
-    | Promise<Iterable<string>>;
+export type BlobRetentionProvider = () => Iterable<string> | Promise<Iterable<string>>;
 
 export interface BlobRemoteMetadata {
     id: string;

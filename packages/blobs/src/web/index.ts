@@ -1,51 +1,29 @@
 import { createBlobStore } from "../store/createBlobStore.js";
-import {
-    IndexedDBBlobMetadataAdapter,
-    type IndexedDBBlobMetadataAdapterOptions,
-} from "./IndexedDBBlobMetadataAdapter.js";
-import { OPFSBlobBytesAdapter, type OPFSBlobBytesAdapterOptions } from "./OPFSBlobBytesAdapter.js";
-import type { BlobBytesAdapter, BlobMetadataAdapter, BlobStore } from "../types.js";
+import { IndexedDBBlobMetadataAdapter } from "./IndexedDBBlobMetadataAdapter.js";
+import { OPFSBlobBytesAdapter } from "./OPFSBlobBytesAdapter.js";
+import type { BlobStore } from "../types.js";
 
 export interface CreateWebBlobStoreOptions {
-    now?: () => number;
+    owner: string;
+    namespace: string;
 }
 
-function blobStorageName(name: string): string {
-    return `blobs-${name}`;
-}
-
-function uploadLockName(name: string, id: string): string {
-    return `${blobStorageName(name)}:upload:${id}`;
-}
-
-function createWebUploadLock(name: string): BlobStore["withUploadLock"] | undefined {
+function createWebUploadLock(owner: string, namespace: string): BlobStore["withUploadLock"] | undefined {
     if (!("locks" in navigator)) {
         return undefined;
     }
-    return (id, callback) => navigator.locks.request(uploadLockName(name, id), callback);
+    return (id, callback) => navigator.locks.request(`${owner}:${namespace}:${id}:upload`, callback);
 }
 
-export function createOPFSBlobBytesAdapter(name: string): BlobBytesAdapter {
-    return new OPFSBlobBytesAdapter({
-        directoryName: encodeURIComponent(blobStorageName(name)),
-    });
-}
-
-export function createIndexedDBBlobMetadataAdapter(name: string): BlobMetadataAdapter {
-    return new IndexedDBBlobMetadataAdapter({
-        databaseName: blobStorageName(name),
-    });
-}
-
-export function createWebBlobStore(name: string, opts: CreateWebBlobStoreOptions = {}): BlobStore {
+export function createWebBlobStore(opts: CreateWebBlobStoreOptions): BlobStore {
     return createBlobStore({
-        name,
-        bytes: createOPFSBlobBytesAdapter,
-        metadata: createIndexedDBBlobMetadataAdapter,
-        now: opts.now,
-        withUploadLock: createWebUploadLock(name),
+        bytes: new OPFSBlobBytesAdapter({
+            directoryName: `party-stack:${opts.owner}:${opts.namespace}:blobs`,
+        }),
+        metadata: new IndexedDBBlobMetadataAdapter({
+            databaseName: `party-stack:${opts.owner}:${opts.namespace}`,
+            storeName: "blobs",
+        }),
+        withUploadLock: createWebUploadLock(opts.owner, opts.namespace),
     });
 }
-
-export { IndexedDBBlobMetadataAdapter, type IndexedDBBlobMetadataAdapterOptions };
-export { OPFSBlobBytesAdapter, type OPFSBlobBytesAdapterOptions };

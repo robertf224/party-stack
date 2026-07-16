@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { InMemoryBlobBytesAdapter, InMemoryBlobMetadataAdapter } from "./memory/adapters.js";
+import { InMemoryBlobBytesAdapter } from "./memory/InMemoryBlobBytesAdapter.js";
+import { InMemoryBlobMetadataAdapter } from "./memory/InMemoryBlobMetadataAdapter.js";
 import { createBlobStore } from "./store/createBlobStore.js";
 import {
     createBlobManager,
@@ -8,7 +9,7 @@ import {
 
 describe("createBlobStore", () => {
     it("stages bytes and metadata under the same logical id", async () => {
-        const store = createInMemoryBlobStore("test", { now: () => 100 });
+        const store = createInMemoryBlobStore({ now: () => 100 });
 
         const ref = await store.stage(
             "attachment-1",
@@ -26,7 +27,7 @@ describe("createBlobStore", () => {
     });
 
     it("marks staged blobs as persisted after materialization", async () => {
-        const store = createInMemoryBlobStore("test");
+        const store = createInMemoryBlobStore();
         await store.stage("local-id", new Blob(["hello"]));
 
         const ref = await store.markUploaded("local-id");
@@ -38,7 +39,7 @@ describe("createBlobStore", () => {
     });
 
     it("caches remote bytes with store-owned metadata", async () => {
-        const store = createInMemoryBlobStore("test", { now: () => 100 });
+        const store = createInMemoryBlobStore({ now: () => 100 });
 
         const ref = await store.cache(
             "remote-id",
@@ -60,9 +61,8 @@ describe("createBlobStore", () => {
         const bytes = new InMemoryBlobBytesAdapter();
         const metadata = new InMemoryBlobMetadataAdapter();
         const store = createBlobStore({
-            name: "test",
-            bytes: () => bytes,
-            metadata: () => metadata,
+            bytes,
+            metadata,
             now: () => 100,
         });
 
@@ -87,9 +87,8 @@ describe("createBlobStore", () => {
     it("resolves remotely mapped ids to local bytes and metadata", async () => {
         const metadata = new InMemoryBlobMetadataAdapter();
         const store = createBlobStore({
-            name: "test",
-            bytes: () => new InMemoryBlobBytesAdapter(),
-            metadata: () => metadata,
+            bytes: new InMemoryBlobBytesAdapter(),
+            metadata,
         });
         await store.stage("local-id", new Blob(["hello"], { type: "text/plain" }));
 
@@ -113,7 +112,7 @@ describe("createBlobStore", () => {
 
 describe("createBlobManager", () => {
     it("pulls remote bytes through the local cache", async () => {
-        const store = createInMemoryBlobStore("test");
+        const store = createInMemoryBlobStore();
         const remoteBlob = new Blob(["remote"], { type: "text/plain" });
         const manager = createBlobManager({
             store,
@@ -132,7 +131,7 @@ describe("createBlobManager", () => {
     });
 
     it("runs scheduled GC through the configured eviction policy", async () => {
-        const store = createInMemoryBlobStore("test", { now: () => 100 });
+        const store = createInMemoryBlobStore({ now: () => 100 });
         const scheduled: Array<() => void> = [];
         const manager = createBlobManager({
             store,
@@ -153,7 +152,7 @@ describe("createBlobManager", () => {
     });
 
     it("keeps blobs retained by external providers during GC", async () => {
-        const store = createInMemoryBlobStore("test", { now: () => 100 });
+        const store = createInMemoryBlobStore({ now: () => 100 });
         const scheduled: Array<() => void> = [];
         const manager = createBlobManager({
             store,
@@ -178,7 +177,7 @@ describe("createBlobManager", () => {
     });
 
     it("keeps blobs retained by remote id during GC", async () => {
-        const store = createInMemoryBlobStore("test", { now: () => 100 });
+        const store = createInMemoryBlobStore({ now: () => 100 });
         const scheduled: Array<() => void> = [];
         const manager = createBlobManager({
             store,
@@ -210,7 +209,7 @@ describe("createBlobManager", () => {
     });
 
     it("uploads staged blobs and updates lifecycle state", async () => {
-        const store = createInMemoryBlobStore("test");
+        const store = createInMemoryBlobStore();
         const manager = createBlobManager({
             store,
             remote: {
@@ -235,7 +234,7 @@ describe("createBlobManager", () => {
     });
 
     it("marks action-owned uploads as persisted with remote ids", async () => {
-        const store = createInMemoryBlobStore("test");
+        const store = createInMemoryBlobStore();
         const manager = createBlobManager({
             store,
             remote: {
@@ -255,7 +254,7 @@ describe("createBlobManager", () => {
     });
 
     it("dedupes concurrent uploads without a store lock", async () => {
-        const store = createInMemoryBlobStore("test");
+        const store = createInMemoryBlobStore();
         const manager = createBlobManager({
             store,
             remote: {
@@ -296,7 +295,7 @@ describe("createBlobManager", () => {
     });
 
     it("uses store upload locks when available", async () => {
-        const store = createInMemoryBlobStore("test");
+        const store = createInMemoryBlobStore();
         const lockedIds: string[] = [];
         store.withUploadLock = async (id, callback) => {
             lockedIds.push(id);
@@ -321,7 +320,7 @@ describe("createBlobManager", () => {
     });
 
     it("skips uploads for already persisted blobs", async () => {
-        const store = createInMemoryBlobStore("test");
+        const store = createInMemoryBlobStore();
         const manager = createBlobManager({
             store,
             remote: {

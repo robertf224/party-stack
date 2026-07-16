@@ -21,12 +21,12 @@ export function createLiveOntologyAction(opts: {
     ir: OntologyIR;
     action: OntologyIR["actionTypes"][number];
     adapter: OntologyAdapter;
-    getContext?: () => Record<string, unknown>;
+    context?: Record<string, unknown>;
     objects: Record<string, OntologyCollection<OntologyObject>>;
     blobManager: BlobManager;
 }): LiveOntologyAction {
     return (providedParameters: Record<string, unknown>) => {
-        const context = opts.getContext?.() ?? {};
+        const context = opts.context ?? {};
         const parameters = resolveActionParameters(
             opts.ir,
             opts.action.name,

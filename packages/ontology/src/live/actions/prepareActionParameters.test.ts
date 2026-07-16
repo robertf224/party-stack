@@ -46,7 +46,7 @@ const adapter: OntologyAdapter = {
 
 describe("prepareActionParameters", () => {
     it("collects action attachment uploads with resolved attachment type targets", async () => {
-        const store = createInMemoryBlobStore("test");
+        const store = createInMemoryBlobStore();
         const blobManager = createBlobManager({
             store,
             remote: {

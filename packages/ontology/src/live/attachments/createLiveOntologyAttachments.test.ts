@@ -44,7 +44,7 @@ const actionIr: OntologyIR = {
 
 describe("createLiveOntologyAttachments", () => {
     it("starts eager materialization in the background when the adapter supports it", async () => {
-        const store = createInMemoryBlobStore("test");
+        const store = createInMemoryBlobStore();
         const materialized: string[] = [];
         let finishMaterialization: (() => void) | undefined;
         const materializationStarted = new Promise<void>((resolve) => {
@@ -110,7 +110,7 @@ describe("createLiveOntologyAttachments", () => {
     });
 
     it("can stage targetless attachments with local ids", async () => {
-        const store = createInMemoryBlobStore("test");
+        const store = createInMemoryBlobStore();
         const adapter: OntologyAdapter = {
             name: "test",
             getCollectionOptions: () => ({
@@ -146,7 +146,7 @@ describe("createLiveOntologyAttachments", () => {
     });
 
     it("silently skips eager materialization when unsupported", async () => {
-        const store = createInMemoryBlobStore("test");
+        const store = createInMemoryBlobStore();
         const adapter: OntologyAdapter = {
             name: "test",
             getCollectionOptions: () => ({
@@ -188,7 +188,7 @@ describe("createLiveOntologyAttachments", () => {
     });
 
     it("applies attachment id mappings returned by actions", async () => {
-        const store = createInMemoryBlobStore("test");
+        const store = createInMemoryBlobStore();
         const adapter: OntologyAdapter = {
             name: "test",
             getCollectionOptions: () => ({

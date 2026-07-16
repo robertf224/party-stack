@@ -2,7 +2,7 @@ import {
     createBlobManager,
     createInMemoryBlobStore,
     type BlobManager,
-    type BlobStoreProvider,
+    type BlobStore,
 } from "@party-stack/blobs";
 import { type Collection } from "@tanstack/db";
 import { createLiveOntologyAction } from "./actions/createLiveOntologyAction.js";
@@ -19,10 +19,7 @@ import type { OntologyAdapter } from "./OntologyAdapter.js";
 import type { OntologyIR } from "../ir/index.js";
 import type { attachment } from "../utils/values.js";
 
-export type {
-    LiveOntologyAction,
-    LiveOntologyActionExecution,
-} from "./actions/createLiveOntologyAction.js";
+export type { LiveOntologyAction, LiveOntologyActionExecution } from "./actions/createLiveOntologyAction.js";
 export type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
 export type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
 export interface OntologyDefinition {
@@ -57,12 +54,13 @@ export type LiveOntologyActions<ActionTypes extends OntologyDefinition["actionTy
     [ActionTypeName in keyof ActionTypes]: LiveOntologyAction<ActionTypes[ActionTypeName]["parameters"]>;
 };
 
-export type LiveOntologyQueryFunctions<QueryFunctionTypes extends OntologyDefinition["queryFunctionTypes"]> = {
-    [QueryFunctionTypeName in keyof QueryFunctionTypes]: LiveOntologyQueryFunction<
-        QueryFunctionTypes[QueryFunctionTypeName]["parameters"],
-        QueryFunctionTypes[QueryFunctionTypeName]["returnType"]
-    >;
-};
+export type LiveOntologyQueryFunctions<QueryFunctionTypes extends OntologyDefinition["queryFunctionTypes"]> =
+    {
+        [QueryFunctionTypeName in keyof QueryFunctionTypes]: LiveOntologyQueryFunction<
+            QueryFunctionTypes[QueryFunctionTypeName]["parameters"],
+            QueryFunctionTypes[QueryFunctionTypeName]["returnType"]
+        >;
+    };
 
 export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefinition> {
     objects: LiveOntologyObjects<Ontology["objectTypes"]>;
@@ -72,19 +70,27 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
     cleanup: () => Promise<void>;
 }
 
-export interface LiveOntologyOpts {
+export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> = Record<string, unknown>> {
     id?: string;
     ir: OntologyIR;
     adapter: OntologyAdapter;
-    blobStore?: BlobStoreProvider;
-    getContext?: () => Record<string, unknown>;
+    blobStore?: (opts: { owner: string; namespace: string }) => BlobStore;
+    context?: Context;
+    getUserId?: (context: Context) => string;
 }
 
-export function createLiveOntology<Ontology extends OntologyDefinition = OntologyDefinition>(
-    opts: LiveOntologyOpts
-): LiveOntology<Ontology> {
-    const ontologyId = opts.id ?? crypto.randomUUID();
-    const blobStore = (opts.blobStore ?? createInMemoryBlobStore)(ontologyId);
+export function createLiveOntology<
+    Ontology extends OntologyDefinition = OntologyDefinition,
+    Context extends Record<string, unknown> = Record<string, unknown>,
+>(opts: CreateLiveOntologyOpts<Context>): LiveOntology<Ontology> {
+    const ontologyId = opts.id ?? "default";
+    const context = (opts.context ?? {}) as Context;
+    const blobStore = opts.blobStore
+        ? opts.blobStore({
+              owner: opts.getUserId?.(context) ?? "anonymous",
+              namespace: ontologyId,
+          })
+        : createInMemoryBlobStore();
     const attachmentsAdapter = opts.adapter.attachments ?? unsupportedOntologyAttachmentsAdapter;
     const blobManager: BlobManager = createBlobManager({
         store: blobStore,
@@ -124,7 +130,7 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
                 ir: opts.ir,
                 action,
                 adapter: opts.adapter,
-                getContext: opts.getContext,
+                context,
                 objects,
                 blobManager,
             }),
@@ -133,20 +139,20 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
     const queryFunctions = Object.fromEntries(
         opts.ir.queryFunctionTypes.map((queryFunctionType) => [
             queryFunctionType.name,
-            (parameters: Record<string, unknown>) => {
-                const context = opts.getContext?.() ?? {};
-                return opts.adapter.runQueryFunction(queryFunctionType.name, parameters, {
+            (parameters: Record<string, unknown>) =>
+                opts.adapter.runQueryFunction(queryFunctionType.name, parameters, {
                     objects: objects as Record<string, Collection<Record<string, unknown>>>,
                     context,
-                });
-            },
+                }),
         ])
     );
 
     return {
         objects: objects as unknown as LiveOntologyObjects<Ontology["objectTypes"]>,
         actions: actions as unknown as LiveOntologyActions<Ontology["actionTypes"]>,
-        queryFunctions: queryFunctions as unknown as LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>,
+        queryFunctions: queryFunctions as unknown as LiveOntologyQueryFunctions<
+            Ontology["queryFunctionTypes"]
+        >,
         attachments,
         cleanup: async () => {
             await Promise.all(Object.values(objects).map((collection) => collection.cleanup()));

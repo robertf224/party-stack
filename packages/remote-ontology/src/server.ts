@@ -486,7 +486,7 @@ async function handleLoadSubset<
     const ontology = createLiveOntology<Ontology>({
         ir,
         adapter,
-        getContext: () => ctx as Record<string, unknown>,
+        context: ctx as Record<string, unknown>,
     });
     let actionResult: OntologyApplyActionResult | void;
     try {
@@ -587,13 +587,13 @@ async function handleApplyAction<
         parameters: hydratedRequestParameters,
         fixedActionParameterValues: opts.policy?.fixedActionParameterValues,
     });
-    const blobStore = createInMemoryBlobStore(`remote-action:${crypto.randomUUID()}`);
+    const blobStore = createInMemoryBlobStore();
     await Promise.all(uploads.map((upload) => blobStore.stage(upload.attachment.id, upload.blob)));
     const ontology = createLiveOntology<Ontology>({
         ir,
         adapter,
         blobStore: () => blobStore,
-        getContext: () => ctx as Record<string, unknown>,
+        context: ctx as Record<string, unknown>,
     });
     let actionResult: OntologyApplyActionResult | void;
 
@@ -648,7 +648,7 @@ async function handleRunQueryFunction<
     const ontology = createLiveOntology<Ontology>({
         ir,
         adapter,
-        getContext: () => ctx as Record<string, unknown>,
+        context: ctx as Record<string, unknown>,
     });
 
     try {
@@ -727,7 +727,7 @@ async function handleAttachmentRead<
     const ontology = createLiveOntology<Ontology>({
         ir,
         adapter,
-        getContext: () => ctx as Record<string, unknown>,
+        context: ctx as Record<string, unknown>,
     });
     try {
         await waitForLiveOntologyReady(ontology);
