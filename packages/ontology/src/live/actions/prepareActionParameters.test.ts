@@ -1,9 +1,9 @@
 import { createBlobManager, createInMemoryBlobStore } from "@party-stack/blobs";
 import { describe, expect, it } from "vitest";
-import { o } from "../ir/index.js";
+import { o } from "../../ir/index.js";
 import { prepareActionParameters } from "./prepareActionParameters.js";
-import type { OntologyAdapter } from "./OntologyAdapter.js";
-import type { OntologyIR } from "../ir/index.js";
+import type { OntologyIR } from "../../ir/index.js";
+import type { OntologyAdapter } from "../OntologyAdapter.js";
 
 const ir: OntologyIR = {
     types: [],

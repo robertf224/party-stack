@@ -1,9 +1,9 @@
 import { set } from "lodash-es";
-import { decorateObjectAttachmentSources } from "./attachmentSources.js";
-import { evaluateExpression, getObjectReferenceObjectType } from "./expression.js";
-import type { OntologyCollection } from "./LiveOntology.js";
-import type { ObjectTypeDef, OntologyIR, PropertyAssignment } from "../ir/index.js";
-import type { OntologyObject } from "../utils/OntologyObject.js";
+import { decorateObjectAttachmentSources } from "../attachments/attachmentSources.js";
+import { evaluateExpression, getObjectReferenceObjectType } from "../expression.js";
+import type { ObjectTypeDef, OntologyIR, PropertyAssignment } from "../../ir/index.js";
+import type { OntologyCollection } from "../objects/createLiveOntologyObjectCollection.js";
+import type { OntologyObject } from "../objects/OntologyObject.js";
 
 function applyPropertyAssignments(opts: {
     ir: OntologyIR;

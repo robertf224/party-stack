@@ -48,11 +48,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ontology
       '@tanstack/db':
-        specifier: ^0.6.5
-        version: 0.6.5(typescript@5.8.3)
+        specifier: ^0.6.14
+        version: 0.6.14(typescript@5.8.3)
       '@tanstack/react-db':
-        specifier: ^0.1.83
-        version: 0.1.83(react@19.2.0)(typescript@5.8.3)
+        specifier: ^0.1.92
+        version: 0.1.92(react@19.2.0)(typescript@5.8.3)
       '@tanstack/react-table':
         specifier: ^8.21.3
         version: 8.21.3(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
@@ -109,17 +109,17 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ontology
       '@tanstack/db':
-        specifier: ^0.6.5
-        version: 0.6.5(typescript@5.8.3)
+        specifier: ^0.6.14
+        version: 0.6.14(typescript@5.8.3)
       '@tanstack/query-core':
-        specifier: ^5.100.9
-        version: 5.100.9
+        specifier: ^5.101.2
+        version: 5.101.2
       '@tanstack/query-db-collection':
-        specifier: ^1.0.36
-        version: 1.0.36(@tanstack/query-core@5.100.9)(typescript@5.8.3)
+        specifier: ^1.0.47
+        version: 1.0.47(@tanstack/query-core@5.101.2)(typescript@5.8.3)
       '@tanstack/react-db':
-        specifier: ^0.1.83
-        version: 0.1.83(react@19.2.0)(typescript@5.8.3)
+        specifier: ^0.1.92
+        version: 0.1.92(react@19.2.0)(typescript@5.8.3)
       '@tanstack/react-router':
         specifier: ^1.168.7
         version: 1.168.7(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
@@ -176,17 +176,17 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sqlite-ontology
       '@tanstack/db':
-        specifier: ^0.6.5
-        version: 0.6.5(typescript@5.8.3)
+        specifier: ^0.6.14
+        version: 0.6.14(typescript@5.8.3)
       '@tanstack/query-core':
-        specifier: ^5.100.9
-        version: 5.100.9
+        specifier: ^5.101.2
+        version: 5.101.2
       '@tanstack/query-db-collection':
-        specifier: ^1.0.36
-        version: 1.0.36(@tanstack/query-core@5.100.9)(typescript@5.8.3)
+        specifier: ^1.0.47
+        version: 1.0.47(@tanstack/query-core@5.101.2)(typescript@5.8.3)
       '@tanstack/react-db':
-        specifier: ^0.1.83
-        version: 0.1.83(react@19.2.0)(typescript@5.8.3)
+        specifier: ^0.1.92
+        version: 0.1.92(react@19.2.0)(typescript@5.8.3)
       '@tanstack/react-router':
         specifier: ^1.168.7
         version: 1.168.7(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
@@ -578,8 +578,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.6.1))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: ^0.6.5
-        version: 0.6.5(typescript@5.8.3)
+        specifier: ^0.6.14
+        version: 0.6.14(typescript@5.8.3)
       eslint:
         specifier: ^9.25.0
         version: 9.28.0(jiti@2.6.1)
@@ -703,8 +703,8 @@ importers:
         specifier: workspace:*
         version: link:../ontology
       '@tanstack/query-core':
-        specifier: ^5.0.0
-        version: 5.100.9
+        specifier: ^5.101.2
+        version: 5.101.2
       '@tanstack/store':
         specifier: ^0.11.0
         version: 0.11.0
@@ -725,11 +725,11 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.6.1))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: ^0.6.5
-        version: 0.6.5(typescript@5.8.3)
+        specifier: ^0.6.14
+        version: 0.6.14(typescript@5.8.3)
       '@tanstack/query-db-collection':
-        specifier: ^1.0.36
-        version: 1.0.36(@tanstack/query-core@5.100.9)(typescript@5.8.3)
+        specifier: ^1.0.47
+        version: 1.0.47(@tanstack/query-core@5.101.2)(typescript@5.8.3)
       '@types/node':
         specifier: ^24.10.1
         version: 24.10.1
@@ -795,8 +795,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.6.1))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: ^0.6.5
-        version: 0.6.5(typescript@5.8.3)
+        specifier: ^0.6.14
+        version: 0.6.14(typescript@5.8.3)
       '@types/lodash-es':
         specifier: ^4.17.12
         version: 4.17.12
@@ -822,11 +822,11 @@ importers:
         specifier: workspace:*
         version: link:../ontology
       '@tanstack/query-core':
-        specifier: ^5.100.9
-        version: 5.100.9
+        specifier: ^5.101.2
+        version: 5.101.2
       '@tanstack/query-db-collection':
-        specifier: ^1.0.36
-        version: 1.0.36(@tanstack/query-core@5.100.9)(typescript@5.8.3)
+        specifier: ^1.0.47
+        version: 1.0.47(@tanstack/query-core@5.101.2)(typescript@5.8.3)
       temporal-polyfill:
         specifier: ^0.3.0
         version: 0.3.0
@@ -838,8 +838,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.6.1))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: ^0.6.5
-        version: 0.6.5(typescript@5.8.3)
+        specifier: ^0.6.14
+        version: 0.6.14(typescript@5.8.3)
       '@types/node':
         specifier: ^24.10.1
         version: 24.10.1
@@ -866,8 +866,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.6.1))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: ^0.6.5
-        version: 0.6.5(typescript@5.8.3)
+        specifier: ^0.6.14
+        version: 0.6.14(typescript@5.8.3)
       '@types/node':
         specifier: ^24.10.1
         version: 24.10.1
@@ -2756,8 +2756,8 @@ packages:
     peerDependencies:
       typescript: '>=4.7'
 
-  '@tanstack/db@0.6.5':
-    resolution: {integrity: sha512-gtCuAo4UtC9SR/kTMu5fVEff6qZ2R1FZi9X7MybtHKA6wve7RePifGG6qBI4OmMB+7juT5/+glNbnqZOrG0/pg==}
+  '@tanstack/db@0.6.14':
+    resolution: {integrity: sha512-Kqma/PcWhn2e21iJPM/FMKwdMuJUYII9zkKPUsD42/ceEOYRtimbBSe+xll7EY805xE2HuQ3NGSSU8UiYXpHUw==}
     peerDependencies:
       typescript: '>=4.7'
 
@@ -2769,20 +2769,20 @@ packages:
     resolution: {integrity: sha512-3PouiFjR4B6x1c969/Pl4ZIJleof1M0n6fNX8NRiC9Sqv1g06CVDlEaXUR4212ycGFyfq4q+t8Gi37Xy+z34iQ==}
     engines: {node: '>=18'}
 
-  '@tanstack/query-core@5.100.9':
-    resolution: {integrity: sha512-SJSFw1S8+kQ0+knv/XGfrbocWoAlT7vDKsSImtLx3ZPQmEcR46hkDjLSvynSy25N8Ms4tIEini1FuBd5k7IscQ==}
+  '@tanstack/query-core@5.101.2':
+    resolution: {integrity: sha512-hH5MLoJhF7KaIGd7q3xTXGXvslI+GYlM1Z/35aSHHWaCJWB7XvTSHYuV3eM7tw+aE0mT/xMro4M4Q9rCGHT0lw==}
 
   '@tanstack/query-core@5.90.10':
     resolution: {integrity: sha512-EhZVFu9rl7GfRNuJLJ3Y7wtbTnENsvzp+YpcAV7kCYiXni1v8qZh++lpw4ch4rrwC0u/EZRnBHIehzCGzwXDSQ==}
 
-  '@tanstack/query-db-collection@1.0.36':
-    resolution: {integrity: sha512-WOHSZeqFOflWpMxp7ndu8x3M8GyLieWyUsS1fReG8wv6I/1MGOz1j3+XNlGoeoWolYF2hV4l324/dB9BxjAwxw==}
+  '@tanstack/query-db-collection@1.0.47':
+    resolution: {integrity: sha512-qbII4EvC8IbWHARbshPU4QmnXETb7wB33uM/e3WyvC/3LYYYOpYABBGxrlnZegQtBv4h1hrRY3qtwkKfHiUSAQ==}
     peerDependencies:
       '@tanstack/query-core': ^5.0.0
       typescript: '>=4.7'
 
-  '@tanstack/react-db@0.1.83':
-    resolution: {integrity: sha512-LNV0C7OARazooT2hLTr5anXo6tbEyX2rHZQ0j9HZ/iNBI+Tx/y19o5Nd3ooyAYz5LEHJJxb8iM8ZTVB/diGnXw==}
+  '@tanstack/react-db@0.1.92':
+    resolution: {integrity: sha512-Ymgwu+4Wq5n2ij/iCh8WxBla0dD8eP1/aivkNWfVe2GIQO9e3AM0vwtSIiOB6r5oFqJbE0x8sY7rQHPzljwf/Q==}
     peerDependencies:
       react: '>=16.8.0'
 
@@ -10087,7 +10087,7 @@ snapshots:
       sorted-btree: 1.8.1
       typescript: 5.8.3
 
-  '@tanstack/db@0.6.5(typescript@5.8.3)':
+  '@tanstack/db@0.6.14(typescript@5.8.3)':
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@tanstack/db-ivm': 0.1.18(typescript@5.8.3)
@@ -10098,20 +10098,20 @@ snapshots:
 
   '@tanstack/pacer-lite@0.2.1': {}
 
-  '@tanstack/query-core@5.100.9': {}
+  '@tanstack/query-core@5.101.2': {}
 
   '@tanstack/query-core@5.90.10': {}
 
-  '@tanstack/query-db-collection@1.0.36(@tanstack/query-core@5.100.9)(typescript@5.8.3)':
+  '@tanstack/query-db-collection@1.0.47(@tanstack/query-core@5.101.2)(typescript@5.8.3)':
     dependencies:
       '@standard-schema/spec': 1.1.0
-      '@tanstack/db': 0.6.5(typescript@5.8.3)
-      '@tanstack/query-core': 5.100.9
+      '@tanstack/db': 0.6.14(typescript@5.8.3)
+      '@tanstack/query-core': 5.101.2
       typescript: 5.8.3
 
-  '@tanstack/react-db@0.1.83(react@19.2.0)(typescript@5.8.3)':
+  '@tanstack/react-db@0.1.92(react@19.2.0)(typescript@5.8.3)':
     dependencies:
-      '@tanstack/db': 0.6.5(typescript@5.8.3)
+      '@tanstack/db': 0.6.14(typescript@5.8.3)
       react: 19.2.0
       use-sync-external-store: 1.6.0(react@19.2.0)
     transitivePeerDependencies:
@@ -11758,7 +11758,7 @@ snapshots:
       '@next/eslint-plugin-next': 16.1.6
       eslint: 9.28.0(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1))
       eslint-plugin-import: 2.32.0(eslint-import-resolver-typescript@3.10.1)(eslint@9.28.0(jiti@2.6.1))
       eslint-plugin-jsx-a11y: 6.10.2(eslint@9.28.0(jiti@2.6.1))
       eslint-plugin-react: 7.37.5(eslint@9.28.0(jiti@2.6.1))
@@ -11781,7 +11781,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)):
+  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1)):
     dependencies:
       '@nolyfill/is-core-module': 1.0.39
       debug: 4.4.3(supports-color@8.1.1)
@@ -11796,13 +11796,13 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-module-utils@2.12.1(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)):
+  eslint-module-utils@2.12.1(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)):
     dependencies:
       debug: 3.2.7
     optionalDependencies:
       eslint: 9.28.0(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1))
     transitivePeerDependencies:
       - supports-color
 
@@ -11817,7 +11817,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 9.28.0(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
-      eslint-module-utils: 2.12.1(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1))
+      eslint-module-utils: 2.12.1(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1))
       hasown: 2.0.3
       is-core-module: 2.16.2
       is-glob: 4.0.3
@@ -13398,7 +13398,7 @@ snapshots:
       metro-cache: 0.83.7
       metro-core: 0.83.7
       metro-runtime: 0.83.7
-      yaml: 2.8.4
+      yaml: 2.9.0
     transitivePeerDependencies:
       - bufferutil
       - supports-color
@@ -13413,7 +13413,7 @@ snapshots:
       metro-cache: 0.84.4
       metro-core: 0.84.4
       metro-runtime: 0.84.4
-      yaml: 2.8.4
+      yaml: 2.9.0
     transitivePeerDependencies:
       - bufferutil
       - supports-color

@@ -1,6 +1,6 @@
-import { resolveType } from "../utils/types.js";
-import type { ObjectTypeDef, OntologyIR, TypeDef } from "../ir/index.js";
-import type { attachment } from "../utils/values.js";
+import { resolveType } from "../../utils/types.js";
+import type { ObjectTypeDef, OntologyIR, TypeDef } from "../../ir/index.js";
+import type { attachment } from "../../utils/values.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;

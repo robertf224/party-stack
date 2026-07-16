@@ -2,7 +2,7 @@ import { invariant } from "@bobbyfidz/panic";
 import { Temporal } from "temporal-polyfill";
 import { resolveType } from "../utils/types.js";
 import type { OntologyIR, TypeDef } from "../ir/generated/types.js";
-import type { OntologyObject } from "../utils/OntologyObject.js";
+import type { OntologyObject } from "../live/objects/OntologyObject.js";
 import type {
     OntologyActionParametersTarget,
     OntologyObjectTarget,
