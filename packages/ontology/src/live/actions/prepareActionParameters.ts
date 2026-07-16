@@ -1,7 +1,6 @@
 import { invariant } from "@bobbyfidz/panic";
 import type { BlobManager } from "@party-stack/blobs";
-import { resolveType } from "../utils/types.js";
-import type { OntologyAdapter, OntologyAttachmentUpload } from "./OntologyAdapter.js";
+import { resolveType } from "../../utils/types.js";
 import type {
     AttachmentTypeDef,
     ListTypeDef,
@@ -9,8 +8,9 @@ import type {
     OntologyIR,
     StructTypeDef,
     TypeDef,
-} from "../ir/index.js";
-import type { attachment } from "../utils/values.js";
+} from "../../ir/index.js";
+import type { attachment } from "../../utils/values.js";
+import type { OntologyAdapter, OntologyAttachmentUpload } from "../OntologyAdapter.js";
 
 interface MaterializeValueOptions {
     ir: OntologyIR;
@@ -101,10 +101,7 @@ function collectStruct(
     }
 }
 
-function collectValue(
-    opts: MaterializeValueOptions,
-    attachments: ActionAttachment[]
-): void {
+function collectValue(opts: MaterializeValueOptions, attachments: ActionAttachment[]): void {
     if (opts.value === undefined || opts.value === null) return;
 
     const type = resolveType(opts.ir, opts.type);

@@ -1,7 +1,7 @@
 import { get } from "lodash-es";
 import { Temporal } from "temporal-polyfill";
 import { resolveType, unwrapType } from "../utils/types.js";
-import type { OntologyCollection } from "./LiveOntology.js";
+import type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
 import type {
     Expression,
     ObjectTypeDef,
@@ -9,7 +9,7 @@ import type {
     TypeDef,
     ValueReferenceExpression,
 } from "../ir/index.js";
-import type { OntologyObject } from "../utils/OntologyObject.js";
+import type { OntologyObject } from "./objects/OntologyObject.js";
 
 function getActionType(ir: OntologyIR, actionTypeName: string) {
     return ir.actionTypes.find((actionType) => actionType.name === actionTypeName)!;
@@ -83,6 +83,7 @@ export function resolveActionParameters(
     const resolving = new Set<string>();
 
     const resolveParameter = (parameterName: string): unknown => {
+        // Only undefined means "not provided"; null is an explicit value used to clear properties.
         if (resolvedParameters[parameterName] !== undefined) {
             return resolvedParameters[parameterName];
         }

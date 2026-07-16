@@ -4,26 +4,27 @@ import {
     type BlobManager,
     type BlobStoreProvider,
 } from "@party-stack/blobs";
-import { BasicIndex, Collection, createCollection } from "@tanstack/db";
-import { applyActionLogic } from "./applyActionLogic.js";
-import { decorateObjectAttachmentSources } from "./attachmentSources.js";
+import { type Collection } from "@tanstack/db";
+import { createLiveOntologyAction } from "./actions/createLiveOntologyAction.js";
 import {
     createLiveOntologyAttachments,
     type LiveOntologyAttachments,
-} from "./createLiveOntologyAttachments.js";
-import { resolveActionParameters } from "./expression.js";
-import { prepareActionParameters } from "./prepareActionParameters.js";
-import type {
-    OntologyAdapter,
-    OntologyApplyActionResult,
-    OntologyAttachmentsAdapter,
-} from "./OntologyAdapter.js";
-import type { PreparedActionParameters } from "./prepareActionParameters.js";
+} from "./attachments/createLiveOntologyAttachments.js";
+import { unsupportedOntologyAttachmentsAdapter } from "./attachments/unsupportedOntologyAttachmentsAdapter.js";
+import { createLiveOntologyObjectCollection } from "./objects/createLiveOntologyObjectCollection.js";
+import type { LiveOntologyAction } from "./actions/createLiveOntologyAction.js";
+import type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
+import type { OntologyObject } from "./objects/OntologyObject.js";
+import type { OntologyAdapter } from "./OntologyAdapter.js";
 import type { OntologyIR } from "../ir/index.js";
-import type { OntologyObject } from "../utils/OntologyObject.js";
 import type { attachment } from "../utils/values.js";
 
-export type { LiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
+export type {
+    LiveOntologyAction,
+    LiveOntologyActionExecution,
+} from "./actions/createLiveOntologyAction.js";
+export type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
+export type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
 export interface OntologyDefinition {
     objectTypes: Record<string, OntologyObject>;
     actionTypes: Record<
@@ -40,17 +41,6 @@ export interface OntologyDefinition {
         }
     >;
 }
-
-export type OntologyCollection<T extends OntologyObject> = Collection<T>;
-
-export interface LiveOntologyActionExecution {
-    mutationFn: () => Promise<OntologyApplyActionResult | void>;
-    mutator: () => void;
-}
-
-export type LiveOntologyAction<Parameters extends Record<string, unknown> = Record<string, unknown>> = (
-    parameters: Parameters
-) => LiveOntologyActionExecution;
 
 export type LiveOntologyQueryFunction<
     Parameters extends Record<string, unknown> = Record<string, unknown>,
@@ -90,44 +80,6 @@ export interface LiveOntologyOpts {
     getContext?: () => Record<string, unknown>;
 }
 
-function decorateCollectionSync(opts: {
-    ir: OntologyIR;
-    objectType: OntologyIR["objectTypes"][number];
-    collectionOptions: ReturnType<OntologyAdapter["getCollectionOptions"]>;
-}): ReturnType<OntologyAdapter["getCollectionOptions"]> {
-    return {
-        ...opts.collectionOptions,
-        sync: {
-            ...opts.collectionOptions.sync,
-            sync: (syncParams) =>
-                opts.collectionOptions.sync.sync({
-                    ...syncParams,
-                    write: (message) => {
-                        if (message.type === "delete") {
-                            syncParams.write(message);
-                            return;
-                        }
-                        syncParams.write({
-                            ...message,
-                            value: decorateObjectAttachmentSources({
-                                ir: opts.ir,
-                                objectType: opts.objectType,
-                                object: message.value,
-                            }),
-                        });
-                    },
-                }),
-        },
-    };
-}
-
-const unsupportedOntologyAttachmentsAdapter: OntologyAttachmentsAdapter = {
-    getAttachmentContent: (attachment) =>
-        Promise.reject(new Error(`Ontology adapter cannot read attachment content for "${attachment.id}".`)),
-    getAttachmentMetadata: (attachment) =>
-        Promise.reject(new Error(`Ontology adapter cannot read attachment metadata for "${attachment.id}".`)),
-};
-
 export function createLiveOntology<Ontology extends OntologyDefinition = OntologyDefinition>(
     opts: LiveOntologyOpts
 ): LiveOntology<Ontology> {
@@ -155,71 +107,27 @@ export function createLiveOntology<Ontology extends OntologyDefinition = Ontolog
         blobManager,
     });
     const objects = Object.fromEntries(
-        opts.ir.objectTypes.map((objectType) => {
-            const collectionOptions = decorateCollectionSync({
+        opts.ir.objectTypes.map((objectType) => [
+            objectType.name,
+            createLiveOntologyObjectCollection({
+                ontologyId,
                 ir: opts.ir,
                 objectType,
-                collectionOptions: opts.adapter.getCollectionOptions(objectType.name),
-            });
-            const collection = createCollection({
-                ...collectionOptions,
-                id: `${ontologyId}:${objectType.name}`,
-                defaultIndexType: BasicIndex,
-                autoIndex: "eager",
-                getKey: (object) =>
-                    (object as Record<string, string | number>)[objectType.primaryKey] as string | number,
-            }) as OntologyCollection<OntologyObject>;
-
-            return [objectType.name, collection];
-        })
+                adapter: opts.adapter,
+            }),
+        ])
     ) as Record<string, OntologyCollection<OntologyObject>>;
     const actions = Object.fromEntries(
         opts.ir.actionTypes.map((action) => [
             action.name,
-            (providedParameters: Record<string, unknown>) => {
-                const context = opts.getContext?.() ?? {};
-                const parameters = resolveActionParameters(
-                    opts.ir,
-                    action.name,
-                    providedParameters,
-                    context,
-                    objects
-                );
-
-                return {
-                    mutationFn: async () => {
-                        const preparedAction: PreparedActionParameters = await prepareActionParameters({
-                            ir: opts.ir,
-                            actionTypeName: action.name,
-                            parameters,
-                            adapter: opts.adapter,
-                            blobManager,
-                        });
-                        const result = await opts.adapter.applyAction(action.name, preparedAction.parameters, {
-                            objects: objects as Record<string, Collection<Record<string, unknown>>>,
-                            context,
-                            attachmentUploads: preparedAction.attachmentUploads,
-                        });
-                        await Promise.all(
-                            (result?.attachmentIdMappings ?? []).map((mapping) =>
-                                blobManager.markUploaded(mapping.localId, {
-                                    remoteId: mapping.remoteId,
-                                })
-                            )
-                        );
-                        return result;
-                    },
-                    mutator: () => {
-                        applyActionLogic({
-                            ir: opts.ir,
-                            actionTypeName: action.name,
-                            parameters,
-                            context,
-                            objects,
-                        });
-                    },
-                };
-            },
+            createLiveOntologyAction({
+                ir: opts.ir,
+                action,
+                adapter: opts.adapter,
+                getContext: opts.getContext,
+                objects,
+                blobManager,
+            }),
         ])
     );
     const queryFunctions = Object.fromEntries(

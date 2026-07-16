@@ -1,10 +1,10 @@
 import { invariant } from "@bobbyfidz/panic";
 import type { BlobManager } from "@party-stack/blobs";
-import { getTargetValueType } from "../utils/types.js";
-import * as v from "../utils/values.js";
-import type { OntologyAttachmentsAdapter } from "./OntologyAdapter.js";
-import type { OntologyIR } from "../ir/index.js";
-import type { OntologyAttachmentCreateTarget } from "../utils/targets.js";
+import { getTargetValueType } from "../../utils/types.js";
+import * as v from "../../utils/values.js";
+import type { OntologyIR } from "../../ir/index.js";
+import type { OntologyAttachmentCreateTarget } from "../../utils/targets.js";
+import type { OntologyAttachmentsAdapter } from "../OntologyAdapter.js";
 
 export interface LiveOntologyEagerAttachmentCreation {
     attachment: v.attachment;
