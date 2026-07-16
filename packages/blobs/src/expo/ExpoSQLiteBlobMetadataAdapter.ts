@@ -2,9 +2,8 @@ import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
 import type { BlobMetadataAdapter, BlobRef, BlobState } from "../types.js";
 
 export interface ExpoSQLiteBlobMetadataAdapterOptions {
-    databaseName?: string;
-    directory?: string;
-    tableName?: string;
+    databaseName: string;
+    tableName: string;
 }
 
 interface BlobRefRow {
@@ -44,14 +43,12 @@ function rowToBlobRef(row: BlobRefRow): BlobRef {
 
 export class ExpoSQLiteBlobMetadataAdapter implements BlobMetadataAdapter {
     readonly databaseName: string;
-    readonly directory: string | undefined;
     readonly tableName: string;
     private dbPromise?: Promise<SQLiteDatabase>;
 
-    constructor(opts: ExpoSQLiteBlobMetadataAdapterOptions = {}) {
-        this.databaseName = opts.databaseName ?? "party-stack-blobs.db";
-        this.directory = opts.directory;
-        this.tableName = opts.tableName ?? "blob_metadata";
+    constructor(opts: ExpoSQLiteBlobMetadataAdapterOptions) {
+        this.databaseName = opts.databaseName;
+        this.tableName = opts.tableName;
     }
 
     private table(): string {
@@ -63,10 +60,9 @@ export class ExpoSQLiteBlobMetadataAdapter implements BlobMetadataAdapter {
     }
 
     private db(): Promise<SQLiteDatabase> {
-        this.dbPromise ??= openDatabaseAsync(this.databaseName, undefined, this.directory).then(
-            async (db) => {
-                const table = this.table();
-                await db.execAsync(`
+        this.dbPromise ??= openDatabaseAsync(this.databaseName, undefined).then(async (db) => {
+            const table = this.table();
+            await db.execAsync(`
                     PRAGMA journal_mode = WAL;
                     CREATE TABLE IF NOT EXISTS ${table} (
                         id TEXT PRIMARY KEY NOT NULL,
@@ -84,17 +80,16 @@ export class ExpoSQLiteBlobMetadataAdapter implements BlobMetadataAdapter {
                     CREATE INDEX IF NOT EXISTS ${this.indexName("last_accessed_at_idx")} ON ${table}(last_accessed_at);
                     CREATE INDEX IF NOT EXISTS ${this.indexName("updated_at_idx")} ON ${table}(updated_at);
                 `);
-                const columns = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
-                const columnNames = new Set(columns.map((column) => column.name));
-                if (!columnNames.has("remote_id")) {
-                    await db.execAsync(`ALTER TABLE ${table} ADD COLUMN remote_id TEXT;`);
-                }
-                await db.execAsync(
-                    `CREATE INDEX IF NOT EXISTS ${this.indexName("remote_id_idx")} ON ${table}(remote_id);`
-                );
-                return db;
+            const columns = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+            const columnNames = new Set(columns.map((column) => column.name));
+            if (!columnNames.has("remote_id")) {
+                await db.execAsync(`ALTER TABLE ${table} ADD COLUMN remote_id TEXT;`);
             }
-        );
+            await db.execAsync(
+                `CREATE INDEX IF NOT EXISTS ${this.indexName("remote_id_idx")} ON ${table}(remote_id);`
+            );
+            return db;
+        });
         return this.dbPromise;
     }
 
@@ -143,10 +138,7 @@ export class ExpoSQLiteBlobMetadataAdapter implements BlobMetadataAdapter {
 
     async get(id: string): Promise<BlobRef | undefined> {
         const db = await this.db();
-        const row = await db.getFirstAsync<BlobRefRow>(
-            `SELECT * FROM ${this.table()} WHERE id = ?`,
-            id
-        );
+        const row = await db.getFirstAsync<BlobRefRow>(`SELECT * FROM ${this.table()} WHERE id = ?`, id);
         return row ? rowToBlobRef(row) : undefined;
     }
 
@@ -166,9 +158,7 @@ export class ExpoSQLiteBlobMetadataAdapter implements BlobMetadataAdapter {
                   `SELECT * FROM ${this.table()} WHERE state = ? ORDER BY created_at ASC`,
                   opts.state
               )
-            : await db.getAllAsync<BlobRefRow>(
-                  `SELECT * FROM ${this.table()} ORDER BY created_at ASC`
-              );
+            : await db.getAllAsync<BlobRefRow>(`SELECT * FROM ${this.table()} ORDER BY created_at ASC`);
         return rows.map(rowToBlobRef);
     }
 

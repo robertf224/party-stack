@@ -74,7 +74,10 @@ function createClientOntology(userEmail: string) {
         }),
     });
     return createRemoteNotesLiveOntology(adapter, {
-        getContext: () => ({ user: { email: userEmail } }),
+        context: {
+            user: { email: userEmail },
+        },
+        getUserId: (context) => context.user.email,
     });
 }
 

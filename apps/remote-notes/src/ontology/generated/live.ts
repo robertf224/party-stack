@@ -3,17 +3,20 @@
 import { createLiveOntology, type LiveOntology } from "@party-stack/ontology";
 import ontology from "../ontology";
 import type { RemoteNotesOntology } from "./types";
-import type { LiveOntologyOpts, OntologyAdapter } from "@party-stack/ontology";
+import type { CreateLiveOntologyOpts, OntologyAdapter } from "@party-stack/ontology";
 
-export function createRemoteNotesLiveOntology(
+export function createRemoteNotesLiveOntology<
+    Context extends Record<string, unknown> = Record<string, unknown>,
+>(
     adapter: OntologyAdapter,
-    opts?: Pick<LiveOntologyOpts, "blobStore" | "getContext" | "id">
+    opts?: Pick<CreateLiveOntologyOpts<Context>, "blobStore" | "context" | "getUserId" | "id">
 ): LiveOntology<RemoteNotesOntology> {
-    return createLiveOntology<RemoteNotesOntology>({
+    return createLiveOntology<RemoteNotesOntology, Context>({
         ir: ontology,
         adapter,
         id: opts?.id,
         blobStore: opts?.blobStore,
-        getContext: opts?.getContext,
+        context: opts?.context,
+        getUserId: opts?.getUserId,
     });
 }

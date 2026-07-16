@@ -16,8 +16,9 @@ export const adapter = createFoundryOntologyAdapter({ client, ir });
 export const ontology = createIssueTrackerLiveOntology(adapter, {
     id: process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
     blobStore: createWebBlobStore,
-    getContext: () => ({
+    context: {
         userId: "77a1fe87-ad9f-4cd7-ba76-223ab048d2d3",
-    }),
+    },
+    getUserId: (context) => context.userId,
 });
 export const User = createCollection(userCollectionOptions({ client }));

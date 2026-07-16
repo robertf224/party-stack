@@ -4,13 +4,13 @@ import type { QueryCollectionUtils } from "@tanstack/query-db-collection";
 import type { Collection } from "@tanstack/db";
 import { createLiveOntology } from "@party-stack/ontology";
 import type {
+    CreateLiveOntologyOpts,
     LiveOntology,
     OntologyDefinition,
     OntologyAdapter,
     OntologyCollectionOptions,
     OntologyIR,
 } from "@party-stack/ontology";
-import type { BlobStoreProvider } from "@party-stack/blobs";
 import { serializeLoadSubsetOptions, type RemoteOntologyTransport } from "./protocol.js";
 
 export interface CreateRemoteOntologyAdapterOptions {
@@ -18,10 +18,13 @@ export interface CreateRemoteOntologyAdapterOptions {
     transport: RemoteOntologyTransport;
 }
 
-export interface CreateRemoteLiveOntologyOptions {
+export interface CreateRemoteLiveOntologyOptions<
+    Context extends Record<string, unknown> = Record<string, unknown>,
+> {
     transport: RemoteOntologyTransport;
     id?: string;
-    blobStore?: BlobStoreProvider;
+    blobStore?: CreateLiveOntologyOpts<Context>["blobStore"];
+    getUserId?: CreateLiveOntologyOpts<Context>["getUserId"];
 }
 
 function getObjectTypePrimaryKey(ir: OntologyIR, objectType: string): string {
@@ -103,17 +106,19 @@ export function createRemoteOntologyAdapter(opts: CreateRemoteOntologyAdapterOpt
 
 export async function createRemoteLiveOntology<
     Ontology extends OntologyDefinition = OntologyDefinition,
->(opts: CreateRemoteLiveOntologyOptions): Promise<LiveOntology<Ontology>> {
+    Context extends Record<string, unknown> = Record<string, unknown>,
+>(opts: CreateRemoteLiveOntologyOptions<Context>): Promise<LiveOntology<Ontology>> {
     const description = await opts.transport.describe();
     const adapter = createRemoteOntologyAdapter({
         ir: description.ir,
         transport: opts.transport,
     });
-    return createLiveOntology<Ontology>({
+    return createLiveOntology<Ontology, Context>({
         ir: description.ir,
         adapter,
         id: opts.id,
         blobStore: opts.blobStore,
-        getContext: () => description.context ?? {},
+        context: (description.context ?? {}) as Context,
+        getUserId: opts.getUserId,
     });
 }

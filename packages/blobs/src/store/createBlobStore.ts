@@ -1,14 +1,8 @@
-import type {
-    BlobBytesAdapterProvider,
-    BlobMetadataAdapterProvider,
-    BlobRef,
-    BlobStore,
-} from "../types.js";
+import type { BlobBytesAdapter, BlobMetadataAdapter, BlobRef, BlobStore } from "../types.js";
 
 export interface CreateBlobStoreOptions {
-    name: string;
-    bytes: BlobBytesAdapterProvider;
-    metadata: BlobMetadataAdapterProvider;
+    bytes: BlobBytesAdapter;
+    metadata: BlobMetadataAdapter;
     now?: () => number;
     withUploadLock?: <T>(id: string, callback: () => Promise<T>) => Promise<T>;
 }
@@ -35,8 +29,8 @@ function createBlobRef(id: string, blob: Blob | File, now: number): BlobRef {
 
 export function createBlobStore(opts: CreateBlobStoreOptions): BlobStore {
     const now = () => opts.now?.() ?? Date.now();
-    const bytes = opts.bytes(opts.name);
-    const metadata = opts.metadata(opts.name);
+    const bytes = opts.bytes;
+    const metadata = opts.metadata;
 
     const resolveRef = async (id: string): Promise<BlobRef | undefined> => {
         const ref = await metadata.get(id);
@@ -186,9 +180,7 @@ export function createBlobStore(opts: CreateBlobStoreOptions): BlobStore {
             if (!byteIds) {
                 return;
             }
-            await Promise.all(
-                byteIds.filter((id) => !refIds.has(id)).map((id) => bytes.delete(id))
-            );
+            await Promise.all(byteIds.filter((id) => !refIds.has(id)).map((id) => bytes.delete(id)));
         },
 
         withUploadLock: opts.withUploadLock,
