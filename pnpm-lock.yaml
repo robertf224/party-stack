@@ -853,6 +853,39 @@ importers:
         specifier: ^3.1.1
         version: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.1)(jiti@2.6.1)(jsdom@27.2.0)(lightningcss@1.32.0)(terser@5.46.2)(tsx@4.20.6)(yaml@2.9.0)
 
+  packages/runtime-services:
+    devDependencies:
+      '@bobbyfidz/universal-build-config':
+        specifier: ^0.1.1
+        version: 0.1.1(eslint@9.28.0(jiti@2.6.1))(typescript@5.8.3)
+      '@tanstack/browser-db-sqlite-persistence':
+        specifier: ^0.2.6
+        version: 0.2.6(@journeyapps/wa-sqlite@1.7.2)(typescript@5.8.3)
+      '@tanstack/db':
+        specifier: ^0.6.14
+        version: 0.6.14(typescript@5.8.3)
+      '@tanstack/db-sqlite-persistence-core':
+        specifier: ^0.2.6
+        version: 0.2.6(typescript@5.8.3)
+      '@tanstack/expo-db-sqlite-persistence':
+        specifier: ^0.2.6
+        version: 0.2.6(expo-sqlite@55.0.15(expo@55.0.23(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(react-dom@19.2.0(react@19.2.0))(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)(typescript@5.8.3))(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0))(typescript@5.8.3)
+      eslint:
+        specifier: ^9.25.0
+        version: 9.28.0(jiti@2.6.1)
+      expo-file-system:
+        specifier: ^55.0.19
+        version: 55.0.19(expo@55.0.23(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(react-dom@19.2.0(react@19.2.0))(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)(typescript@5.8.3))(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.2.6)(react@19.2.0))
+      expo-sqlite:
+        specifier: ^55.0.15
+        version: 55.0.15(expo@55.0.23(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(react-dom@19.2.0(react@19.2.0))(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)(typescript@5.8.3))(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+      vitest:
+        specifier: ^3.1.1
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@25.6.0)(jiti@2.6.1)(jsdom@27.2.0)(lightningcss@1.32.0)(terser@5.46.2)(tsx@4.20.6)(yaml@2.9.0)
+
   packages/sqlite-ontology:
     dependencies:
       '@party-stack/ontology':
@@ -2144,6 +2177,9 @@ packages:
     resolution: {integrity: sha512-u3UPsIilWKOM3F9CXtrG8LEJmNxwoCQC/XVj4IKYXvvpx7QIi/Kg1LI5uDmDpKlac62NUtX7eLjRh+jVZcLOzw==}
     engines: {node: ^14.15.0 || ^16.10.0 || >=18.0.0}
 
+  '@journeyapps/wa-sqlite@1.7.2':
+    resolution: {integrity: sha512-EVRMzqHtHgJBFcTGOgQ5/YlxrYFSXLFFztC5yo6+jQx2mqFR+a1kkLV4IirquiBzIonjmYXfBtvZ26fmI8r9Nw==}
+
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
 
@@ -2751,14 +2787,31 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7
 
+  '@tanstack/browser-db-sqlite-persistence@0.2.6':
+    resolution: {integrity: sha512-l78NOmRmdoFc+QoZmkvS1D1RkWaayUFMX+230Z20CP00tZBDgGWvSL6ubVLwf1IpcaY4AFsVuZmcfVDteE4UxQ==}
+    peerDependencies:
+      '@journeyapps/wa-sqlite': ^1.4.1
+      typescript: '>=4.7'
+
   '@tanstack/db-ivm@0.1.18':
     resolution: {integrity: sha512-+pZJiRKdoKRM5Epq9T7otD9ZJl82pRFauo7LKuJGrarjVKQ7r+QQlPe3kGdN9LEKSnuNGIWjX9OOY4M8kH4eLw==}
+    peerDependencies:
+      typescript: '>=4.7'
+
+  '@tanstack/db-sqlite-persistence-core@0.2.6':
+    resolution: {integrity: sha512-T9J/qzRmuumSw55w1o5X428k8GvtxCb81hNV73+MQlLMGabdJYpYCYjuADyPivHMF0ZkzjCl4NGdSI5+wzH4aQ==}
     peerDependencies:
       typescript: '>=4.7'
 
   '@tanstack/db@0.6.14':
     resolution: {integrity: sha512-Kqma/PcWhn2e21iJPM/FMKwdMuJUYII9zkKPUsD42/ceEOYRtimbBSe+xll7EY805xE2HuQ3NGSSU8UiYXpHUw==}
     peerDependencies:
+      typescript: '>=4.7'
+
+  '@tanstack/expo-db-sqlite-persistence@0.2.6':
+    resolution: {integrity: sha512-OuciFR6S2DKrTQNvVpC5a/Tatao4dcwq49iyXrUw7JtxppUyAJo+dcFKeTyN9dZwhdYNZSrc0m76Ty5w/dIkbA==}
+    peerDependencies:
+      expo-sqlite: ^55.0.10
       typescript: '>=4.7'
 
   '@tanstack/history@1.161.6':
@@ -9350,6 +9403,8 @@ snapshots:
       '@types/yargs': 17.0.35
       chalk: 4.1.2
 
+  '@journeyapps/wa-sqlite@1.7.2': {}
+
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
@@ -10081,10 +10136,22 @@ snapshots:
       tailwindcss: 4.1.17
       vite: 7.2.4(@types/node@25.6.0)(jiti@2.6.1)(lightningcss@1.32.0)(terser@5.46.2)(tsx@4.20.6)(yaml@2.9.0)
 
+  '@tanstack/browser-db-sqlite-persistence@0.2.6(@journeyapps/wa-sqlite@1.7.2)(typescript@5.8.3)':
+    dependencies:
+      '@journeyapps/wa-sqlite': 1.7.2
+      '@tanstack/db-sqlite-persistence-core': 0.2.6(typescript@5.8.3)
+      typescript: 5.8.3
+
   '@tanstack/db-ivm@0.1.18(typescript@5.8.3)':
     dependencies:
       fractional-indexing: 3.2.0
       sorted-btree: 1.8.1
+      typescript: 5.8.3
+
+  '@tanstack/db-sqlite-persistence-core@0.2.6(typescript@5.8.3)':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      '@tanstack/db': 0.6.14(typescript@5.8.3)
       typescript: 5.8.3
 
   '@tanstack/db@0.6.14(typescript@5.8.3)':
@@ -10092,6 +10159,12 @@ snapshots:
       '@standard-schema/spec': 1.1.0
       '@tanstack/db-ivm': 0.1.18(typescript@5.8.3)
       '@tanstack/pacer-lite': 0.2.1
+      typescript: 5.8.3
+
+  '@tanstack/expo-db-sqlite-persistence@0.2.6(expo-sqlite@55.0.15(expo@55.0.23(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(react-dom@19.2.0(react@19.2.0))(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)(typescript@5.8.3))(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0))(typescript@5.8.3)':
+    dependencies:
+      '@tanstack/db-sqlite-persistence-core': 0.2.6(typescript@5.8.3)
+      expo-sqlite: 55.0.15(expo@55.0.23(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(react-dom@19.2.0(react@19.2.0))(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)(typescript@5.8.3))(react-native@0.85.3(@babel/core@7.29.0)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)
       typescript: 5.8.3
 
   '@tanstack/history@1.161.6': {}
@@ -11758,7 +11831,7 @@ snapshots:
       '@next/eslint-plugin-next': 16.1.6
       eslint: 9.28.0(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1))
       eslint-plugin-import: 2.32.0(eslint-import-resolver-typescript@3.10.1)(eslint@9.28.0(jiti@2.6.1))
       eslint-plugin-jsx-a11y: 6.10.2(eslint@9.28.0(jiti@2.6.1))
       eslint-plugin-react: 7.37.5(eslint@9.28.0(jiti@2.6.1))
@@ -11781,7 +11854,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1)):
+  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)):
     dependencies:
       '@nolyfill/is-core-module': 1.0.39
       debug: 4.4.3(supports-color@8.1.1)
@@ -11796,13 +11869,13 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-module-utils@2.12.1(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)):
+  eslint-module-utils@2.12.1(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)):
     dependencies:
       debug: 3.2.7
     optionalDependencies:
       eslint: 9.28.0(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1))
     transitivePeerDependencies:
       - supports-color
 
@@ -11817,7 +11890,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 9.28.0(jiti@2.6.1)
       eslint-import-resolver-node: 0.3.9
-      eslint-module-utils: 2.12.1(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1))
+      eslint-module-utils: 2.12.1(eslint-import-resolver-node@0.3.9)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1)))(eslint@9.28.0(jiti@2.6.1))
       hasown: 2.0.3
       is-core-module: 2.16.2
       is-glob: 4.0.3
