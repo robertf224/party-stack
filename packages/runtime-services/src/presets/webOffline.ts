@@ -15,9 +15,12 @@ export async function webOffline(owner: string, namespace: string): Promise<Runt
             directoryName: `party-stack:${owner}:${namespace}:blobs`,
         }),
         locks: navigator.locks,
-        persistence: createBrowserWASQLitePersistence({
-            database,
-        }).adapter,
+        persistence: {
+            adapter: createBrowserWASQLitePersistence({
+                database,
+            }).adapter,
+            persistObjects: true,
+        },
         cleanup: async () => {
             await database.close?.();
         },

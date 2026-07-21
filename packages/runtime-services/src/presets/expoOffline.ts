@@ -13,9 +13,12 @@ export async function expoOffline(owner: string, namespace: string): Promise<Run
         blobBytes: new ExpoFileSystemBlobBytesStore({
             directoryName: `party-stack:${owner}:${namespace}:blobs`,
         }),
-        persistence: createExpoSQLitePersistence({
-            database: database as unknown as ExpoSQLiteDatabaseLike,
-        }).adapter,
+        persistence: {
+            adapter: createExpoSQLitePersistence({
+                database: database as unknown as ExpoSQLiteDatabaseLike,
+            }).adapter,
+            persistObjects: true,
+        },
         cleanup: async () => {
             await database.closeAsync();
         },

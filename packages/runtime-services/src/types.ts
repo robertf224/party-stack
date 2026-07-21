@@ -21,7 +21,10 @@ export type { PersistenceAdapter } from "@tanstack/db-sqlite-persistence-core";
 export interface RuntimeServices {
     blobBytes: BlobBytesStore;
     locks?: LockManager;
-    persistence?: PersistenceAdapter;
+    persistence?: {
+        adapter: PersistenceAdapter;
+        persistObjects: boolean;
+    };
     cleanup?: () => void | Promise<void>;
 }
 
