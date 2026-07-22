@@ -34,6 +34,7 @@ const INDEX_ENTRIES = "indexEntries";
 const BY_COLLECTION = "collectionId";
 const BY_INDEX = "index";
 const BY_LOOKUP = "lookup";
+const INDEX_BATCH_SIZE = 300;
 
 interface RowRecord extends PersistedRow {
     id: string;
@@ -106,7 +107,13 @@ interface RuntimePersistenceDB extends DBSchema {
         indexes: {
             collectionId: string;
             index: [string, string];
-            lookup: [string, string, IndexValueType, IndexValue];
+            lookup: [
+                string,
+                string,
+                IndexValueType,
+                IndexValue,
+                string,
+            ];
         };
     };
 }
@@ -379,12 +386,22 @@ function exactRange(
     encoded: EncodedIndexValue,
     valueType: IndexValueType = encoded.type
 ): IDBKeyRange {
-    return IDBKeyRange.only([
-        definition.collectionId,
-        definition.signature,
-        valueType,
-        encoded.value,
-    ]);
+    return IDBKeyRange.bound(
+        [
+            definition.collectionId,
+            definition.signature,
+            valueType,
+            encoded.value,
+            "",
+        ],
+        [
+            definition.collectionId,
+            definition.signature,
+            valueType,
+            encoded.value,
+            [],
+        ]
+    );
 }
 
 function boundedRange(
@@ -397,27 +414,59 @@ function boundedRange(
         definition.signature,
         encoded.type,
     ] as const;
-    const key: [string, string, IndexValueType, IndexValue] = [
+    const keyStart: [
+        string,
+        string,
+        IndexValueType,
+        IndexValue,
+        string,
+    ] = [
         ...prefix,
         encoded.value,
+        "",
     ];
-    const minimum: [string, string, IndexValueType, IndexValue] = [
+    const keyEnd: [
+        string,
+        string,
+        IndexValueType,
+        IndexValue,
+        IDBValidKey,
+    ] = [
+        ...prefix,
+        encoded.value,
+        [],
+    ];
+    const minimum: [
+        string,
+        string,
+        IndexValueType,
+        IndexValue,
+        string,
+    ] = [
         ...prefix,
         -Infinity,
+        "",
     ];
-    const maximum: [string, string, IndexValueType, IDBValidKey] = [
+    const maximum: [
+        string,
+        string,
+        IndexValueType,
+        IDBValidKey,
+        IDBValidKey,
+    ] = [
         ...prefix,
+        [],
         [],
     ];
     switch (operator) {
         case "gt":
-            return IDBKeyRange.bound(key, maximum, true, false);
+            return IDBKeyRange.bound(keyEnd, maximum);
         case "gte":
-            return IDBKeyRange.bound(key, maximum, false, false);
+            return IDBKeyRange.bound(keyStart, maximum);
         case "lt":
-            return IDBKeyRange.bound(minimum, key, false, true);
+            return IDBKeyRange.bound(minimum, keyStart, false, true);
         case "lte":
-            return IDBKeyRange.bound(minimum, key, false, false);
+            return IDBKeyRange.bound(minimum, keyEnd);
     }
 }
 
@@ -432,14 +481,49 @@ function stringPrefixRange(
             definition.signature,
             valueType,
             prefix,
+            "",
         ],
         [
             definition.collectionId,
             definition.signature,
             valueType,
             `${prefix}\uffff`,
+            [],
         ]
     );
+}
+
+function rangeAfter(
+    range: IDBKeyRange,
+    entry: IndexEntryRecord
+): IDBKeyRange | undefined {
+    const checkpoint: [
+        string,
+        string,
+        IndexValueType,
+        IndexValue,
+        string,
+    ] = [
+        entry.collectionId,
+        entry.signature,
+        entry.valueType,
+        entry.value,
+        entry.rowId,
+    ];
+    if (
+        range.upper !== undefined &&
+        indexedDB.cmp(checkpoint, range.upper) >= 0
+    ) {
+        return undefined;
+    }
+    return range.upper === undefined
+        ? IDBKeyRange.lowerBound(checkpoint, true)
+        : IDBKeyRange.bound(
+              checkpoint,
+              range.upper,
+              true,
+              range.upperOpen
+          );
 }
 
 function compatibleRangeType(
@@ -726,8 +810,20 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
                 if (current.kind === "none") return;
                 if (current.kind === "lookup") {
                     for (const range of current.ranges ?? []) {
-                        for await (const cursor of lookup.iterate(range)) {
-                            visit(cursor.value.rowId);
+                        let remaining: IDBKeyRange | undefined = range;
+                        while (remaining) {
+                            const entries = await lookup.getAll(
+                                remaining,
+                                INDEX_BATCH_SIZE
+                            );
+                            for (const entry of entries) {
+                                visit(entry.rowId);
+                            }
+                            if (entries.length < INDEX_BATCH_SIZE) break;
+                            remaining = rangeAfter(
+                                range,
+                                entries.at(-1)!
+                            );
                         }
                     }
                     return;
@@ -777,9 +873,22 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             const rowIds = await executePlan(plan);
             rows = [];
             const rowStore = transaction.objectStore(ROWS);
-            for (const key of rowIds) {
-                const row = await rowStore.get(key);
-                if (row) rows.push(row);
+            const keys = [...rowIds];
+            for (
+                let offset = 0;
+                offset < keys.length;
+                offset += INDEX_BATCH_SIZE
+            ) {
+                const loaded = await Promise.all(
+                    keys
+                        .slice(offset, offset + INDEX_BATCH_SIZE)
+                        .map((key) => rowStore.get(key))
+                );
+                rows.push(
+                    ...loaded.filter(
+                        (row): row is RowRecord => row !== undefined
+                    )
+                );
             }
         } else {
             rows = await transaction.objectStore(ROWS).index(BY_COLLECTION).getAll(collectionId);
@@ -1034,6 +1143,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
                     "signature",
                     "valueType",
                     "value",
+                    "rowId",
                 ]);
             },
             blocked: () => this.options.onBlocked?.(),

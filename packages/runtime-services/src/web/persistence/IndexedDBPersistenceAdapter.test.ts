@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import {
     IR,
+    Query,
     and,
     createCollection,
     eq,
@@ -10,14 +11,16 @@ import {
     isNull,
     isUndefined,
     like,
+    localOnlyCollectionOptions,
     lower,
     not,
     or,
 } from "@tanstack/db";
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
 import { Temporal } from "temporal-polyfill";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { IndexedDBPersistenceAdapter } from "./IndexedDBPersistenceAdapter.js";
+import type { LoadSubsetOptions } from "@tanstack/db";
 import type {
     PersistedIndexSpec,
     PersistedTx,
@@ -34,6 +37,48 @@ interface Item {
     status?: string;
     priority: number;
 }
+
+const queryItems = createCollection(
+    localOnlyCollectionOptions<Item, string>({
+        id: "indexeddb-persistence-query-builder",
+        getKey: (item) => item.id,
+    })
+);
+
+function queryOptions(
+    build: (query: ReturnType<typeof createBaseQuery>) => unknown
+): LoadSubsetOptions {
+    const builder = build(createBaseQuery());
+    if (
+        typeof builder !== "object" ||
+        builder === null ||
+        !("_getQuery" in builder) ||
+        typeof builder._getQuery !== "function"
+    ) {
+        throw new TypeError("Expected a TanStack DB query builder.");
+    }
+    const ir = (builder as { _getQuery(): IR.QueryIR })._getQuery();
+    const whereExpressions = (ir.where ?? []).map(IR.getWhereExpression);
+    return {
+        where:
+            whereExpressions.length === 0
+                ? undefined
+                : whereExpressions.length === 1
+                  ? whereExpressions[0]
+                  : new IR.Func("and", whereExpressions),
+        orderBy: ir.orderBy,
+        limit: ir.limit,
+        offset: ir.offset,
+    };
+}
+
+function createBaseQuery() {
+    return new Query().from({ item: queryItems });
+}
+
+afterAll(async () => {
+    await queryItems.cleanup();
+});
 
 function databaseName(): string {
     return `runtime-services-${crypto.randomUUID()}`;
@@ -184,18 +229,28 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["instant"])
         );
 
-        const dates = await adapter.loadSubset("items", {
-            where: gt(
-                new IR.PropRef(["item", "date"]),
-                Temporal.PlainDate.from("2026-06-01")
-            ),
-        });
-        const instants = await adapter.loadSubset("items", {
-            where: gt(
-                new IR.PropRef(["item", "instant"]),
-                Temporal.Instant.from("2026-06-01T00:00:00Z")
-            ),
-        });
+        const dates = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) =>
+                    gt(
+                        item.date,
+                        Temporal.PlainDate.from("2026-06-01")
+                    )
+                )
+            )
+        );
+        const instants = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) =>
+                    gt(
+                        item.instant,
+                        Temporal.Instant.from("2026-06-01T00:00:00Z")
+                    )
+                )
+            )
+        );
 
         expect(ids(dates)).toEqual(["later"]);
         expect(ids(instants)).toEqual(["later"]);
@@ -211,9 +266,12 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "closed", status: "closed", priority: 2 },
         ]);
 
-        const rows = await adapter.loadSubset("items", {
-            where: eq(new IR.PropRef(["item", "status"]), "open"),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => eq(item.status, "open"))
+            )
+        );
 
         expect(ids(rows)).toEqual(["closed", "open"]);
         adapter.close();
@@ -234,9 +292,12 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["status"])
         );
 
-        const rows = await adapter.loadSubset("items", {
-            where: eq(new IR.PropRef(["item", "status"]), "open"),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => eq(item.status, "open"))
+            )
+        );
 
         expect(ids(rows)).toEqual(["open-1", "open-2"]);
         adapter.close();
@@ -257,9 +318,12 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["priority"])
         );
 
-        const rows = await adapter.loadSubset("items", {
-            where: gt(new IR.PropRef(["item", "priority"]), 4),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => gt(item.priority, 4))
+            )
+        );
 
         expect(ids(rows)).toEqual(["high", "middle"]);
         adapter.close();
@@ -285,12 +349,14 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["priority"])
         );
 
-        const rows = await adapter.loadSubset("items", {
-            where: and(
-                eq(new IR.PropRef(["item", "status"]), "open"),
-                gt(new IR.PropRef(["item", "priority"]), 4)
-            ),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) =>
+                    and(eq(item.status, "open"), gt(item.priority, 4))
+                )
+            )
+        );
 
         expect(ids(rows)).toEqual(["open-high"]);
         adapter.close();
@@ -311,12 +377,14 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["status"])
         );
 
-        const rows = await adapter.loadSubset("items", {
-            where: inArray(new IR.PropRef(["item", "status"]), [
-                "open",
-                "pending",
-            ]),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) =>
+                    inArray(item.status, ["open", "pending"])
+                )
+            )
+        );
 
         expect(ids(rows)).toEqual(["open", "pending"]);
         adapter.close();
@@ -337,12 +405,12 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["name"])
         );
 
-        const rows = await adapter.loadSubset("items", {
-            where: like(
-                new IR.PropRef<string>(["item", "name"]),
-                "hel_o%"
-            ),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => like(item.name, "hel_o%"))
+            )
+        );
 
         expect(ids(rows)).toEqual(["hello", "help"]);
         adapter.close();
@@ -363,12 +431,12 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["name"])
         );
 
-        const rows = await adapter.loadSubset("items", {
-            where: ilike(
-                new IR.PropRef<string>(["item", "name"]),
-                "HEL%"
-            ),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => ilike(item.name, "HEL%"))
+            )
+        );
 
         expect(ids(rows)).toEqual(["helium", "hello"]);
         adapter.close();
@@ -389,12 +457,18 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["nullable"])
         );
 
-        const nullRows = await adapter.loadSubset("items", {
-            where: isNull(new IR.PropRef(["item", "nullable"])),
-        });
-        const undefinedRows = await adapter.loadSubset("items", {
-            where: isUndefined(new IR.PropRef(["item", "nullable"])),
-        });
+        const nullRows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => isNull(item.nullable))
+            )
+        );
+        const undefinedRows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => isUndefined(item.nullable))
+            )
+        );
 
         expect(ids(nullRows)).toEqual(["null"]);
         expect(ids(undefinedRows)).toEqual(["missing"]);
@@ -421,12 +495,14 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["priority"])
         );
 
-        const rows = await adapter.loadSubset("items", {
-            where: or(
-                eq(new IR.PropRef(["item", "status"]), "closed"),
-                gt(new IR.PropRef(["item", "priority"]), 8)
-            ),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) =>
+                    or(eq(item.status, "closed"), gt(item.priority, 8))
+                )
+            )
+        );
 
         expect(ids(rows)).toEqual(["closed", "open-high"]);
         adapter.close();
@@ -446,9 +522,12 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["status"])
         );
 
-        const rows = await adapter.loadSubset("items", {
-            where: not(eq(new IR.PropRef(["item", "status"]), "open")),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => not(eq(item.status, "open")))
+            )
+        );
 
         expect(ids(rows)).toEqual(["closed", "open"]);
         adapter.close();
@@ -470,12 +549,12 @@ describe("IndexedDBPersistenceAdapter", () => {
             )
         );
 
-        const rows = await adapter.loadSubset("items", {
-            where: eq(
-                lower(new IR.PropRef(["item", "name"])),
-                "hello"
-            ),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => eq(lower(item.name), "hello"))
+            )
+        );
 
         expect(ids(rows)).toEqual(["hello"]);
         adapter.close();
@@ -495,12 +574,18 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["mixed"])
         );
 
-        const numbers = await adapter.loadSubset("items", {
-            where: eq(new IR.PropRef(["item", "mixed"]), 1),
-        });
-        const strings = await adapter.loadSubset("items", {
-            where: eq(new IR.PropRef(["item", "mixed"]), "1"),
-        });
+        const numbers = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => eq(item.mixed, 1))
+            )
+        );
+        const strings = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => eq(item.mixed, "1"))
+            )
+        );
 
         expect(ids(numbers)).toEqual(["number"]);
         expect(ids(strings)).toEqual(["string"]);
@@ -523,18 +608,30 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["mixed"])
         );
 
-        const booleans = await adapter.loadSubset("items", {
-            where: eq(new IR.PropRef(["item", "mixed"]), true),
-        });
-        const numbers = await adapter.loadSubset("items", {
-            where: eq(new IR.PropRef(["item", "mixed"]), 1),
-        });
-        const bigints = await adapter.loadSubset("items", {
-            where: eq(new IR.PropRef(["item", "mixed"]), 1n),
-        });
-        const strings = await adapter.loadSubset("items", {
-            where: eq(new IR.PropRef(["item", "mixed"]), "1"),
-        });
+        const booleans = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => eq(item.mixed, true))
+            )
+        );
+        const numbers = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => eq(item.mixed, 1))
+            )
+        );
+        const bigints = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => eq(item.mixed, 1n))
+            )
+        );
+        const strings = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => eq(item.mixed, "1"))
+            )
+        );
 
         expect(ids(booleans)).toEqual(["boolean"]);
         expect(ids(numbers)).toEqual(["number"]);
@@ -557,9 +654,12 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["mixed"])
         );
 
-        const rows = await adapter.loadSubset("items", {
-            where: gt(new IR.PropRef(["item", "mixed"]), 4),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => gt(item.mixed, 4))
+            )
+        );
 
         expect(ids(rows)).toEqual(["number", "string"]);
         adapter.close();
@@ -589,9 +689,12 @@ describe("IndexedDBPersistenceAdapter", () => {
             ])
         );
 
-        const rows = await adapter.loadSubset("items", {
-            where: eq(new IR.PropRef(["item", "status"]), "open"),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => eq(item.status, "open"))
+            )
+        );
 
         expect(ids(rows)).toEqual(["one", "two"]);
         adapter.close();
@@ -612,9 +715,12 @@ describe("IndexedDBPersistenceAdapter", () => {
         );
         await adapter.markIndexRemoved("items", "status-index");
 
-        const rows = await adapter.loadSubset("items", {
-            where: eq(new IR.PropRef(["item", "status"]), "open"),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => eq(item.status, "open"))
+            )
+        );
 
         expect(ids(rows)).toEqual(["closed", "open"]);
         adapter.close();
@@ -659,9 +765,12 @@ describe("IndexedDBPersistenceAdapter", () => {
             indexSpec(["status"])
         );
 
-        const rows = await adapter.loadSubset("items", {
-            where: gt(new IR.PropRef(["item", "status"]), "a"),
-        });
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query.where(({ item }) => gt(item.status, "a"))
+            )
+        );
 
         expect(ids(rows)).toEqual(["closed", "open"]);
         adapter.close();

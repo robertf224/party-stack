@@ -1,5 +1,5 @@
-import { IndexedDBPersistenceAdapter } from "../web/IndexedDBPersistenceAdapter.js";
 import { OPFSBlobBytesStore } from "../web/OPFSBlobBytesStore.js";
+import { IndexedDBPersistenceAdapter } from "../web/persistence/IndexedDBPersistenceAdapter.js";
 import type { RuntimeServices } from "../types.js";
 
 export function webOnline(owner: string, namespace: string): RuntimeServices {
