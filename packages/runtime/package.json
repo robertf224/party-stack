@@ -1,0 +1,39 @@
+{
+    "name": "@party-stack/runtime",
+    "version": "0.1.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./effection": {
+            "types": "./lib/effection/index.d.ts",
+            "default": "./lib/effection/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@party-stack/coordination": "workspace:*",
+        "effection": "^4.0.2"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@tanstack/db": "^0.6.14",
+        "@tanstack/db-sqlite-persistence-core": "^0.2.6",
+        "eslint": "^9.25.0",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    },
+    "peerDependencies": {
+        "@tanstack/db": "^0.6.14",
+        "@tanstack/db-sqlite-persistence-core": "^0.2.6"
+    }
+}

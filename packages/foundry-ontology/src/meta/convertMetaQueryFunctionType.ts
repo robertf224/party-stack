@@ -29,8 +29,11 @@ function timestampType(): TypeDef {
     return { kind: "timestamp", value: {} };
 }
 
-function attachmentType(): TypeDef {
-    return { kind: "attachment", value: {} };
+function attachmentType(type: "attachment" | "media"): TypeDef {
+    return {
+        kind: "attachment",
+        value: { meta: { type } },
+    };
 }
 
 function maybeOptional(type: TypeDef, required: boolean): TypeDef {
@@ -56,8 +59,9 @@ function convertQueryDataType(type: QueryDataType): TypeDef {
         case "timestamp":
             return timestampType();
         case "attachment":
+            return attachmentType("attachment");
         case "mediaReference":
-            return attachmentType();
+            return attachmentType("media");
         case "object":
             return { kind: "objectReference", value: { objectType: type.objectTypeApiName } };
         case "array":

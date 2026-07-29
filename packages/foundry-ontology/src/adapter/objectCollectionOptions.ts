@@ -63,23 +63,84 @@ export interface ObjectCollectionUtils extends UtilsRecord {
 // ---------------------------------------------------------------------------
 
 const EDIT_HISTORY_PAGE_SIZE = 1_000;
+const EDIT_HISTORY_CURSOR_METADATA_KEY = "foundry.editHistoryCursor";
+const EDIT_HISTORY_CURSOR_VERSION = 1;
 
 interface EditHistoryCursor {
     timestamp: string;
     seenEntryKeysAtTimestamp: Set<string>;
 }
 
+interface PersistedEditHistoryCursor {
+    version: typeof EDIT_HISTORY_CURSOR_VERSION;
+    timestamp: string;
+    seenEntryKeysAtTimestamp: string[];
+}
+
 function createEditHistoryCursor(timestamp: string = new Date().toISOString()): EditHistoryCursor {
     return { timestamp, seenEntryKeysAtTimestamp: new Set() };
 }
 
+function cloneEditHistoryCursor(cursor: EditHistoryCursor): EditHistoryCursor {
+    return {
+        timestamp: cursor.timestamp,
+        seenEntryKeysAtTimestamp: new Set(cursor.seenEntryKeysAtTimestamp),
+    };
+}
+
+function serializeEditHistoryCursor(cursor: EditHistoryCursor): PersistedEditHistoryCursor {
+    return {
+        version: EDIT_HISTORY_CURSOR_VERSION,
+        timestamp: cursor.timestamp,
+        seenEntryKeysAtTimestamp: [...cursor.seenEntryKeysAtTimestamp].sort(),
+    };
+}
+
+function deserializeEditHistoryCursor(value: unknown): EditHistoryCursor | undefined {
+    if (
+        !isPlainObject(value) ||
+        value.version !== EDIT_HISTORY_CURSOR_VERSION ||
+        typeof value.timestamp !== "string" ||
+        !Array.isArray(value.seenEntryKeysAtTimestamp) ||
+        !value.seenEntryKeysAtTimestamp.every((key) => typeof key === "string")
+    ) {
+        return undefined;
+    }
+    return {
+        timestamp: value.timestamp,
+        seenEntryKeysAtTimestamp: new Set(value.seenEntryKeysAtTimestamp),
+    };
+}
+
+function editHistoryCursorsEqual(left: EditHistoryCursor, right: EditHistoryCursor): boolean {
+    return (
+        left.timestamp === right.timestamp &&
+        left.seenEntryKeysAtTimestamp.size === right.seenEntryKeysAtTimestamp.size &&
+        [...left.seenEntryKeysAtTimestamp].every((key) => right.seenEntryKeysAtTimestamp.has(key))
+    );
+}
+
+function canonicalizeJsonValue(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(canonicalizeJsonValue);
+    if (isPlainObject(value)) {
+        return Object.fromEntries(
+            Object.keys(value)
+                .sort()
+                .map((key) => [key, canonicalizeJsonValue(value[key])])
+        );
+    }
+    return value;
+}
+
 function getEditHistoryEntryKey(entry: ObjectEditHistoryEntry): string {
-    return JSON.stringify({
-        objectPrimaryKey: entry.objectPrimaryKey,
-        operationId: entry.operationId,
-        timestamp: entry.timestamp,
-        edit: entry.edit,
-    });
+    return JSON.stringify(
+        canonicalizeJsonValue({
+            objectPrimaryKey: entry.objectPrimaryKey,
+            operationId: entry.operationId,
+            timestamp: entry.timestamp,
+            edit: entry.edit,
+        })
+    );
 }
 
 function shouldProcessEditHistoryEntry(cursor: EditHistoryCursor, entry: ObjectEditHistoryEntry): boolean {
@@ -174,9 +235,14 @@ function normalizeEditPropertyValue(value: unknown): unknown {
 async function fetchFoundryObjects(
     client: OntologyClient,
     objectType: string,
+    selectedProperties: string[],
     opts: LoadSubsetOptions,
     decodeObject: (object: FoundryObject) => FoundryObject = (object) => object
 ): Promise<FoundryObject[]> {
+    const offset = Math.max(0, Math.trunc(opts.offset ?? 0));
+    const limit = opts.limit === undefined ? undefined : Math.max(0, Math.trunc(opts.limit));
+    if (limit === 0) return [];
+
     let where = convertLoadSubsetFilter(opts.where);
     if (isAlwaysFalseFilter(where) || (where?.type === "in" && where.value.length === 0)) {
         return [];
@@ -199,7 +265,7 @@ async function fetchFoundryObjects(
                     snapshot: true,
                     where,
                     excludeRid: true,
-                    select: [],
+                    select: selectedProperties,
                     selectV2: [],
                     pageSize,
                     pageToken,
@@ -208,23 +274,29 @@ async function fetchFoundryObjects(
             (page) => page.nextPageToken,
             (page) => page.data,
             10_000,
-            opts.limit
+            limit === undefined ? undefined : offset + limit
         )
     );
 
-    return (results as FoundryObject[]).map(decodeObject);
+    return (results as FoundryObject[])
+        .slice(offset, limit === undefined ? undefined : offset + limit)
+        .map(decodeObject);
 }
 
 function createSyncConfig(
     client: OntologyClient,
     objectType: string,
     primaryKeyProperty: string,
+    selectedProperties: string[],
     decodeObject: (object: FoundryObject) => FoundryObject = (object) => object
 ): { sync: SyncConfig<Record<string, unknown>, string | number>; utils: ObjectCollectionUtils } {
-    const seenOperationIds = new Store<Set<string>>(new Set<string>());
-    const syncDisposed = new Store<boolean>(false);
-    const directWebsocketSyncVersion = new Store<number>(0);
-    const editHistoryUnavailable = new Store<boolean>(false);
+    const seenOperationIds =
+        new Store<Set<string>>(new Set<string>());
+    const syncDisposed = new Store(false);
+    const directWebsocketSyncVersion =
+        new Store(0);
+    let editHistoryUnavailable = false;
+    let requestFullRefresh: (() => void) | undefined;
     let requestEditHistoryCatchUp: (() => void) | undefined;
 
     const awaitOperationId = async (
@@ -235,7 +307,9 @@ function createSyncConfig(
             throw new Error("Foundry operationId must be a non-empty string.");
         }
 
-        if (seenOperationIds.state.has(operationId)) {
+        if (
+            seenOperationIds.state.has(operationId)
+        ) {
             return true;
         }
 
@@ -243,11 +317,8 @@ function createSyncConfig(
             throw new ObjectCollectionSyncAbortedError(objectType);
         }
 
-        if (editHistoryUnavailable.state) {
-            return true;
-        }
-
-        const directSyncVersionAtStart = directWebsocketSyncVersion.state;
+        const directSyncVersionAtStart =
+            directWebsocketSyncVersion.state;
         requestEditHistoryCatchUp?.();
 
         return new Promise((resolve, reject) => {
@@ -260,32 +331,48 @@ function createSyncConfig(
 
             const timeoutId = setTimeout(() => {
                 cleanup();
-                reject(new TimeoutWaitingForOperationIdError(operationId, objectType));
+                reject(
+                    new TimeoutWaitingForOperationIdError(
+                        operationId,
+                        objectType
+                    )
+                );
             }, timeout);
-
-            const seenOperationIdsSubscription = seenOperationIds.subscribe(() => {
-                if (seenOperationIds.state.has(operationId)) {
-                    cleanup();
-                    resolve(true);
-                }
-            });
-
-            const directWebsocketSyncVersionSubscription = directWebsocketSyncVersion.subscribe(() => {
-                if (
-                    editHistoryUnavailable.state &&
-                    directWebsocketSyncVersion.state > directSyncVersionAtStart
-                ) {
-                    cleanup();
-                    resolve(true);
-                }
-            });
-
-            const disposedSubscription = syncDisposed.subscribe(() => {
-                if (syncDisposed.state) {
-                    cleanup();
-                    reject(new ObjectCollectionSyncAbortedError(objectType));
-                }
-            });
+            const seenOperationIdsSubscription =
+                seenOperationIds.subscribe(() => {
+                    if (
+                        seenOperationIds.state.has(
+                            operationId
+                        )
+                    ) {
+                        cleanup();
+                        resolve(true);
+                    }
+                });
+            const directWebsocketSyncVersionSubscription =
+                directWebsocketSyncVersion.subscribe(
+                    () => {
+                        if (
+                            editHistoryUnavailable &&
+                            directWebsocketSyncVersion.state >
+                                directSyncVersionAtStart
+                        ) {
+                            cleanup();
+                            resolve(true);
+                        }
+                    }
+                );
+            const disposedSubscription =
+                syncDisposed.subscribe(() => {
+                    if (syncDisposed.state) {
+                        cleanup();
+                        reject(
+                            new ObjectCollectionSyncAbortedError(
+                                objectType
+                            )
+                        );
+                    }
+                });
         });
     };
 
@@ -293,17 +380,37 @@ function createSyncConfig(
 
     const sync: SyncConfig<Record<string, unknown>, string | number> = {
         sync: (params) => {
-            const { begin, write, commit, markReady } = params;
+            const {
+                begin,
+                write,
+                commit,
+                markReady,
+                truncate,
+            } = params;
+            const collectionMetadata = params.metadata?.collection;
 
             syncDisposed.setState(() => false);
 
-            const syncedKeys = new Set<string | number>(params.collection.keys());
-
             let disposed = false;
-            const editHistoryCursor = createEditHistoryCursor();
+            const restoredEditHistoryCursor = deserializeEditHistoryCursor(
+                collectionMetadata?.get(EDIT_HISTORY_CURSOR_METADATA_KEY)
+            );
+            let editHistoryCursor = restoredEditHistoryCursor ?? createEditHistoryCursor();
+            if (!restoredEditHistoryCursor) {
+                if (collectionMetadata) {
+                    begin();
+                    collectionMetadata.set(
+                        EDIT_HISTORY_CURSOR_METADATA_KEY,
+                        serializeEditHistoryCursor(editHistoryCursor)
+                    );
+                    commit();
+                }
+            }
             let catchUpRequested = false;
             let catchUpTask: Promise<void> | undefined;
             let pendingDirectWatcherUpdates: ObjectSetUpdate[] = [];
+            let fullRefreshRequested = false;
+            let fullRefreshTask: Promise<void> | undefined;
 
             const getObjectKey = (object: FoundryObject): string | number =>
                 object[primaryKeyProperty] as string | number;
@@ -320,14 +427,21 @@ function createSyncConfig(
 
             const upsertObject = (object: FoundryObject) => {
                 const key = getObjectKey(object);
-                write({ type: syncedKeys.has(key) ? "update" : "insert", value: object });
-                syncedKeys.add(key);
+                const exists = params.collection.has(key);
+                const existing = exists ? params.collection.get(key) : undefined;
+                write({
+                    type: exists ? "update" : "insert",
+                    value: existing
+                        ? {
+                              ...existing,
+                              ...object,
+                          }
+                        : object,
+                });
             };
 
             const deleteObjectByKey = (key: string | number): boolean => {
-                if (!syncedKeys.has(key)) return false;
                 write({ type: "delete", key });
-                syncedKeys.delete(key);
                 return true;
             };
 
@@ -393,12 +507,8 @@ function createSyncConfig(
 
                 let transactionStarted = false;
                 for (const [primaryKey, mutation] of pendingMutations) {
-                    if (mutation.type === "delete" && !syncedKeys.has(primaryKey)) {
-                        continue;
-                    }
-
                     if (!transactionStarted) {
-                        begin({ immediate: true });
+                        begin();
                         transactionStarted = true;
                     }
 
@@ -414,28 +524,36 @@ function createSyncConfig(
                 }
 
                 if (observedObjectUpdate) {
-                    directWebsocketSyncVersion.setState((version) => version + 1);
+                    directWebsocketSyncVersion.setState(
+                        (version) => version + 1
+                    );
                 }
             };
 
             const switchToDirectWebsocketMode = (error: unknown): void => {
-                if (!editHistoryUnavailable.state) {
+                if (!editHistoryUnavailable) {
                     const errorMessage = error instanceof Error ? error.message : error;
                     console.warn(
                         `Edit history catch-up failed for ${objectType}; falling back to direct websocket updates.`,
                         errorMessage
                     );
-                    editHistoryUnavailable.setState(() => true);
+                    editHistoryUnavailable = true;
                 }
 
-                if (pendingDirectWatcherUpdates.length > 0) {
-                    const updates = pendingDirectWatcherUpdates;
+                if (
+                    pendingDirectWatcherUpdates.length >
+                    0
+                ) {
+                    const updates =
+                        pendingDirectWatcherUpdates;
                     pendingDirectWatcherUpdates = [];
                     applyDirectWatcherUpdates(updates);
                 }
+                requestFullRefresh?.();
             };
 
             const catchUpFromEditHistory = async (): Promise<void> => {
+                const nextEditHistoryCursor = cloneEditHistoryCursor(editHistoryCursor);
                 const pendingMutations = new Map<
                     string | number,
                     { type: "upsert"; object: FoundryObject } | { type: "delete" }
@@ -447,7 +565,7 @@ function createSyncConfig(
                         fetchEditHistoryPage({
                             filters: {
                                 type: "timestampFilter",
-                                startTime: editHistoryCursor.timestamp,
+                                startTime: nextEditHistoryCursor.timestamp,
                             },
                             includeAllPreviousProperties: true,
                             pageSize,
@@ -459,8 +577,8 @@ function createSyncConfig(
                     EDIT_HISTORY_PAGE_SIZE
                 )) {
                     if (disposed) break;
-                    if (!shouldProcessEditHistoryEntry(editHistoryCursor, entry)) continue;
-                    advanceEditHistoryCursor(editHistoryCursor, entry);
+                    if (!shouldProcessEditHistoryEntry(nextEditHistoryCursor, entry)) continue;
+                    advanceEditHistoryCursor(nextEditHistoryCursor, entry);
                     newOperationIds.add(entry.operationId);
 
                     const primaryKey = getPrimaryKeyValue(entry.objectPrimaryKey);
@@ -481,16 +599,15 @@ function createSyncConfig(
 
                 if (disposed) return;
 
+                const checkpointChanged = !editHistoryCursorsEqual(editHistoryCursor, nextEditHistoryCursor);
                 let transactionStarted = false;
+                const ensureTransaction = () => {
+                    if (transactionStarted) return;
+                    begin();
+                    transactionStarted = true;
+                };
                 for (const [primaryKey, mutation] of pendingMutations) {
-                    if (mutation.type === "delete") {
-                        if (!syncedKeys.has(primaryKey)) continue;
-                    }
-
-                    if (!transactionStarted) {
-                        begin({ immediate: true });
-                        transactionStarted = true;
-                    }
+                    ensureTransaction();
 
                     if (mutation.type === "delete") {
                         deleteObjectByKey(primaryKey);
@@ -499,25 +616,90 @@ function createSyncConfig(
                     }
                 }
 
+                if (checkpointChanged && collectionMetadata) {
+                    ensureTransaction();
+                    collectionMetadata.set(
+                        EDIT_HISTORY_CURSOR_METADATA_KEY,
+                        serializeEditHistoryCursor(nextEditHistoryCursor)
+                    );
+                }
+
                 if (transactionStarted) {
                     commit();
                 }
 
+                if (checkpointChanged) {
+                    editHistoryCursor = nextEditHistoryCursor;
+                }
+
                 if (newOperationIds.size > 0) {
-                    seenOperationIds.setState((current) => {
-                        const next = new Set(current);
-                        for (const operationId of newOperationIds) {
-                            next.add(operationId);
-                        }
-                        return next;
-                    });
+                    seenOperationIds.setState(
+                        (current) =>
+                            new Set([
+                                ...current,
+                                ...newOperationIds,
+                            ])
+                    );
                 }
 
                 pendingDirectWatcherUpdates = [];
             };
 
+            const refreshAllFromSource = async (): Promise<void> => {
+                const objects = await fetchFoundryObjects(
+                    client,
+                    objectType,
+                    selectedProperties,
+                    {},
+                    decodeObject
+                );
+                if (disposed) return;
+
+                begin();
+                truncate();
+                for (const object of objects) {
+                    write({
+                        type: "insert",
+                        value: object,
+                    });
+                }
+                commit();
+
+                if (pendingDirectWatcherUpdates.length > 0) {
+                    const updates = pendingDirectWatcherUpdates;
+                    pendingDirectWatcherUpdates = [];
+                    applyDirectWatcherUpdates(updates);
+                }
+                directWebsocketSyncVersion.setState(
+                    (version) => version + 1
+                );
+            };
+
+            requestFullRefresh = () => {
+                fullRefreshRequested = true;
+                if (fullRefreshTask) return;
+
+                fullRefreshTask = (async () => {
+                    while (fullRefreshRequested && !disposed) {
+                        fullRefreshRequested = false;
+                        await refreshAllFromSource();
+                    }
+                })()
+                    .catch((error: unknown) => {
+                        console.warn(`Failed full Foundry refresh for ${objectType}.`, error);
+                    })
+                    .finally(() => {
+                        fullRefreshTask = undefined;
+                        if (fullRefreshRequested && !disposed) {
+                            requestFullRefresh?.();
+                        }
+                    });
+            };
+
             requestEditHistoryCatchUp = () => {
-                if (editHistoryUnavailable.state) return;
+                if (editHistoryUnavailable) {
+                    return;
+                }
 
                 catchUpRequested = true;
                 if (catchUpTask) return;
@@ -540,9 +722,15 @@ function createSyncConfig(
             };
 
             const loadSubset = async (opts: LoadSubsetOptions): Promise<void> => {
-                const objects = await fetchFoundryObjects(client, objectType, opts, decodeObject);
+                const objects = await fetchFoundryObjects(
+                    client,
+                    objectType,
+                    selectedProperties,
+                    opts,
+                    decodeObject
+                );
                 if (objects.length > 0) {
-                    begin({ immediate: true });
+                    begin();
                     for (const object of objects) {
                         upsertObject(object);
                     }
@@ -555,8 +743,14 @@ function createSyncConfig(
             const unsubscribe = objectSetWatcherManager.subscribe({ type: "base", objectType }, (message) => {
                 switch (message.type) {
                     case "change": {
-                        if (editHistoryUnavailable.state) {
-                            applyDirectWatcherUpdates(message.updates);
+                        if (
+                            editHistoryUnavailable
+                        ) {
+                            if (fullRefreshTask) {
+                                pendingDirectWatcherUpdates.push(...message.updates);
+                            } else {
+                                applyDirectWatcherUpdates(message.updates);
+                            }
                         } else {
                             pendingDirectWatcherUpdates.push(...message.updates);
                             requestEditHistoryCatchUp?.();
@@ -564,14 +758,24 @@ function createSyncConfig(
                         break;
                     }
                     case "refresh": {
-                        if (!editHistoryUnavailable.state) {
+                        if (
+                            editHistoryUnavailable
+                        ) {
+                            requestFullRefresh?.();
+                        } else {
                             requestEditHistoryCatchUp?.();
                         }
                         break;
                     }
                     case "state": {
-                        if (message.status === "open" && !editHistoryUnavailable.state) {
-                            requestEditHistoryCatchUp?.();
+                        if (message.status === "open") {
+                            if (
+                                editHistoryUnavailable
+                            ) {
+                                requestFullRefresh?.();
+                            } else {
+                                requestEditHistoryCatchUp?.();
+                            }
                         }
                         break;
                     }
@@ -590,6 +794,7 @@ function createSyncConfig(
                 cleanup: () => {
                     disposed = true;
                     requestEditHistoryCatchUp = undefined;
+                    requestFullRefresh = undefined;
                     syncDisposed.setState(() => true);
                     unsubscribe();
                     loadSubsetDedupe.reset();
@@ -609,6 +814,7 @@ export interface ObjectCollectionOpts {
     client: OntologyClient;
     objectType: string;
     primaryKeyProperty: string;
+    selectedProperties: string[];
     decodeObject?: (object: Record<string, unknown>) => Record<string, unknown>;
 }
 
@@ -638,12 +844,18 @@ export function objectCollectionOptions(config: ObjectCollectionOpts): {
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function objectCollectionOptions(config: any): any {
-    const { client, objectType, primaryKeyProperty, decodeObject, schema, ...rest } =
+    const { client, objectType, primaryKeyProperty, selectedProperties, decodeObject, schema, ...rest } =
         config as ObjectCollectionOpts & { schema?: StandardSchema<OntologyObject> } & Record<
                 string,
                 unknown
             >;
-    const { sync, utils } = createSyncConfig(client, objectType, primaryKeyProperty, decodeObject);
+    const { sync, utils } = createSyncConfig(
+        client,
+        objectType,
+        primaryKeyProperty,
+        selectedProperties,
+        decodeObject
+    );
 
     if (schema === undefined) {
         return { syncMode: "on-demand" as const, sync, utils };

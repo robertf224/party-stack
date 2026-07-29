@@ -1,76 +1,66 @@
-import type { BlobManager } from "@party-stack/blobs";
 import { resolveActionParameters } from "../expression.js";
-import { applyActionLogic } from "./applyActionLogic.js";
-import { prepareActionParameters } from "./prepareActionParameters.js";
+import { createReadTx } from "../mutators/createMutatorTx.js";
 import type { OntologyIR } from "../../ir/index.js";
+import type {
+    LiveOntologyWriteMode,
+    LiveOntologyWriteVisibility,
+} from "../LiveOntology.js";
 import type { OntologyCollection } from "../objects/createLiveOntologyObjectCollection.js";
 import type { OntologyObject } from "../objects/OntologyObject.js";
-import type { OntologyAdapter, OntologyApplyActionResult } from "../OntologyAdapter.js";
-import type { Collection } from "@tanstack/db";
+import type { OntologyApplyActionResult } from "../OntologyBackendAdapter.js";
+import type { OntologyActionRequest } from "../outbox/types.js";
 
-export interface LiveOntologyActionExecution {
-    mutationFn: () => Promise<OntologyApplyActionResult | void>;
-    mutator: () => void;
+export interface LiveOntologyActionOptions {
+    idempotencyKey?: string;
+    mode?: LiveOntologyWriteMode;
+    visibility?: LiveOntologyWriteVisibility;
 }
 
-export type LiveOntologyAction<Parameters extends Record<string, unknown> = Record<string, unknown>> = (
-    parameters: Parameters
-) => LiveOntologyActionExecution;
+export type LiveOntologyAction<
+    Parameters extends Record<string, unknown> = Record<
+        string,
+        unknown
+    >,
+> = (
+    parameters: Parameters,
+    options?: LiveOntologyActionOptions
+) => Promise<OntologyApplyActionResult | void>;
 
-export function createLiveOntologyAction(opts: {
+export function createLiveOntologyAction(options: {
     ir: OntologyIR;
     action: OntologyIR["actionTypes"][number];
-    adapter: OntologyAdapter;
     context?: Record<string, unknown>;
-    objects: Record<string, OntologyCollection<OntologyObject>>;
-    blobManager: BlobManager;
+    objects: Record<
+        string,
+        OntologyCollection<OntologyObject>
+    >;
+    submit(
+        request: OntologyActionRequest,
+        options?: LiveOntologyActionOptions
+    ): Promise<OntologyApplyActionResult | void>;
 }): LiveOntologyAction {
-    return (providedParameters: Record<string, unknown>) => {
-        const context = opts.context ?? {};
-        const parameters = resolveActionParameters(
-            opts.ir,
-            opts.action.name,
-            providedParameters,
+    return async (
+        providedParameters,
+        executionOptions
+    ) => {
+        const context = options.context ?? {};
+        const parameters = await resolveActionParameters({
+            ir: options.ir,
+            actionTypeName: options.action.name,
+            initialParameters: providedParameters,
             context,
-            opts.objects
+            tx: createReadTx(options.objects),
+        });
+        const idempotencyKey =
+            executionOptions?.idempotencyKey ??
+            crypto.randomUUID();
+        return options.submit(
+            {
+                actionTypeName: options.action.name,
+                parameters,
+                idempotencyKey,
+            },
+            executionOptions
         );
-
-        return {
-            mutationFn: async () => {
-                const preparedAction = await prepareActionParameters({
-                    ir: opts.ir,
-                    actionTypeName: opts.action.name,
-                    parameters,
-                    adapter: opts.adapter,
-                    blobManager: opts.blobManager,
-                });
-                const result = await opts.adapter.applyAction(
-                    opts.action.name,
-                    preparedAction.parameters,
-                    {
-                        objects: opts.objects as Record<string, Collection<Record<string, unknown>>>,
-                        context,
-                        attachmentUploads: preparedAction.attachmentUploads,
-                    }
-                );
-                await Promise.all(
-                    (result?.attachmentIdMappings ?? []).map((mapping) =>
-                        opts.blobManager.markUploaded(mapping.localId, {
-                            remoteId: mapping.remoteId,
-                        })
-                    )
-                );
-                return result;
-            },
-            mutator: () => {
-                applyActionLogic({
-                    ir: opts.ir,
-                    actionTypeName: opts.action.name,
-                    parameters,
-                    context,
-                    objects: opts.objects,
-                });
-            },
-        };
     };
 }

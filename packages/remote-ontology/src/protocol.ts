@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { LoadSubsetOptions } from "@tanstack/db";
-import type { OntologyAttachmentIdMapping, OntologyAttachmentUpload, OntologyIR } from "@party-stack/ontology";
+import type {
+    OntologyAttachmentIdMapping,
+    OntologyAttachmentUpload,
+    OntologyIR,
+} from "@party-stack/ontology";
 import type { attachment } from "@party-stack/ontology/values";
 
 export interface RemoteOntologyDescription {
@@ -33,6 +37,7 @@ export interface RemoteLoadSubsetResponse {
 export interface RemoteApplyActionRequest {
     actionType: string;
     parameters: Record<string, unknown>;
+    idempotencyKey?: string;
 }
 
 export interface RemoteApplyActionResponse {
@@ -75,7 +80,7 @@ export interface RemoteOntologyTransport {
     getAttachmentMetadata: (
         request: RemoteAttachmentRequest,
         options?: RemoteOntologyTransportOptions
-    ) => Promise<attachment & { size: number; type: string; name: string }>;
+    ) => Promise<attachment & { size: number; type: string; name?: string }>;
     getAttachmentContent: (
         request: RemoteAttachmentRequest,
         options?: RemoteOntologyTransportOptions
@@ -96,7 +101,7 @@ export type RemoteOntologyResponseByEndpoint = {
     "load-subset": RemoteLoadSubsetResponse;
     "apply-action": RemoteApplyActionResponse;
     "run-query-function": RemoteRunQueryFunctionResponse;
-    "attachment-metadata": attachment & { size: number; type: string; name: string };
+    "attachment-metadata": attachment & { size: number; type: string; name?: string };
     "attachment-content": Blob;
 };
 
@@ -142,6 +147,7 @@ export const remoteApplyActionRequestSchema = z
     .object({
         actionType: z.string().min(1),
         parameters: recordSchema,
+        idempotencyKey: z.string().min(1).optional(),
     })
     .strict() satisfies z.ZodType<RemoteApplyActionRequest>;
 

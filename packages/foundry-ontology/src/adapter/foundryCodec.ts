@@ -1,18 +1,14 @@
 import { Temporal } from "temporal-polyfill";
 import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology";
+import {
+    decodeFoundryMediaId,
+    foundryMediaIdToReference,
+    mediaReferenceToFoundryMediaId,
+} from "./foundryMediaId.js";
+import type { MediaReference } from "@osdk/foundry.core";
 import type { AttachmentProperty, OntologyObjectV2 } from "@osdk/foundry.ontologies";
 
 type FoundryObjectRecord = Record<string, unknown>;
-type MediaReferencePropertyValue = {
-    mimeType: string;
-    reference: {
-        type: "mediaSetViewItem";
-        mediaSetViewItem: {
-            mediaItemRid: string;
-        };
-    };
-};
-
 /** @deprecated Use {@link FoundryCodec} instead. */
 export type FoundryObjectDecoder = FoundryCodec;
 
@@ -25,7 +21,12 @@ export interface FoundryCodec {
     encodeValue: (type: TypeDef, value: unknown) => unknown;
 }
 
-export function createFoundryCodec(ir: OntologyIR): FoundryCodec {
+export function createFoundryCodec(
+    ir: OntologyIR,
+    options?: {
+        resolveMediaReference?: (id: string) => MediaReference | undefined;
+    }
+): FoundryCodec {
     const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
     const namedTypes = new Map(ir.types.map((type) => [type.name, type.type]));
 
@@ -147,7 +148,7 @@ export function createFoundryCodec(ir: OntologyIR): FoundryCodec {
             case "geopoint":
                 return encodeGeoPoint(value);
             case "attachment":
-                return isPlainObject(value) && typeof value.id === "string" ? value.id : value;
+                return encodeAttachment(value, resolvedType.value.meta, options?.resolveMediaReference);
             case "objectReference":
             case "unknown":
                 return value;
@@ -229,11 +230,34 @@ function decodeFoundryAttachment(value: unknown): unknown {
 }
 
 function decodeMediaReference(value: unknown): unknown {
-    const mediaReference = value as MediaReferencePropertyValue;
+    const mediaReference = value as MediaReference;
     return {
-        id: mediaReference.reference.mediaSetViewItem.mediaItemRid,
+        id: mediaReferenceToFoundryMediaId(mediaReference),
         type: mediaReference.mimeType,
     };
+}
+
+function encodeAttachment(
+    value: unknown,
+    meta?: Record<string, unknown>,
+    resolveMediaReference?: (id: string) => MediaReference | undefined
+): unknown {
+    if (!isPlainObject(value) || typeof value.id !== "string") {
+        return value;
+    }
+    if (meta?.type !== "media") {
+        return value.id;
+    }
+    const resolved = resolveMediaReference?.(value.id);
+    if (resolved) return resolved;
+    const id = decodeFoundryMediaId(value.id);
+    if (!id) {
+        throw new Error(`Invalid Foundry media attachment id "${value.id}".`);
+    }
+    if (typeof value.type !== "string") {
+        throw new Error(`Foundry media attachment "${value.id}" is missing its MIME type.`);
+    }
+    return foundryMediaIdToReference(id, value.type);
 }
 
 function isPlainObject(value: unknown): value is FoundryObjectRecord {

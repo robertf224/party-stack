@@ -2,7 +2,7 @@ import { performLocalOAuthFlow } from "@bobbyfidz/local-oauth-flow";
 import { invariant } from "@bobbyfidz/panic";
 import { createOntologyClient, type OntologyClient } from "@party-stack/foundry-client";
 import type { OntologyConfig, OntologyConfigAdapter } from "@party-stack/ontology";
-import { createFoundryMetaOntologyAdapter } from "../meta/createFoundryMetaOntologyAdapter.js";
+import { createFoundryMetaOntologyBackendAdapter } from "../meta/createFoundryMetaOntologyBackendAdapter.js";
 
 const DEFAULT_FOUNDRY_SCOPES = ["api:read-data", "offline_access"];
 
@@ -52,7 +52,7 @@ export const foundryOntologyConfigAdapter: OntologyConfigAdapter<
             foundryClientId: opts?.foundryClientId ?? getDefaultEnvValue("FOUNDRY_CLIENT_ID"),
             foundryRedirectUrl: opts?.foundryRedirectUrl ?? getDefaultEnvValue("FOUNDRY_REDIRECT_URL"),
         });
-        return createFoundryMetaOntologyAdapter({ client });
+        return createFoundryMetaOntologyBackendAdapter({ client });
     },
 };
 

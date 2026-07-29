@@ -61,8 +61,10 @@ export async function writePulledOntology(
     outPath: string,
     ontologyImportPath = "@party-stack/ontology"
 ): Promise<void> {
-    const adapter = await config.adapter.createAdapter(config.opts);
-    const liveOntology = createMetaLiveOntology(adapter);
+    const backendAdapter = await config.adapter.createAdapter(config.opts);
+    const liveOntology = await createMetaLiveOntology({
+        backend: () => backendAdapter,
+    });
 
     try {
         const ontology = await pull(liveOntology, {

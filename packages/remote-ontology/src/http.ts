@@ -118,7 +118,9 @@ export function createHttpRemoteOntologyTransport(
     let ir = opts.ir;
     const getIr = () => {
         if (!ir) {
-            throw new Error("HTTP remote ontology transport must describe the ontology before typed requests.");
+            throw new Error(
+                "HTTP remote ontology transport must describe the ontology before typed requests."
+            );
         }
         return ir;
     };
@@ -145,12 +147,13 @@ export function createHttpRemoteOntologyTransport(
             );
             return {
                 ...response,
-                objects: response.objects.map((object) =>
-                    decode({
-                        ir: getIr(),
-                        target: { kind: "object", name: response.objectType },
-                        value: object,
-                    }) as Record<string, unknown>
+                objects: response.objects.map(
+                    (object) =>
+                        decode({
+                            ir: getIr(),
+                            target: { kind: "object", name: response.objectType },
+                            value: object,
+                        }) as Record<string, unknown>
                 ),
             };
         },
@@ -190,7 +193,10 @@ export function createHttpRemoteOntologyTransport(
                     ...request,
                     parameters: encode({
                         ir: ontology,
-                        target: { kind: "queryFunctionParameters", queryFunctionType: request.queryFunctionType },
+                        target: {
+                            kind: "queryFunctionParameters",
+                            queryFunctionType: request.queryFunctionType,
+                        },
                         value: request.parameters,
                     }) as Record<string, unknown>,
                 },
@@ -207,7 +213,7 @@ export function createHttpRemoteOntologyTransport(
             };
         },
         getAttachmentMetadata: (request: RemoteAttachmentRequest, options) =>
-            postJson<attachment & { size: number; type: string; name: string }>(
+            postJson<attachment & { size: number; type: string; name?: string }>(
                 fetchImpl,
                 resolveEndpoint(opts.url, "attachment-metadata"),
                 request,

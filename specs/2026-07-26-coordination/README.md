@@ -33,10 +33,11 @@ The root entry point exports:
 - Coordination client and host contracts.
 - Typed service client/server/handler helper types.
 - Coordination errors and the host type guard.
-- Lock and broadcast capability contracts.
 - `SingleProcessCoordination`.
 - `LockBroadcastCoordination`.
 
+The `./effection` entry point exports scoped resources over the native Web
+APIs, including `useWebLock`, `useBroadcastChannel`, and `useMessagePort`.
 The `./shared-worker` entry point exports SharedWorker-specific client and host
 implementations so worker and DOM types do not enter the root bundle.
 
@@ -210,8 +211,8 @@ cancellation, and cleanup semantics without transport messaging.
 
 ### Locks and broadcast
 
-`LockBroadcastCoordination` uses abstract `Locks` and `BroadcastChannels`
-capabilities. One root Effection program owns:
+`LockBroadcastCoordination` uses the native `navigator.locks` and
+`BroadcastChannel` APIs directly. One root Effection program owns:
 
 - Broadcast subscription and handle cleanup.
 - Request and response correlation.
@@ -219,6 +220,12 @@ capabilities. One root Effection program owns:
 - Retry and response-cache lifetimes.
 - Web Lock acquisition.
 - The current leadership scope and child callbacks.
+
+The Web API wrappers follow Effection's resource model: they provide the
+underlying native handle or stream while it is usable and release it
+automatically when its scope exits. Other packages use
+`SingleProcessCoordination` for tests; native Web API shims remain private to
+the lock/broadcast implementation tests.
 
 The wire protocol carries a protocol version, coordination scope, sender,
 request ID, service, method or event, and payload. A protocol/scope mismatch
@@ -249,7 +256,7 @@ a new connection identity; callers recover durable state from persistence.
 `RuntimeAdapter` contains:
 
 ```ts
-coordination?: Coordination;
+coordination: Coordination;
 ```
 
 It does not contain a provider abstraction.
@@ -259,12 +266,8 @@ It does not contain a provider abstraction.
 - A SharedWorker page runtime may supply `SharedWorkerCoordinationClient`.
 - A SharedWorker host runtime may supply `SharedWorkerCoordinationHost`.
 
-Composition roots use `runtime.coordination` when present. A memory or custom
-runtime receives one owned `SingleProcessCoordination` fallback.
-
-Platform runtime cleanup closes platform-created Coordination after subsystem
-servers and leader callbacks stop. The composition root closes only a fallback
-it created, preventing double close.
+Every runtime constructs and owns its Coordination connection. Platform
+runtime cleanup closes it after subsystem servers and leader callbacks stop.
 
 ## TanStack persistence mapping
 

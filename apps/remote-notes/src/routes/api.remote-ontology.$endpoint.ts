@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import Database from "better-sqlite3";
 import { createFileRoute } from "@tanstack/react-router";
 import { eq, queryOnce, type Collection } from "@tanstack/db";
-import { createSQLiteOntologyAdapter } from "@party-stack/sqlite-ontology";
+import { createSQLiteOntologyBackendAdapter } from "@party-stack/sqlite-ontology";
 import { createRemoteOntologyServer } from "@party-stack/remote-ontology/server";
 import { notesOntology } from "../ontology/ontology";
 import type { Note, RemoteNotesOntology } from "../ontology/generated/types";
@@ -39,7 +39,7 @@ function getDemoEmail(request: Request): string {
 
 const remoteServer = createRemoteOntologyServer<NotesContext, RemoteNotesOntology>({
     ir: notesOntology,
-    adapter: createSQLiteOntologyAdapter({
+    backendAdapter: createSQLiteOntologyBackendAdapter({
         ir: notesOntology,
         database: new Database("temp/remote-notes.sqlite"),
         name: "remote-notes-sqlite",

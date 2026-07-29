@@ -18,7 +18,7 @@ Implemented:
 - Serialized cross-context enqueue/edit/remove/retry commands.
 - Execution claim IDs that reject stale completion and invalid removal.
 - Restart restoration with isolated optimistic-projection failures.
-- Public `NonRetriableError` support for permanent adapter failures.
+- Public `NonRetryableError` support for permanent adapter failures.
 - `direct` versus `outbox` write modes with optional optimistic prediction.
 - Async custom mutators with local `queryOnce` reads and one live manual
   TanStack transaction.
@@ -26,7 +26,13 @@ Implemented:
 - Stable idempotency-key propagation through remote-ontology transport.
 - TanStack Devtools outbox panel.
 
-Still required before production automatic retry:
+Every `LiveOntology` owns an outbox, while direct/confirmed writes remain the
+default. Each action invocation may independently override `mode` (`direct` or
+`outbox`) and local `visibility` (`confirmed` or `optimistic`). The ontology
+write configuration supplies defaults, optional mutators, and permanent-failure
+policy.
+
+Still required before production-safe automatic retry:
 
 - Server-side idempotency storage and authoritative mutation receipts.
 - A complete cross-collection `defer-until-empty` sync barrier.
@@ -34,13 +40,25 @@ Still required before production automatic retry:
 - Blob transfer prerequisite jobs.
 - Mutator versioning and replay-safe context serialization.
 
-Automatic retry is intentionally disabled until server idempotency exists;
-failed/interrupted entries require explicit retry.
+Retryable execution failures are automatically retried with exponential
+backoff. `writes.outbox.maxRetries` defaults to three retries and the internal
+backoff starts at one second; offline waiting does not consume an attempt. This
+remains unsafe for ambiguous network failures until server idempotency and
+durable receipts exist, because a timed-out write may already have reached the
+server.
 
-Adapters throw `NonRetriableError` for validation, authorization, or other
-permanent failures. The outbox marks those rows non-retriable, rolls back their
-prediction, rejects the current completion handle, and keeps the row for
-inspection/edit/removal.
+Adapters throw `NonRetryableError` for validation, authorization, or other
+permanent failures. By default the outbox discards the failed entry and every
+later queued entry, rejects their completion handles, and rolls back their
+predictions. Long-offline applications may configure `pause`, which keeps the
+failed head and all later writes for inspection and user intervention.
+
+Optimistic projection failure is local UI degradation, not durable outbox
+failure. If a context cannot create or restore a projection, it rolls back all
+projections in that context and falls back to confirmed visibility. Durable
+entries remain queued/executing and continue through authoritative FIFO
+execution. Projection errors are not written into shared outbox rows and do
+not invoke the outbox failure strategy.
 
 ## Goal
 
@@ -446,6 +464,79 @@ These remain advanced options. Implement them only after the
 `defer-until-empty` strategy is working and measurements show that delayed
 authoritative visibility is unacceptable.
 
+### Future: gated sync wrapper and device-only mutator queries
+
+Do not snapshot every visible object collection for local mutator execution.
+Large collections may have substantial persisted data that is intentionally
+absent from memory, and mutators should be able to load only the required
+persisted subsets.
+
+The current TanStack persisted collection wrapper is local-first, not
+local-only. For an on-demand subset it:
+
+1. Awaits `PersistenceAdapter.loadSubset(collectionId, options)` and hydrates
+   matching device rows into the collection.
+2. Separately invokes the wrapped source's `loadSubset(options)` without
+   awaiting it.
+3. Logs a failed upstream request and queues a remote subset ensure for later.
+
+It does not itself check network connectivity before invoking the source.
+Consequently `queryOnce` can return device rows while also causing an upstream
+request. TanStack's `deferDataRefresh` only has targeted support in collection
+consumers such as query-backed collections; it is not a general ontology sync
+barrier and does not express local-only query intent.
+
+The preferred Party Stack boundary is a gated collection/source wrapper that
+separates subset loading from real-time sync:
+
+```ts
+interface OntologyObjectSource<T> {
+    loadSubset(
+        options: LoadSubsetOptions
+    ): Promise<readonly T[]>;
+    subscribeRealtime?(
+        sink: OntologySyncSink<T>
+    ): () => void;
+}
+
+interface OntologySyncPolicy {
+    realtime: "enabled" | "disabled";
+    subsets: "remote" | "device-only";
+}
+```
+
+The wrapper should intercept complete source transactions
+(`begin`/`write`/metadata/`truncate`/`commit`). While an ontology gate is
+closed it queues those transactions without exposing them to public
+collections, then flushes them FIFO when the gate opens. Network fetching and
+durable persistence may continue independently.
+
+Subset handling while gated should distinguish query intent:
+
+- A device-only mutator query hydrates matching rows from
+  `PersistenceAdapter` and never invokes the upstream source.
+- A normal application query may hydrate device rows immediately while its
+  remote subset request is queued/deduplicated until the gate opens.
+- A composition may disable real-time subscription entirely while retaining
+  on-demand remote subsets.
+
+TanStack currently provides no public `queryOnce` option that propagates
+`"device-only"` into generated `LoadSubsetOptions`. The cleanest implementation
+likely requires a small TanStack extension such as:
+
+```ts
+queryOnce({
+    query,
+    source: "device-only" | "device-then-remote",
+});
+```
+
+Without that extension Party Stack would need a custom query wrapper coupled
+to TanStack subscription internals. Defer implementation until query intent
+can be represented explicitly. Client optimistic mutators should eventually
+always use device-only reads; server mutators should use a separate
+authoritative database transaction implementation.
+
 ## Why one long-running TanStack transaction is not sufficient
 
 One aggregate transaction is useful for representing visible prediction, but
@@ -723,8 +814,7 @@ Startup is an explicit state machine:
 ```text
 opening
   -> loadingOutbox
-  -> hydratingBase
-  -> restoringPredictions
+  -> restoringPredictions (keyed hydration)
   -> ready
   -> draining
 ```
@@ -733,31 +823,31 @@ Required ordering:
 
 1. Open runtime persistence, locks, and coordination.
 2. Load durable outbox rows and mutation receipts.
-3. Create object collections with remote sync temporarily gated.
-4. Hydrate locally persisted authoritative object state.
+3. Create on-demand persisted object collections.
+4. Let replayable mutator reads and update/delete prerequisites issue keyed
+   `queryOnce` calls, hydrating only the persisted subsets they need.
 5. Remove/suppress outbox entries already covered by durable receipts.
 6. Rerun remaining semantic mutators FIFO and create fresh optimistic TanStack
    transactions. Do not restore serialized `PendingMutation` snapshots.
 7. Mark LiveOntology ready and allow application queries.
 8. Resume upstream remote sync.
-9. Only then allow the Coordinator leader to begin remote outbox execution.
+9. Only then allow the Coordination leader to begin remote outbox execution.
 
-Outbox loading and base hydration may run concurrently, but prediction replay
-waits for both. Remote execution always starts after prediction restoration so
-receipts cannot race startup reconstruction.
+Prediction replay does not preload every object collection. Each prediction
+waits for its own on-demand local reads before mutating. Remote execution starts
+after prediction restoration so receipts cannot race startup reconstruction.
 
 Every context restores its own in-memory optimistic projection from shared
-durable outbox rows. Only the runtime Coordinator leader performs remote
+durable outbox rows. Only the runtime Coordination leader performs remote
 execution. Projection installs are serialized per entry so collection-change
 and command-response paths cannot apply one prediction twice.
 
 `persistObjects` belongs to `CreateLiveOntologyOpts`, because object
 persistence is a live ontology composition choice rather than a capability of
 `RuntimeAdapter`. Platform `RuntimeAdapterProvider` values supply collection
-persistence but do not choose whether ontology object collections use it. The option is currently
-forwarded without implementing object persistence behavior.
+persistence but do not choose whether ontology object collections use it.
 
-When object persistence is implemented, `persistObjects: true` means local
+`persistObjects: true` means local
 persistence supplies the startup base before remote sync resumes.
 `persistObjects: false` means one initial remote bootstrap makes object
 collections ready before prediction restoration and normal operation.
@@ -896,7 +986,7 @@ Based on production measurements:
 
 - Add server mutation IDs/receipts.
 - Observe authoritative persistence completion.
-- Add every crash-point test before enabling automatic retry.
+- Add every crash-point test before treating automatic retry as production-safe.
 
 ### Pass F: blob prerequisites
 
@@ -948,7 +1038,7 @@ Based on production measurements:
 ## Decisions
 
 - Persist semantic mutator name/args, not TanStack pending mutations.
-- Require server idempotency before automatic retry.
+- Require server idempotency before relying on automatic retry in production.
 - Require explicit mutation receipts or stable client identity.
 - Keep prediction and remote execution separate.
 - Support async local-only queries.

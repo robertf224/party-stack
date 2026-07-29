@@ -1,8 +1,7 @@
 // Auto-generated file - do not edit manually
 
-import { o } from "@party-stack/ontology";
-import type { OntologyIR } from "@party-stack/ontology";
-export default {
+import { defineOntology, o } from "@party-stack/ontology";
+export default defineOntology({
     types: [],
     objectTypes: [
         {
@@ -46,6 +45,15 @@ export default {
                     name: "id",
                     displayName: "Id",
                     type: o.string({}),
+                },
+                {
+                    name: "media",
+                    displayName: "Media",
+                    type: o.attachment({
+                        meta: {
+                            type: "media",
+                        },
+                    }),
                 },
                 {
                     name: "title",
@@ -108,11 +116,7 @@ export default {
                     displayName: "Attachments",
                     type: o.optional({
                         type: o.list({
-                            elementType: o.attachment({
-                                meta: {
-                                    type: "attachment",
-                                },
-                            }),
+                            elementType: o.attachment({}),
                         }),
                     }),
                 },
@@ -121,6 +125,17 @@ export default {
                     displayName: "Location",
                     type: o.optional({
                         type: o.geopoint({}),
+                    }),
+                },
+                {
+                    name: "media",
+                    displayName: "Media",
+                    type: o.optional({
+                        type: o.attachment({
+                            meta: {
+                                type: "media",
+                            },
+                        }),
                     }),
                 },
                 {
@@ -179,6 +194,12 @@ export default {
                             property: ["id"],
                             value: o.Expression.valueReference({
                                 path: ["__uuid_9131b78a-d4a1-443b-9fca-a3f70c2355ef"],
+                            }),
+                        },
+                        {
+                            property: ["media"],
+                            value: o.Expression.valueReference({
+                                path: ["media"],
                             }),
                         },
                         {
@@ -248,4 +269,4 @@ export default {
         },
     ],
     queryFunctionTypes: [],
-} satisfies OntologyIR;
+});

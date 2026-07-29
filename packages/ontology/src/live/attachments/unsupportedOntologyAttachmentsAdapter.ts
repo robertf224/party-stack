@@ -1,4 +1,4 @@
-import type { OntologyAttachmentsAdapter } from "../OntologyAdapter.js";
+import type { OntologyAttachmentsAdapter } from "../OntologyBackendAdapter.js";
 
 export const unsupportedOntologyAttachmentsAdapter: OntologyAttachmentsAdapter = {
     getAttachmentContent: (attachment) =>

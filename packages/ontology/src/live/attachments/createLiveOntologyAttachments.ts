@@ -4,7 +4,7 @@ import { getTargetValueType } from "../../utils/types.js";
 import * as v from "../../utils/values.js";
 import type { OntologyIR } from "../../ir/index.js";
 import type { OntologyAttachmentCreateTarget } from "../../utils/targets.js";
-import type { OntologyAttachmentsAdapter } from "../OntologyAdapter.js";
+import type { OntologyAttachmentsAdapter } from "../OntologyBackendAdapter.js";
 
 export interface LiveOntologyEagerAttachmentCreation {
     attachment: v.attachment;
@@ -27,7 +27,7 @@ export interface LiveOntologyAttachments {
     ) => Promise<LiveOntologyAttachmentCreateResult<Options>>;
     metadata: (
         attachment: v.attachment
-    ) => Promise<v.attachment & { size: number; type: string; name: string }>;
+    ) => Promise<v.attachment & { size: number; type: string; name?: string }>;
     blob: (attachment: v.attachment) => Promise<Blob>;
 }
 
@@ -64,12 +64,24 @@ export function createLiveOntologyAttachments(opts: {
             name: ref.name,
         };
         const materializeAttachment = attachmentsAdapter.materializeAttachment;
-        if (normalizedOpts.eager && materializeAttachment) {
-            const promise = blobManager.withUploadTracking(ref.id, (blob) =>
-                materializeAttachment(attachment, blob, {
-                    target: targetType?.kind === "attachment" ? targetType.value : undefined,
-                })
-            );
+        const materializeOptions = {
+            target: targetType?.kind === "attachment" ? targetType.value : undefined,
+        };
+        const canMaterialize =
+            materializeAttachment &&
+            (attachmentsAdapter.canMaterializeAttachment?.(attachment, materializeOptions) ?? true);
+        if (normalizedOpts.eager && canMaterialize) {
+            const promise = blobManager
+                .read(ref.id)
+                .then((storedBlob) => materializeAttachment(attachment, storedBlob, materializeOptions))
+                .then(async (materialized) => {
+                    if (materialized) {
+                        if (materialized.id !== ref.id) {
+                            await blobManager.bindRemoteId(ref.id, materialized.id);
+                        }
+                        Object.assign(attachment, materialized);
+                    }
+                });
             void promise.catch(() => undefined);
             return {
                 attachment,
@@ -82,7 +94,12 @@ export function createLiveOntologyAttachments(opts: {
     return {
         create,
         metadata: (attachment) =>
-            blobManager.metadata(attachment.id, { meta: { source: attachment.source } }),
-        blob: (attachment) => blobManager.blob(attachment.id, { meta: { source: attachment.source } }),
+            blobManager.metadata(attachment.id, {
+                meta: { source: attachment.source },
+            }),
+        blob: (attachment) =>
+            blobManager.read(attachment.id, {
+                meta: { source: attachment.source },
+            }),
     };
 }

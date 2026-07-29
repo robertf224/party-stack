@@ -6,8 +6,25 @@ import {
     StructFieldApiName,
 } from "@osdk/foundry.ontologies";
 import { FieldPath, LoadSubsetOptions, parseOrderByExpression, parseWhereExpression } from "@tanstack/db";
+import { Temporal } from "temporal-polyfill";
 
 const ALWAYS_FALSE_FILTER: SearchJsonQueryV2 = { type: "or", value: [] };
+
+function convertQueryValue(
+    value: unknown
+): unknown {
+    if (value instanceof Date) {
+        return value.toISOString();
+    }
+    if (
+        value instanceof Temporal.Instant ||
+        value instanceof Temporal.PlainDate ||
+        value instanceof Temporal.PlainDateTime
+    ) {
+        return value.toString();
+    }
+    return value;
+}
 
 function fieldPathToPropertyIdentifier(fieldPath: FieldPath): PropertyIdentifier {
     if (fieldPath.length === 1) {
@@ -46,7 +63,8 @@ export function convertLoadSubsetFilter(filter: LoadSubsetOptions["where"]): Sea
                         : {
                               type: "eq",
                               propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value,
+                              value:
+                                  convertQueryValue(value),
                           },
                 gt: (field: FieldPath, value) =>
                     value == null
@@ -54,7 +72,8 @@ export function convertLoadSubsetFilter(filter: LoadSubsetOptions["where"]): Sea
                         : {
                               type: "gt",
                               propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value,
+                              value:
+                                  convertQueryValue(value),
                           },
                 gte: (field: FieldPath, value) =>
                     value == null
@@ -62,7 +81,8 @@ export function convertLoadSubsetFilter(filter: LoadSubsetOptions["where"]): Sea
                         : {
                               type: "gte",
                               propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value,
+                              value:
+                                  convertQueryValue(value),
                           },
                 lt: (field: FieldPath, value) =>
                     value == null
@@ -70,7 +90,8 @@ export function convertLoadSubsetFilter(filter: LoadSubsetOptions["where"]): Sea
                         : {
                               type: "lt",
                               propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value,
+                              value:
+                                  convertQueryValue(value),
                           },
                 lte: (field: FieldPath, value) =>
                     value == null
@@ -78,7 +99,8 @@ export function convertLoadSubsetFilter(filter: LoadSubsetOptions["where"]): Sea
                         : {
                               type: "lte",
                               propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value,
+                              value:
+                                  convertQueryValue(value),
                           },
                 isNull: (field: FieldPath) => ({
                     type: "isNull",
@@ -88,7 +110,13 @@ export function convertLoadSubsetFilter(filter: LoadSubsetOptions["where"]): Sea
                 in: (field: FieldPath, value: unknown[]) => ({
                     type: "in",
                     propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                    value: value.filter((v) => v !== null && v !== undefined),
+                    value: value
+                        .filter(
+                            (entry) =>
+                                entry !== null &&
+                                entry !== undefined
+                        )
+                        .map(convertQueryValue),
                 }),
                 ilike: (field: FieldPath, value: string) =>
                     value !== "%"

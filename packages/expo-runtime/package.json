@@ -1,0 +1,38 @@
+{
+    "name": "@party-stack/expo-runtime",
+    "version": "0.1.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run --pass-with-no-tests"
+    },
+    "dependencies": {
+        "@party-stack/coordination": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
+        "@tanstack/expo-db-sqlite-persistence": "^0.2.6"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@react-native-community/netinfo": "^12.0.1",
+        "eslint": "^9.25.0",
+        "expo-file-system": "^55.0.19",
+        "expo-sqlite": "^55.0.15",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    },
+    "peerDependencies": {
+        "@react-native-community/netinfo": "^12.0.1",
+        "expo-file-system": "^55.0.19",
+        "expo-sqlite": "^55.0.15"
+    }
+}

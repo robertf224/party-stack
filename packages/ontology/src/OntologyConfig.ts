@@ -1,7 +1,7 @@
-import type { OntologyAdapter } from "./live/OntologyAdapter.js";
+import type { OntologyBackendAdapter } from "./live/OntologyBackendAdapter.js";
 
 export interface OntologyConfigAdapter<Opts = unknown> {
-    createAdapter: (opts: Opts) => OntologyAdapter | Promise<OntologyAdapter>;
+    createAdapter: (opts: Opts) => OntologyBackendAdapter | Promise<OntologyBackendAdapter>;
 }
 
 export interface OntologyConfig<Opts = unknown> {

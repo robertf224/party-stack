@@ -10,7 +10,7 @@ It owns:
 - Local staging and byte persistence.
 - Blob metadata and local/remote ID relationships.
 - Pull-through reads from remote sources.
-- Cache reconciliation, retention, and size/age-based GC.
+- Cache reconciliation and time-based GC.
 - Eventually range reads, streams, and backend capability pushdown.
 
 It does not own:
@@ -29,6 +29,7 @@ the blob resource.
 
 ```ts
 interface BlobManager {
+    readonly collection: Collection<BlobRef, string>;
     stage(id: string, blob: Blob | File): Promise<BlobRef>;
     metadata(
         id: string,
@@ -52,11 +53,12 @@ replace the single `remoteId` with destination-keyed mappings.
 
 ## Internal store
 
-The internal `BlobStore` is a TanStack metadata collection with byte lifecycle
-utilities:
+The internal `BlobStore` owns a plain TanStack metadata collection plus
+explicit byte-lifecycle operations:
 
 ```text
-Collection<BlobRef>.utils
+BlobStore
+    collection: Collection<BlobRef>
     stage
     cache
     find
@@ -67,9 +69,9 @@ Collection<BlobRef>.utils
 ```
 
 Metadata collection mutations use `optimistic: false`; callers await local
-durability. Locks are limited to operations that span both byte and metadata
-stores, such as stage/cache/purge/reconciliation. Ordinary metadata patches do
-not need a separate per-blob lock.
+durability. Typed blob coordination service methods fence operations that span
+byte and metadata stores, such as stage/cache/purge/reconciliation; blob
+consumers do not acquire per-blob Web Locks.
 
 `queryOnce` handles:
 
@@ -106,17 +108,21 @@ For a newly discovered remote blob, cache intent starts from `persisted`.
 Binding a server-confirmed remote ID directly sets `persisted`, clears any
 operation, and leaves local bytes available for reads.
 
-Startup reconciliation is metadata-driven. It scans pending operations and
-rereads each record under its per-blob lock. Interrupted stage and cache writes
+Startup reconciliation is metadata-driven. It scans pending operations through
+the leader-owned blob coordination service. Interrupted stage and cache writes
 delete potentially partial bytes and become failed operations without guessing
 from byte size or contents. Interrupted purges finish byte and metadata
 deletion; deletion failures become failed purge operations. Stable and
 already-failed records are unchanged.
 
 `BlobBytesStore` only writes, reads, and deletes by ID; it does not enumerate
-keys. Orphan bytes are therefore not adopted during startup. Outbox and draft
-retention providers protect local blob IDs from GC, and cache GC only treats
-completed cache writes as cached eviction candidates.
+keys. Orphan bytes are therefore not adopted during startup. GC treats
+completed `cached` and `persisted` blobs as purge candidates, while `staged`
+blobs and active/failed operations are retained. `BlobManagerOptions.gcTime`
+defaults to five minutes. Eligible blobs are ordered in TanStack DB by
+Chromium's size-aware disk-cache score, `age * (size + 512 bytes)`,
+prioritizing blobs that are both older and larger, and then purged in bounded
+batches.
 
 ## Outbox integration
 

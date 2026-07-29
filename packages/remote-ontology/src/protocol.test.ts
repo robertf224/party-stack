@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { Temporal } from "temporal-polyfill";
 import { o, type OntologyIR } from "@party-stack/ontology";
+import { eq, gt, IR } from "@tanstack/db";
 import { createHttpRemoteOntologyTransport } from "./http.js";
+import { parseRemoteOntologyRequest, serializeLoadSubsetOptions } from "./protocol.js";
 
 describe("createHttpRemoteOntologyTransport", () => {
     it("serializes and hydrates typed ontology values", async () => {
@@ -75,6 +77,42 @@ describe("createHttpRemoteOntologyTransport", () => {
             parameters: {
                 id: "task-2",
                 dueDate: "2026-05-30",
+            },
+        });
+    });
+
+    it("preserves load subset cursor expressions and removes only subscriptions", () => {
+        const where = eq(new IR.PropRef(["status"]), "open");
+        const whereFrom = gt(new IR.PropRef(["priority"]), 5);
+        const whereCurrent = eq(new IR.PropRef(["priority"]), 5);
+        const options = serializeLoadSubsetOptions({
+            where,
+            cursor: {
+                whereFrom,
+                whereCurrent,
+                lastKey: "task-5",
+            },
+            offset: 2,
+            limit: 3,
+            subscription: {} as never,
+        });
+        const request = parseRemoteOntologyRequest("load-subset", {
+            objectType: "Task",
+            options,
+        });
+
+        expect(options).not.toHaveProperty("subscription");
+        expect(request.input).toEqual({
+            objectType: "Task",
+            options: {
+                where,
+                cursor: {
+                    whereFrom,
+                    whereCurrent,
+                    lastKey: "task-5",
+                },
+                offset: 2,
+                limit: 3,
             },
         });
     });

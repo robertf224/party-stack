@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { createLiveOntology, o, type OntologyIR } from "@party-stack/ontology";
 import { afterEach, describe, expect, it } from "vitest";
 import type { attachment as OntologyAttachment } from "@party-stack/ontology/values";
-import { createSQLiteOntologyAdapter } from "./index.js";
+import { createSQLiteOntologyBackendAdapter } from "./index.js";
 
 interface TestDatabase {
     close: () => void;
@@ -123,7 +123,7 @@ const ir: OntologyIR = {
     queryFunctionTypes: [],
 };
 
-describe("createSQLiteOntologyAdapter", () => {
+describe("createSQLiteOntologyBackendAdapter", () => {
     const databases: TestDatabase[] = [];
 
     afterEach(() => {
@@ -140,25 +140,29 @@ describe("createSQLiteOntologyAdapter", () => {
 
     it("persists action mutations and hydrates Temporal values on reload", async () => {
         const database = createDatabase();
-        const adapter = createSQLiteOntologyAdapter({
+        const backendAdapter = createSQLiteOntologyBackendAdapter({
             ir,
             database,
             name: "test",
         });
-        const ontology = createLiveOntology({ ir, adapter });
+        const ontology = await createLiveOntology({
+            ir,
+            backend: () => backendAdapter,
+        });
 
         await ontology.actions.createNote!({
             id: "note-1",
             title: "Hello",
-        }).mutationFn();
+        });
 
-        const reloadedOntology = createLiveOntology({
+        const reloadedOntology = await createLiveOntology({
             ir,
-            adapter: createSQLiteOntologyAdapter({
-                ir,
-                database,
-                name: "test",
-            }),
+            backend: (ontologyIr) =>
+                createSQLiteOntologyBackendAdapter({
+                    ir: ontologyIr,
+                    database,
+                    name: "test",
+                }),
         });
 
         const note = reloadedOntology.objects.Note!.get("note-1");
@@ -168,17 +172,20 @@ describe("createSQLiteOntologyAdapter", () => {
 
     it("stores action attachment uploads in SQLite", async () => {
         const database = createDatabase();
-        const adapter = createSQLiteOntologyAdapter({
+        const backendAdapter = createSQLiteOntologyBackendAdapter({
             ir,
             database,
             name: "test",
         });
-        const ontology = createLiveOntology({ ir, adapter });
+        const ontology = await createLiveOntology({
+            ir,
+            backend: () => backendAdapter,
+        });
 
         await ontology.actions.createNote!({
             id: "note-1",
             title: "Hello",
-        }).mutationFn();
+        });
         const creation = await ontology.attachments.create(
             new File(["hello attachment"], "hello.txt", { type: "text/plain" }),
             {
@@ -195,7 +202,7 @@ describe("createSQLiteOntologyAdapter", () => {
             id: "attachment-object-1",
             note: "note-1",
             attachment,
-        }).mutationFn();
+        });
 
         const metadata = await ontology.attachments.metadata(attachment);
         const blob = await ontology.attachments.blob(attachment);

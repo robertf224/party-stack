@@ -29,13 +29,14 @@ export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
     });
     sourceFile.addImportDeclaration({
         moduleSpecifier: opts.ontologyRuntimeImportPath,
-        namedImports: ["CreateLiveOntologyOpts", "OntologyAdapter"],
+        namedImports: ["CreateLiveOntologyOpts"],
         isTypeOnly: true,
     });
 
     sourceFile.addFunction({
         name: opts.outputFactoryName,
         isExported: true,
+        isAsync: true,
         typeParameters: [
             {
                 name: "Context",
@@ -44,21 +45,15 @@ export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
             },
         ],
         parameters: [
-            { name: "adapter", type: "OntologyAdapter" },
             {
                 name: "opts",
-                type: "Pick<CreateLiveOntologyOpts<Context>, \"blobStore\" | \"context\" | \"getUserId\" | \"id\">",
-                hasQuestionToken: true,
+                type: 'Omit<CreateLiveOntologyOpts<Context>, "ir">',
             },
         ],
-        returnType: `LiveOntology<${opts.ontologyTypeName}>`,
+        returnType: `Promise<LiveOntology<${opts.ontologyTypeName}>>`,
         statements: `return createLiveOntology<${opts.ontologyTypeName}, Context>({
+            ...opts,
             ir: ${ontologyImportName},
-            adapter,
-            id: opts?.id,
-            blobStore: opts?.blobStore,
-            context: opts?.context,
-            getUserId: opts?.getUserId,
         });`,
     });
 

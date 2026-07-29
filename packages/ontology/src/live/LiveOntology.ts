@@ -1,11 +1,8 @@
-import {
-    createBlobManager,
-    createInMemoryBlobStore,
-    type BlobManager,
-    type BlobStore,
-} from "@party-stack/blobs";
+import { createBlobManager, type BlobManager } from "@party-stack/blobs";
+import { createDefaultRuntime, type RuntimeAdapterProvider } from "@party-stack/runtime";
 import { type Collection } from "@tanstack/db";
-import { createLiveOntologyAction } from "./actions/createLiveOntologyAction.js";
+import { provide } from "../utils/provide.js";
+import { createLiveOntologyActions } from "./actions/createLiveOntologyActions.js";
 import {
     createLiveOntologyAttachments,
     type LiveOntologyAttachments,
@@ -13,15 +10,36 @@ import {
 import { unsupportedOntologyAttachmentsAdapter } from "./attachments/unsupportedOntologyAttachmentsAdapter.js";
 import { createLiveOntologyObjectCollection } from "./objects/createLiveOntologyObjectCollection.js";
 import type { LiveOntologyAction } from "./actions/createLiveOntologyAction.js";
+import type { OntologyMutatorRegistry } from "./mutators/types.js";
 import type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
 import type { OntologyObject } from "./objects/OntologyObject.js";
-import type { OntologyAdapter } from "./OntologyAdapter.js";
+import type { OntologyBackendAdapter, OntologyBackendAdapterProvider } from "./OntologyBackendAdapter.js";
+import type { OntologyOutbox } from "./outbox/types.js";
 import type { OntologyIR } from "../ir/index.js";
 import type { attachment } from "../utils/values.js";
 
-export type { LiveOntologyAction, LiveOntologyActionExecution } from "./actions/createLiveOntologyAction.js";
+export type { LiveOntologyAction, LiveOntologyActionOptions } from "./actions/createLiveOntologyAction.js";
 export type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
 export type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
+
+export type LiveOntologyWriteMode = "direct" | "outbox";
+
+export type LiveOntologyWriteVisibility = "confirmed" | "optimistic";
+
+export type LiveOntologyOutboxFailureStrategy = "pause" | "discard-all";
+
+export interface LiveOntologyOutboxOptions {
+    failureStrategy?: LiveOntologyOutboxFailureStrategy;
+    maxRetries?: number;
+}
+
+export interface LiveOntologyWrites {
+    defaultMode?: LiveOntologyWriteMode;
+    defaultVisibility?: LiveOntologyWriteVisibility;
+    mutators?: OntologyMutatorRegistry;
+    outbox?: LiveOntologyOutboxOptions;
+}
+
 export interface OntologyDefinition {
     objectTypes: Record<string, OntologyObject>;
     actionTypes: Record<
@@ -67,35 +85,35 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
     queryFunctions: LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>;
     attachments: LiveOntologyAttachments;
+    outbox: OntologyOutbox;
     cleanup: () => Promise<void>;
 }
 
 export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> = Record<string, unknown>> {
     id?: string;
     ir: OntologyIR;
-    adapter: OntologyAdapter;
-    blobStore?: (opts: { owner: string; namespace: string }) => BlobStore;
+    backend: OntologyBackendAdapterProvider<NoInfer<Context>>;
+    runtime?: RuntimeAdapterProvider;
+    persistObjects?: boolean;
+    writes?: LiveOntologyWrites;
     context?: Context;
     getUserId?: (context: Context) => string;
 }
 
-export function createLiveOntology<
+export async function createLiveOntology<
     Ontology extends OntologyDefinition = OntologyDefinition,
     Context extends Record<string, unknown> = Record<string, unknown>,
->(opts: CreateLiveOntologyOpts<Context>): LiveOntology<Ontology> {
+>(opts: CreateLiveOntologyOpts<Context>): Promise<LiveOntology<Ontology>> {
     const ontologyId = opts.id ?? "default";
     const context = (opts.context ?? {}) as Context;
-    const blobStore = opts.blobStore
-        ? opts.blobStore({
-              owner: opts.getUserId?.(context) ?? "anonymous",
-              namespace: ontologyId,
-          })
-        : createInMemoryBlobStore();
-    const attachmentsAdapter = opts.adapter.attachments ?? unsupportedOntologyAttachmentsAdapter;
+    const owner = opts.getUserId?.(context) ?? "anonymous";
+    const backendAdapter: OntologyBackendAdapter = await provide(opts.backend, opts.ir, context);
+    const runtime = await provide(opts.runtime ?? createDefaultRuntime, owner, ontologyId);
+    const attachmentsAdapter = backendAdapter.attachments ?? unsupportedOntologyAttachmentsAdapter;
     const blobManager: BlobManager = createBlobManager({
-        store: blobStore,
+        runtime,
         remote: {
-            blob: (id, readOptions) =>
+            read: (id, readOptions) =>
                 attachmentsAdapter.getAttachmentContent({
                     id,
                     source: readOptions?.meta?.source as attachment["source"],
@@ -116,31 +134,28 @@ export function createLiveOntology<
         opts.ir.objectTypes.map((objectType) => [
             objectType.name,
             createLiveOntologyObjectCollection({
-                ontologyId,
                 ir: opts.ir,
                 objectType,
-                adapter: opts.adapter,
+                backendAdapter,
+                runtime,
+                persistObjects: opts.persistObjects ?? false,
             }),
         ])
     ) as Record<string, OntologyCollection<OntologyObject>>;
-    const actions = Object.fromEntries(
-        opts.ir.actionTypes.map((action) => [
-            action.name,
-            createLiveOntologyAction({
-                ir: opts.ir,
-                action,
-                adapter: opts.adapter,
-                context,
-                objects,
-                blobManager,
-            }),
-        ])
-    );
+    const actionsSubsystem = createLiveOntologyActions({
+        ir: opts.ir,
+        backendAdapter,
+        runtime,
+        context,
+        objects,
+        blobManager,
+        writes: opts.writes,
+    });
     const queryFunctions = Object.fromEntries(
         opts.ir.queryFunctionTypes.map((queryFunctionType) => [
             queryFunctionType.name,
             (parameters: Record<string, unknown>) =>
-                opts.adapter.runQueryFunction(queryFunctionType.name, parameters, {
+                backendAdapter.runQueryFunction(queryFunctionType.name, parameters, {
                     objects: objects as Record<string, Collection<Record<string, unknown>>>,
                     context,
                 }),
@@ -149,14 +164,18 @@ export function createLiveOntology<
 
     return {
         objects: objects as unknown as LiveOntologyObjects<Ontology["objectTypes"]>,
-        actions: actions as unknown as LiveOntologyActions<Ontology["actionTypes"]>,
+        actions: actionsSubsystem.actions as unknown as LiveOntologyActions<Ontology["actionTypes"]>,
         queryFunctions: queryFunctions as unknown as LiveOntologyQueryFunctions<
             Ontology["queryFunctionTypes"]
         >,
         attachments,
+        outbox: actionsSubsystem.outbox,
         cleanup: async () => {
+            await actionsSubsystem.outbox.cleanup();
             await Promise.all(Object.values(objects).map((collection) => collection.cleanup()));
-            await opts.adapter.cleanup?.();
+            await blobManager.cleanup();
+            await backendAdapter.cleanup?.();
+            await runtime.cleanup?.();
         },
     };
 }

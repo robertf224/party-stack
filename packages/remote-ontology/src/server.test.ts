@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { Temporal } from "temporal-polyfill";
 import {
     o,
-    type OntologyAdapter,
+    type OntologyBackendAdapter,
     type OntologyIR,
 } from "@party-stack/ontology";
+import { eq, gt, IR } from "@tanstack/db";
 import { createRemoteOntologyServer } from "./server.js";
 import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
 import type { RemoteOntologyDescription } from "./protocol.js";
@@ -61,10 +62,12 @@ const noteObjectType: OntologyIR["objectTypes"][number] = {
     properties: [
         { name: "id", displayName: "ID", type: o.string({}) },
         { name: "ownerEmail", displayName: "Owner", type: o.string({}) },
+        { name: "status", displayName: "Status", type: o.string({}) },
+        { name: "priority", displayName: "Priority", type: o.integer({}) },
     ],
 };
 
-function readyCollectionOptions(): ReturnType<OntologyAdapter["getCollectionOptions"]> {
+function readyCollectionOptions(): ReturnType<OntologyBackendAdapter["getCollectionOptions"]> {
     return {
         syncMode: "eager",
         sync: {
@@ -78,7 +81,7 @@ function readyCollectionOptions(): ReturnType<OntologyAdapter["getCollectionOpti
 describe("remote ontology server policy projection", () => {
     it("describes the secured IR and applies server-owned action parameters last", async () => {
         let appliedParameters: Record<string, unknown> | undefined;
-        const adapter: OntologyAdapter = {
+        const backendAdapter: OntologyBackendAdapter = {
             name: "test",
             getCollectionOptions: readyCollectionOptions,
             applyAction: async (_actionType, parameters) => {
@@ -88,7 +91,7 @@ describe("remote ontology server policy projection", () => {
         };
         const server = createRemoteOntologyServer<any, any>({
             ir,
-            adapter,
+            backendAdapter,
             getContext: () => ({ user: { email: "alice@example.com" } }),
             policy: {
                 canApplyAction: () => true,
@@ -140,7 +143,7 @@ describe("remote ontology server policy projection", () => {
                 ...ir,
                 objectTypes: [noteObjectType],
             },
-            adapter: {
+            backendAdapter: {
                 name: "test",
                 getCollectionOptions: readyCollectionOptions,
                 applyAction: async () => {},
@@ -184,7 +187,7 @@ describe("remote ontology server policy projection", () => {
                 ...ir,
                 objectTypes: [noteObjectType],
             },
-            adapter: {
+            backendAdapter: {
                 name: "test",
                 getCollectionOptions: readyCollectionOptions,
                 applyAction: async () => {},
@@ -219,7 +222,7 @@ describe("remote ontology server policy projection", () => {
     it("runs query functions through the remote query function endpoint", async () => {
         const server = createRemoteOntologyServer<any, any>({
             ir,
-            adapter: {
+            backendAdapter: {
                 name: "test",
                 getCollectionOptions: readyCollectionOptions,
                 applyAction: async () => {},
@@ -242,5 +245,94 @@ describe("remote ontology server policy projection", () => {
 
         expect(response.status).toBe(200);
         expect(parseRemoteOntologyJson(await response.text())).toEqual({ value: "Hello Alice" });
+    });
+
+    it("composes policy, where, cursor, ordering, offset, and limit once", async () => {
+        const notes = [
+            { id: "one", ownerEmail: "alice@example.com", status: "open", priority: 1 },
+            { id: "two", ownerEmail: "alice@example.com", status: "open", priority: 3 },
+            { id: "three", ownerEmail: "alice@example.com", status: "open", priority: 5 },
+            { id: "four", ownerEmail: "alice@example.com", status: "open", priority: 7 },
+            { id: "closed", ownerEmail: "alice@example.com", status: "closed", priority: 4 },
+            { id: "other-owner", ownerEmail: "bob@example.com", status: "open", priority: 2 },
+        ];
+        const backendAdapter: OntologyBackendAdapter = {
+            name: "test",
+            getCollectionOptions: () => ({
+                syncMode: "eager",
+                sync: {
+                    sync: ({ begin, write, commit, markReady }) => {
+                        begin();
+                        for (const note of notes) {
+                            write({ type: "insert", value: note });
+                        }
+                        commit();
+                        markReady();
+                    },
+                },
+            }),
+            applyAction: async () => {},
+            runQueryFunction: async () => undefined,
+        };
+        const server = createRemoteOntologyServer<any, any>({
+            ir: {
+                ...ir,
+                objectTypes: [noteObjectType],
+            },
+            backendAdapter,
+            policy: {
+                baseObjectTypeQueries: {
+                    Note: ({ q, collection }: any) =>
+                        q
+                            .from({ object: collection })
+                            .where(({ object }: any) =>
+                                eq(object.ownerEmail, "alice@example.com")
+                            ),
+                },
+                allowedObjectTypeProperties: {
+                    Note: ["id", "ownerEmail", "status", "priority"],
+                },
+            } as any,
+        });
+        const response = await server.handleRequest(
+            new Request("http://example.test/load-subset", {
+                method: "POST",
+                body: serializeRemoteOntologyJson({
+                    objectType: "Note",
+                    options: {
+                        where: eq(new IR.PropRef(["status"]), "open"),
+                        cursor: {
+                            whereFrom: gt(new IR.PropRef(["priority"]), 1),
+                            whereCurrent: eq(new IR.PropRef(["priority"]), 1),
+                            lastKey: "one",
+                        },
+                        orderBy: [
+                            {
+                                expression: new IR.PropRef(["priority"]),
+                                compareOptions: {
+                                    direction: "asc",
+                                    nulls: "last",
+                                },
+                            },
+                        ],
+                        offset: 1,
+                        limit: 1,
+                    },
+                }),
+            })
+        );
+
+        expect(response.status).toBe(200);
+        expect(parseRemoteOntologyJson(await response.text())).toEqual({
+            objectType: "Note",
+            objects: [
+                {
+                    id: "three",
+                    ownerEmail: "alice@example.com",
+                    status: "open",
+                    priority: 5,
+                },
+            ],
+        });
     });
 });

@@ -38,10 +38,8 @@ ontology prediction
 The runtime core remains platform-neutral. `@party-stack/web-runtime` composes
 the IndexedDB-only `createWebRuntime` `RuntimeAdapterProvider`, while
 `@party-stack/expo-runtime` composes `createExpoRuntime` over Expo SQLite.
-These providers return platform resources only. Composition roots construct
-one `Coordinator` with `createCoordinator` from the resolved `RuntimeAdapter`
-and explicitly pass it to consumers. A runtime may supply a synchronous
-`CoordinatorProvider` for a platform-specific implementation.
+These providers construct platform resources plus one scoped `Coordination`.
+`RuntimeAdapter.coordination` is required and owned by the runtime.
 Blob storage remains a resource layer. Durable execution and prediction live under
 `packages/ontology/src/live/outbox` and
 `packages/ontology/src/live/mutators`.
@@ -83,7 +81,7 @@ Each pass must:
 - Async mutator reads use only locally available client data.
 - Removing or editing an outbox entry recomputes later predictions.
 - Persistence and its coordinator are authoritative for cross-context state.
-- One Coordinator leader serializes persistence writes and outbox commands.
+- One Coordination leader serializes persistence writes and outbox commands.
 - Stale outbox execution claims cannot complete newer work.
 - Per-collection persistence is not presented as cross-collection atomicity.
 - Blob GC cannot remove bytes referenced by drafts or outbox work.
