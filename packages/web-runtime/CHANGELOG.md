@@ -1,6 +1,6 @@
-# @party-stack/blobs
+# @party-stack/web-runtime
 
-## 0.3.0
+## 0.2.0
 
 ### Minor Changes
 
@@ -9,10 +9,6 @@
 ### Patch Changes
 
 - Updated dependencies [803610f]
+    - @party-stack/db-indexeddb-persistence@0.1.0
+    - @party-stack/coordination@0.2.0
     - @party-stack/runtime@0.2.0
-
-## 0.2.0
-
-### Minor Changes
-
-- 2ee9520: introduce attachments

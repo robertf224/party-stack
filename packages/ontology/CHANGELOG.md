@@ -1,5 +1,17 @@
 # @party-stack/ontology
 
+## 0.4.0
+
+### Minor Changes
+
+- 803610f: the big revamp
+
+### Patch Changes
+
+- Updated dependencies [803610f]
+    - @party-stack/runtime@0.2.0
+    - @party-stack/blobs@0.3.0
+
 ## 0.3.0
 
 ### Minor Changes
