@@ -1,5 +1,16 @@
 # @party-stack/foundry-ontology
 
+## 0.4.0
+
+### Minor Changes
+
+- 803610f: the big revamp
+
+### Patch Changes
+
+- Updated dependencies [803610f]
+    - @party-stack/ontology@0.4.0
+
 ## 0.3.2
 
 ### Patch Changes

@@ -1,5 +1,15 @@
 # @party-stack/issue-tracker
 
+## 0.0.7
+
+### Patch Changes
+
+- Updated dependencies [803610f]
+    - @party-stack/ontology-devtools@0.1.0
+    - @party-stack/foundry-ontology@0.4.0
+    - @party-stack/web-runtime@0.2.0
+    - @party-stack/ontology@0.4.0
+
 ## 0.0.6
 
 ### Patch Changes
