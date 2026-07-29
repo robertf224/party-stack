@@ -1,6 +1,7 @@
 import { o } from "@party-stack/ontology";
 import { describe, expect, it } from "vitest";
 import { createFoundryCodec } from "./foundryCodec.js";
+import { encodeFoundryMediaId } from "./foundryMediaId.js";
 
 describe("createFoundryCodec", () => {
     it("decodes attachment rids into serializable pointers", () => {
@@ -65,27 +66,38 @@ describe("createFoundryCodec", () => {
             queryFunctionTypes: [],
         });
 
+        const reference = {
+            reference: {
+                type: "mediaSetViewItem" as const,
+                mediaSetViewItem: {
+                    mediaItemRid: "ri.mio.main.media-item.1",
+                    mediaSetRid: "ri.mio.main.media-set.1",
+                    mediaSetViewRid: "ri.mio.main.view.1",
+                },
+            },
+            mimeType: "image/png",
+        };
+        const attachment = {
+            id: encodeFoundryMediaId(reference.reference.mediaSetViewItem),
+            type: "image/png",
+        };
+
         expect(
             codec.decodeObject("Document", {
                 id: "doc-1",
-                file: {
-                    reference: {
-                        type: "mediaSetViewItem",
-                        mediaSetViewItem: {
-                            mediaItemRid: "ri.mio.main.media-item.1",
-                            mediaSetRid: "ri.mio.main.media-set.1",
-                            mediaSetViewRid: "ri.mio.main.view.1",
-                        },
-                    },
-                    mimeType: "image/png",
-                },
+                file: reference,
             })
         ).toEqual({
             id: "doc-1",
-            file: {
-                id: "ri.mio.main.media-item.1",
-                type: "image/png",
-            },
+            file: attachment,
         });
+        expect(
+            codec.encodeValue(
+                o.attachment({
+                    meta: { type: "media" },
+                }),
+                attachment
+            )
+        ).toEqual(reference);
     });
 });

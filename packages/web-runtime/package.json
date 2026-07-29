@@ -1,0 +1,31 @@
+{
+    "name": "@party-stack/web-runtime",
+    "version": "0.1.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run --pass-with-no-tests"
+    },
+    "dependencies": {
+        "@party-stack/coordination": "workspace:*",
+        "@party-stack/db-indexeddb-persistence": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
+        "effection": "^4.0.2"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "eslint": "^9.25.0",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    }
+}

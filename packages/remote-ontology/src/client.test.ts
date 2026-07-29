@@ -64,12 +64,10 @@ describe("createRemoteLiveOntology", () => {
         };
 
         const ontology = await createRemoteLiveOntology({ transport });
-        await ontology.actions
-            .createNote!({
-                title: "Hello",
-                dueDate: Temporal.PlainDate.from("2026-06-15"),
-            })
-            .mutationFn();
+        await ontology.actions.createNote!({
+            title: "Hello",
+            dueDate: Temporal.PlainDate.from("2026-06-15"),
+        });
 
         expect(appliedParameters).toEqual({
             title: "Hello",

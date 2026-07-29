@@ -6,14 +6,6 @@
         ".": {
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
-        },
-        "./web": {
-            "types": "./lib/web/index.d.ts",
-            "default": "./lib/web/index.js"
-        },
-        "./expo": {
-            "types": "./lib/expo/index.d.ts",
-            "default": "./lib/expo/index.js"
         }
     },
     "files": [
@@ -22,31 +14,22 @@
     "scripts": {
         "build": "tsc",
         "lint": "eslint",
-        "test": "vitest run"
+        "test": "vitest run src"
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",
         "@tanstack/db": "^0.6.14",
         "eslint": "^9.25.0",
-        "expo-file-system": "^55.0.19",
-        "expo-sqlite": "^55.0.15",
         "typescript": "~5.8.3",
         "vitest": "^3.1.1"
     },
     "peerDependencies": {
-        "@tanstack/db": "^0.6.14",
-        "expo-file-system": "^55.0.19",
-        "expo-sqlite": "^55.0.15"
-    },
-    "peerDependenciesMeta": {
-        "expo-file-system": {
-            "optional": true
-        },
-        "expo-sqlite": {
-            "optional": true
-        }
+        "@tanstack/db": "^0.6.14"
     },
     "dependencies": {
-        "@bobbyfidz/panic": "^0.1.0"
+        "@bobbyfidz/panic": "^0.1.0",
+        "@effectionx/stream-helpers": "^0.8.1",
+        "@party-stack/runtime": "workspace:*",
+        "effection": "^4.0.2"
     }
 }

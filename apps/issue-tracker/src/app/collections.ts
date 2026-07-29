@@ -1,24 +1,43 @@
 "use client";
 
 import { createCollection } from "@tanstack/db";
-import { createWebBlobStore } from "@party-stack/blobs/web";
-import { createOntologyClient, createFoundryOntologyAdapter } from "@party-stack/foundry-ontology";
+import { createFoundryOntologyBackend, createOntologyClient } from "@party-stack/foundry-ontology";
 import { userCollectionOptions } from "@party-stack/foundry-ontology/users";
-import ir from "../ontology/ontology";
+import { createWebRuntime } from "@party-stack/web-runtime";
 import { createIssueTrackerLiveOntology } from "../ontology/generated/live";
 
 const client = createOntologyClient({
-    baseUrl: process.env.NEXT_PUBLIC_FOUNDRY_URL!,
-    ontologyRid: process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
-    tokenProvider: () => Promise.resolve(process.env.NEXT_PUBLIC_FOUNDRY_TOKEN!),
+    baseUrl: import.meta.env.NEXT_PUBLIC_FOUNDRY_URL,
+    ontologyRid: import.meta.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID,
+    tokenProvider: () => Promise.resolve(import.meta.env.NEXT_PUBLIC_FOUNDRY_TOKEN),
 });
-export const adapter = createFoundryOntologyAdapter({ client, ir });
-export const ontology = createIssueTrackerLiveOntology(adapter, {
-    id: process.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID!,
-    blobStore: createWebBlobStore,
-    context: {
-        userId: "77a1fe87-ad9f-4cd7-ba76-223ab048d2d3",
-    },
-    getUserId: (context) => context.userId,
+const backend = createFoundryOntologyBackend({
+    client,
 });
-export const User = createCollection(userCollectionOptions({ client }));
+const ontologyId = import.meta.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID;
+const userId = "77a1fe87-ad9f-4cd7-ba76-223ab048d2d3";
+async function createCollections() {
+    return {
+        ontology: await createIssueTrackerLiveOntology({
+            backend,
+            id: ontologyId,
+            runtime: createWebRuntime,
+            persistObjects: true,
+            writes: {
+                defaultMode: "outbox",
+                defaultVisibility: "optimistic",
+            },
+            context: {
+                userId,
+            },
+            getUserId: (context) => context.userId,
+        }),
+        User: createCollection(userCollectionOptions({ client })),
+    };
+}
+
+const collections = await createCollections();
+
+export function getIssueTrackerCollections() {
+    return collections;
+}

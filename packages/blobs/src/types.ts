@@ -1,6 +1,20 @@
-import type { BlobEvictionStrategy } from "./gc/types.js";
+import type { RuntimeAdapter } from "@party-stack/runtime";
+import type { Collection } from "@tanstack/db";
 
-export type BlobState = "staging" | "staged" | "uploading" | "persisted" | "cached" | "failed";
+export type BlobState = "staged" | "persisted" | "cached";
+
+export type BlobOperation =
+    | {
+          kind: "stage" | "cache" | "purge";
+          status: "pending";
+          operationId: string;
+      }
+    | {
+          kind: "stage" | "cache" | "purge";
+          status: "failed";
+          operationId: string;
+          error: string;
+      };
 
 export interface BlobRef {
     id: string;
@@ -8,49 +22,18 @@ export interface BlobRef {
     type: string;
     size: number;
     name?: string;
-    state: BlobState;
+    state?: BlobState;
+    operation?: BlobOperation;
     lastAccessedAt?: number;
     createdAt: number;
     updatedAt: number;
-    error?: string;
 }
-
-export interface BlobBytesAdapter {
-    write: (id: string, blob: Blob) => Promise<void>;
-    read: (id: string) => Promise<Blob>;
-    delete: (id: string) => Promise<void>;
-    list?: () => Promise<string[]>;
-}
-
-export interface BlobMetadataAdapter {
-    put: (ref: BlobRef) => Promise<void>;
-    get: (id: string) => Promise<BlobRef | undefined>;
-    getByRemoteId: (remoteId: string) => Promise<BlobRef | undefined>;
-    delete: (id: string) => Promise<void>;
-    list: (opts?: { state?: BlobState }) => Promise<BlobRef[]>;
-}
-
-export interface BlobStore {
-    stage: (id: string, blob: Blob | File) => Promise<BlobRef>;
-    cache: (id: string, blob: Blob | File) => Promise<BlobRef>;
-    get: (id: string) => Promise<BlobRef | undefined>;
-    read: (id: string) => Promise<Blob>;
-    list: (opts?: { state?: BlobState }) => Promise<BlobRef[]>;
-    markUploading: (id: string) => Promise<BlobRef>;
-    markUploaded: (id: string, opts?: { remoteId?: string }) => Promise<BlobRef>;
-    markFailed: (id: string, error?: unknown) => Promise<BlobRef>;
-    purge: (id: string) => Promise<void>;
-    reconcile: () => Promise<void>;
-    withUploadLock?: <T>(id: string, callback: () => Promise<T>) => Promise<T>;
-}
-
-export type BlobRetentionProvider = () => Iterable<string> | Promise<Iterable<string>>;
 
 export interface BlobRemoteMetadata {
     id: string;
     size: number;
     type: string;
-    name: string;
+    name?: string;
 }
 
 export interface BlobReadOptions {
@@ -59,28 +42,20 @@ export interface BlobReadOptions {
 
 export interface BlobRemoteSource {
     metadata: (id: string, opts?: BlobReadOptions) => Promise<BlobRemoteMetadata>;
-    blob: (id: string, opts?: BlobReadOptions) => Promise<Blob>;
+    read: (id: string, opts?: BlobReadOptions) => Promise<Blob>;
 }
 
 export interface BlobManager {
+    readonly collection: Collection<BlobRef, string>;
     stage: (id: string, blob: Blob | File) => Promise<BlobRef>;
     metadata: (id: string, opts?: BlobReadOptions) => Promise<BlobRemoteMetadata>;
-    blob: (id: string, opts?: BlobReadOptions) => Promise<Blob>;
-    withUploadTracking: (
-        id: string,
-        uploadFn: (blob: Blob) => Promise<{ remoteId?: string } | void>
-    ) => Promise<void>;
-    markUploaded: (id: string, opts?: { remoteId?: string }) => Promise<BlobRef>;
+    read: (id: string, opts?: BlobReadOptions) => Promise<Blob>;
+    bindRemoteId: (localId: string, remoteId: string) => Promise<BlobRef>;
+    cleanup: () => Promise<void>;
 }
 
 export interface BlobManagerOptions {
-    store: BlobStore;
+    runtime: RuntimeAdapter;
     remote: BlobRemoteSource;
-    now?: () => number;
-    gcScheduler?: (run: () => void) => void;
-    gcReleaseBufferSize?: number;
-    cacheMaxAgeMs?: number;
-    maxCacheBytes?: number;
-    evictionStrategy?: BlobEvictionStrategy;
-    retentionProviders?: BlobRetentionProvider[];
+    gcTime?: number;
 }

@@ -1,7 +1,9 @@
+import { eq } from "@tanstack/db";
 import { get } from "lodash-es";
 import { Temporal } from "temporal-polyfill";
 import { resolveType, unwrapType } from "../utils/types.js";
-import type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
+import type { OntologyReadTx } from "./mutators/types.js";
+import type { OntologyObject } from "./objects/OntologyObject.js";
 import type {
     Expression,
     ObjectTypeDef,
@@ -9,110 +11,155 @@ import type {
     TypeDef,
     ValueReferenceExpression,
 } from "../ir/index.js";
-import type { OntologyObject } from "./objects/OntologyObject.js";
 
-function getActionType(ir: OntologyIR, actionTypeName: string) {
-    return ir.actionTypes.find((actionType) => actionType.name === actionTypeName)!;
+function getActionType(
+    ir: OntologyIR,
+    actionTypeName: string
+) {
+    return ir.actionTypes.find(
+        (actionType) => actionType.name === actionTypeName
+    )!;
 }
 
-export function evaluateExpression(
-    ir: OntologyIR,
-    actionTypeName: string,
-    expression: Expression,
-    resolveParameter: (parameterName: string) => unknown,
-    context: Record<string, unknown>,
-    objects: Record<string, OntologyCollection<OntologyObject>>
-): unknown {
+export async function evaluateExpression(options: {
+    ir: OntologyIR;
+    actionTypeName: string;
+    expression: Expression;
+    resolveParameter: (
+        parameterName: string
+    ) => Promise<unknown>;
+    context: Record<string, unknown>;
+    tx: OntologyReadTx;
+}): Promise<unknown> {
+    const {
+        ir,
+        actionTypeName,
+        expression,
+        resolveParameter,
+        context,
+        tx,
+    } = options;
+
     switch (expression.kind) {
         case "valueReference": {
-            const [parameterName, ...path] = expression.value.path;
+            const [parameterName, ...path] =
+                expression.value.path;
+            const parameterValue =
+                await resolveParameter(parameterName!);
+            if (path.length === 0) return parameterValue;
 
-            const parameterValue = resolveParameter(parameterName!);
-            if (path.length === 0) {
-                return parameterValue;
-            }
-
-            const actionType = getActionType(ir, actionTypeName);
-            const { type: parameterType, isOptional: parameterIsOptional } = unwrapType(
-                resolveType(
-                    ir,
-                    actionType.parameters.find((parameter) => parameter.name === parameterName)!.type
-                )
+            const actionType = getActionType(
+                ir,
+                actionTypeName
             );
+            const parameter = actionType.parameters.find(
+                (candidate) =>
+                    candidate.name === parameterName
+            )!;
+            const {
+                type: parameterType,
+                isOptional: parameterIsOptional,
+            } = unwrapType(resolveType(ir, parameter.type));
 
-            if (parameterType.kind === "objectReference") {
-                const objectType = ir.objectTypes.find(
-                    (objectType) => objectType.name === parameterType.value.objectType
-                )!;
-                const collection = objects[objectType.name];
-                const referencedObject = collection?.get(parameterValue as string | number);
-                if (!referencedObject && !parameterIsOptional) {
-                    throw new Error(
-                        `Missing loaded "${objectType.name}" object for parameter "${parameterName}" (${String(parameterValue)}).`
-                    );
-                }
-                return get(referencedObject, path);
-            } else {
+            if (parameterType.kind !== "objectReference") {
                 return get(parameterValue, path);
             }
+
+            const referencedType = ir.objectTypes.find(
+                (candidate) =>
+                    candidate.name ===
+                    parameterType.value.objectType
+            )!;
+            const referencedObject = await tx.query<
+                OntologyObject | undefined
+            >((query, objects) =>
+                query
+                    .from({
+                        object: objects[referencedType.name]!,
+                    })
+                    .where(({ object }) =>
+                        eq(
+                            object[referencedType.primaryKey],
+                            parameterValue
+                        )
+                    )
+                    .select(({ object }) => object)
+                    .findOne()
+            );
+            if (!referencedObject && !parameterIsOptional) {
+                throw new Error(
+                    `Missing loaded "${referencedType.name}" object for parameter "${parameterName}" (${String(parameterValue)}).`
+                );
+            }
+            return get(referencedObject, path);
         }
         case "contextReference":
             return get(context, expression.value.path);
         case "literal":
             return expression.value.value;
         case "functionCall":
-            switch (expression.value.kind) {
-                case "uuid":
-                    return globalThis.crypto.randomUUID();
-                case "now":
-                    return Temporal.Now.instant();
-            }
+            return expression.value.kind === "uuid"
+                ? globalThis.crypto.randomUUID()
+                : Temporal.Now.instant();
     }
 }
 
-export function resolveActionParameters(
-    ir: OntologyIR,
-    actionTypeName: string,
-    initialParameters: Record<string, unknown>,
-    context: Record<string, unknown>,
-    objects: Record<string, OntologyCollection<OntologyObject>>
-): Record<string, unknown> {
-    const action = getActionType(ir, actionTypeName);
-    const resolvedParameters = { ...initialParameters };
-    const parametersByName = new Map(action.parameters.map((parameter) => [parameter.name, parameter]));
+export async function resolveActionParameters(options: {
+    ir: OntologyIR;
+    actionTypeName: string;
+    initialParameters: Record<string, unknown>;
+    context: Record<string, unknown>;
+    tx: OntologyReadTx;
+}): Promise<Record<string, unknown>> {
+    const action = getActionType(
+        options.ir,
+        options.actionTypeName
+    );
+    const resolvedParameters = {
+        ...options.initialParameters,
+    };
+    const parametersByName = new Map(
+        action.parameters.map((parameter) => [
+            parameter.name,
+            parameter,
+        ])
+    );
     const resolving = new Set<string>();
 
-    const resolveParameter = (parameterName: string): unknown => {
-        // Only undefined means "not provided"; null is an explicit value used to clear properties.
+    const resolveParameter = async (
+        parameterName: string
+    ): Promise<unknown> => {
         if (resolvedParameters[parameterName] !== undefined) {
             return resolvedParameters[parameterName];
         }
-
         const parameter = parametersByName.get(parameterName);
-        if (!parameter || !parameter.defaultValue) {
-            return undefined;
-        }
+        if (!parameter?.defaultValue) return undefined;
         if (resolving.has(parameterName)) {
-            throw new Error(`Circular action parameter default for "${parameterName}".`);
+            throw new Error(
+                `Circular action parameter default for "${parameterName}".`
+            );
         }
 
         resolving.add(parameterName);
-        resolvedParameters[parameterName] = evaluateExpression(
-            ir,
-            actionTypeName,
-            parameter.defaultValue,
-            resolveParameter,
-            context,
-            objects
-        );
-        resolving.delete(parameterName);
-        return resolvedParameters[parameterName];
+        try {
+            resolvedParameters[parameterName] =
+                await evaluateExpression({
+                    ir: options.ir,
+                    actionTypeName: options.actionTypeName,
+                    expression: parameter.defaultValue,
+                    resolveParameter,
+                    context: options.context,
+                    tx: options.tx,
+                });
+            return resolvedParameters[parameterName];
+        } finally {
+            resolving.delete(parameterName);
+        }
     };
 
     for (const parameter of action.parameters) {
-        resolveParameter(parameter.name);
+        await resolveParameter(parameter.name);
     }
-
     return resolvedParameters;
 }
 
@@ -122,10 +169,15 @@ export function getObjectReferenceObjectType(
     reference: ValueReferenceExpression
 ): ObjectTypeDef {
     const actionType = getActionType(ir, actionTypeName);
-    const parameter = actionType.parameters.find((parameter) => parameter.name === reference.path[0])!;
-    const resolvedType = unwrapType(resolveType(ir, parameter.type)).type as Extract<
-        TypeDef,
-        { kind: "objectReference" }
-    >;
-    return ir.objectTypes.find((objectType) => objectType.name === resolvedType.value.objectType)!;
+    const parameter = actionType.parameters.find(
+        (candidate) =>
+            candidate.name === reference.path[0]
+    )!;
+    const resolvedType = unwrapType(
+        resolveType(ir, parameter.type)
+    ).type as Extract<TypeDef, { kind: "objectReference" }>;
+    return ir.objectTypes.find(
+        (candidate) =>
+            candidate.name === resolvedType.value.objectType
+    )!;
 }

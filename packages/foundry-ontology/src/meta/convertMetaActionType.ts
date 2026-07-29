@@ -56,8 +56,11 @@ function geopointType(): TypeDef {
     return { kind: "geopoint", value: {} };
 }
 
-function attachmentType(): TypeDef {
-    return { kind: "attachment", value: {} };
+function attachmentType(type: "attachment" | "media"): TypeDef {
+    return {
+        kind: "attachment",
+        value: { meta: { type } },
+    };
 }
 
 function createUniqueIdentifierParameterName(linkId: string): string {
@@ -88,8 +91,9 @@ function convertActionParameterType(type: ActionParameterType, required = true):
             case "timestamp":
                 return timestampType();
             case "attachment":
+                return attachmentType("attachment");
             case "mediaReference":
-                return attachmentType();
+                return attachmentType("media");
             case "geohash":
                 return geopointType();
             case "geoshape":
@@ -153,8 +157,9 @@ function convertOntologyDataType(type: OntologyDataType, required = true): TypeD
             case "timestamp":
                 return timestampType();
             case "binary":
+                return attachmentType("attachment");
             case "mediaReference":
-                return attachmentType();
+                return attachmentType("media");
             case "array":
             case "set":
                 return {

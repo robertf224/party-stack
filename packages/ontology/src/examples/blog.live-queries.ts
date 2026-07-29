@@ -3,11 +3,13 @@
  */
 import { Query, concat, createCollection, eq, liveQueryCollectionOptions } from "@tanstack/db";
 import { createBlogLiveOntology } from "./generated/live.js";
-import type { OntologyAdapter } from "../live/OntologyAdapter.js";
+import type { OntologyBackendAdapter } from "../live/OntologyBackendAdapter.js";
 
-declare const adapter: OntologyAdapter;
+declare const backendAdapter: OntologyBackendAdapter;
 
-const blog = createBlogLiveOntology(adapter);
+const blog = await createBlogLiveOntology({
+    backend: () => backendAdapter,
+});
 const { Post, Author, Comment } = blog.objects;
 
 const postList = createCollection(

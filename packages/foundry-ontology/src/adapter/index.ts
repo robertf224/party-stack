@@ -1,3 +1,3 @@
 export * from "./objectCollectionOptions.js";
-export * from "./createFoundryOntologyAdapter.js";
+export * from "./createFoundryOntologyBackendAdapter.js";
 export * from "./foundryCodec.js";

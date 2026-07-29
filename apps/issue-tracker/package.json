@@ -2,36 +2,40 @@
     "name": "@party-stack/issue-tracker",
     "version": "0.0.6",
     "private": true,
+    "type": "module",
     "scripts": {
         "build": "tsc",
-        "dev": "next dev",
-        "dist": "next build",
+        "dev": "vite dev",
+        "dist": "vite build",
         "lint": "eslint",
         "ontology:generate": "ontology generate --no-js-extensions",
-        "ontology:pull": "ontology pull",
-        "start": "serve out"
+        "ontology:pull": "ontology pull"
     },
     "dependencies": {
-        "@party-stack/blobs": "workspace:*",
         "@party-stack/foundry-ontology": "workspace:*",
         "@party-stack/ontology": "workspace:*",
+        "@party-stack/ontology-devtools": "workspace:*",
+        "@party-stack/web-runtime": "workspace:*",
         "@tanstack/db": "^0.6.14",
         "@tanstack/react-db": "^0.1.92",
+        "@tanstack/react-router": "^1.168.7",
+        "@tanstack/react-start": "^1.167.12",
         "@tanstack/react-table": "^8.21.3",
-        "next": "16.1.6",
+        "motion": "^12.43.0",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
         "zod": "^4.1.13"
     },
     "devDependencies": {
-        "@tailwindcss/postcss": "^4",
+        "@tailwindcss/vite": "^4",
+        "@tanstack/devtools-vite": "^0.6.0",
         "@types/node": "^24.10.1",
         "@types/react": "^19.2.6",
         "@types/react-dom": "^19.2.3",
+        "@vitejs/plugin-react": "^4.7.0",
         "eslint": "^9.25.0",
-        "eslint-config-next": "16.1.6",
-        "serve": "^14.2.5",
         "tailwindcss": "^4.0.6",
-        "typescript": "~5.8.3"
+        "typescript": "~5.8.3",
+        "vite": "^7.2.4"
     }
 }

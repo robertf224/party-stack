@@ -34,6 +34,7 @@
         "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/urls": "^0.2.1",
         "@osdk/foundry.admin": "^2.59.0",
+        "@osdk/foundry.core": "^2.59.0",
         "@osdk/foundry.mediasets": "^2.59.0",
         "@osdk/foundry.ontologies": "^2.59.0",
         "@party-stack/foundry-client": "workspace:*",

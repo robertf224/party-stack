@@ -1,9 +1,4 @@
-import {
-    useEffect,
-    useMemo,
-    useState,
-    type DragEvent,
-} from "react";
+import { use, useEffect, useMemo, useState, type DragEvent } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { debounceStrategy, useLiveQuery, usePacedMutations } from "@tanstack/react-db";
 import { ilike, or } from "@tanstack/db";
@@ -11,11 +6,12 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Temporal } from "temporal-polyfill";
 import type { attachment } from "@party-stack/ontology/values";
-import { createRemoteOntologyAdapter } from "@party-stack/remote-ontology/client";
+import { OntologyDevtools } from "@party-stack/ontology-devtools";
+import { createRemoteOntologyBackend } from "@party-stack/remote-ontology/client";
 import { createHttpRemoteOntologyTransport } from "@party-stack/remote-ontology/http";
+import { createWebRuntime } from "@party-stack/web-runtime";
 import { createRemoteNotesLiveOntology } from "../ontology/generated/live";
 import type { Note } from "../ontology/generated/types";
-import { notesOntology } from "../ontology/ontology";
 
 const demoUsers = ["ada@example.com", "grace@example.com", "linus@example.com"];
 
@@ -64,16 +60,25 @@ function markdownImage(alt: string, url: string): string {
 }
 
 function createClientOntology(userEmail: string) {
-    const adapter = createRemoteOntologyAdapter({
-        ir: notesOntology,
-        transport: createHttpRemoteOntologyTransport({
-            url: "/api/remote-ontology/",
-            headers: () => ({
-                "x-demo-user-email": userEmail,
+    const backend = createRemoteOntologyBackend({
+        createTransport: (ir) =>
+            createHttpRemoteOntologyTransport({
+                url: "/api/remote-ontology/",
+                ir,
+                headers: () => ({
+                    "x-demo-user-email": userEmail,
+                }),
             }),
-        }),
     });
-    return createRemoteNotesLiveOntology(adapter, {
+    return createRemoteNotesLiveOntology({
+        backend,
+        id: "remote-notes",
+        runtime: createWebRuntime,
+        persistObjects: true,
+        writes: {
+            defaultMode: "outbox",
+            defaultVisibility: "optimistic",
+        },
         context: {
             user: { email: userEmail },
         },
@@ -97,11 +102,16 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
                 ),
                 p: ({ children }) => <p className="my-3 leading-7 text-slate-300">{children}</p>,
                 a: ({ children, href }) => (
-                    <a className="text-cyan-300 underline decoration-cyan-300/40 underline-offset-4" href={href}>
+                    <a
+                        className="text-cyan-300 underline decoration-cyan-300/40 underline-offset-4"
+                        href={href}
+                    >
                         {children}
                     </a>
                 ),
-                ul: ({ children }) => <ul className="my-3 list-disc space-y-1 pl-6 text-slate-300">{children}</ul>,
+                ul: ({ children }) => (
+                    <ul className="my-3 list-disc space-y-1 pl-6 text-slate-300">{children}</ul>
+                ),
                 ol: ({ children }) => (
                     <ol className="my-3 list-decimal space-y-1 pl-6 text-slate-300">{children}</ol>
                 ),
@@ -111,7 +121,9 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
                     </blockquote>
                 ),
                 code: ({ children }) => (
-                    <code className="rounded bg-white/10 px-1.5 py-0.5 text-sm text-cyan-100">{children}</code>
+                    <code className="rounded bg-white/10 px-1.5 py-0.5 text-sm text-cyan-100">
+                        {children}
+                    </code>
                 ),
                 pre: ({ children }) => (
                     <pre className="my-4 overflow-x-auto rounded-2xl border border-white/10 bg-slate-950 p-4 text-sm text-slate-200">
@@ -120,7 +132,9 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
                 ),
                 table: ({ children }) => (
                     <div className="my-4 overflow-x-auto">
-                        <table className="min-w-full border-collapse text-left text-sm text-slate-300">{children}</table>
+                        <table className="min-w-full border-collapse text-left text-sm text-slate-300">
+                            {children}
+                        </table>
                     </div>
                 ),
                 th: ({ children }) => (
@@ -189,7 +203,14 @@ function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: N
     const navigate = useNavigate();
     const [userEmail, setUserEmail] = useState(getInitialUserEmail);
     const [searchQuery, setSearchQuery] = useState("");
-    const ontology = useMemo(() => createClientOntology(userEmail), [userEmail]);
+    const ontology = use(useMemo(() => createClientOntology(userEmail), [userEmail]));
+
+    useEffect(
+        () => () => {
+            void ontology.cleanup();
+        },
+        [ontology]
+    );
 
     const trimmedSearchQuery = searchQuery.trim();
     const { data: notes } = useLiveQuery(
@@ -221,13 +242,11 @@ function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: N
 
     async function createNote() {
         const id = crypto.randomUUID();
-        await ontology.actions
-            .createNote({
-                id,
-                title: "Untitled note",
-                bodyMarkdown: "# Untitled note\n\nStart writing...",
-            })
-            .mutationFn();
+        await ontology.actions.createNote({
+            id,
+            title: "Untitled note",
+            bodyMarkdown: "# Untitled note\n\nStart writing...",
+        });
         await navigate({ to: "/notes/$noteId", params: { noteId: id } });
     }
 
@@ -299,7 +318,7 @@ function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: N
                                 className={`mb-2 block w-full rounded-2xl border p-4 text-left transition ${
                                     note.id === selectedNoteId
                                         ? "border-cyan-300/70 bg-cyan-300/10"
-                                        : "border-white/10 bg-white/3 hover:border-white/20 hover:bg-white/6"
+                                        : "bg-white/3 hover:bg-white/6 border-white/10 hover:border-white/20"
                                 }`}
                             >
                                 <div className="truncate font-medium text-slate-100">{note.title}</div>
@@ -329,6 +348,7 @@ function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: N
                     </div>
                 )}
             </main>
+            <OntologyDevtools ontology={ontology} />
         </div>
     );
 }
@@ -341,7 +361,7 @@ function NoteEditor({
 }: {
     note: Note | undefined;
     noteId: string;
-    ontology: ReturnType<typeof createClientOntology>;
+    ontology: Awaited<ReturnType<typeof createClientOntology>>;
     userEmail: string;
 }) {
     const navigate = useNavigate();
@@ -381,15 +401,13 @@ function NoteEditor({
                     transaction.mutations.map((mutation) => {
                         const modifiedNote = mutation.modified as Note;
                         const changes = mutation.changes as Partial<Note>;
-                        return ontology.actions
-                            .updateNote({
-                                note: modifiedNote.id,
-                                ...(typeof changes.title === "string" ? { title: changes.title } : {}),
-                                ...(typeof changes.bodyMarkdown === "string"
-                                    ? { bodyMarkdown: changes.bodyMarkdown }
-                                    : {}),
-                            })
-                            .mutationFn();
+                        return ontology.actions.updateNote({
+                            note: modifiedNote.id,
+                            ...(typeof changes.title === "string" ? { title: changes.title } : {}),
+                            ...(typeof changes.bodyMarkdown === "string"
+                                ? { bodyMarkdown: changes.bodyMarkdown }
+                                : {}),
+                        });
                     })
                 );
                 setSaveStatus("saved");
@@ -434,7 +452,7 @@ function NoteEditor({
         await ontology.actions.createNoteAttachment({
             note: noteId,
             attachment: createdAttachment,
-        }).mutationFn();
+        });
 
         return markdownImage(fileAltText(file), attachmentContentUrl(attachmentForUrl, userEmail));
     }
@@ -483,12 +501,16 @@ function NoteEditor({
     }
 
     async function deleteNote() {
-        await ontology.actions.deleteNote({ note: noteId }).mutationFn();
+        await ontology.actions.deleteNote({ note: noteId });
         await navigate({ to: "/" });
     }
 
     if (!note && draftTitle === "" && draftBody === "") {
-        return <div className="flex flex-1 items-center justify-center p-8 text-center text-slate-500">Loading note...</div>;
+        return (
+            <div className="flex flex-1 items-center justify-center p-8 text-center text-slate-500">
+                Loading note...
+            </div>
+        );
     }
 
     return (
@@ -504,7 +526,7 @@ function NoteEditor({
                         <input
                             value={draftTitle}
                             onChange={(event) => updateDraftTitle(event.target.value)}
-                            className="w-full max-w-2xl rounded-2xl border border-white/10 bg-white/3 px-4 py-3 text-2xl font-semibold outline-none transition placeholder:text-slate-600 focus:border-cyan-300"
+                            className="bg-white/3 w-full max-w-2xl rounded-2xl border border-white/10 px-4 py-3 text-2xl font-semibold outline-none transition placeholder:text-slate-600 focus:border-cyan-300"
                             placeholder="Untitled note"
                         />
                     </div>
@@ -526,7 +548,7 @@ function NoteEditor({
                         <button
                             type="button"
                             onClick={() => setShowPreview((current) => !current)}
-                            className="rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-200 transition hover:border-white/20 hover:bg-white/6"
+                            className="hover:bg-white/6 rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-200 transition hover:border-white/20"
                         >
                             {showPreview ? "Hide preview" : "Show preview"}
                         </button>
@@ -541,7 +563,9 @@ function NoteEditor({
                 </div>
             </div>
 
-            <div className={`grid min-h-0 flex-1 grid-cols-1 ${showPreview ? "lg:grid-cols-2" : "lg:grid-cols-1"}`}>
+            <div
+                className={`grid min-h-0 flex-1 grid-cols-1 ${showPreview ? "lg:grid-cols-2" : "lg:grid-cols-1"}`}
+            >
                 <section
                     className={`relative flex min-h-[45vh] min-w-0 flex-col p-4 sm:p-6 ${
                         showPreview ? "border-b border-white/10 lg:border-b-0 lg:border-r" : ""
@@ -556,7 +580,7 @@ function NoteEditor({
                         onDragLeave={handleDragLeave}
                         onDragOver={handleDragOver}
                         onDrop={handleDrop}
-                        className="min-h-88 flex-1 resize-none rounded-2xl border border-white/10 bg-white/3 p-4 font-mono text-sm leading-6 text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-cyan-300"
+                        className="min-h-88 bg-white/3 flex-1 resize-none rounded-2xl border border-white/10 p-4 font-mono text-sm leading-6 text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-cyan-300"
                         placeholder="Write markdown..."
                     />
                     {isDraggingImage ? (

@@ -7,23 +7,39 @@ import type {
     CreateLiveOntologyOpts,
     LiveOntology,
     OntologyDefinition,
-    OntologyAdapter,
+    OntologyBackendAdapter,
+    OntologyBackendAdapterProvider,
     OntologyCollectionOptions,
     OntologyIR,
 } from "@party-stack/ontology";
 import { serializeLoadSubsetOptions, type RemoteOntologyTransport } from "./protocol.js";
 
-export interface CreateRemoteOntologyAdapterOptions {
+export interface CreateRemoteOntologyBackendAdapterOptions {
     ir: OntologyIR;
     transport: RemoteOntologyTransport;
 }
+
+export type CreateRemoteOntologyBackendOptions<
+    Context extends Record<string, unknown> = Record<string, unknown>,
+> =
+    | {
+          transport: RemoteOntologyTransport;
+      }
+    | {
+          createTransport: (
+              ir: OntologyIR,
+              context: Context
+          ) => RemoteOntologyTransport | Promise<RemoteOntologyTransport>;
+      };
 
 export interface CreateRemoteLiveOntologyOptions<
     Context extends Record<string, unknown> = Record<string, unknown>,
 > {
     transport: RemoteOntologyTransport;
     id?: string;
-    blobStore?: CreateLiveOntologyOpts<Context>["blobStore"];
+    runtime?: CreateLiveOntologyOpts<Context>["runtime"];
+    persistObjects?: CreateLiveOntologyOpts<Context>["persistObjects"];
+    writes?: CreateLiveOntologyOpts<Context>["writes"];
     getUserId?: CreateLiveOntologyOpts<Context>["getUserId"];
 }
 
@@ -35,7 +51,9 @@ function getObjectTypePrimaryKey(ir: OntologyIR, objectType: string): string {
     return objectTypeDef.primaryKey;
 }
 
-export function createRemoteOntologyAdapter(opts: CreateRemoteOntologyAdapterOptions): OntologyAdapter {
+export function createRemoteOntologyBackendAdapter(
+    opts: CreateRemoteOntologyBackendAdapterOptions
+): OntologyBackendAdapter {
     const { transport } = opts;
     const queryClient = new QueryClient();
     const queryKeyPrefix = ["remote-ontology", "remote"];
@@ -63,12 +81,16 @@ export function createRemoteOntologyAdapter(opts: CreateRemoteOntologyAdapterOpt
             }) as unknown as OntologyCollectionOptions;
         },
         applyAction: async (actionType, parameters, live) => {
-            const response = await transport.applyAction({
-                actionType,
-                parameters,
-            }, {
-                attachments: live.attachmentUploads,
-            });
+            const response = await transport.applyAction(
+                {
+                    actionType,
+                    parameters,
+                    idempotencyKey: live.idempotencyKey,
+                },
+                {
+                    attachments: live.attachmentUploads,
+                }
+            );
 
             const invalidatedObjectTypes =
                 response.invalidatedObjectTypes && response.invalidatedObjectTypes.length > 0
@@ -101,7 +123,18 @@ export function createRemoteOntologyAdapter(opts: CreateRemoteOntologyAdapterOpt
             getAttachmentContent: (attachment) => transport.getAttachmentContent({ attachment }),
             getAttachmentMetadata: (attachment) => transport.getAttachmentMetadata({ attachment }),
         },
+        cleanup: () => queryClient.clear(),
     };
+}
+
+export function createRemoteOntologyBackend<
+    Context extends Record<string, unknown> = Record<string, unknown>,
+>(opts: CreateRemoteOntologyBackendOptions<Context>): OntologyBackendAdapterProvider<Context> {
+    return async (ir, context) =>
+        createRemoteOntologyBackendAdapter({
+            ir,
+            transport: "transport" in opts ? opts.transport : await opts.createTransport(ir, context),
+        });
 }
 
 export async function createRemoteLiveOntology<
@@ -109,15 +142,16 @@ export async function createRemoteLiveOntology<
     Context extends Record<string, unknown> = Record<string, unknown>,
 >(opts: CreateRemoteLiveOntologyOptions<Context>): Promise<LiveOntology<Ontology>> {
     const description = await opts.transport.describe();
-    const adapter = createRemoteOntologyAdapter({
-        ir: description.ir,
+    const backend = createRemoteOntologyBackend<Context>({
         transport: opts.transport,
     });
     return createLiveOntology<Ontology, Context>({
         ir: description.ir,
-        adapter,
+        backend,
         id: opts.id,
-        blobStore: opts.blobStore,
+        runtime: opts.runtime,
+        persistObjects: opts.persistObjects,
+        writes: opts.writes,
         context: (description.context ?? {}) as Context,
         getUserId: opts.getUserId,
     });

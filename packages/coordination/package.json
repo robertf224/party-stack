@@ -1,0 +1,32 @@
+{
+    "name": "@party-stack/coordination",
+    "version": "0.1.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./shared-worker": {
+            "types": "./lib/shared-worker/index.d.ts",
+            "default": "./lib/shared-worker/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "effection": "^4.0.2"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "eslint": "^9.25.0",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    }
+}

@@ -1,17 +1,22 @@
+import {
+    createPersistedCollectionCoordinator,
+    type RuntimeAdapter,
+} from "@party-stack/runtime";
 import { BasicIndex, createCollection, type Collection } from "@tanstack/db";
+import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
 import { decorateObjectAttachmentSources } from "../attachments/attachmentSources.js";
 import { ontologyObjectCollectionId } from "./ontologyObjectCollectionId.js";
-import type { OntologyObject } from "./OntologyObject.js";
 import type { OntologyIR } from "../../ir/index.js";
-import type { OntologyAdapter } from "../OntologyAdapter.js";
+import type { OntologyBackendAdapter } from "../OntologyBackendAdapter.js";
+import type { OntologyObject } from "./OntologyObject.js";
 
 export type OntologyCollection<T extends OntologyObject> = Collection<T>;
 
 function decorateCollectionSync(opts: {
     ir: OntologyIR;
     objectType: OntologyIR["objectTypes"][number];
-    collectionOptions: ReturnType<OntologyAdapter["getCollectionOptions"]>;
-}): ReturnType<OntologyAdapter["getCollectionOptions"]> {
+    collectionOptions: ReturnType<OntologyBackendAdapter["getCollectionOptions"]>;
+}): ReturnType<OntologyBackendAdapter["getCollectionOptions"]> {
     return {
         ...opts.collectionOptions,
         sync: {
@@ -39,23 +44,53 @@ function decorateCollectionSync(opts: {
 }
 
 export function createLiveOntologyObjectCollection(opts: {
-    ontologyId: string;
     ir: OntologyIR;
     objectType: OntologyIR["objectTypes"][number];
-    adapter: OntologyAdapter;
+    backendAdapter: OntologyBackendAdapter;
+    runtime: RuntimeAdapter;
+    persistObjects: boolean;
 }): OntologyCollection<OntologyObject> {
     const collectionOptions = decorateCollectionSync({
         ir: opts.ir,
         objectType: opts.objectType,
-        collectionOptions: opts.adapter.getCollectionOptions(opts.objectType.name),
+        collectionOptions: opts.backendAdapter.getCollectionOptions(opts.objectType.name),
     });
-
-    return createCollection({
+    const options = {
         ...collectionOptions,
-        id: ontologyObjectCollectionId(opts.ontologyId, opts.objectType.name),
+        id: ontologyObjectCollectionId(
+            opts.runtime.owner,
+            opts.runtime.namespace,
+            opts.objectType.name
+        ),
         defaultIndexType: BasicIndex,
-        autoIndex: "eager",
-        getKey: (object) =>
+        autoIndex: "eager" as const,
+        getKey: (object: OntologyObject) =>
             (object as Record<string, string | number>)[opts.objectType.primaryKey] as string | number,
-    }) as OntologyCollection<OntologyObject>;
+    };
+    if (!opts.persistObjects) {
+        return createCollection(options) as OntologyCollection<OntologyObject>;
+    }
+    if (!opts.runtime.persistence) {
+        throw new Error(
+            `Live ontology object persistence requires a runtime persistence adapter (${opts.objectType.name}).`
+        );
+    }
+
+    return createCollection(
+        persistedCollectionOptions<
+            OntologyObject,
+            string | number
+        >({
+            ...options,
+            schemaVersion: 1,
+            persistence: {
+                adapter: opts.runtime.persistence,
+                coordinator:
+                    createPersistedCollectionCoordinator(
+                        opts.runtime.coordination,
+                        opts.runtime.persistence
+                    ),
+            },
+        })
+    ) as OntologyCollection<OntologyObject>;
 }

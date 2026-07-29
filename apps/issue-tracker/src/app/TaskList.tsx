@@ -1,20 +1,13 @@
 "use client";
 
-import { concat, eq, ilike, useLiveQuery } from "@tanstack/react-db";
+import { eq, ilike, useLiveQuery } from "@tanstack/react-db";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import React, { useEffect, useRef, useState } from "react";
-import { flushSync } from "react-dom";
-import { ontology, User } from "./collections";
+import { OntologyDevtools } from "@party-stack/ontology-devtools";
+import { getIssueTrackerCollections } from "./collections";
 import { MiniMap } from "./MiniMap";
 import { useAction } from "./useAction";
 import type * as v from "@party-stack/ontology/values";
-
-function withViewTransition(fn: () => void) {
-    if (!document.startViewTransition) {
-        fn();
-        return;
-    }
-    document.startViewTransition(() => flushSync(fn));
-}
 
 function formatFileSize(size: number) {
     const kilobytes = size / 1024;
@@ -133,6 +126,7 @@ function useGeolocation() {
 const TaskAttachmentPreview: React.FC<{
     attachment: v.attachment;
 }> = ({ attachment }) => {
+    const { ontology } = getIssueTrackerCollections();
     const [preview, setPreview] = useState<{
         metadata: Partial<v.attachment>;
         src: string;
@@ -197,10 +191,13 @@ const TaskAttachmentPreview: React.FC<{
 };
 
 export const TaskList: React.FC = () => {
+    const { ontology, User } = getIssueTrackerCollections();
+    const prefersReducedMotion = useReducedMotion();
     const [query, setQuery] = useState("");
     const [title, setTitle] = useState("");
     const [selectedImage, setSelectedImage] = useState<SelectedTaskImage | null>(null);
     const [eagerMaterialization, setEagerMaterialization] = useState(true);
+    const [useMediaReference, setUseMediaReference] = useState(false);
     const [isImageDragActive, setIsImageDragActive] = useState(false);
     const imageUploadRequestId = useRef(0);
     const coords = useGeolocation();
@@ -214,15 +211,18 @@ export const TaskList: React.FC = () => {
             q
                 .from({ Task: ontology.objects.Task })
                 .where(({ Task }) => ilike(Task.title, `${query}%`))
-                .innerJoin({ User }, ({ Task, User }) => eq(Task.createdBy, User.id))
+                .leftJoin({ User }, ({ Task, User }) => eq(Task.createdBy, User.id))
                 .select(({ Task, User }) => ({
                     id: Task.id,
                     title: Task.title,
-                    createdBy: concat(User.givenName, " ", User.familyName),
+                    createdBy: Task.createdBy,
+                    creatorGivenName: User.givenName,
+                    creatorFamilyName: User.familyName,
                     createdAt: Task.createdAt,
                     completedAt: Task.completedAt,
                     location: Task.location,
                     attachments: Task.attachments,
+                    media: Task.media,
                 }))
                 .orderBy(({ Task }) => Task.completedAt, "desc")
                 .orderBy(({ Task }) => Task.createdAt, "asc")
@@ -242,12 +242,17 @@ export const TaskList: React.FC = () => {
             return;
         }
 
-        const attachments = selectedImage?.attachment ? [selectedImage.attachment] : undefined;
+        const attachment = selectedImage?.attachment;
+        const attachments = attachment && !useMediaReference ? [attachment] : undefined;
+        const media = attachment && useMediaReference ? attachment : undefined;
 
-        withViewTransition(() => {
-            setTitle("");
-            setSelectedImage(null);
-            createTask({ title: nextTitle, location: coords ?? undefined, attachments });
+        setTitle("");
+        setSelectedImage(null);
+        void createTask({
+            title: nextTitle,
+            location: coords ?? undefined,
+            attachments,
+            media,
         });
     };
 
@@ -264,9 +269,13 @@ export const TaskList: React.FC = () => {
         setSelectedImage({ file, status: eagerMaterialization ? "uploading" : "deferred" });
 
         if (eagerMaterialization) {
-            void ontology
-                .attachments.create(file, {
-                    target: { kind: "objectProperty", objectType: "Task", property: "attachment" },
+            void ontology.attachments
+                .create(file, {
+                    target: {
+                        kind: "objectProperty",
+                        objectType: "Task",
+                        property: useMediaReference ? "media" : "attachments",
+                    },
                     eager: true,
                 })
                 .then(({ attachment, isMaterialized }) => {
@@ -312,9 +321,13 @@ export const TaskList: React.FC = () => {
             return;
         }
 
-        void ontology
-            .attachments.create(file, {
-                target: { kind: "objectProperty", objectType: "Task", property: "attachment" },
+        void ontology.attachments
+            .create(file, {
+                target: {
+                    kind: "objectProperty",
+                    objectType: "Task",
+                    property: useMediaReference ? "media" : "attachments",
+                },
                 eager: false,
             })
             .then(({ attachment }) => {
@@ -388,19 +401,18 @@ export const TaskList: React.FC = () => {
     };
 
     const handleDeleteTask = (taskId: string) => {
-        withViewTransition(() => {
-            deleteTask({ task: taskId });
-        });
+        void deleteTask({ task: taskId });
     };
 
     const handleToggleTask = (taskId: string, completedAt: unknown) => {
-        withViewTransition(() => {
-            if (completedAt) {
-                reopenTask({ task: taskId, completedAt: null });
-                return;
-            }
-            completeTask({ task: taskId });
-        });
+        if (completedAt) {
+            void reopenTask({
+                task: taskId,
+                completedAt: null,
+            });
+            return;
+        }
+        void completeTask({ task: taskId });
     };
 
     return (
@@ -471,6 +483,19 @@ export const TaskList: React.FC = () => {
                                             type="checkbox"
                                         />
                                         Eagerly upload selected images
+                                    </label>
+                                    <label className="mt-2 flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                                        <input
+                                            checked={useMediaReference}
+                                            className="h-3.5 w-3.5 rounded border-zinc-300"
+                                            onChange={(event) => {
+                                                imageUploadRequestId.current += 1;
+                                                setSelectedImage(null);
+                                                setUseMediaReference(event.target.checked);
+                                            }}
+                                            type="checkbox"
+                                        />
+                                        Store as a Foundry media reference
                                     </label>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
@@ -544,64 +569,108 @@ export const TaskList: React.FC = () => {
                     </label>
                 </section>
                 <ul className="flex w-full max-w-xl flex-col gap-4">
-                    {tasks.map((task) => (
-                        <li
-                            key={task.id}
-                            className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
-                            style={{ viewTransitionName: `task-${task.id}` }}
-                        >
-                            <div className="flex items-start justify-between gap-4">
-                                <div className="flex min-w-0 flex-1 items-start gap-3">
-                                    <input
-                                        checked={Boolean(task.completedAt)}
-                                        className="mt-1 h-4 w-4 rounded border-zinc-300"
-                                        onChange={() => handleToggleTask(task.id, task.completedAt)}
-                                        type="checkbox"
-                                    />
-                                    <div className="flex min-w-0 flex-1 flex-col gap-2">
-                                        <h2
-                                            className={`truncate text-base font-semibold ${
-                                                task.completedAt
-                                                    ? "text-zinc-500 line-through dark:text-zinc-500"
-                                                    : "text-zinc-900 dark:text-zinc-100"
-                                            }`}
-                                        >
-                                            {task.title}{" "}
-                                            <span className="text-gray-500">
-                                                {task.createdAt?.toLocaleString()}
-                                            </span>
-                                        </h2>
-                                        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                                            Created by {task.createdBy}
-                                        </p>
-                                        {task.completedAt && (
-                                            <p className="text-xs text-zinc-500 dark:text-zinc-500">
-                                                Completed {String(task.completedAt)}
+                    <AnimatePresence initial={false} mode="popLayout">
+                        {tasks.map((task) => (
+                            <motion.li
+                                key={task.id}
+                                layout={prefersReducedMotion ? false : "position"}
+                                initial={
+                                    prefersReducedMotion
+                                        ? false
+                                        : {
+                                              opacity: 0,
+                                              scale: 0.985,
+                                              y: -8,
+                                          }
+                                }
+                                animate={{
+                                    opacity: 1,
+                                    scale: 1,
+                                    y: 0,
+                                }}
+                                exit={
+                                    prefersReducedMotion
+                                        ? { opacity: 0 }
+                                        : {
+                                              opacity: 0,
+                                              scale: 0.985,
+                                              x: 12,
+                                          }
+                                }
+                                transition={{
+                                    duration: 0.2,
+                                    ease: [0.22, 1, 0.36, 1],
+                                    layout: {
+                                        duration: 0.22,
+                                    },
+                                }}
+                                className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+                            >
+                                <div className="flex items-start justify-between gap-4">
+                                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                                        <input
+                                            checked={Boolean(task.completedAt)}
+                                            className="mt-1 h-4 w-4 rounded border-zinc-300"
+                                            onChange={() => handleToggleTask(task.id, task.completedAt)}
+                                            type="checkbox"
+                                        />
+                                        <div className="flex min-w-0 flex-1 flex-col gap-2">
+                                            <h2
+                                                className={`truncate text-base font-semibold ${
+                                                    task.completedAt
+                                                        ? "text-zinc-500 line-through dark:text-zinc-500"
+                                                        : "text-zinc-900 dark:text-zinc-100"
+                                                }`}
+                                            >
+                                                {task.title}{" "}
+                                                <span className="text-gray-500">
+                                                    {task.createdAt?.toLocaleString()}
+                                                </span>
+                                            </h2>
+                                            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                                                Created by{" "}
+                                                {[task.creatorGivenName, task.creatorFamilyName]
+                                                    .filter(Boolean)
+                                                    .join(" ") ||
+                                                    task.createdBy ||
+                                                    "Unknown user"}
                                             </p>
-                                        )}
-                                        {task.location && (
-                                            <MiniMap lat={task.location.lat} lon={task.location.lon} />
-                                        )}
-                                        {task.attachments?.[0]?.id && (
-                                            <TaskAttachmentPreview
-                                                key={task.attachments[0].id}
-                                                attachment={task.attachments[0]}
-                                            />
-                                        )}
+                                            {task.completedAt && (
+                                                <p className="text-xs text-zinc-500 dark:text-zinc-500">
+                                                    Completed {String(task.completedAt)}
+                                                </p>
+                                            )}
+                                            {task.location && (
+                                                <MiniMap lat={task.location.lat} lon={task.location.lon} />
+                                            )}
+                                            {task.attachments?.[0]?.id && (
+                                                <TaskAttachmentPreview
+                                                    key={task.attachments[0].id}
+                                                    attachment={task.attachments[0]}
+                                                />
+                                            )}
+                                            {task.media?.id && (
+                                                <TaskAttachmentPreview
+                                                    key={task.media.id}
+                                                    attachment={task.media}
+                                                />
+                                            )}
+                                        </div>
                                     </div>
+                                    <button
+                                        className="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40"
+                                        onClick={() => handleDeleteTask(task.id)}
+                                        type="button"
+                                    >
+                                        Delete
+                                    </button>
                                 </div>
-                                <button
-                                    className="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-950/40"
-                                    onClick={() => handleDeleteTask(task.id)}
-                                    type="button"
-                                >
-                                    Delete
-                                </button>
-                            </div>
-                        </li>
-                    ))}
+                            </motion.li>
+                        ))}
+                    </AnimatePresence>
                 </ul>
             </main>
+            <OntologyDevtools ontology={ontology} />
         </div>
     );
 };
