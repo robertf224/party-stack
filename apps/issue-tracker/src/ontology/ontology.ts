@@ -116,7 +116,11 @@ export default defineOntology({
                     displayName: "Attachments",
                     type: o.optional({
                         type: o.list({
-                            elementType: o.attachment({}),
+                            elementType: o.attachment({
+                                meta: {
+                                    type: "attachment",
+                                },
+                            }),
                         }),
                     }),
                 },
@@ -267,6 +271,224 @@ export default defineOntology({
                 }),
             ],
         },
+        {
+            name: "streamlineCreateToken",
+            displayName: "[Streamline] Create Token",
+            parameters: [
+                {
+                    name: "contextObjectId",
+                    displayName: "Context object id",
+                    type: o.string({}),
+                },
+                {
+                    name: "tokenTypeId",
+                    displayName: "Token type id",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "allowedFormIds",
+                    displayName: "Allowed form ids",
+                    type: o.list({
+                        elementType: o.string({}),
+                    }),
+                },
+                {
+                    name: "name",
+                    displayName: "Name",
+                    type: o.string({}),
+                },
+                {
+                    name: "secretHash",
+                    displayName: "Secret hash",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "hashingAlgorithm",
+                    displayName: "Hashing algorithm",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "expiresAt",
+                    displayName: "Expires at",
+                    type: o.optional({
+                        type: o.timestamp({}),
+                    }),
+                },
+            ],
+            logic: [],
+        },
     ],
-    queryFunctionTypes: [],
+    queryFunctionTypes: [
+        {
+            name: "googleMapsAutocompleteAddress",
+            displayName: "googleMapsAutocompleteAddress",
+            parameters: [
+                {
+                    name: "apiKey",
+                    displayName: "apiKey",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "query",
+                    displayName: "query",
+                    type: o.string({}),
+                },
+                {
+                    name: "sessionToken",
+                    displayName: "sessionToken",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "countries",
+                    displayName: "countries",
+                    type: o.optional({
+                        type: o.list({
+                            elementType: o.string({}),
+                        }),
+                    }),
+                },
+            ],
+            returnType: o.list({
+                elementType: o.struct({
+                    fields: [
+                        {
+                            name: "id",
+                            displayName: "id",
+                            type: o.string({}),
+                        },
+                        {
+                            name: "label",
+                            displayName: "label",
+                            type: o.string({}),
+                        },
+                        {
+                            name: "address",
+                            displayName: "address",
+                            type: o.optional({
+                                type: o.struct({
+                                    fields: [
+                                        {
+                                            name: "address",
+                                            displayName: "address",
+                                            type: o.string({}),
+                                        },
+                                        {
+                                            name: "address2",
+                                            displayName: "address2",
+                                            type: o.optional({
+                                                type: o.string({}),
+                                            }),
+                                        },
+                                        {
+                                            name: "city",
+                                            displayName: "city",
+                                            type: o.string({}),
+                                        },
+                                        {
+                                            name: "state",
+                                            displayName: "state",
+                                            type: o.optional({
+                                                type: o.string({}),
+                                            }),
+                                        },
+                                        {
+                                            name: "postalCode",
+                                            displayName: "postalCode",
+                                            type: o.string({}),
+                                        },
+                                        {
+                                            name: "country",
+                                            displayName: "country",
+                                            type: o.string({}),
+                                        },
+                                    ],
+                                }),
+                            }),
+                        },
+                    ],
+                }),
+            }),
+        },
+        {
+            name: "googleMapsGetAddress",
+            displayName: "googleMapsGetAddress",
+            parameters: [
+                {
+                    name: "apiKey",
+                    displayName: "apiKey",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "sessionToken",
+                    displayName: "sessionToken",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "id",
+                    displayName: "id",
+                    type: o.string({}),
+                },
+            ],
+            returnType: o.struct({
+                fields: [
+                    {
+                        name: "address",
+                        displayName: "address",
+                        type: o.struct({
+                            fields: [
+                                {
+                                    name: "address",
+                                    displayName: "address",
+                                    type: o.string({}),
+                                },
+                                {
+                                    name: "address2",
+                                    displayName: "address2",
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
+                                },
+                                {
+                                    name: "city",
+                                    displayName: "city",
+                                    type: o.string({}),
+                                },
+                                {
+                                    name: "state",
+                                    displayName: "state",
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
+                                },
+                                {
+                                    name: "postalCode",
+                                    displayName: "postalCode",
+                                    type: o.string({}),
+                                },
+                                {
+                                    name: "country",
+                                    displayName: "country",
+                                    type: o.string({}),
+                                },
+                            ],
+                        }),
+                    },
+                ],
+            }),
+        },
+    ],
 });

@@ -4,11 +4,13 @@ import type {
     ActionTypeDef,
     Expression,
     PropertyAssignment,
+    StringConstraint,
     TypeDef,
 } from "@party-stack/ontology";
 import { toOntologyActionTypeName } from "../utils/actionTypeName.js";
 import type {
     ActionLogicRule,
+    ActionParameterValidation,
     ActionParameterType,
     ActionTypeFullMetadata,
     LogicRuleArgument,
@@ -24,8 +26,8 @@ function maybeOptional(type: TypeDef, required: boolean): TypeDef {
     return required ? type : { kind: "optional", value: { type } };
 }
 
-function stringType(): TypeDef {
-    return { kind: "string", value: {} };
+function stringType(constraint?: StringConstraint): TypeDef {
+    return { kind: "string", value: { constraint } };
 }
 
 function booleanType(): TypeDef {
@@ -74,11 +76,26 @@ function getUniqueIdentifierLinkIdFromParameterName(parameterName: string): stri
     return decodeURIComponent(parameterName.slice(FOUNDRY_UUID_PARAMETER_PREFIX.length));
 }
 
-function convertActionParameterType(type: ActionParameterType, required = true): TypeDef {
+function convertActionParameterType(
+    type: ActionParameterType,
+    required = true,
+    validation?: ActionParameterValidation
+): TypeDef {
+    const allowedValues = validation?.defaultValidation.allowedValues;
+    if (allowedValues?.type === "valueType") {
+        return maybeOptional(
+            {
+                kind: "ref",
+                value: { name: allowedValues.apiName },
+            },
+            required
+        );
+    }
+
     const baseType: TypeDef = (() => {
         switch (type.type) {
             case "string":
-                return stringType();
+                return stringType(convertActionParameterStringConstraint(validation));
             case "boolean":
                 return booleanType();
             case "integer":
@@ -128,11 +145,39 @@ function convertActionParameterType(type: ActionParameterType, required = true):
             case "objectType":
             case "interfaceObject":
             case "objectSet":
+            case "scenarioReference":
                 return stringType();
         }
     })();
 
     return maybeOptional(baseType, required);
+}
+
+function convertActionParameterStringConstraint(
+    validation?: ActionParameterValidation
+): StringConstraint | undefined {
+    const allowedValues = validation?.defaultValidation.allowedValues;
+    if (allowedValues?.type === "oneOf" && !allowedValues.otherValuesAllowed) {
+        const options = allowedValues.options.flatMap((option) => {
+            const value: unknown = option.value;
+            return typeof value === "string"
+                ? [{ value, label: option.displayName }]
+                : [];
+        });
+        return options.length > 0
+            ? {
+                  kind: "enum",
+                  value: { options },
+              }
+            : undefined;
+    }
+    if (allowedValues?.type === "text" && allowedValues.regex) {
+        return {
+            kind: "regex",
+            value: { regex: allowedValues.regex },
+        };
+    }
+    return undefined;
 }
 
 function convertOntologyDataType(type: OntologyDataType, required = true): TypeDef {
@@ -447,7 +492,11 @@ export function convertFoundryMetaActionType(actionType: ActionTypeFullMetadata)
                 ([name, parameter]): ActionParameterDef => ({
                     name,
                     displayName: parameter.displayName ?? name,
-                    type: convertActionParameterType(parameter.dataType, parameter.required),
+                    type: convertActionParameterType(
+                        parameter.dataType,
+                        parameter.required,
+                        parameter.validation
+                    ),
                     description: parameter.description,
                 })
             ),

@@ -37,7 +37,7 @@ function attachmentType(type: "attachment" | "media"): TypeDef {
 }
 
 function maybeOptional(type: TypeDef, required: boolean): TypeDef {
-    return required ? type : { kind: "optional", value: { type } };
+    return required || type.kind === "optional" ? type : { kind: "optional", value: { type } };
 }
 
 function convertQueryDataType(type: QueryDataType): TypeDef {
@@ -79,15 +79,25 @@ function convertQueryDataType(type: QueryDataType): TypeDef {
                 },
             };
         case "union":
-            return {
-                kind: "union",
-                value: {
-                    variants: type.unionTypes.map((variant, index) => ({
-                        name: `variant${index + 1}`,
-                        type: convertQueryDataType(variant),
-                    })),
-                },
-            };
+            {
+                const nonNullTypes = type.unionTypes.filter((variant) => variant.type !== "null");
+                const hasNull = nonNullTypes.length !== type.unionTypes.length;
+                const converted =
+                    nonNullTypes.length === 0
+                        ? { kind: "unknown" as const, value: {} }
+                        : nonNullTypes.length === 1
+                          ? convertQueryDataType(nonNullTypes[0]!)
+                          : {
+                                kind: "union" as const,
+                                value: {
+                                    variants: nonNullTypes.map((variant, index) => ({
+                                        name: `variant${index + 1}`,
+                                        type: convertQueryDataType(variant),
+                                    })),
+                                },
+                            };
+                return maybeOptional(converted, !hasNull);
+            }
         case "void":
         case "null":
             return { kind: "unknown", value: {} };

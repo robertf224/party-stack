@@ -3,5 +3,6 @@ import { foundryOntologyConfigAdapter, FoundryOntologyConfig } from "@party-stac
 export default {
     adapter: foundryOntologyConfigAdapter,
     objectTypeNames: ["Task"],
-    actionTypeNames: ["createTask", "completeTask", "reopenTask", "deleteTask"],
+    actionTypeNames: ["createTask", "completeTask", "reopenTask", "deleteTask", "streamlineCreateToken"],
+    queryFunctionTypeNames: ["googleMapsAutocompleteAddress", "googleMapsGetAddress"],
 } satisfies FoundryOntologyConfig;
