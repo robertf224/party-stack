@@ -116,7 +116,11 @@ export default defineOntology({
                     displayName: "Attachments",
                     type: o.optional({
                         type: o.list({
-                            elementType: o.attachment({}),
+                            elementType: o.attachment({
+                                meta: {
+                                    type: "attachment",
+                                },
+                            }),
                         }),
                     }),
                 },

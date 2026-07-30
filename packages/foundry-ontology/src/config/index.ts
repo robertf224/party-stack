@@ -4,7 +4,7 @@ import { createOntologyClient, type OntologyClient } from "@party-stack/foundry-
 import type { OntologyConfig, OntologyConfigAdapter } from "@party-stack/ontology";
 import { createFoundryMetaOntologyBackendAdapter } from "../meta/createFoundryMetaOntologyBackendAdapter.js";
 
-const DEFAULT_FOUNDRY_SCOPES = ["api:read-data", "offline_access"];
+const DEFAULT_FOUNDRY_SCOPES = ["api:use-ontologies-read", "offline_access"];
 
 export interface FoundryOntologyConfigAdapterOpts {
     foundryUrl: string;
