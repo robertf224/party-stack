@@ -1,5 +1,13 @@
 # @party-stack/foundry-ontology
 
+## 0.4.1
+
+### Patch Changes
+
+- dd8e2ee: fix function union types + function-backed action pulls
+- Updated dependencies [dd8e2ee]
+    - @party-stack/foundry-object-set-watcher@0.3.1
+
 ## 0.4.0
 
 ### Minor Changes
