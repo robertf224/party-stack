@@ -1,4 +1,7 @@
 {
     "$schema": "https://json.schemastore.org/tsconfig",
-    "extends": "@bobbyfidz/react-build-config/tsconfig-base.json"
+    "extends": "@bobbyfidz/react-build-config/tsconfig-base.json",
+    "compilerOptions": {
+        "skipLibCheck": true
+    }
 }

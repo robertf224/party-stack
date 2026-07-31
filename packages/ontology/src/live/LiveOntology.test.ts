@@ -92,6 +92,7 @@ describe("createLiveOntology", () => {
             },
         });
 
+        expect(ontology.ir).toBe(ir);
         expect(ontology.outbox).toBeDefined();
         await expect(ontology.queryFunctions.currentUser!({})).resolves.toBe("user-1");
         expect(receivedContext).toBe(context);

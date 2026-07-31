@@ -1,9 +1,13 @@
 "use client";
 
 import { eq, ilike, useLiveQuery } from "@tanstack/react-db";
+import { TanStackDevtools } from "@tanstack/react-devtools";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import React, { useEffect, useRef, useState } from "react";
-import { OntologyDevtools } from "@party-stack/ontology-devtools";
+import {
+    createOntologyDevtoolsPlugin,
+    ontologyDevtoolsTrigger,
+} from "@party-stack/ontology-devtools";
 import { getIssueTrackerCollections } from "./collections";
 import { MiniMap } from "./MiniMap";
 import { useAction } from "./useAction";
@@ -192,6 +196,10 @@ const TaskAttachmentPreview: React.FC<{
 
 export const TaskList: React.FC = () => {
     const { ontology, User } = getIssueTrackerCollections();
+    const ontologyDevtoolsPlugin = React.useMemo(
+        () => createOntologyDevtoolsPlugin({ ontology }),
+        [ontology]
+    );
     const prefersReducedMotion = useReducedMotion();
     const [query, setQuery] = useState("");
     const [title, setTitle] = useState("");
@@ -670,7 +678,10 @@ export const TaskList: React.FC = () => {
                     </AnimatePresence>
                 </ul>
             </main>
-            <OntologyDevtools ontology={ontology} />
+            <TanStackDevtools
+                config={{ customTrigger: ontologyDevtoolsTrigger }}
+                plugins={[ontologyDevtoolsPlugin]}
+            />
         </div>
     );
 };

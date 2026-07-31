@@ -81,6 +81,7 @@ export type LiveOntologyQueryFunctions<QueryFunctionTypes extends OntologyDefini
     };
 
 export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefinition> {
+    readonly ir: OntologyIR;
     objects: LiveOntologyObjects<Ontology["objectTypes"]>;
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
     queryFunctions: LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>;
@@ -163,6 +164,7 @@ export async function createLiveOntology<
     );
 
     return {
+        ir: opts.ir,
         objects: objects as unknown as LiveOntologyObjects<Ontology["objectTypes"]>,
         actions: actionsSubsystem.actions as unknown as LiveOntologyActions<Ontology["actionTypes"]>,
         queryFunctions: queryFunctions as unknown as LiveOntologyQueryFunctions<
