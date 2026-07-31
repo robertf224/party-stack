@@ -1,5 +1,11 @@
 # @party-stack/ontology
 
+## 0.5.0
+
+### Minor Changes
+
+- 5bdc4be: improve devtools
+
 ## 0.4.0
 
 ### Minor Changes

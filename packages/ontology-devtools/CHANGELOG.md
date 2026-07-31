@@ -1,5 +1,16 @@
 # @party-stack/ontology-devtools
 
+## 0.2.0
+
+### Minor Changes
+
+- 5bdc4be: improve devtools
+
+### Patch Changes
+
+- Updated dependencies [5bdc4be]
+    - @party-stack/ontology@0.5.0
+
 ## 0.1.0
 
 ### Minor Changes
