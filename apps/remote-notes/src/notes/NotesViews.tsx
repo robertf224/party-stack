@@ -1,4 +1,5 @@
 import { use, useEffect, useMemo, useState, type DragEvent } from "react";
+import { TanStackDevtools } from "@tanstack/react-devtools";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { debounceStrategy, useLiveQuery, usePacedMutations } from "@tanstack/react-db";
 import { ilike, or } from "@tanstack/db";
@@ -6,7 +7,10 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Temporal } from "temporal-polyfill";
 import type { attachment } from "@party-stack/ontology/values";
-import { OntologyDevtools } from "@party-stack/ontology-devtools";
+import {
+    createOntologyDevtoolsPlugin,
+    ontologyDevtoolsTrigger,
+} from "@party-stack/ontology-devtools";
 import { createRemoteOntologyBackend } from "@party-stack/remote-ontology/client";
 import { createHttpRemoteOntologyTransport } from "@party-stack/remote-ontology/http";
 import { createWebRuntime } from "@party-stack/web-runtime";
@@ -204,6 +208,10 @@ function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: N
     const [userEmail, setUserEmail] = useState(getInitialUserEmail);
     const [searchQuery, setSearchQuery] = useState("");
     const ontology = use(useMemo(() => createClientOntology(userEmail), [userEmail]));
+    const ontologyDevtoolsPlugin = useMemo(
+        () => createOntologyDevtoolsPlugin({ ontology }),
+        [ontology]
+    );
 
     useEffect(
         () => () => {
@@ -348,7 +356,10 @@ function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: N
                     </div>
                 )}
             </main>
-            <OntologyDevtools ontology={ontology} />
+            <TanStackDevtools
+                config={{ customTrigger: ontologyDevtoolsTrigger }}
+                plugins={[ontologyDevtoolsPlugin]}
+            />
         </div>
     );
 }

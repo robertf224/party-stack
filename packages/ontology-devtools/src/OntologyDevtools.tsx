@@ -1,346 +1,91 @@
-import { ArrowPathIcon, CheckIcon, InboxStackIcon, TrashIcon } from "@heroicons/react/24/outline";
-import { useLiveQuery } from "@tanstack/react-db";
-import { TanStackDevtools } from "@tanstack/react-devtools";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Dialog } from "@base-ui/react/dialog";
+import { Menu } from "@base-ui/react/menu";
+import { Tabs } from "@base-ui/react/tabs";
+import { Tooltip } from "@base-ui/react/tooltip";
+import {
+    ArrowPathIcon,
+    Bars2Icon,
+    CalendarDaysIcon,
+    CheckIcon,
+    CheckCircleIcon,
+    ChevronDownIcon,
+    ChevronUpIcon,
+    ChevronUpDownIcon,
+    CircleStackIcon,
+    ClockIcon,
+    CodeBracketSquareIcon,
+    HashtagIcon,
+    InboxStackIcon,
+    LinkIcon,
+    ListBulletIcon,
+    MapIcon,
+    MapPinIcon,
+    PaperClipIcon,
+    QuestionMarkCircleIcon,
+    ShareIcon,
+    Squares2X2Icon,
+    TrashIcon,
+    ViewColumnsIcon,
+} from "@heroicons/react/24/outline";
+import NumberFlow from "@number-flow/react";
+import { createReactPlugin } from "@tanstack/devtools-utils/react";
+import { useLiveInfiniteQuery, useLiveQuery } from "@tanstack/react-db";
+import {
+    createColumnHelper,
+    flexRender,
+    getCoreRowModel,
+    useReactTable,
+    type ColumnOrderState,
+    type ColumnSizingState,
+    type SortingState,
+    type VisibilityState,
+} from "@tanstack/react-table";
+import {
+    useEffect,
+    useId,
+    useMemo,
+    useRef,
+    useState,
+    type ComponentType,
+    type CSSProperties,
+    type ReactNode,
+} from "react";
 import { flushSync } from "react-dom";
 import type {
     LiveOntology,
     OntologyDefinition,
+    OntologyIR,
     OntologyOutbox,
     OntologyOutboxEntry,
+    ObjectTypeDef,
+    TypeDef,
 } from "@party-stack/ontology";
+import type * as v from "@party-stack/ontology/values";
+import type { TanStackDevtoolsReactPlugin } from "@tanstack/react-devtools";
+import "./styles.css";
 
-export interface OntologyDevtoolsProps<Ontology extends OntologyDefinition = OntologyDefinition> {
+export interface OntologyDevtoolsPanelProps<
+    Ontology extends OntologyDefinition = OntologyDefinition,
+> {
     ontology: LiveOntology<Ontology>;
+    theme?: "light" | "dark";
 }
 
-const styles = `
-.ps-outbox-root {
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
+export interface OntologyDevtoolsPluginOptions<
+    Ontology extends OntologyDefinition = OntologyDefinition,
+> {
+    ontology: LiveOntology<Ontology>;
+    id?: string;
+    name?: TanStackDevtoolsReactPlugin["name"];
+    defaultOpen?: boolean;
 }
-.ps-outbox {
-  box-sizing: border-box;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden auto;
-  overscroll-behavior: contain;
-  padding: 20px 22px;
-  color: #e7e5e4;
-  background:
-    radial-gradient(circle at 8% 0%, rgba(232, 59, 50, .12), transparent 30%),
-    linear-gradient(145deg, #171717 0%, #111113 100%);
-  font: 13px/1.45 Inter, ui-sans-serif, system-ui, sans-serif;
-}
-.ps-outbox * { box-sizing: border-box; }
-.ps-outbox-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-.ps-outbox-heading {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-}
-.ps-outbox-mark {
-  width: 30px;
-  height: 30px;
-  padding: 5px;
-  border: 1px solid rgba(255, 255, 255, .1);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, .06);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .24);
-  color: #fb7185;
-}
-.ps-outbox-mark svg { display: block; width: 100%; height: 100%; }
-.ps-outbox-title-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.ps-outbox-title {
-  margin: 0;
-  color: #fafaf9;
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: -.015em;
-}
-.ps-outbox-subtitle { margin: 2px 0 0; color: #a8a29e; font-size: 12px; }
-.ps-outbox-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 25px;
-  padding: 2px 7px;
-  border: 1px solid #3f3f46;
-  border-radius: 999px;
-  color: #d6d3d1;
-  background: rgba(39, 39, 42, .75);
-  text-align: center;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.ps-outbox-track {
-  display: flex;
-  align-items: flex-start;
-  width: 100%;
-  padding: 4px 2px 16px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: thin;
-  scrollbar-color: #52525b transparent;
-  scroll-snap-type: x proximity;
-}
-.ps-outbox-step {
-  display: flex;
-  flex: none;
-  align-items: flex-start;
-}
-.ps-outbox-node {
-  flex: 0 0 clamp(250px, 31vw, 330px);
-  min-width: 0;
-  scroll-snap-align: start;
-}
-.ps-outbox-connector {
-  position: relative;
-  flex: 0 0 52px;
-  align-self: flex-start;
-  height: 2px;
-  margin: 30px 8px 0;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #3f3f46, #52525b);
-}
-.ps-outbox-connector::before {
-  position: absolute;
-  z-index: 1;
-  right: 0;
-  top: -3px;
-  width: 7px;
-  height: 7px;
-  content: "";
-  border-top: 2px solid #71717a;
-  border-right: 2px solid #71717a;
-  transform: rotate(45deg);
-}
-.ps-outbox-card {
-  position: relative;
-  min-height: 190px;
-  padding: 15px;
-  overflow: hidden;
-  border: 1px solid #36363b;
-  border-radius: 14px;
-  background: linear-gradient(155deg, rgba(45, 45, 50, .96), rgba(31, 31, 35, .96));
-  box-shadow: 0 14px 36px rgba(0, 0, 0, .2);
-}
-.ps-outbox-card::before {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  content: "";
-  background: #38bdf8;
-}
-.ps-card-executing::before {
-  background: #f59e0b;
-}
-.ps-card-failed::before { background: #ef4444; }
-.ps-outbox-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.ps-outbox-name {
-  min-width: 0;
-  overflow: hidden;
-  color: #fafaf9;
-  font-size: 14px;
-  font-weight: 680;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ps-outbox-status {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .03em;
-}
-.ps-status-dot { width: 5px; height: 5px; border-radius: 999px; background: currentColor; }
-.ps-status-queued { color: #7dd3fc; background: rgba(12, 74, 110, .45); }
-.ps-status-executing { color: #fcd34d; background: rgba(120, 53, 15, .42); }
-.ps-status-failed { color: #fca5a5; background: rgba(127, 29, 29, .42); }
-.ps-outbox-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 13px;
-  margin-top: 10px;
-  color: #a8a29e;
-  font-size: 11px;
-}
-.ps-outbox-meta strong { color: #d6d3d1; font-weight: 600; }
-.ps-outbox-meta-divider {
-  align-self: center;
-  width: 3px;
-  height: 3px;
-  border-radius: 999px;
-  background: currentColor;
-  opacity: .65;
-}
-.ps-outbox-permanent { color: #fca5a5; }
-.ps-outbox-time { cursor: help; font-variant-numeric: tabular-nums; }
-.ps-outbox-error {
-  margin-top: 11px;
-  padding: 8px 10px;
-  border: 1px solid rgba(239, 68, 68, .35);
-  border-radius: 8px;
-  color: #fecaca;
-  background: rgba(69, 10, 10, .55);
-  font-size: 11px;
-  white-space: pre-wrap;
-}
-.ps-outbox-details { margin-top: 11px; color: #a8a29e; font-size: 11px; }
-.ps-outbox-details summary { cursor: pointer; user-select: none; transition: color 120ms ease; }
-.ps-outbox-details summary:hover { color: #e7e5e4; }
-.ps-outbox-details pre {
-  max-height: 150px;
-  margin: 8px 0 0;
-  padding: 10px;
-  overflow: auto;
-  border: 1px solid #303036;
-  border-radius: 8px;
-  color: #d4d4d8;
-  background: rgba(9, 9, 11, .7);
-  font: 11px/1.5 ui-monospace, SFMono-Regular, monospace;
-}
-.ps-outbox-actions { display: flex; gap: 7px; margin-top: 13px; }
-.ps-button {
-  appearance: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
-}
-.ps-button svg { width: 13px; height: 13px; }
-.ps-button:disabled { cursor: not-allowed; opacity: .4; }
-.ps-button-primary { color: #e0f2fe; border-color: #075985; background: rgba(7, 89, 133, .7); }
-.ps-button-primary:not(:disabled):hover { background: #0369a1; }
-.ps-button-danger { color: #fca5a5; border-color: #7f1d1d; background: rgba(69, 10, 10, .16); }
-.ps-button-danger:not(:disabled):hover { background: rgba(127, 29, 29, .7); }
-.ps-outbox-action-error { margin-top: 8px; color: #fca5a5; font-size: 12px; }
-.ps-outbox-empty {
-  display: grid;
-  place-items: center;
-  min-height: 150px;
-  padding: 28px 16px;
-  border: 1px dashed #3f3f46;
-  border-radius: 14px;
-  color: #a8a29e;
-  background: rgba(39, 39, 42, .3);
-  text-align: center;
-}
-.ps-outbox-empty-mark {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  margin: 0 auto 9px;
-  border: 1px solid #3f3f46;
-  border-radius: 999px;
-  color: #86efac;
-  background: #1c2920;
-}
-.ps-outbox-empty-mark svg { width: 17px; height: 17px; }
-.ps-outbox-empty strong { display: block; margin-bottom: 2px; color: #e7e5e4; }
-html[data-ps-outbox-transition]::view-transition-old(root),
-html[data-ps-outbox-transition]::view-transition-new(root) {
-  animation: none;
-}
-html[data-ps-outbox-transition]::view-transition-group(*) {
-  animation-duration: 240ms;
-  animation-timing-function: cubic-bezier(.22, 1, .36, 1);
-}
-.ps-theme-light .ps-outbox {
-  color: #292524;
-  background:
-    radial-gradient(circle at 8% 0%, rgba(232, 59, 50, .1), transparent 30%),
-    linear-gradient(145deg, #fafaf9 0%, #f5f5f4 100%);
-}
-.ps-theme-light .ps-outbox-mark {
-  color: #dc2626;
-  border-color: #e7e5e4;
-  background: rgba(255, 255, 255, .82);
-  box-shadow: 0 8px 22px rgba(41, 37, 36, .1);
-}
-.ps-theme-light .ps-outbox-title,
-.ps-theme-light .ps-outbox-name,
-.ps-theme-light .ps-outbox-empty strong {
-  color: #1c1917;
-}
-.ps-theme-light .ps-outbox-subtitle,
-.ps-theme-light .ps-outbox-meta,
-.ps-theme-light .ps-outbox-details {
-  color: #78716c;
-}
-.ps-theme-light .ps-outbox-meta strong { color: #44403c; }
-.ps-theme-light .ps-outbox-count {
-  color: #57534e;
-  border-color: #d6d3d1;
-  background: rgba(255, 255, 255, .8);
-}
-.ps-theme-light .ps-outbox-card {
-  border-color: #d6d3d1;
-  background: linear-gradient(155deg, rgba(255, 255, 255, .98), rgba(245, 245, 244, .98));
-  box-shadow: 0 14px 34px rgba(41, 37, 36, .1);
-}
-.ps-theme-light .ps-outbox-connector { background: #d6d3d1; }
-.ps-theme-light .ps-outbox-details summary:hover { color: #292524; }
-.ps-theme-light .ps-outbox-details pre {
-  color: #44403c;
-  border-color: #e7e5e4;
-  background: rgba(255, 255, 255, .86);
-}
-.ps-theme-light .ps-outbox-empty {
-  color: #78716c;
-  border-color: #d6d3d1;
-  background: rgba(255, 255, 255, .55);
-}
-.ps-theme-light .ps-outbox-empty-mark {
-  color: #15803d;
-  border-color: #bbf7d0;
-  background: #f0fdf4;
-}
-.ps-theme-light .ps-button-primary {
-  color: #075985;
-  border-color: #7dd3fc;
-  background: #e0f2fe;
-}
-.ps-theme-light .ps-button-primary:not(:disabled):hover { background: #bae6fd; }
-.ps-theme-light .ps-button-danger {
-  color: #b91c1c;
-  border-color: #fecaca;
-  background: #fff7f7;
-}
-.ps-theme-light .ps-button-danger:not(:disabled):hover { background: #fee2e2; }
-`;
 
-function PartyStackLogo({ theme }: { theme: "light" | "dark" }) {
+export interface OntologyDevtoolsChromeProps {
+    theme: "light" | "dark";
+}
+
+
+function PartyStackLogo({ theme }: OntologyDevtoolsChromeProps) {
     const id = useId().replaceAll(":", "");
     const gradientId = `ps-ball-${id}`;
     const shadowId = `ps-shadow-${id}`;
@@ -425,7 +170,7 @@ function PartyStackLogomark() {
     );
 }
 
-function PartyStackPluginName({ theme }: { theme: "light" | "dark" }) {
+export function OntologyDevtoolsPluginName({ theme }: OntologyDevtoolsChromeProps) {
     return (
         <div style={{ height: 30, width: 120 }}>
             <PartyStackLogo theme={theme} />
@@ -433,11 +178,47 @@ function PartyStackPluginName({ theme }: { theme: "light" | "dark" }) {
     );
 }
 
+export function OntologyDevtoolsTrigger({ theme }: OntologyDevtoolsChromeProps) {
+    const dark = theme === "dark";
+    return (
+        <div
+            aria-label="Open Ontology devtools"
+            role="button"
+            style={{
+                alignItems: "center",
+                background: dark
+                    ? "linear-gradient(145deg, #2d2d31, #171719)"
+                    : "linear-gradient(145deg, #fff, #f5f5f4)",
+                border: dark ? "1px solid rgba(255,255,255,.16)" : "1px solid rgba(23,23,23,.14)",
+                borderRadius: "999px",
+                boxShadow: dark
+                    ? "0 10px 30px rgba(0,0,0,.34), 0 0 0 4px rgba(232,59,50,.11)"
+                    : "0 10px 28px rgba(28,25,23,.16), 0 0 0 4px rgba(232,59,50,.09)",
+                cursor: "pointer",
+                display: "flex",
+                height: 48,
+                justifyContent: "center",
+                padding: 8,
+                width: 48,
+            }}
+            title="Open Ontology devtools"
+        >
+            <PartyStackLogomark />
+        </div>
+    );
+}
+
+export function ontologyDevtoolsTrigger(
+    _element: HTMLElement,
+    { theme }: OntologyDevtoolsChromeProps
+) {
+    return <OntologyDevtoolsTrigger theme={theme} />;
+}
+
 function OutboxPanel({ children, theme }: { children: ReactNode; theme: "light" | "dark" }) {
     return (
         <div className={`ps-outbox-root ps-theme-${theme}`}>
             <div className="ps-outbox">
-                <style>{styles}</style>
                 {children}
             </div>
         </div>
@@ -638,20 +419,6 @@ function OutboxRows({ outbox, theme }: { outbox: OntologyOutbox; theme: "light" 
 
     return (
         <OutboxPanel theme={theme}>
-            <header className="ps-outbox-header">
-                <div className="ps-outbox-heading">
-                    <div className="ps-outbox-mark">
-                        <InboxStackIcon aria-hidden="true" />
-                    </div>
-                    <div>
-                        <div className="ps-outbox-title-row">
-                            <h2 className="ps-outbox-title">Outbox</h2>
-                            <span className="ps-outbox-count">{visibleData.length}</span>
-                        </div>
-                        <p className="ps-outbox-subtitle">Actions waiting to sync</p>
-                    </div>
-                </div>
-            </header>
             {visibleData.length === 0 ? (
                 <div
                     className="ps-outbox-empty"
@@ -692,58 +459,1156 @@ function OutboxRows({ outbox, theme }: { outbox: OntologyOutbox; theme: "light" 
     );
 }
 
-function OntologyPanel({ ontology, theme }: { ontology: LiveOntology; theme: "light" | "dark" }) {
-    return <OutboxRows outbox={ontology.outbox} theme={theme} />;
+type OntologyDevtoolsView = "objects" | "schema" | "outbox";
+type OutboxActivity = "idle" | "draining" | "paused";
+
+export function getOutboxActivity(entries: OntologyOutboxEntry[]): OutboxActivity {
+    if (entries.length === 0) return "idle";
+    const head = entries.reduce((first, entry) =>
+        entry.sequence < first.sequence ? entry : first
+    );
+    if (head.status === "failed") return "paused";
+    return "draining";
 }
 
-function OntologyTrigger({ theme }: { theme: "light" | "dark" }) {
-    const dark = theme === "dark";
+function outboxActivityLabel(activity: OutboxActivity): string {
+    switch (activity) {
+        case "idle":
+            return "Idle";
+        case "draining":
+            return "Draining";
+        case "paused":
+            return "Paused by failure";
+    }
+}
+
+function outboxBadgeClass(activity: OutboxActivity): string {
+    switch (activity) {
+        case "idle":
+            return "ps:bg-zinc-500/15 ps:text-zinc-400";
+        case "draining":
+            return "ps:bg-sky-500/20 ps:text-sky-300";
+        case "paused":
+            return "ps:bg-red-500/20 ps:text-red-300";
+    }
+}
+
+const ontologyViews: Array<{
+    id: OntologyDevtoolsView;
+    label: string;
+    icon: ComponentType<{
+        "aria-hidden"?: boolean;
+        className?: string;
+        style?: CSSProperties;
+    }>;
+}> = [
+    { id: "outbox", label: "Outbox", icon: InboxStackIcon },
+    { id: "schema", label: "Schema", icon: ShareIcon },
+    { id: "objects", label: "Objects", icon: CircleStackIcon },
+];
+
+function formatObjectValue(value: unknown): string {
+    if (value === undefined || value === null) return "—";
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+        return String(value);
+    }
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return "[Unserializable value]";
+    }
+}
+
+const CONTINENTS = [
+    "15,25 45,20 75,22 110,30 120,35 105,52 100,62 85,68 75,72 60,65 50,42 30,35",
+    "100,82 118,80 138,90 140,100 130,118 118,132 108,138 100,122 95,100",
+    "175,38 185,30 198,28 208,32 205,42 198,48 188,48 178,44",
+    "170,58 185,52 205,56 218,68 215,88 208,108 198,125 185,128 172,112 168,88 165,70",
+    "212,42 228,32 255,22 282,18 310,22 325,30 330,42 318,55 300,58 282,65 265,78 248,72 232,58 218,50",
+    "292,112 312,108 332,114 330,126 318,134 298,128 292,118",
+];
+
+function resolvedType(ir: OntologyIR, type: TypeDef): TypeDef {
+    if (type.kind !== "ref") return type;
+    const referenced = ir.types.find((candidate) => candidate.name === type.value.name)?.type;
+    return referenced ? resolvedType(ir, referenced) : type;
+}
+
+export function typeDisplayName(ir: OntologyIR, type: TypeDef): string {
+    switch (type.kind) {
+        case "ref":
+            return type.value.name;
+        case "optional":
+            return `${typeDisplayName(ir, type.value.type)} (optional)`;
+        case "list":
+            return `List of ${typeDisplayName(ir, type.value.elementType)}`;
+        case "map":
+            return `Map of ${typeDisplayName(ir, type.value.valueType)}`;
+        case "objectReference":
+            return `${type.value.objectType} reference`;
+        case "string":
+            return "String";
+        case "boolean":
+            return "Boolean";
+        case "integer":
+            return "Integer";
+        case "float":
+            return "Float";
+        case "double":
+            return "Double";
+        case "date":
+            return "Date";
+        case "timestamp":
+            return "Timestamp";
+        case "geopoint":
+            return "Geopoint";
+        case "struct":
+            return "Struct";
+        case "union":
+            return "Union";
+        case "result":
+            return "Result";
+        case "attachment":
+            return "Attachment";
+        case "unknown":
+            return "Unknown";
+    }
+}
+
+function typeIcon(type: TypeDef): ComponentType<{ "aria-hidden"?: boolean; className?: string }> {
+    switch (type.kind) {
+        case "ref":
+            return LinkIcon;
+        case "optional":
+            return typeIcon(type.value.type);
+        case "list":
+            return ListBulletIcon;
+        case "map":
+            return Squares2X2Icon;
+        case "objectReference":
+            return LinkIcon;
+        case "string":
+            return CodeBracketSquareIcon;
+        case "boolean":
+            return CheckCircleIcon;
+        case "integer":
+        case "float":
+        case "double":
+            return HashtagIcon;
+        case "date":
+            return CalendarDaysIcon;
+        case "timestamp":
+            return ClockIcon;
+        case "geopoint":
+            return MapPinIcon;
+        case "attachment":
+            return PaperClipIcon;
+        case "struct":
+        case "union":
+        case "result":
+            return MapIcon;
+        case "unknown":
+            return QuestionMarkCircleIcon;
+    }
+}
+
+function DevtoolsTooltip({ children, label }: { children: ReactNode; label: ReactNode }) {
     return (
-        <div
-            aria-label="Open Ontology devtools"
-            role="button"
-            style={{
-                alignItems: "center",
-                background: dark
-                    ? "linear-gradient(145deg, #2d2d31, #171719)"
-                    : "linear-gradient(145deg, #fff, #f5f5f4)",
-                border: dark ? "1px solid rgba(255,255,255,.16)" : "1px solid rgba(23,23,23,.14)",
-                borderRadius: "999px",
-                boxShadow: dark
-                    ? "0 10px 30px rgba(0,0,0,.34), 0 0 0 4px rgba(232,59,50,.11)"
-                    : "0 10px 28px rgba(28,25,23,.16), 0 0 0 4px rgba(232,59,50,.09)",
-                cursor: "pointer",
-                display: "flex",
-                height: 48,
-                justifyContent: "center",
-                padding: 8,
-                width: 48,
-            }}
-            title="Open Ontology devtools"
+        <Tooltip.Root>
+            <Tooltip.Trigger render={<span className="ps:inline-flex ps:items-center" />}>
+                {children}
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+                <Tooltip.Positioner className="ps:z-[100001]" sideOffset={6}>
+                    <Tooltip.Popup className="ps:max-w-64 ps:rounded-md ps:border ps:border-zinc-700 ps:bg-zinc-900 ps:px-2.5 ps:py-1.5 ps:text-[11px] ps:text-zinc-200 ps:shadow-xl">
+                        {label}
+                    </Tooltip.Popup>
+                </Tooltip.Positioner>
+            </Tooltip.Portal>
+        </Tooltip.Root>
+    );
+}
+
+function TypeIndicator({ ir, type }: { ir: OntologyIR; type: TypeDef }) {
+    const Icon = typeIcon(type);
+    return (
+        <DevtoolsTooltip label={typeDisplayName(ir, type)}>
+            <Icon aria-hidden className="ps:size-3.5 ps:text-zinc-500" />
+        </DevtoolsTooltip>
+    );
+}
+
+function isGeopoint(value: unknown): value is v.geopoint {
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        "lat" in value &&
+        typeof value.lat === "number" &&
+        "lon" in value &&
+        typeof value.lon === "number"
+    );
+}
+
+function GeopointPreview({ value }: { value: v.geopoint }) {
+    const cx = value.lon + 180;
+    const cy = 90 - value.lat;
+    const label = `${value.lat.toFixed(4)}, ${value.lon.toFixed(4)}`;
+    return (
+        <DevtoolsTooltip
+            label={
+                <svg
+                    aria-label={`Map preview for ${label}`}
+                    className="ps:block ps:rounded ps:border ps:border-zinc-700"
+                    height="72"
+                    role="img"
+                    viewBox="0 0 360 180"
+                    width="144"
+                >
+                    <rect className="ps:fill-sky-950" height="180" width="360" />
+                    {CONTINENTS.map((points) => (
+                        <polygon
+                            className="ps:fill-zinc-700 ps:stroke-zinc-600"
+                            key={points}
+                            points={points}
+                            strokeWidth="0.5"
+                        />
+                    ))}
+                    <circle className="ps:fill-rose-400" cx={cx} cy={cy} r="5" />
+                </svg>
+            }
         >
-            <PartyStackLogomark />
+            <a
+                className="ps:text-sky-400 ps:underline ps:decoration-dotted ps:underline-offset-4"
+                href={`https://www.google.com/maps?q=${value.lat},${value.lon}`}
+                rel="noopener noreferrer"
+                target="_blank"
+            >
+                {label}
+            </a>
+        </DevtoolsTooltip>
+    );
+}
+
+export function timestampPreview(value: unknown): { display: string; exact: string } | undefined {
+    if (value === undefined || value === null) return undefined;
+    const exact = formatObjectValue(value);
+    let epochMilliseconds: number | undefined;
+    if (value instanceof Date) {
+        epochMilliseconds = value.getTime();
+    } else if (
+        typeof value === "object" &&
+        "epochMilliseconds" in value &&
+        (typeof value.epochMilliseconds === "number" ||
+            typeof value.epochMilliseconds === "bigint")
+    ) {
+        epochMilliseconds = Number(value.epochMilliseconds);
+    } else if (typeof value === "string") {
+        const parsed = Date.parse(value);
+        if (!Number.isNaN(parsed)) epochMilliseconds = parsed;
+    }
+    if (epochMilliseconds === undefined || !Number.isFinite(epochMilliseconds)) {
+        return { display: exact, exact };
+    }
+    return {
+        display: new Intl.DateTimeFormat(undefined, {
+            dateStyle: "medium",
+            timeStyle: "medium",
+        }).format(new Date(epochMilliseconds)),
+        exact,
+    };
+}
+
+function isAttachment(value: unknown): value is v.attachment {
+    return typeof value === "object" && value !== null && "id" in value && typeof value.id === "string";
+}
+
+function AttachmentPreview({
+    attachment,
+    ontology,
+}: {
+    attachment: v.attachment;
+    ontology: LiveOntology;
+}) {
+    const [preview, setPreview] = useState<{
+        metadata: v.attachment & { size: number; type: string; name?: string };
+        src?: string;
+    }>();
+    useEffect(() => {
+        let cancelled = false;
+        let objectUrl: string | undefined;
+        void ontology.attachments
+            .metadata(attachment)
+            .then(async (metadata) => {
+                if (metadata.type.startsWith("image/")) {
+                    objectUrl = URL.createObjectURL(await ontology.attachments.blob(attachment));
+                }
+                if (!cancelled) setPreview({ metadata, src: objectUrl });
+            })
+            .catch(() => {
+                if (!cancelled) setPreview(undefined);
+            });
+        return () => {
+            cancelled = true;
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+        };
+    }, [attachment, ontology]);
+
+    const label = preview?.metadata.name ?? attachment.name ?? attachment.id;
+    if (!preview?.src) {
+        return (
+            <DevtoolsTooltip label={label}>
+                <span className="ps:inline-flex ps:max-w-40 ps:items-center ps:gap-1.5 ps:truncate">
+                    <PaperClipIcon aria-hidden className="ps:size-3.5 ps:flex-none ps:text-zinc-500" />
+                    <span className="ps:truncate">{label}</span>
+                </span>
+            </DevtoolsTooltip>
+        );
+    }
+
+    return (
+        <Dialog.Root>
+            <Dialog.Trigger
+                aria-label={`Open ${label}`}
+                className="ps:block ps:overflow-hidden ps:rounded-md ps:border ps:border-zinc-700 ps:bg-transparent ps:p-0 ps:hover:border-rose-400"
+            >
+                <img alt={label} className="ps:size-10 ps:object-cover" src={preview.src} />
+            </Dialog.Trigger>
+            <Dialog.Portal>
+                <Dialog.Backdrop className="ps:fixed ps:inset-0 ps:z-[100002] ps:bg-black/75 ps:backdrop-blur-sm" />
+                <Dialog.Viewport className="ps:fixed ps:inset-0 ps:z-[100003] ps:grid ps:place-items-center ps:p-8">
+                    <Dialog.Popup className="ps:relative ps:max-h-full ps:max-w-4xl ps:rounded-xl ps:border ps:border-zinc-700 ps:bg-zinc-950 ps:p-3 ps:shadow-2xl">
+                        <Dialog.Title className="ps:sr-only">{label}</Dialog.Title>
+                        <img
+                            alt={label}
+                            className="ps:max-h-[80vh] ps:max-w-[80vw] ps:rounded-lg ps:object-contain"
+                            src={preview.src}
+                        />
+                        <Dialog.Close className="ps:absolute ps:top-4 ps:right-4 ps:rounded-md ps:border ps:border-zinc-600 ps:bg-zinc-950/90 ps:px-2.5 ps:py-1.5 ps:text-xs ps:text-white">
+                            Close
+                        </Dialog.Close>
+                    </Dialog.Popup>
+                </Dialog.Viewport>
+            </Dialog.Portal>
+        </Dialog.Root>
+    );
+}
+
+function PropertyValuePreview({
+    ir,
+    ontology,
+    type,
+    value,
+}: {
+    ir: OntologyIR;
+    ontology: LiveOntology;
+    type: TypeDef;
+    value: unknown;
+}) {
+    const resolved = resolvedType(ir, type);
+    if (resolved.kind === "optional") {
+        return (
+            <PropertyValuePreview
+                ir={ir}
+                ontology={ontology}
+                type={resolved.value.type}
+                value={value}
+            />
+        );
+    }
+    if (resolved.kind === "geopoint" && isGeopoint(value)) {
+        return <GeopointPreview value={value} />;
+    }
+    if (resolved.kind === "timestamp") {
+        const preview = timestampPreview(value);
+        if (preview) {
+            return (
+                <DevtoolsTooltip label={preview.exact}>
+                    <span>{preview.display}</span>
+                </DevtoolsTooltip>
+            );
+        }
+    }
+    if (resolved.kind === "attachment" && isAttachment(value)) {
+        return <AttachmentPreview attachment={value} ontology={ontology} />;
+    }
+    if (
+        resolved.kind === "list" &&
+        resolvedType(ir, resolved.value.elementType).kind === "attachment" &&
+        Array.isArray(value)
+    ) {
+        const attachments = value.filter(isAttachment);
+        if (attachments.length > 0) {
+            return (
+                <div className="ps:flex ps:items-center ps:gap-1.5">
+                    {attachments.slice(0, 3).map((attachment) => (
+                        <AttachmentPreview
+                            attachment={attachment}
+                            key={attachment.id}
+                            ontology={ontology}
+                        />
+                    ))}
+                    {attachments.length > 3 ? (
+                        <span className="ps:text-zinc-500">+{attachments.length - 3}</span>
+                    ) : null}
+                </div>
+            );
+        }
+    }
+    const formatted = formatObjectValue(value);
+    return (
+        <span className="ps:block ps:max-w-72 ps:truncate" title={formatted}>
+            {formatted}
+        </span>
+    );
+}
+
+function defaultColumnSize(ir: OntologyIR, type: TypeDef): number {
+    switch (resolvedType(ir, type).kind) {
+        case "boolean":
+            return 110;
+        case "integer":
+        case "float":
+        case "double":
+            return 130;
+        case "date":
+        case "timestamp":
+            return 190;
+        case "geopoint":
+            return 175;
+        case "attachment":
+        case "list":
+            return 150;
+        case "objectReference":
+            return 200;
+        case "string":
+            return 220;
+        default:
+            return 180;
+    }
+}
+
+export function moveColumn(
+    columnOrder: string[],
+    sourceId: string,
+    targetId: string
+): string[] {
+    const sourceIndex = columnOrder.indexOf(sourceId);
+    const targetIndex = columnOrder.indexOf(targetId);
+    if (sourceIndex === -1 || targetIndex === -1 || sourceIndex === targetIndex) {
+        return columnOrder;
+    }
+    const next = [...columnOrder];
+    next.splice(sourceIndex, 1);
+    next.splice(targetIndex, 0, sourceId);
+    return next;
+}
+
+const objectColumnHelper = createColumnHelper<Record<string, unknown>>();
+
+function ObjectTable({
+    collection,
+    objectType,
+    ontology,
+}: {
+    collection: LiveOntology["objects"][string];
+    objectType: ObjectTypeDef;
+    ontology: LiveOntology;
+}) {
+    const [sorting, setSorting] = useState<SortingState>([]);
+    const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
+    const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+    const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(() =>
+        objectType.properties.map((property) => property.name)
+    );
+    const [draggedColumnId, setDraggedColumnId] = useState<string>();
+    const [dragOverColumnId, setDragOverColumnId] = useState<string>();
+    const selectedSort = sorting[0];
+    const {
+        data,
+        fetchNextPage,
+        hasNextPage,
+        isFetchingNextPage,
+    } = useLiveInfiniteQuery(
+        (query) => {
+            const from = query.from({ row: collection });
+            const primaryKey = objectType.primaryKey;
+            if (selectedSort && selectedSort.id !== primaryKey) {
+                return from
+                    .orderBy(
+                        ({ row }) =>
+                            (row as Record<string, unknown>)[selectedSort.id] as string | number,
+                        selectedSort.desc ? "desc" : "asc"
+                    )
+                    .orderBy(
+                        ({ row }) =>
+                            (row as Record<string, unknown>)[primaryKey] as string | number,
+                        "asc"
+                    )
+                    .select(({ row }) => row as Record<string, unknown>);
+            }
+            return from
+                .orderBy(
+                    ({ row }) =>
+                        (row as Record<string, unknown>)[primaryKey] as string | number,
+                    selectedSort?.desc ? "desc" : "asc"
+                )
+                .select(({ row }) => row as Record<string, unknown>);
+        },
+        { pageSize: 50 },
+        [collection.id, objectType.primaryKey, selectedSort?.id, selectedSort?.desc]
+    );
+    const rows = data as Array<Record<string, unknown>>;
+    const columns = useMemo(
+        () =>
+            objectType.properties.map((property) =>
+                objectColumnHelper.accessor((row) => row[property.name], {
+                    id: property.name,
+                    maxSize: 520,
+                    minSize: 90,
+                    size:
+                        property.name === objectType.primaryKey
+                            ? 220
+                            : defaultColumnSize(ontology.ir, property.type),
+                    header: () => (
+                        <span className="ps:inline-flex ps:items-center ps:gap-1.5">
+                            <TypeIndicator ir={ontology.ir} type={property.type} />
+                            <span>{property.displayName}</span>
+                            {property.name === objectType.primaryKey ? (
+                                <span className="ps:ml-1.5 ps:text-[9px] ps:font-bold ps:tracking-wide ps:text-rose-400">
+                                    PK
+                                </span>
+                            ) : null}
+                        </span>
+                    ),
+                    cell: (info) => (
+                        <PropertyValuePreview
+                            ir={ontology.ir}
+                            ontology={ontology}
+                            type={property.type}
+                            value={info.getValue()}
+                        />
+                    ),
+                })
+            ),
+        [objectType, ontology]
+    );
+    const table = useReactTable({
+        columnResizeMode: "onEnd",
+        columns,
+        data: rows,
+        enableColumnResizing: true,
+        getCoreRowModel: getCoreRowModel(),
+        getRowId: (row, index) => `${formatObjectValue(row[objectType.primaryKey])}-${index}`,
+        manualSorting: true,
+        onColumnOrderChange: setColumnOrder,
+        onColumnSizingChange: setColumnSizing,
+        onColumnVisibilityChange: setColumnVisibility,
+        onSortingChange: setSorting,
+        state: { columnOrder, columnSizing, columnVisibility, sorting },
+    });
+    const resizingColumnId = table.getState().columnSizingInfo.isResizingColumn;
+    const resizingColumn =
+        typeof resizingColumnId === "string" ? table.getColumn(resizingColumnId) : undefined;
+    const allColumns = table.getAllLeafColumns();
+
+    return (
+        <div className="ps:flex ps:min-h-0 ps:min-w-0 ps:flex-1 ps:flex-col ps:overflow-hidden">
+            <div className="ps:flex ps:flex-none ps:items-center ps:border-b ps:border-zinc-500/20 ps:px-4 ps:py-2">
+                <h2 className="ps:m-0 ps:text-lg ps:font-semibold">{objectType.pluralDisplayName}</h2>
+                <div className="ps:ml-auto ps:flex ps:items-center ps:gap-1.5">
+                    <button
+                        className="ps:inline-flex ps:items-center ps:gap-1.5 ps:rounded-md ps:border-0 ps:bg-transparent ps:px-2 ps:py-1.5 ps:text-xs ps:text-zinc-400 ps:hover:bg-zinc-500/10 ps:hover:text-current ps:disabled:opacity-40"
+                        disabled={Object.keys(columnSizing).length === 0}
+                        title="Reset column widths"
+                        type="button"
+                        onClick={() => {
+                            table.resetColumnSizing();
+                        }}
+                    >
+                        <ArrowPathIcon aria-hidden className="ps:size-3.5" />
+                        Reset widths
+                    </button>
+                    <Menu.Root>
+                        <Menu.Trigger className="ps:inline-flex ps:items-center ps:gap-1.5 ps:rounded-md ps:border ps:border-zinc-500/30 ps:bg-zinc-500/10 ps:px-2.5 ps:py-1.5 ps:text-xs ps:text-inherit ps:hover:border-zinc-500/60">
+                            <ViewColumnsIcon aria-hidden className="ps:size-3.5" />
+                            Columns
+                        </Menu.Trigger>
+                        <Menu.Portal>
+                            <Menu.Positioner
+                                align="end"
+                                className="ps:z-[100001]"
+                                sideOffset={6}
+                            >
+                                <Menu.Popup className="ps:min-w-48 ps:rounded-lg ps:border ps:border-zinc-700 ps:bg-zinc-900 ps:p-1.5 ps:text-xs ps:text-zinc-200 ps:shadow-2xl">
+                                    <Menu.Group>
+                                        <Menu.GroupLabel className="ps:px-2 ps:py-1.5 ps:text-[10px] ps:font-bold ps:tracking-wider ps:text-zinc-500 ps:uppercase">
+                                            Columns
+                                        </Menu.GroupLabel>
+                                        {allColumns.map((column, columnIndex) => (
+                                            <Menu.CheckboxItem
+                                                aria-label={
+                                                    objectType.properties.find(
+                                                        (property) =>
+                                                            property.name === column.id
+                                                    )?.displayName ?? column.id
+                                                }
+                                                checked={column.getIsVisible()}
+                                                className={
+                                                    dragOverColumnId === column.id &&
+                                                    draggedColumnId !== column.id
+                                                        ? "ps:flex ps:cursor-default ps:items-center ps:gap-2 ps:rounded-md ps:bg-rose-500/15 ps:px-2 ps:py-1.5 ps:outline-none"
+                                                        : "ps:flex ps:cursor-default ps:items-center ps:gap-2 ps:rounded-md ps:px-2 ps:py-1.5 ps:outline-none ps:data-[highlighted]:bg-zinc-700/70"
+                                                }
+                                                draggable
+                                                key={column.id}
+                                                label={
+                                                    objectType.properties.find(
+                                                        (property) =>
+                                                            property.name === column.id
+                                                    )?.displayName ?? column.id
+                                                }
+                                                onCheckedChange={(checked) => {
+                                                    column.toggleVisibility(checked);
+                                                }}
+                                                onDragEnd={() => {
+                                                    setDraggedColumnId(undefined);
+                                                    setDragOverColumnId(undefined);
+                                                }}
+                                                onDragOver={(event) => {
+                                                    event.preventDefault();
+                                                    event.dataTransfer.dropEffect = "move";
+                                                    setDragOverColumnId(column.id);
+                                                }}
+                                                onDragStart={(event) => {
+                                                    event.dataTransfer.effectAllowed = "move";
+                                                    event.dataTransfer.setData(
+                                                        "text/plain",
+                                                        column.id
+                                                    );
+                                                    setDraggedColumnId(column.id);
+                                                }}
+                                                onDrop={(event) => {
+                                                    event.preventDefault();
+                                                    if (
+                                                        draggedColumnId &&
+                                                        draggedColumnId !== column.id
+                                                    ) {
+                                                        setColumnOrder((current) =>
+                                                            moveColumn(
+                                                                current,
+                                                                draggedColumnId,
+                                                                column.id
+                                                            )
+                                                        );
+                                                    }
+                                                    setDraggedColumnId(undefined);
+                                                    setDragOverColumnId(undefined);
+                                                }}
+                                                onKeyDown={(event) => {
+                                                    if (
+                                                        !event.altKey ||
+                                                        (event.key !== "ArrowUp" &&
+                                                            event.key !== "ArrowDown")
+                                                    ) {
+                                                        return;
+                                                    }
+                                                    event.preventDefault();
+                                                    const targetIndex =
+                                                        event.key === "ArrowUp"
+                                                            ? columnIndex - 1
+                                                            : columnIndex + 1;
+                                                    const target = allColumns[targetIndex];
+                                                    if (target) {
+                                                        setColumnOrder((current) =>
+                                                            moveColumn(
+                                                                current,
+                                                                column.id,
+                                                                target.id
+                                                            )
+                                                        );
+                                                    }
+                                                }}
+                                            >
+                                                <span
+                                                    className="ps:cursor-grab ps:text-zinc-500 ps:active:cursor-grabbing"
+                                                    title="Drag to reorder"
+                                                    onClick={(event) => {
+                                                        event.stopPropagation();
+                                                    }}
+                                                >
+                                                    <Bars2Icon
+                                                        aria-hidden
+                                                        className="ps:size-3.5"
+                                                    />
+                                                </span>
+                                                <span className="ps:grid ps:size-4 ps:place-items-center ps:rounded ps:border ps:border-zinc-600">
+                                                    {column.getIsVisible() ? (
+                                                        <CheckIcon
+                                                            aria-hidden
+                                                            className="ps:size-3 ps:text-rose-400"
+                                                        />
+                                                    ) : null}
+                                                </span>
+                                                <span className="ps:truncate">
+                                                    {objectType.properties.find(
+                                                        (property) => property.name === column.id
+                                                    )?.displayName ?? column.id}
+                                                </span>
+                                            </Menu.CheckboxItem>
+                                        ))}
+                                        <p className="ps:m-0 ps:px-2 ps:pt-2 ps:pb-1 ps:text-[10px] ps:text-zinc-500">
+                                            Drag to reorder · Alt+↑/↓ with keyboard
+                                        </p>
+                                    </Menu.Group>
+                                </Menu.Popup>
+                            </Menu.Positioner>
+                        </Menu.Portal>
+                    </Menu.Root>
+                </div>
+            </div>
+            {rows.length === 0 ? (
+                <div className="ps:m-4 ps:grid ps:min-h-40 ps:place-items-center ps:rounded-xl ps:border ps:border-dashed ps:border-zinc-500/40 ps:text-sm ps:text-zinc-500">
+                    No objects loaded
+                </div>
+            ) : (
+                <div className="ps-object-table-scroll ps:min-h-0 ps:flex-1 ps:overflow-auto">
+                    <div
+                        className="ps:relative ps:min-h-full"
+                        style={{ minWidth: "100%", width: table.getTotalSize() }}
+                    >
+                        <table className="ps:w-full ps:table-fixed ps:border-separate ps:border-spacing-0 ps:text-left ps:text-xs">
+                            <colgroup>
+                                {table.getVisibleLeafColumns().map((column) => (
+                                    <col key={column.id} style={{ width: column.getSize() }} />
+                                ))}
+                            </colgroup>
+                            <thead className="ps-object-table-header">
+                            {table.getHeaderGroups().map((headerGroup) => (
+                                <tr key={headerGroup.id}>
+                                    {headerGroup.headers.map((header) => {
+                                        const direction = header.column.getIsSorted();
+                                        return (
+                                            <th
+                                                className="ps:relative ps:border-b ps:border-zinc-500/30 ps:bg-zinc-950/95 ps:px-4 ps:py-3 ps:font-semibold ps:whitespace-nowrap ps:backdrop-blur ps:in-[.ps-theme-light]:bg-stone-50/95"
+                                                key={header.id}
+                                            >
+                                                {header.isPlaceholder ? null : (
+                                                    <button
+                                                        className="ps:flex ps:w-full ps:items-center ps:gap-2 ps:border-0 ps:bg-transparent ps:p-0 ps:text-left ps:text-inherit ps:font-inherit ps:hover:text-rose-400"
+                                                        title={`Sort by ${header.column.id}`}
+                                                        type="button"
+                                                        onClick={header.column.getToggleSortingHandler()}
+                                                    >
+                                                        {flexRender(
+                                                            header.column.columnDef.header,
+                                                            header.getContext()
+                                                        )}
+                                                        {direction === "asc" ? (
+                                                            <ChevronUpIcon
+                                                                aria-hidden
+                                                                className="ps:size-3.5 ps:flex-none ps:text-rose-400"
+                                                            />
+                                                        ) : direction === "desc" ? (
+                                                            <ChevronDownIcon
+                                                                aria-hidden
+                                                                className="ps:size-3.5 ps:flex-none ps:text-rose-400"
+                                                            />
+                                                        ) : (
+                                                            <ChevronUpDownIcon
+                                                                aria-hidden
+                                                                className="ps:size-3.5 ps:flex-none ps:text-zinc-600"
+                                                            />
+                                                        )}
+                                                        <span className="ps:sr-only">
+                                                            {direction === "asc"
+                                                                ? "Sorted ascending"
+                                                                : direction === "desc"
+                                                                  ? "Sorted descending"
+                                                                  : "Not sorted"}
+                                                        </span>
+                                                    </button>
+                                                )}
+                                                {header.column.getCanResize() ? (
+                                                    <button
+                                                        aria-label={`Resize ${header.column.id} column`}
+                                                        aria-orientation="vertical"
+                                                        aria-valuemax={header.column.columnDef.maxSize}
+                                                        aria-valuemin={header.column.columnDef.minSize}
+                                                        aria-valuenow={header.column.getSize()}
+                                                        className={
+                                                            header.column.getIsResizing()
+                                                                ? "ps:absolute ps:top-0 ps:right-0 ps:z-20 ps:h-full ps:w-1 ps:cursor-col-resize ps:touch-none ps:border-0 ps:bg-transparent ps:p-0"
+                                                                : resizingColumn
+                                                                  ? "ps:pointer-events-none ps:invisible ps:absolute ps:top-0 ps:right-0 ps:h-full ps:w-1 ps:border-0 ps:bg-transparent ps:p-0"
+                                                                : "ps:absolute ps:top-0 ps:right-0 ps:h-full ps:w-1 ps:cursor-col-resize ps:touch-none ps:border-0 ps:bg-transparent ps:p-0 ps:hover:bg-rose-400/70 ps:focus-visible:bg-rose-400/70 ps:focus:outline-none"
+                                                        }
+                                                        disabled={
+                                                            resizingColumn !== undefined &&
+                                                            !header.column.getIsResizing()
+                                                        }
+                                                        role="separator"
+                                                        tabIndex={0}
+                                                        type="button"
+                                                        onDoubleClick={() => {
+                                                            header.column.resetSize();
+                                                        }}
+                                                        onKeyDown={(event) => {
+                                                            if (
+                                                                event.key !== "ArrowLeft" &&
+                                                                event.key !== "ArrowRight"
+                                                            ) {
+                                                                return;
+                                                            }
+                                                            event.preventDefault();
+                                                            const delta =
+                                                                event.key === "ArrowRight" ? 10 : -10;
+                                                            const min =
+                                                                header.column.columnDef.minSize ?? 20;
+                                                            const max =
+                                                                header.column.columnDef.maxSize ??
+                                                                Number.MAX_SAFE_INTEGER;
+                                                            setColumnSizing((current) => ({
+                                                                ...current,
+                                                                [header.column.id]: Math.min(
+                                                                    max,
+                                                                    Math.max(
+                                                                        min,
+                                                                        header.column.getSize() +
+                                                                            delta
+                                                                    )
+                                                                ),
+                                                            }));
+                                                        }}
+                                                        onMouseDown={header.getResizeHandler()}
+                                                        onTouchStart={header.getResizeHandler()}
+                                                    />
+                                                ) : null}
+                                            </th>
+                                        );
+                                    })}
+                                </tr>
+                            ))}
+                            </thead>
+                            <tbody>
+                            {table.getRowModel().rows.map((row) => (
+                                <tr className="ps:hover:bg-zinc-500/8" key={row.id}>
+                                    {row.getVisibleCells().map((cell) => (
+                                        <td
+                                            className="ps:max-w-80 ps:border-b ps:border-zinc-500/15 ps:px-4 ps:py-3 ps:text-[11px] ps:whitespace-nowrap"
+                                            key={cell.id}
+                                        >
+                                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))}
+                            </tbody>
+                        </table>
+                        {hasNextPage ? (
+                            <div className="ps:sticky ps:left-0 ps:flex ps:w-full ps:justify-center ps:border-t ps:border-zinc-500/20 ps:bg-zinc-950/95 ps:p-3 ps:in-[.ps-theme-light]:bg-stone-50/95">
+                                <button
+                                    className="ps:rounded-md ps:border ps:border-zinc-600 ps:bg-zinc-900 ps:px-3 ps:py-1.5 ps:text-xs ps:text-zinc-200 ps:hover:border-rose-400 ps:hover:text-rose-300 ps:disabled:opacity-50"
+                                    disabled={isFetchingNextPage}
+                                    type="button"
+                                    onClick={fetchNextPage}
+                                >
+                                    {isFetchingNextPage ? "Loading…" : "Load 50 more"}
+                                </button>
+                            </div>
+                        ) : null}
+                        {resizingColumn ? (
+                            <div
+                                className="ps:pointer-events-none ps:absolute ps:inset-y-0 ps:z-50 ps:w-0.5 ps:bg-rose-400 ps:shadow-[0_0_0_1px_rgba(251,113,133,0.18)] ps:will-change-transform"
+                                style={{
+                                    left: resizingColumn.getStart() + resizingColumn.getSize(),
+                                    transform: `translateX(${
+                                        table.getState().columnSizingInfo.deltaOffset ?? 0
+                                    }px)`,
+                                }}
+                            />
+                        ) : null}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
 
-export function OntologyDevtools<Ontology extends OntologyDefinition>({
-    ontology,
-}: OntologyDevtoolsProps<Ontology>) {
+function ObjectsView({ ontology }: { ontology: LiveOntology }) {
+    const objectTypes = ontology.ir.objectTypes;
+    const [selectedName, setSelectedName] = useState(() => objectTypes[0]?.name);
+    const selected = objectTypes.find((objectType) => objectType.name === selectedName) ?? objectTypes[0];
+    const collection = selected ? ontology.objects[selected.name] : undefined;
+
+    if (!selected || !collection) {
+        return (
+            <div className="ps:grid ps:h-full ps:place-items-center ps:text-sm ps:text-zinc-500">
+                This ontology has no object types.
+            </div>
+        );
+    }
+
     return (
-        <TanStackDevtools
-            plugins={[
-                {
-                    id: "party-stack-ontology",
-                    name: (_element, { theme }) => <PartyStackPluginName theme={theme} />,
-                    render: (_element, { theme }) => (
-                        <OntologyPanel ontology={ontology as LiveOntology} theme={theme} />
-                    ),
-                    defaultOpen: true,
-                },
-            ]}
-            config={{
-                customTrigger: (_element, { theme }) => <OntologyTrigger theme={theme} />,
-            }}
-        />
+        <div className="ps:flex ps:h-full ps:min-h-0 ps:w-full ps:min-w-0 ps:overflow-hidden">
+            <aside className="ps:w-44 ps:flex-none ps:overflow-y-auto ps:border-r ps:border-zinc-500/20 ps:p-3">
+                <p className="ps:mt-0 ps:mb-2 ps:px-2 ps:text-[10px] ps:font-bold ps:tracking-[0.14em] ps:text-zinc-500 ps:uppercase">
+                    Object types
+                </p>
+                <div className="ps:flex ps:flex-col ps:gap-1">
+                    {objectTypes.map((objectType) => (
+                        <button
+                            className={
+                                objectType.name === selected.name
+                                    ? "ps:rounded-lg ps:border-0 ps:bg-rose-500/15 ps:px-2.5 ps:py-2 ps:text-left ps:text-xs ps:font-semibold ps:text-rose-400"
+                                    : "ps:rounded-lg ps:border-0 ps:bg-transparent ps:px-2.5 ps:py-2 ps:text-left ps:text-xs ps:text-inherit ps:hover:bg-zinc-500/10"
+                            }
+                            key={objectType.name}
+                            type="button"
+                            onClick={() => {
+                                setSelectedName(objectType.name);
+                            }}
+                        >
+                            {objectType.pluralDisplayName}
+                        </button>
+                    ))}
+                </div>
+            </aside>
+            <ObjectTable
+                collection={collection}
+                key={selected.name}
+                objectType={selected}
+                ontology={ontology}
+            />
+        </div>
     );
+}
+
+interface SchemaNode {
+    objectType: ObjectTypeDef;
+    x: number;
+    y: number;
+}
+
+export function layoutSchema(ir: OntologyIR): {
+    nodes: SchemaNode[];
+    width: number;
+    height: number;
+} {
+    const cardWidth = 230;
+    const cardHeight = 176;
+    const gapX = 110;
+    const gapY = 90;
+    const columns = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(ir.objectTypes.length))));
+    const rows = Math.max(1, Math.ceil(ir.objectTypes.length / columns));
+    const nodes = ir.objectTypes.map((objectType, index) => ({
+        objectType,
+        x: 40 + (index % columns) * (cardWidth + gapX),
+        y: 40 + Math.floor(index / columns) * (cardHeight + gapY),
+    }));
+    return {
+        nodes,
+        width: 80 + columns * cardWidth + (columns - 1) * gapX,
+        height: 80 + rows * cardHeight + (rows - 1) * gapY,
+    };
+}
+
+function SchemaView({ ir }: { ir: OntologyIR }) {
+    const layout = layoutSchema(ir);
+    const nodeByName = new Map(layout.nodes.map((node) => [node.objectType.name, node]));
+
+    if (ir.objectTypes.length === 0) {
+        return (
+            <div className="ps:grid ps:h-full ps:place-items-center ps:text-sm ps:text-zinc-500">
+                This ontology has no schema.
+            </div>
+        );
+    }
+
+    return (
+        <div className="ps:h-full ps:overflow-auto ps:p-5">
+            <div
+                className="ps:relative ps:rounded-2xl ps:border ps:border-zinc-500/20 ps:bg-zinc-950/25 ps:in-[.ps-theme-light]:bg-white/45"
+                style={{ height: layout.height, minWidth: layout.width }}
+            >
+                <svg
+                    aria-label="Ontology relations"
+                    className="ps:absolute ps:inset-0 ps:size-full ps:overflow-visible"
+                    role="img"
+                    viewBox={`0 0 ${layout.width} ${layout.height}`}
+                >
+                    <defs>
+                        <marker
+                            id="ps-schema-arrow"
+                            markerHeight="7"
+                            markerWidth="7"
+                            orient="auto-start-reverse"
+                            refX="6"
+                            refY="3.5"
+                        >
+                            <path className="ps:fill-rose-400" d="M0,0 L7,3.5 L0,7 Z" />
+                        </marker>
+                    </defs>
+                    {ir.linkTypes.map((link) => {
+                        const source = nodeByName.get(link.source.objectType);
+                        const target = nodeByName.get(link.target.objectType);
+                        if (!source || !target) return null;
+                        const sourceX = source.x + 115;
+                        const sourceY = source.y + 88;
+                        const targetX = target.x + 115;
+                        const targetY = target.y + 88;
+                        const labelX = (sourceX + targetX) / 2;
+                        const labelY = (sourceY + targetY) / 2;
+                        return (
+                            <g key={link.id}>
+                                <line
+                                    className="ps:stroke-rose-400/70"
+                                    markerEnd="url(#ps-schema-arrow)"
+                                    strokeWidth="1.5"
+                                    x1={sourceX}
+                                    x2={targetX}
+                                    y1={sourceY}
+                                    y2={targetY}
+                                />
+                                <text
+                                    className="ps:fill-zinc-400 ps:text-[10px]"
+                                    textAnchor="middle"
+                                    x={labelX}
+                                    y={labelY - 6}
+                                >
+                                    {link.source.displayName} · {link.cardinality}
+                                </text>
+                            </g>
+                        );
+                    })}
+                </svg>
+                {layout.nodes.map(({ objectType, x, y }) => (
+                    <article
+                        className="ps:absolute ps:h-44 ps:w-[230px] ps:overflow-hidden ps:rounded-xl ps:border ps:border-zinc-500/30 ps:bg-zinc-900/95 ps:shadow-xl ps:in-[.ps-theme-light]:bg-white/95"
+                        key={objectType.name}
+                        style={{ left: x, top: y }}
+                    >
+                        <header className="ps:border-b ps:border-zinc-500/20 ps:px-3.5 ps:py-3">
+                            <h3 className="ps:m-0 ps:text-sm ps:font-semibold">{objectType.displayName}</h3>
+                            <p className="ps:mt-0.5 ps:mb-0 ps:font-mono ps:text-[10px] ps:text-zinc-500">
+                                {objectType.name}
+                            </p>
+                        </header>
+                        <div className="ps:max-h-28 ps:overflow-y-auto ps:px-3.5 ps:py-2">
+                            {objectType.properties.map((property) => (
+                                <div
+                                    className="ps:flex ps:items-center ps:justify-between ps:gap-3 ps:py-1 ps:text-[11px]"
+                                    key={property.name}
+                                >
+                                    <span className="ps:truncate">{property.displayName}</span>
+                                    {property.name === objectType.primaryKey ? (
+                                        <span className="ps:flex-none ps:text-[9px] ps:font-bold ps:text-rose-400">
+                                            PK
+                                        </span>
+                                    ) : null}
+                                </div>
+                            ))}
+                        </div>
+                    </article>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+export function OntologyDevtoolsPanel<Ontology extends OntologyDefinition>({
+    ontology,
+    theme = "dark",
+}: OntologyDevtoolsPanelProps<Ontology>) {
+    const { data: outboxEntries } = useLiveQuery(
+        (query) => query.from({ entry: ontology.outbox.collection }),
+        [ontology.outbox]
+    );
+    const outboxActivity = getOutboxActivity(outboxEntries);
+
+    return (
+        <Tooltip.Provider>
+            <Tabs.Root
+            className={`ps-devtools ps-theme-${theme} ps:flex ps:h-full ps:min-h-0 ps:w-full ps:min-w-0 ps:flex-col ps:overflow-hidden ps:font-sans ps:text-[13px] ${
+                theme === "dark"
+                    ? "ps:bg-zinc-950 ps:text-stone-200"
+                    : "ps:bg-stone-50 ps:text-stone-800"
+            }`}
+            defaultValue="outbox"
+            style={{ contain: "inline-size" }}
+        >
+            <Tabs.List
+                aria-label="Ontology devtools views"
+                className="ps:flex ps:flex-none ps:items-center ps:gap-1 ps:border-b ps:border-zinc-500/20 ps:px-4"
+                style={{ height: 40 }}
+            >
+                {ontologyViews.map((view) => {
+                    const Icon = view.icon;
+                    return (
+                        <Tabs.Tab
+                            className="ps:group ps:flex ps:h-full ps:items-center ps:gap-1.5 ps:border-x-0 ps:border-t-0 ps:border-b-2 ps:border-transparent ps:bg-transparent ps:px-3 ps:text-xs ps:font-medium ps:text-zinc-500 ps:hover:text-current ps:data-[active]:border-rose-400 ps:data-[active]:font-semibold ps:data-[active]:text-rose-400"
+                            key={view.id}
+                            value={view.id}
+                        >
+                            <Icon
+                                aria-hidden
+                                className="ps:flex-none"
+                                style={{ height: 16, width: 16 }}
+                            />
+                            <span>{view.label}</span>
+                            {view.id === "outbox" ? (
+                                <>
+                                    <span
+                                        className={`ps:inline-flex ps:min-w-5 ps:items-center ps:justify-center ps:rounded-full ps:px-1.5 ps:py-0.5 ps:text-center ps:text-[10px] ps:leading-none ps:transition-colors ${outboxBadgeClass(
+                                            outboxActivity
+                                        )}`}
+                                        title={`${outboxEntries.length} outbox entries · ${outboxActivityLabel(
+                                            outboxActivity
+                                        )}`}
+                                    >
+                                        <NumberFlow
+                                            className="ps:tabular-nums"
+                                            isolate
+                                            value={outboxEntries.length}
+                                        />
+                                    </span>
+                                </>
+                            ) : null}
+                        </Tabs.Tab>
+                    );
+                })}
+            </Tabs.List>
+            <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="outbox">
+                <OutboxRows outbox={ontology.outbox} theme={theme} />
+            </Tabs.Panel>
+            <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="schema">
+                <SchemaView ir={ontology.ir} />
+            </Tabs.Panel>
+            <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="objects">
+                <ObjectsView ontology={ontology as LiveOntology} />
+            </Tabs.Panel>
+            </Tabs.Root>
+        </Tooltip.Provider>
+    );
+}
+
+export function createOntologyDevtoolsPlugin<Ontology extends OntologyDefinition>({
+    ontology,
+    id = "party-stack-ontology",
+    name,
+    defaultOpen,
+}: OntologyDevtoolsPluginOptions<Ontology>): TanStackDevtoolsReactPlugin {
+    const [createPlugin] = createReactPlugin({
+        id,
+        name: "Ontology",
+        defaultOpen,
+        Component: ({ theme }) => <OntologyDevtoolsPanel ontology={ontology} theme={theme} />,
+    });
+
+    return {
+        ...createPlugin(),
+        name:
+            name ??
+            ((_element, { theme }) => <OntologyDevtoolsPluginName theme={theme} />),
+    };
 }

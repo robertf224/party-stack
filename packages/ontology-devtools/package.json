@@ -12,30 +12,38 @@
         "lib"
     ],
     "scripts": {
-        "build": "tsc",
+        "build": "tsc && pnpm run build:css",
+        "build:css": "tailwindcss -i ./src/styles.css -o ./lib/styles.css --minify",
         "lint": "eslint",
-        "test": "vitest run --pass-with-no-tests"
+        "test": "vitest run src --pass-with-no-tests"
     },
     "dependencies": {
+        "@base-ui/react": "^1.6.0",
         "@heroicons/react": "^2.2.0",
+        "@number-flow/react": "^0.6.2",
         "@party-stack/ontology": "workspace:*",
-        "@tanstack/react-devtools": "^0.10.2"
+        "@tanstack/devtools-utils": "^0.6.0",
+        "@tanstack/react-table": "^8.21.3"
     },
     "devDependencies": {
         "@bobbyfidz/react-build-config": "^0.1.1",
+        "@tailwindcss/cli": "4.1.17",
         "@tanstack/db": "^0.6.14",
         "@tanstack/react-db": "^0.1.92",
+        "@tanstack/react-devtools": "^0.10.9",
         "@types/react": "^19.2.6",
         "@types/react-dom": "^19.2.3",
         "eslint": "^9.25.0",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
+        "tailwindcss": "4.1.17",
         "typescript": "~5.8.3",
         "vitest": "^3.1.1"
     },
     "peerDependencies": {
         "@tanstack/db": "^0.6.14",
         "@tanstack/react-db": "^0.1.92",
+        "@tanstack/react-devtools": "^0.10.9",
         "react": "^19.2.0",
         "react-dom": "^19.2.0"
     }
