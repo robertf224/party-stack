@@ -1,0 +1,37 @@
+{
+    "name": "@party-stack/cloudkit-ontology",
+    "version": "0.0.1",
+    "type": "module",
+    "bin": {
+        "cloudkit-ontology": "./lib/cli.js"
+    },
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run src --pass-with-no-tests"
+    },
+    "dependencies": {
+        "@party-stack/cloudkit-client": "workspace:*",
+        "@party-stack/ontology": "workspace:*"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@tanstack/db": "^0.6.14",
+        "@types/node": "^24.10.1",
+        "eslint": "^9.25.0",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    },
+    "peerDependencies": {
+        "@tanstack/db": "^0.6.14"
+    }
+}

@@ -1,0 +1,45 @@
+DEFINE SCHEMA
+
+    RECORD TYPE PS_JournalEntry (
+        "___recordID" REFERENCE QUERYABLE,
+        ps_id STRING,
+        ps_title STRING,
+        ps_body STRING,
+        ps_mood STRING,
+        ps_createdAt TIMESTAMP,
+        ps_updatedAt TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    RECORD TYPE PS_JournalAttachment (
+        "___recordID" REFERENCE QUERYABLE,
+        ps_id STRING,
+        ps_entryId STRING,
+        ps_attachment REFERENCE,
+        ps_createdAt TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    RECORD TYPE PS_PartyStackAttachment (
+        "___recordID" REFERENCE QUERYABLE,
+        asset ASSET,
+        contentType STRING,
+        name STRING,
+        size INT64,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+
+    RECORD TYPE PS_PartyStackActionReceipt (
+        "___recordID" REFERENCE QUERYABLE,
+        createdAt TIMESTAMP,
+        GRANT WRITE TO "_creator",
+        GRANT CREATE TO "_icloud",
+        GRANT READ TO "_creator"
+    );
+

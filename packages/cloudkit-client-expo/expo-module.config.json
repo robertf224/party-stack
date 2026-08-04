@@ -1,0 +1,14 @@
+{
+    "platforms": [
+        "apple"
+    ],
+    "apple": {
+        "podspecPath": "PartyStackCloudKitClient.podspec",
+        "appDelegateSubscribers": [
+            "PartyStackCloudKitAppDelegateSubscriber"
+        ],
+        "modules": [
+            "PartyStackCloudKitClientModule"
+        ]
+    }
+}

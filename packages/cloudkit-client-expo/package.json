@@ -1,0 +1,53 @@
+{
+    "name": "@party-stack/cloudkit-client-expo",
+    "version": "0.0.1",
+    "type": "module",
+    "main": "./lib/index.js",
+    "types": "./lib/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./app.plugin": "./app.plugin.cjs"
+    },
+    "files": [
+        "lib",
+        "ios",
+        "PartyStackCloudKitClient.podspec",
+        "app.plugin.cjs",
+        "expo-module.config.json"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run src --pass-with-no-tests"
+    },
+    "dependencies": {
+        "@expo/config-plugins": "^55.0.11",
+        "@party-stack/cloudkit-client": "workspace:*",
+        "expo-modules-core": "^55.0.25"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@types/node": "^24.10.1",
+        "eslint": "^9.25.0",
+        "expo": "^55.0.23",
+        "react": "^19.2.0",
+        "react-native": "0.83.6",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    },
+    "peerDependencies": {
+        "expo": "^55.0.23",
+        "react": "^19.2.0",
+        "react-native": ">=0.83.0 <0.86.0"
+    },
+    "expo": {
+        "name": "cloudkit-client-expo",
+        "platforms": [
+            "ios"
+        ],
+        "plugin": "./app.plugin.cjs"
+    }
+}
