@@ -433,6 +433,13 @@ export default {
                         description: "The name of the property that serves as primary key.",
                     },
                     {
+                        name: "title",
+                        displayName: "Title",
+                        type: o.optional({ type: o.string({}) }),
+                        description:
+                            "The optional property name used as the human-readable title for an object.",
+                    },
+                    {
                         name: "properties",
                         displayName: "Properties",
                         type: o.list({ elementType: o.ref({ name: "PropertyDef" }) }),

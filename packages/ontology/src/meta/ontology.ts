@@ -1,6 +1,51 @@
 import { invariant } from "@bobbyfidz/panic";
+import { o } from "../ir/generated/builders.js";
 import OntologyIRSchema from "../ir/schema.js";
-import type { OntologyIR } from "../ir/generated/types.js";
+import type {
+    FieldDef,
+    NamedTypeDef,
+    OntologyIR,
+} from "../ir/generated/types.js";
+
+const idField = (description: string): FieldDef => ({
+    name: "id",
+    displayName: "ID",
+    type: o.string({}),
+    description,
+});
+
+function addRuntimeId(type: NamedTypeDef, description: string): NamedTypeDef {
+    invariant(type.type.kind === "struct", `${type.name} must be a struct.`);
+    return {
+        ...type,
+        type: o.struct({
+            fields: [
+                idField(description),
+                ...type.type.value.fields,
+            ],
+        }),
+    };
+}
+
+function addRuntimeMetaFields(type: NamedTypeDef): NamedTypeDef {
+    if (type.name === "ObjectTypeDef") {
+        return addRuntimeId(
+            type,
+            "The provider-assigned stable identifier for this object type."
+        );
+    } else if (type.name === "PropertyDef") {
+        return addRuntimeId(
+            type,
+            "The provider-assigned stable identifier for this property."
+        );
+    } else {
+        return type;
+    }
+}
+
+const metaTypes = OntologyIRSchema.types
+    .filter((type) => type.name !== "OntologyIR")
+    .map(addRuntimeMetaFields);
 
 function lift(
     schema: Pick<OntologyIR, "types">,
@@ -31,7 +76,7 @@ function lift(
 
 export default {
     ...lift(
-        { types: OntologyIRSchema.types.filter((type) => type.name !== "OntologyIR") },
+        { types: metaTypes },
         {
             ObjectTypeDef: {
                 name: "ObjectType",

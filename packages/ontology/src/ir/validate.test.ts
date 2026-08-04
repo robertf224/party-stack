@@ -74,6 +74,29 @@ describe("Ontology Validation", () => {
         });
     });
 
+    describe("Title Validation", () => {
+        it("should detect a title that doesn't reference a property", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType({ title: "nonExistent" })],
+            };
+
+            const result = validate(ontology);
+            expectErr(result, 1);
+            expect(getErrors(result)).toContain(
+                'Title "nonExistent" does not reference a valid property.'
+            );
+        });
+
+        it("should accept a valid title property reference", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType({ title: "name" })],
+            };
+            expectOk(validate(ontology));
+        });
+    });
+
     describe("Duplicate Name Detection", () => {
         it("should detect duplicate object type names", () => {
             const ontology: OntologyIR = {

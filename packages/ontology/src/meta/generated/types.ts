@@ -154,6 +154,8 @@ export type ObjectReferenceTypeDef = {
 
 /** A property on an Object type. */
 export type PropertyDef = {
+    /** The provider-assigned stable identifier for this property. */
+    id: string;
     /** The property's name. */
     name: string;
     /** Human-readable name. */
@@ -280,6 +282,8 @@ export type ValueType = {
 
 /** An object type in the ontology. */
 export type ObjectType = {
+    /** The provider-assigned stable identifier for this object type. */
+    id: string;
     /** The object type's programmatic name. */
     name: string;
     /** Human-readable name. */
@@ -287,6 +291,8 @@ export type ObjectType = {
     pluralDisplayName: string;
     /** The name of the property that serves as primary key. */
     primaryKey: string;
+    /** The optional property name used as the human-readable title for an object. */
+    title?: string;
     /** The object type's propertieo. */
     properties: Array<PropertyDef>;
     /** Optional description. */
