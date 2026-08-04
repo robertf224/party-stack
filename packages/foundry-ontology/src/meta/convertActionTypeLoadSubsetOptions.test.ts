@@ -6,6 +6,20 @@ import {
 } from "./convertActionTypeLoadSubsetOptions.js";
 
 describe("convertActionTypeLoadSubsetFilter", () => {
+    it("converts id equality to an exact RID predicate", () => {
+        expect(
+            convertActionTypeLoadSubsetFilter(
+                eq(
+                    new IR.PropRef<string>(["id"]),
+                    "ri.actions.main.action-type.create-task"
+                )
+            )
+        ).toEqual({
+            type: "actionTypeRid",
+            value: "ri.actions.main.action-type.create-task",
+        });
+    });
+
     it("converts name equality to an exact apiName predicate with kebab-case", () => {
         const filter = convertActionTypeLoadSubsetFilter(
             eq(new IR.PropRef<string>(["name"]), "streamlineCreateToken")

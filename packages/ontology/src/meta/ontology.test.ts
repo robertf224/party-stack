@@ -10,11 +10,21 @@ describe("meta ontology runtime fields", () => {
         const property = canonicalOntology.types.find(
             (type) => type.name === "PropertyDef"
         );
+        const actionType = canonicalOntology.types.find(
+            (type) => type.name === "ActionTypeDef"
+        );
 
         expect(objectType?.type.kind).toBe("struct");
         expect(property?.type.kind).toBe("struct");
-        if (objectType?.type.kind !== "struct" || property?.type.kind !== "struct") {
-            throw new Error("Expected canonical object and property definitions to be structs.");
+        expect(actionType?.type.kind).toBe("struct");
+        if (
+            objectType?.type.kind !== "struct" ||
+            property?.type.kind !== "struct" ||
+            actionType?.type.kind !== "struct"
+        ) {
+            throw new Error(
+                "Expected canonical object, property, and action definitions to be structs."
+            );
         }
 
         expect(objectType.type.value.fields.map(({ name }) => name)).not.toContain("id");
@@ -23,6 +33,7 @@ describe("meta ontology runtime fields", () => {
             value: { type: { kind: "string", value: {} } },
         });
         expect(property.type.value.fields.map(({ name }) => name)).not.toContain("id");
+        expect(actionType.type.value.fields.map(({ name }) => name)).not.toContain("id");
     });
 
     it("requires IDs while preserving the canonical title field in runtime metadata", () => {
@@ -31,6 +42,9 @@ describe("meta ontology runtime fields", () => {
         );
         const property = metaOntology.types.find(
             (type) => type.name === "PropertyDef"
+        );
+        const actionType = metaOntology.objectTypes.find(
+            (type) => type.name === "ActionType"
         );
 
         expect(objectType?.properties.find(({ name }) => name === "id")?.type).toEqual({
@@ -49,6 +63,10 @@ describe("meta ontology runtime fields", () => {
             throw new Error("Expected runtime PropertyDef to be a struct.");
         }
         expect(property.type.value.fields.find(({ name }) => name === "id")?.type).toEqual({
+            kind: "string",
+            value: {},
+        });
+        expect(actionType?.properties.find(({ name }) => name === "id")?.type).toEqual({
             kind: "string",
             value: {},
         });

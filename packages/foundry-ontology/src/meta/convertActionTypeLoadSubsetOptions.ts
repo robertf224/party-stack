@@ -8,6 +8,7 @@ import type {
 } from "@osdk/foundry.ontologies";
 
 const FILTER_FIELDS = {
+    id: "actionTypeRid",
     name: "actionTypeApiName",
     displayName: "actionTypeDisplayName",
 } as const satisfies Partial<Record<keyof MetaActionType, ActionTypeSearchJsonQueryV2["type"]>>;
@@ -26,6 +27,12 @@ function getFilterField(field: FieldPath): keyof typeof FILTER_FIELDS {
 
 function eq(field: FieldPath, value: unknown): ActionTypeSearchJsonQueryV2 {
     const name = getFilterField(field);
+    if (name === "id") {
+        return {
+            type: "actionTypeRid",
+            value: value as string,
+        };
+    }
     return {
         type: FILTER_FIELDS[name],
         value: {
@@ -37,6 +44,9 @@ function eq(field: FieldPath, value: unknown): ActionTypeSearchJsonQueryV2 {
 
 function like(field: FieldPath, value: string): ActionTypeSearchJsonQueryV2 {
     const name = getFilterField(field);
+    if (name === "id") {
+        throw new Error("Foundry ActionType search only supports exact filtering by id.");
+    }
     const terms = value.split("%").filter(Boolean);
     const queries: ActionTypeSearchJsonQueryV2[] = terms.map((term) => ({
         type: FILTER_FIELDS[name],

@@ -3,6 +3,7 @@ import type {
     ActionParameterDef,
     ActionTypeDef,
     Expression,
+    MetaActionType,
     PropertyAssignment,
     StringConstraint,
     TypeDef,
@@ -475,13 +476,14 @@ function convertLogicStep(
     }
 }
 
-export function convertFoundryMetaActionType(actionType: ActionTypeFullMetadata): ActionTypeDef {
+export function convertFoundryMetaActionType(actionType: ActionTypeFullMetadata): MetaActionType {
     const syntheticParameters = createSyntheticParameters(actionType);
     const fullLogicRules = actionType.fullLogicRules
         .map((rule) => convertLogicStep(rule, syntheticParameters))
         .filter((rule): rule is NonNullable<typeof rule> => rule !== null);
 
     return {
+        id: actionType.actionType.rid,
         name: toOntologyActionTypeName(actionType.actionType.apiName),
         displayName: actionType.actionType.displayName ?? actionType.actionType.apiName,
         description: actionType.actionType.description,

@@ -38,6 +38,11 @@ function addRuntimeMetaFields(type: NamedTypeDef): NamedTypeDef {
             type,
             "The provider-assigned stable identifier for this property."
         );
+    } else if (type.name === "ActionTypeDef") {
+        return addRuntimeId(
+            type,
+            "The provider-assigned stable identifier for this action type."
+        );
     } else {
         return type;
     }
