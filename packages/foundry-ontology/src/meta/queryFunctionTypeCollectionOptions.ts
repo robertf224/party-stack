@@ -1,8 +1,11 @@
 import { QueryTypes } from "@osdk/foundry.ontologies";
+import {
+    normalizeFoundryError,
+    type OntologyClient,
+} from "@party-stack/foundry-client";
 import { FieldPath, LoadSubsetOptions, parseWhereExpression } from "@tanstack/db";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
-import type { OntologyClient } from "@party-stack/foundry-client";
 import type { OntologyCollectionOptions, QueryFunctionTypeDef } from "@party-stack/ontology";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import { convertFoundryMetaQueryFunctionType } from "./convertMetaQueryFunctionType.js";
@@ -14,26 +17,34 @@ export interface QueryFunctionTypeCollectionOpts {
 }
 
 async function listQueryFunctionTypes(opts: QueryFunctionTypeCollectionOpts): Promise<QueryTypeV2[]> {
-    return AsyncIterable.toArray(
-        AsyncIterable.fromPagination(
-            (pageSize, pageToken: string | undefined) =>
-                QueryTypes.list(opts.client, opts.client.ontologyRid, {
-                    pageSize,
-                    pageToken,
-                }),
-            (page) => page.nextPageToken,
-            (page) => page.data,
-            100
-        )
-    );
+    try {
+        return await AsyncIterable.toArray(
+            AsyncIterable.fromPagination(
+                (pageSize, pageToken: string | undefined) =>
+                    QueryTypes.list(opts.client, opts.client.ontologyRid, {
+                        pageSize,
+                        pageToken,
+                    }),
+                (page) => page.nextPageToken,
+                (page) => page.data,
+                100
+            )
+        );
+    } catch (error) {
+        throw normalizeFoundryError(error);
+    }
 }
 
 async function getQueryFunctionTypes(opts: QueryFunctionTypeCollectionOpts, names: string[]): Promise<QueryTypeV2[]> {
     const uniqueNames = Array.from(new Set(names));
     if (uniqueNames.length === 0) return [];
-    return Promise.all(
-        uniqueNames.map((name) => QueryTypes.get(opts.client, opts.client.ontologyRid, name))
-    );
+    try {
+        return await Promise.all(
+            uniqueNames.map((name) => QueryTypes.get(opts.client, opts.client.ontologyRid, name))
+        );
+    } catch (error) {
+        throw normalizeFoundryError(error);
+    }
 }
 
 export function queryFunctionTypeCollectionOptions(opts: QueryFunctionTypeCollectionOpts): OntologyCollectionOptions {
@@ -42,14 +53,8 @@ export function queryFunctionTypeCollectionOptions(opts: QueryFunctionTypeCollec
         getKey: (row: { name: string }) => row.name,
         queryKey: ["foundry", "ontology", "queryFunctionTypes"],
         syncMode: "on-demand",
-        queryFn: async (ctx): Promise<QueryFunctionTypeDef[]> => {
-            const query = convertQueryFunctionTypeQuery(ctx.meta?.loadSubsetOptions);
-            const queryFunctionTypes =
-                query.type === "getBatch"
-                    ? await getQueryFunctionTypes(opts, query.names)
-                    : await listQueryFunctionTypes(opts);
-            return queryFunctionTypes.map(convertFoundryMetaQueryFunctionType);
-        },
+        queryFn: async (ctx): Promise<QueryFunctionTypeDef[]> =>
+            loadQueryFunctionTypeCollectionRows(opts, ctx.meta?.loadSubsetOptions),
     }) as unknown as OntologyCollectionOptions;
 }
 
@@ -83,4 +88,16 @@ function convertQueryFunctionTypeQuery(options?: LoadSubsetOptions): QueryFuncti
         }) ?? undefined;
 
     return batchQuery ?? { type: "list" };
+}
+
+export async function loadQueryFunctionTypeCollectionRows(
+    opts: QueryFunctionTypeCollectionOpts,
+    options?: LoadSubsetOptions
+): Promise<QueryFunctionTypeDef[]> {
+    const query = convertQueryFunctionTypeQuery(options);
+    const queryFunctionTypes =
+        query.type === "getBatch"
+            ? await getQueryFunctionTypes(opts, query.names)
+            : await listQueryFunctionTypes(opts);
+    return queryFunctionTypes.map(convertFoundryMetaQueryFunctionType);
 }

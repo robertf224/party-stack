@@ -5,9 +5,11 @@ import type { ObjectTypeFullMetadata, PropertyV2 } from "@osdk/foundry.ontologie
 export function convertFoundryMetaObjectType(objectType: ObjectTypeFullMetadata): MetaObjectType {
     return {
         name: objectType.objectType.apiName,
+        id: objectType.objectType.rid,
         displayName: objectType.objectType.displayName,
         pluralDisplayName: objectType.objectType.pluralDisplayName,
         primaryKey: objectType.objectType.primaryKey,
+        titleProperty: objectType.objectType.titleProperty,
         description: objectType.objectType.description,
         properties: Object.entries(objectType.objectType.properties).map(([name, property]) =>
             convertFoundryObjectProperty(name, property)

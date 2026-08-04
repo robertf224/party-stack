@@ -1,4 +1,5 @@
 import { OntologiesV2 } from "@osdk/foundry.ontologies";
+import { normalizeFoundryError } from "@party-stack/foundry-client";
 import {
     createCollection,
     eq,
@@ -43,24 +44,28 @@ export function createMetaEntityCollection(opts: MetaEntityStoreOpts) {
             queryKey: ["foundry", "ontology", "metadata"],
             syncMode: "eager",
             queryFn: async () => {
-                const loaded = await loadFoundryMetaOntology(opts.client);
-                return [
-                    ...loaded.objectTypes.map((entity) => ({
-                        entityType: "ObjectType" as const,
-                        entity,
-                        ...entity,
-                    })),
-                    ...loaded.valueTypes.map((entity) => ({
-                        entityType: "ValueType" as const,
-                        entity,
-                        ...entity,
-                    })),
-                    ...loaded.linkTypes.map((entity) => ({
-                        entityType: "LinkType" as const,
-                        entity,
-                        ...entity,
-                    })),
-                ];
+                try {
+                    const loaded = await loadFoundryMetaOntology(opts.client);
+                    return [
+                        ...loaded.objectTypes.map((entity) => ({
+                            entityType: "ObjectType" as const,
+                            entity,
+                            ...entity,
+                        })),
+                        ...loaded.valueTypes.map((entity) => ({
+                            entityType: "ValueType" as const,
+                            entity,
+                            ...entity,
+                        })),
+                        ...loaded.linkTypes.map((entity) => ({
+                            entityType: "LinkType" as const,
+                            entity,
+                            ...entity,
+                        })),
+                    ];
+                } catch (error) {
+                    throw normalizeFoundryError(error);
+                }
             },
         })
     );
@@ -92,6 +97,12 @@ export function linkTypeCollectionOptions(metadata: MetaEntityCollection): Ontol
     }) as unknown as OntologyCollectionOptions;
 }
 
+/**
+ * Object/link/value meta entities are loaded from a single shared
+ * `OntologiesV2.getFullMetadata` request (eager collection). Foundry has no narrower public API
+ * that returns the property/title/link detail Party Stack needs, so RID/name filters are applied
+ * by TanStack DB against this cached snapshot rather than a separate RID endpoint.
+ */
 async function loadFoundryMetaOntology(client: OntologyClient): Promise<{
     objectTypes: MetaObjectType[];
     valueTypes: MetaValueType[];

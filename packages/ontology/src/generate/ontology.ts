@@ -262,9 +262,17 @@ function renderProperty(property: PropertyDef): string {
 function renderObjectType(objectType: ObjectTypeDef): string {
     return renderObject([
         { name: "name", value: renderPlainValue(objectType.name) },
+        {
+            name: "id",
+            value: objectType.id ? renderPlainValue(objectType.id) : undefined,
+        },
         { name: "displayName", value: renderPlainValue(objectType.displayName) },
         { name: "pluralDisplayName", value: renderPlainValue(objectType.pluralDisplayName) },
         { name: "primaryKey", value: renderPlainValue(objectType.primaryKey) },
+        {
+            name: "titleProperty",
+            value: objectType.titleProperty ? renderPlainValue(objectType.titleProperty) : undefined,
+        },
         {
             name: "properties",
             value: withWriter((writer) =>
@@ -287,6 +295,10 @@ function renderLinkTypeSide(side: LinkTypeSideDef): string {
         { name: "objectType", value: renderPlainValue(side.objectType) },
         { name: "name", value: renderPlainValue(side.name) },
         { name: "displayName", value: renderPlainValue(side.displayName) },
+        {
+            name: "cardinality",
+            value: side.cardinality ? renderPlainValue(side.cardinality) : undefined,
+        },
     ]);
 }
 
@@ -295,7 +307,10 @@ function renderLinkType(linkType: LinkTypeDef): string {
         { name: "id", value: renderPlainValue(linkType.id) },
         { name: "source", value: renderLinkTypeSide(linkType.source) },
         { name: "target", value: renderLinkTypeSide(linkType.target) },
-        { name: "foreignKey", value: renderPlainValue(linkType.foreignKey) },
+        {
+            name: "foreignKey",
+            value: linkType.foreignKey ? renderPlainValue(linkType.foreignKey) : undefined,
+        },
         { name: "cardinality", value: renderPlainValue(linkType.cardinality) },
     ]);
 }
@@ -314,6 +329,10 @@ function renderActionPropertyAssignment(assignment: PropertyAssignment, ctx?: Re
 function renderActionType(actionType: ActionTypeDef, ctx?: RenderContext): string {
     return renderObject([
         { name: "name", value: renderPlainValue(actionType.name) },
+        {
+            name: "id",
+            value: actionType.id ? renderPlainValue(actionType.id) : undefined,
+        },
         { name: "displayName", value: renderPlainValue(actionType.displayName) },
         {
             name: "parameters",

@@ -416,6 +416,13 @@ export default {
                         description: "The object type's programmatic name.",
                     },
                     {
+                        name: "id",
+                        displayName: "ID",
+                        type: o.optional({ type: o.string({}) }),
+                        description:
+                            "Optional backend-neutral identifier for the object type. Foundry adapters map the object-type RID into this field.",
+                    },
+                    {
                         name: "displayName",
                         displayName: "Display name",
                         type: o.string({}),
@@ -431,6 +438,13 @@ export default {
                         displayName: "Primary key",
                         type: o.string({}),
                         description: "The name of the property that serves as primary key.",
+                    },
+                    {
+                        name: "titleProperty",
+                        displayName: "Title property",
+                        type: o.optional({ type: o.string({}) }),
+                        description:
+                            "Optional property used as the human-readable title/label for instances of this object type.",
                     },
                     {
                         name: "properties",
@@ -471,6 +485,21 @@ export default {
                         displayName: "Display name",
                         type: o.string({}),
                     },
+                    {
+                        name: "cardinality",
+                        displayName: "Cardinality",
+                        type: o.optional({
+                            type: o.string({
+                                constraint: o.StringConstraint.enum({
+                                    options: [
+                                        { value: "one", label: "One" },
+                                        { value: "many", label: "Many" },
+                                    ],
+                                }),
+                            }),
+                        }),
+                        description: "How many objects on this side participate in the link.",
+                    },
                 ],
             }),
         },
@@ -509,8 +538,9 @@ export default {
                     {
                         name: "foreignKey",
                         displayName: "Foreign key",
-                        type: o.string({}),
-                        description: "The foreign key on the source.",
+                        type: o.optional({ type: o.string({}) }),
+                        description:
+                            "Optional foreign key on the source. When omitted, traversal requires a backend link capability.",
                     },
                     {
                         name: "cardinality",
@@ -523,7 +553,8 @@ export default {
                                 ],
                             }),
                         }),
-                        description: "How many sources are linked to the target.",
+                        description:
+                            "How many sources are linked to the target. Prefer source.cardinality when present.",
                     },
                 ],
             }),
@@ -756,6 +787,13 @@ export default {
                         displayName: "Name",
                         type: o.string({}),
                         description: "The object type's programmatic name.",
+                    },
+                    {
+                        name: "id",
+                        displayName: "ID",
+                        type: o.optional({ type: o.string({}) }),
+                        description:
+                            "Optional backend-neutral identifier for the action type. Foundry adapters map the action-type RID into this field.",
                     },
                     {
                         name: "displayName",

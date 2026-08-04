@@ -147,4 +147,10 @@ describe("convertFoundryMetaActionType parameter validation", () => {
             value: { name: "PostalCode" },
         });
     });
+
+    it("maps Foundry action-type RID to id", () => {
+        const result = convertFoundryMetaActionType(actionType({}));
+        expect(result.id).toBe("ri.actions.main.action-type.example");
+        expect(result.name).toBe("validatedAction");
+    });
 });

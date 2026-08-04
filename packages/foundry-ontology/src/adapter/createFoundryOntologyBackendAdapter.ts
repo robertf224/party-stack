@@ -8,6 +8,12 @@ import {
     Queries,
 } from "@osdk/foundry.ontologies";
 import {
+    FoundryActionValidationError,
+    isFoundryNotFoundError,
+    normalizeFoundryError,
+    type OntologyClient,
+} from "@party-stack/foundry-client";
+import {
     NonRetryableError,
     type OntologyAttachmentIdMapping,
     type OntologyBackendAdapter,
@@ -17,23 +23,12 @@ import {
 } from "@party-stack/ontology";
 import { Collection } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
-import type { OntologyClient } from "@party-stack/foundry-client";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
+import { createFoundryLinksAdapter } from "./createFoundryLinksAdapter.js";
 import { createFoundryCodec } from "./foundryCodec.js";
 import { decodeFoundryMediaId, mediaReferenceToFoundryMediaId } from "./foundryMediaId.js";
 import { objectCollectionOptions, type ObjectCollectionUtils } from "./objectCollectionOptions.js";
-
-export function isFoundryNotFoundError(error: unknown): boolean {
-    if (typeof error !== "object" || error === null) {
-        return false;
-    }
-    const foundryError = error as {
-        statusCode?: unknown;
-        errorCode?: unknown;
-    };
-    return foundryError.statusCode === 404 || foundryError.errorCode === "NOT_FOUND";
-}
 
 type FoundryObject = Record<string, unknown>;
 
@@ -130,65 +125,95 @@ export function createFoundryOntologyBackendAdapter(opts: {
             try {
                 await Attachments.get(opts.client, attachment.id as AttachmentRid);
                 return;
-            } catch {
-                // The stable attachment RID has not been materialized yet.
+            } catch (error) {
+                const normalized = normalizeFoundryError(error);
+                if (!isFoundryNotFoundError(normalized)) {
+                    throw normalized;
+                }
             }
-            await Attachments.uploadWithRid(opts.client, attachment.id as AttachmentRid, blob, {
-                filename: getAttachmentName(attachment as unknown) ?? "",
-                preview: true,
-            });
+            try {
+                await Attachments.uploadWithRid(opts.client, attachment.id as AttachmentRid, blob, {
+                    filename: getAttachmentName(attachment as unknown) ?? "",
+                    preview: true,
+                });
+            } catch (error) {
+                throw normalizeFoundryError(error);
+            }
         },
         getAttachmentContent: async (attachment) => {
-            const media = decodeFoundryMediaId(attachment.id);
-            if (media) {
-                const source = attachment.source;
-                invariant(
-                    source,
-                    `Foundry media attachment "${attachment.id}" is missing its object property source.`
-                );
-                const response = await MediaReferenceProperties.getMediaContent(
-                    opts.client,
-                    opts.client.ontologyRid,
-                    source.objectType,
-                    String(source.primaryKey),
-                    source.property,
-                    { preview: true }
-                );
-                return response.blob();
+            try {
+                const media = decodeFoundryMediaId(attachment.id);
+                if (media) {
+                    const source = attachment.source;
+                    invariant(
+                        source,
+                        `Foundry media attachment "${attachment.id}" is missing its object property source.`
+                    );
+                    const response = await MediaReferenceProperties.getMediaContent(
+                        opts.client,
+                        opts.client.ontologyRid,
+                        source.objectType,
+                        String(source.primaryKey),
+                        source.property,
+                        { preview: true }
+                    );
+                    return response.blob();
+                }
+                const contents = await Attachments.read(opts.client, attachment.id as AttachmentRid);
+                return contents.blob();
+            } catch (error) {
+                throw normalizeFoundryError(error);
             }
-            const contents = await Attachments.read(opts.client, attachment.id as AttachmentRid);
-            return contents.blob();
         },
         getAttachmentMetadata: async (attachment) => {
-            const media = decodeFoundryMediaId(attachment.id);
-            if (media) {
-                const source = attachment.source;
-                invariant(
-                    source,
-                    `Foundry media attachment "${attachment.id}" is missing its object property source.`
-                );
-                const info = await MediaReferenceProperties.getMediaMetadata(
-                    opts.client,
-                    opts.client.ontologyRid,
-                    source.objectType,
-                    String(source.primaryKey),
-                    source.property,
-                    { preview: true }
-                );
+            try {
+                const media = decodeFoundryMediaId(attachment.id);
+                if (media) {
+                    const source = attachment.source;
+                    invariant(
+                        source,
+                        `Foundry media attachment "${attachment.id}" is missing its object property source.`
+                    );
+                    const [info, dimensions] = await Promise.all([
+                        MediaReferenceProperties.getMediaMetadata(
+                            opts.client,
+                            opts.client.ontologyRid,
+                            source.objectType,
+                            String(source.primaryKey),
+                            source.property,
+                            { preview: true }
+                        ),
+                        MediaSets.metadata(opts.client, media.mediaSetRid, media.mediaItemRid, {
+                            preview: true,
+                        })
+                            .then((metadata) =>
+                                metadata.type === "imagery" && metadata.dimensions
+                                    ? metadata.dimensions
+                                    : undefined
+                            )
+                            .catch(() => undefined),
+                    ]);
+                    return {
+                        ...attachment,
+                        size: Number(info.sizeBytes),
+                        type: info.mediaType,
+                        name: info.path,
+                        width: dimensions?.width,
+                        height: dimensions?.height,
+                        provider: "media",
+                    };
+                }
+                const metadata = await Attachments.get(opts.client, attachment.id as AttachmentRid);
                 return {
-                    ...attachment,
-                    size: Number(info.sizeBytes),
-                    type: info.mediaType,
-                    name: info.path,
+                    id: attachment.id,
+                    size: Number(metadata.sizeBytes),
+                    type: metadata.mediaType,
+                    name: metadata.filename,
+                    provider: "attachment",
                 };
+            } catch (error) {
+                throw normalizeFoundryError(error);
             }
-            const metadata = await Attachments.get(opts.client, attachment.id as AttachmentRid);
-            return {
-                id: attachment.id,
-                size: Number(metadata.sizeBytes),
-                type: metadata.mediaType,
-                name: metadata.filename,
-            };
         },
     };
 
@@ -220,10 +245,15 @@ export function createFoundryOntologyBackendAdapter(opts: {
                         getAttachmentProviderType(upload.target) === "media",
                         `Foundry attachment "${upload.attachment.id}" was not materialized before action execution.`
                     );
-                    const reference = await MediaSets.uploadMedia(opts.client, upload.blob, {
-                        filename: getAttachmentName(upload.attachment) ?? upload.attachment.id,
-                        preview: true,
-                    });
+                    let reference: Awaited<ReturnType<typeof MediaSets.uploadMedia>>;
+                    try {
+                        reference = await MediaSets.uploadMedia(opts.client, upload.blob, {
+                            filename: getAttachmentName(upload.attachment) ?? upload.attachment.id,
+                            preview: true,
+                        });
+                    } catch (error) {
+                        throw normalizeFoundryError(error);
+                    }
                     mediaReferences.set(upload.attachment.id, reference);
                     attachmentIdMappings.push({
                         localId: upload.attachment.id,
@@ -287,16 +317,27 @@ export function createFoundryOntologyBackendAdapter(opts: {
                     } as any
                 );
             } catch (error) {
-                if (isFoundryNotFoundError(error)) {
+                const normalized = normalizeFoundryError(error);
+                if (isFoundryNotFoundError(normalized)) {
                     throw new NonRetryableError(
-                        error instanceof Error ? error.message : "Foundry action target was not found.",
-                        { cause: error }
+                        normalized.message || "Foundry action target was not found.",
+                        { cause: normalized }
                     );
                 }
-                throw error;
+                throw normalized;
             }
             if (result.validation?.result === "INVALID") {
-                throw new NonRetryableError("Invalid Action arguments.");
+                const validationError = new FoundryActionValidationError(
+                    "Invalid Action arguments.",
+                    {
+                        statusCode: 400,
+                        validation: result.validation,
+                        parameters: { actionType: name },
+                    }
+                );
+                throw new NonRetryableError(validationError.message, {
+                    cause: validationError,
+                });
             }
             if (context) {
                 const operationId = getApplyActionOperationId(result);
@@ -330,13 +371,22 @@ export function createFoundryOntologyBackendAdapter(opts: {
                     : value;
             }
 
-            const result = await Queries.execute(opts.client, opts.client.ontologyRid, name, {
-                parameters: requestParameters,
-            });
+            try {
+                const result = await Queries.execute(opts.client, opts.client.ontologyRid, name, {
+                    parameters: requestParameters,
+                });
 
-            return codec.decodeValue(queryFunctionType.returnType, result.value);
+                return codec.decodeValue(queryFunctionType.returnType, result.value);
+            } catch (error) {
+                throw normalizeFoundryError(error);
+            }
         },
         attachments,
+        links: createFoundryLinksAdapter({
+            client: opts.client,
+            ir: opts.ir,
+            codec,
+        }),
     };
 }
 

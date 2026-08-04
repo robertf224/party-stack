@@ -6,6 +6,10 @@ import {
     ObjectTypesV2,
     type ObjectPrimaryKeyV2,
 } from "@osdk/foundry.ontologies";
+import {
+    normalizeFoundryError,
+    type OntologyClient,
+} from "@party-stack/foundry-client";
 import { getObjectSetWatcherManager } from "@party-stack/foundry-object-set-watcher";
 import {
     BasicIndex,
@@ -18,7 +22,6 @@ import {
     UtilsRecord,
 } from "@tanstack/db";
 import { Store } from "@tanstack/store";
-import type { OntologyClient } from "@party-stack/foundry-client";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import {
     convertLoadSubsetFilter,
@@ -258,25 +261,30 @@ async function fetchFoundryObjects(
         }
     }
 
-    const results = await AsyncIterable.toArray(
-        AsyncIterable.fromPagination(
-            (pageSize, pageToken: string | undefined) =>
-                OntologyObjectsV2.search(client, client.ontologyRid, objectType, {
-                    snapshot: true,
-                    where,
-                    excludeRid: true,
-                    select: selectedProperties,
-                    selectV2: [],
-                    pageSize,
-                    pageToken,
-                    orderBy: convertLoadSubsetOrderBy(opts.orderBy),
-                }),
-            (page) => page.nextPageToken,
-            (page) => page.data,
-            10_000,
-            limit === undefined ? undefined : offset + limit
-        )
-    );
+    let results: OntologyObjectV2[];
+    try {
+        results = await AsyncIterable.toArray(
+            AsyncIterable.fromPagination(
+                (pageSize, pageToken: string | undefined) =>
+                    OntologyObjectsV2.search(client, client.ontologyRid, objectType, {
+                        snapshot: true,
+                        where,
+                        excludeRid: true,
+                        select: selectedProperties,
+                        selectV2: [],
+                        pageSize,
+                        pageToken,
+                        orderBy: convertLoadSubsetOrderBy(opts.orderBy),
+                    }),
+                (page) => page.nextPageToken,
+                (page) => page.data,
+                10_000,
+                limit === undefined ? undefined : offset + limit
+            )
+        );
+    } catch (error) {
+        throw normalizeFoundryError(error);
+    }
 
     return (results as FoundryObject[])
         .slice(offset, limit === undefined ? undefined : offset + limit)
@@ -445,18 +453,25 @@ function createSyncConfig(
                 return true;
             };
 
-            const fetchEditHistoryPage = (body: Parameters<typeof ObjectTypesV2.getEditsHistory>[3]) =>
-                ObjectTypesV2.getEditsHistory(
-                    client,
-                    client.ontologyRid,
-                    objectType,
-                    body,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-                    {
-                        preview: true,
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    } as unknown as any
-                );
+            const fetchEditHistoryPage = async (
+                body: Parameters<typeof ObjectTypesV2.getEditsHistory>[3]
+            ) => {
+                try {
+                    return await ObjectTypesV2.getEditsHistory(
+                        client,
+                        client.ontologyRid,
+                        objectType,
+                        body,
+                        // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+                        {
+                            preview: true,
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        } as unknown as any
+                    );
+                } catch (error) {
+                    throw normalizeFoundryError(error);
+                }
+            };
 
             const decodeEditProperties = (
                 properties: Record<string, unknown>,
@@ -739,48 +754,50 @@ function createSyncConfig(
             };
 
             const loadSubsetDedupe = new DeduplicatedLoadSubset({ loadSubset });
-            const objectSetWatcherManager = getObjectSetWatcherManager(client);
-            const unsubscribe = objectSetWatcherManager.subscribe({ type: "base", objectType }, (message) => {
-                switch (message.type) {
-                    case "change": {
-                        if (
-                            editHistoryUnavailable
-                        ) {
-                            if (fullRefreshTask) {
-                                pendingDirectWatcherUpdates.push(...message.updates);
-                            } else {
-                                applyDirectWatcherUpdates(message.updates);
+            let unsubscribe: () => void;
+            try {
+                const objectSetWatcherManager = getObjectSetWatcherManager(client);
+                unsubscribe = objectSetWatcherManager.subscribe(
+                    { type: "base", objectType },
+                    (message) => {
+                        switch (message.type) {
+                            case "change": {
+                                if (editHistoryUnavailable) {
+                                    if (fullRefreshTask) {
+                                        pendingDirectWatcherUpdates.push(...message.updates);
+                                    } else {
+                                        applyDirectWatcherUpdates(message.updates);
+                                    }
+                                } else {
+                                    pendingDirectWatcherUpdates.push(...message.updates);
+                                    requestEditHistoryCatchUp?.();
+                                }
+                                break;
                             }
-                        } else {
-                            pendingDirectWatcherUpdates.push(...message.updates);
-                            requestEditHistoryCatchUp?.();
-                        }
-                        break;
-                    }
-                    case "refresh": {
-                        if (
-                            editHistoryUnavailable
-                        ) {
-                            requestFullRefresh?.();
-                        } else {
-                            requestEditHistoryCatchUp?.();
-                        }
-                        break;
-                    }
-                    case "state": {
-                        if (message.status === "open") {
-                            if (
-                                editHistoryUnavailable
-                            ) {
-                                requestFullRefresh?.();
-                            } else {
-                                requestEditHistoryCatchUp?.();
+                            case "refresh": {
+                                if (editHistoryUnavailable) {
+                                    requestFullRefresh?.();
+                                } else {
+                                    requestEditHistoryCatchUp?.();
+                                }
+                                break;
+                            }
+                            case "state": {
+                                if (message.status === "open") {
+                                    if (editHistoryUnavailable) {
+                                        requestFullRefresh?.();
+                                    } else {
+                                        requestEditHistoryCatchUp?.();
+                                    }
+                                }
+                                break;
                             }
                         }
-                        break;
                     }
-                }
-            });
+                );
+            } catch (error) {
+                throw normalizeFoundryError(error);
+            }
 
             // start task here, cleanup can stop it
             // in that task:

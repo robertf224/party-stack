@@ -180,11 +180,15 @@ export type PropertyDef = {
 export type ObjectTypeDef = {
     /** The object type's programmatic name. */
     name: string;
+    /** Optional backend-neutral identifier for the object type. Foundry adapters map the object-type RID into this field. */
+    id?: string;
     /** Human-readable name. */
     displayName: string;
     pluralDisplayName: string;
     /** The name of the property that serves as primary key. */
     primaryKey: string;
+    /** Optional property used as the human-readable title/label for instances of this object type. */
+    titleProperty?: string;
     /** The object type's propertieo. */
     properties: Array<PropertyDef>;
     /** Optional description. */
@@ -196,6 +200,8 @@ export type LinkTypeSideDef = {
     objectType: string;
     name: string;
     displayName: string;
+    /** How many objects on this side participate in the link. */
+    cardinality?: "one" | "many";
 };
 
 /** The cardinality of a link from the source's perspective. */
@@ -206,9 +212,9 @@ export type LinkTypeDef = {
     id: string;
     source: LinkTypeSideDef;
     target: LinkTypeSideDef;
-    /** The foreign key on the source. */
-    foreignKey: string;
-    /** How many sources are linked to the target. */
+    /** Optional foreign key on the source. When omitted, traversal requires a backend link capability. */
+    foreignKey?: string;
+    /** How many sources are linked to the target. Prefer source.cardinality when present. */
     cardinality: "one" | "many";
 };
 
@@ -297,6 +303,8 @@ export type ActionLogicStep = v.Union<{
 export type ActionTypeDef = {
     /** The object type's programmatic name. */
     name: string;
+    /** Optional backend-neutral identifier for the action type. Foundry adapters map the action-type RID into this field. */
+    id?: string;
     /** Human-readable name. */
     displayName: string;
     /** The action type's parametero. */

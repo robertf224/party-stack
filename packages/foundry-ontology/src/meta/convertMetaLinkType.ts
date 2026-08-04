@@ -1,15 +1,22 @@
-import { invariant } from "@bobbyfidz/panic";
 import type { MetaLinkType } from "@party-stack/ontology";
 import type { LinkTypeSideCardinality, LinkTypeSideV2, ObjectTypeFullMetadata } from "@osdk/foundry.ontologies";
 
+interface OwnedLinkTypeSide {
+    ownerObjectType: string;
+    side: LinkTypeSideV2;
+}
+
 export function convertFoundryMetaLinkTypes(objectTypes: ObjectTypeFullMetadata[]): MetaLinkType[] {
-    const sidesByRid = new Map<string, LinkTypeSideV2[]>();
+    const sidesByRid = new Map<string, OwnedLinkTypeSide[]>();
 
     for (const objectType of objectTypes) {
         for (const linkType of objectType.linkTypes) {
             const key = linkType.linkTypeRid;
             const sides = sidesByRid.get(key) ?? [];
-            sides.push(linkType);
+            sides.push({
+                ownerObjectType: objectType.objectType.apiName,
+                side: linkType,
+            });
             sidesByRid.set(key, sides);
         }
     }
@@ -19,38 +26,42 @@ export function convertFoundryMetaLinkTypes(objectTypes: ObjectTypeFullMetadata[
         .filter((linkType): linkType is MetaLinkType => linkType !== null);
 }
 
-function convertFoundryMetaLinkType(id: string, sides: LinkTypeSideV2[]): MetaLinkType | null {
+function convertFoundryMetaLinkType(id: string, sides: OwnedLinkTypeSide[]): MetaLinkType | null {
     if (sides.length !== 2) {
         return null;
     }
 
-    const source = sides.find((side) => side.foreignKeyPropertyApiName);
-    if (!source) {
+    const sourceEntry = sides.find(({ side }) => side.foreignKeyPropertyApiName) ?? sides[0];
+    const targetEntry = sides.find((entry) => entry !== sourceEntry);
+    if (!sourceEntry || !targetEntry) {
         return null;
     }
 
-    const target = sides.find((side) => side !== source);
-    if (!target) {
-        return null;
-    }
+    // Full metadata stores each outgoing link under its owner object type, while
+    // `side.objectTypeApiName` and the side name/cardinality describe the linked side.
+    // Canonical IR stores each role on the object type it represents, so the role
+    // metadata is intentionally taken from the opposite owner's outgoing entry.
+    const sourceRole = targetEntry.side;
+    const targetRole = sourceEntry.side;
+    const sourceCardinality = convertFoundryLinkCardinality(sourceRole.cardinality);
+    const targetCardinality = convertFoundryLinkCardinality(targetRole.cardinality);
 
     return {
         id,
         source: {
-            objectType: source.objectTypeApiName,
-            name: source.apiName,
-            displayName: source.displayName,
+            objectType: sourceEntry.ownerObjectType,
+            name: sourceRole.apiName,
+            displayName: sourceRole.displayName,
+            cardinality: sourceCardinality,
         },
         target: {
-            objectType: target.objectTypeApiName,
-            name: target.apiName,
-            displayName: target.displayName,
+            objectType: targetEntry.ownerObjectType,
+            name: targetRole.apiName,
+            displayName: targetRole.displayName,
+            cardinality: targetCardinality,
         },
-        foreignKey: (() => {
-            invariant(source.foreignKeyPropertyApiName, "Expected Foundry link foreign key.");
-            return source.foreignKeyPropertyApiName;
-        })(),
-        cardinality: convertFoundryLinkCardinality(source.cardinality),
+        foreignKey: sourceEntry.side.foreignKeyPropertyApiName,
+        cardinality: sourceCardinality,
     };
 }
 

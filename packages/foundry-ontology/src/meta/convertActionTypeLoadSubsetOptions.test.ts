@@ -6,6 +6,20 @@ import {
 } from "./convertActionTypeLoadSubsetOptions.js";
 
 describe("convertActionTypeLoadSubsetFilter", () => {
+    it("converts id equality to an exact RID predicate", () => {
+        const filter = convertActionTypeLoadSubsetFilter(
+            eq(
+                new IR.PropRef<string>(["id"]),
+                "ri.actions.main.action-type.create-task"
+            )
+        );
+
+        expect(filter).toEqual({
+            type: "actionTypeRid",
+            value: "ri.actions.main.action-type.create-task",
+        });
+    });
+
     it("converts name equality to an exact apiName predicate with kebab-case", () => {
         const filter = convertActionTypeLoadSubsetFilter(
             eq(new IR.PropRef<string>(["name"]), "streamlineCreateToken")
@@ -107,6 +121,32 @@ describe("convertActionTypeLoadSubsetFilter", () => {
                 {
                     type: "actionTypeDisplayName",
                     value: { type: "contains", value: "Task" },
+                },
+            ],
+        });
+    });
+
+    it("supports RID predicates combined with searchable fields", () => {
+        const filter = convertActionTypeLoadSubsetFilter(
+            and(
+                eq(
+                    new IR.PropRef<string>(["id"]),
+                    "ri.actions.main.action-type.create-task"
+                ),
+                eq(new IR.PropRef<string>(["name"]), "createTask")
+            )
+        );
+
+        expect(filter).toEqual({
+            type: "and",
+            value: [
+                {
+                    type: "actionTypeRid",
+                    value: "ri.actions.main.action-type.create-task",
+                },
+                {
+                    type: "actionTypeApiName",
+                    value: { type: "exact", value: "create-task" },
                 },
             ],
         });
