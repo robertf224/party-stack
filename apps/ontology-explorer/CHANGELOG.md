@@ -1,5 +1,13 @@
 # @party-stack/ontology-explorer
 
+## 0.0.9
+
+### Patch Changes
+
+- Updated dependencies [fe9443e]
+    - @party-stack/ontology@0.7.0
+    - @party-stack/foundry-ontology@0.6.0
+
 ## 0.0.8
 
 ### Patch Changes
