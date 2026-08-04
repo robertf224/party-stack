@@ -574,6 +574,12 @@ export function validate(ontology: OntologyIR): ValidationResult {
                 path: [...otPath, "primaryKey"],
             });
         }
+        if (ot.title && !propertyNames.has(ot.title)) {
+            errors.push({
+                message: `Title "${ot.title}" does not reference a valid property.`,
+                path: [...otPath, "title"],
+            });
+        }
     }
 
     // Validate link types

@@ -18,11 +18,14 @@ describe("meta ontology runtime fields", () => {
         }
 
         expect(objectType.type.value.fields.map(({ name }) => name)).not.toContain("id");
-        expect(objectType.type.value.fields.map(({ name }) => name)).not.toContain("title");
+        expect(objectType.type.value.fields.find(({ name }) => name === "title")?.type).toEqual({
+            kind: "optional",
+            value: { type: { kind: "string", value: {} } },
+        });
         expect(property.type.value.fields.map(({ name }) => name)).not.toContain("id");
     });
 
-    it("requires IDs and exposes a title expression in runtime object metadata", () => {
+    it("requires IDs while preserving the canonical title field in runtime metadata", () => {
         const objectType = metaOntology.objectTypes.find(
             (type) => type.name === "ObjectType"
         );

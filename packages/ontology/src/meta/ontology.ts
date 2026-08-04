@@ -14,49 +14,33 @@ const idField = (description: string): FieldDef => ({
     description,
 });
 
-function addRuntimeMetaFields(type: NamedTypeDef): NamedTypeDef {
-    if (type.name !== "ObjectTypeDef" && type.name !== "PropertyDef") {
-        return type;
-    }
-
+function addRuntimeId(type: NamedTypeDef, description: string): NamedTypeDef {
     invariant(type.type.kind === "struct", `${type.name} must be a struct.`);
-
-    if (type.name === "PropertyDef") {
-        return {
-            ...type,
-            type: o.struct({
-                fields: [
-                    idField("The provider-assigned stable identifier for this property."),
-                    ...type.type.value.fields,
-                ],
-            }),
-        };
-    }
-
-    const fields = type.type.value.fields.flatMap((field) =>
-        field.name === "primaryKey"
-            ? [
-                  field,
-                  {
-                      name: "title",
-                      displayName: "Title",
-                      type: o.optional({ type: o.string({}) }),
-                      description:
-                          "The optional property name used as the human-readable title for an object.",
-                  } satisfies FieldDef,
-              ]
-            : [field]
-    );
-
     return {
         ...type,
         type: o.struct({
             fields: [
-                idField("The provider-assigned stable identifier for this object type."),
-                ...fields,
+                idField(description),
+                ...type.type.value.fields,
             ],
         }),
     };
+}
+
+function addRuntimeMetaFields(type: NamedTypeDef): NamedTypeDef {
+    if (type.name === "ObjectTypeDef") {
+        return addRuntimeId(
+            type,
+            "The provider-assigned stable identifier for this object type."
+        );
+    } else if (type.name === "PropertyDef") {
+        return addRuntimeId(
+            type,
+            "The provider-assigned stable identifier for this property."
+        );
+    } else {
+        return type;
+    }
 }
 
 const metaTypes = OntologyIRSchema.types

@@ -266,6 +266,10 @@ function renderObjectType(objectType: ObjectTypeDef): string {
         { name: "pluralDisplayName", value: renderPlainValue(objectType.pluralDisplayName) },
         { name: "primaryKey", value: renderPlainValue(objectType.primaryKey) },
         {
+            name: "title",
+            value: objectType.title ? renderPlainValue(objectType.title) : undefined,
+        },
+        {
             name: "properties",
             value: withWriter((writer) =>
                 writeArray(
