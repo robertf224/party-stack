@@ -67,6 +67,17 @@ describe("convertActionTypeLoadSubsetFilter", () => {
         });
     });
 
+    it("rejects LIKE predicates for ID fields", () => {
+        expect(() =>
+            convertActionTypeLoadSubsetFilter(
+                like(
+                    new IR.PropRef<string>(["id"]),
+                    "%ri.actions.main.action-type%"
+                )
+            )
+        ).toThrow(/does not support LIKE filtering/);
+    });
+
     it("converts each like wildcard-delimited term to a contains predicate", () => {
         expect(
             convertActionTypeLoadSubsetFilter(
