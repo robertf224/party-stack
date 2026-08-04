@@ -1,5 +1,15 @@
 # @party-stack/remote-notes
 
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies [1842e6c]
+    - @party-stack/ontology@0.6.0
+    - @party-stack/ontology-devtools@0.2.1
+    - @party-stack/remote-ontology@0.1.2
+    - @party-stack/sqlite-ontology@0.1.2
+
 ## 0.0.2
 
 ### Patch Changes
