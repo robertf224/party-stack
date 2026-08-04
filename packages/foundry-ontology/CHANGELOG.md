@@ -1,5 +1,18 @@
 # @party-stack/foundry-ontology
 
+## 0.6.0
+
+### Minor Changes
+
+- fe9443e: Add required action type identifiers to runtime metadata while keeping portable action definitions provider-neutral.
+
+    Map Foundry action type RIDs into runtime metadata and support filtering the ActionType collection by ID.
+
+### Patch Changes
+
+- Updated dependencies [fe9443e]
+    - @party-stack/ontology@0.7.0
+
 ## 0.5.0
 
 ### Minor Changes
