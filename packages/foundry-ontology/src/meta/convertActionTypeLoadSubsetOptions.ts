@@ -8,9 +8,15 @@ import type {
 } from "@osdk/foundry.ontologies";
 
 const FILTER_FIELDS = {
+    id: "actionTypeRid",
     name: "actionTypeApiName",
     displayName: "actionTypeDisplayName",
 } as const satisfies Partial<Record<keyof MetaActionType, ActionTypeSearchJsonQueryV2["type"]>>;
+
+const LIKE_FIELDS = {
+    name: FILTER_FIELDS.name,
+    displayName: FILTER_FIELDS.displayName,
+} as const satisfies Pick<typeof FILTER_FIELDS, "name" | "displayName">;
 
 const ORDER_BY_FIELDS = {
     displayName: "actionTypeDisplayName",
@@ -24,8 +30,22 @@ function getFilterField(field: FieldPath): keyof typeof FILTER_FIELDS {
     throw new Error(`Foundry ActionType search does not support filtering by "${name}".`);
 }
 
+function getLikeField(field: FieldPath): keyof typeof LIKE_FIELDS {
+    const name = field.join(".");
+    if (name && Object.hasOwn(LIKE_FIELDS, name)) {
+        return name as keyof typeof LIKE_FIELDS;
+    }
+    throw new Error(`Foundry ActionType search does not support LIKE filtering by "${name}".`);
+}
+
 function eq(field: FieldPath, value: unknown): ActionTypeSearchJsonQueryV2 {
     const name = getFilterField(field);
+    if (name === "id") {
+        return {
+            type: "actionTypeRid",
+            value: value as string,
+        };
+    }
     return {
         type: FILTER_FIELDS[name],
         value: {
@@ -36,10 +56,10 @@ function eq(field: FieldPath, value: unknown): ActionTypeSearchJsonQueryV2 {
 }
 
 function like(field: FieldPath, value: string): ActionTypeSearchJsonQueryV2 {
-    const name = getFilterField(field);
+    const name = getLikeField(field);
     const terms = value.split("%").filter(Boolean);
     const queries: ActionTypeSearchJsonQueryV2[] = terms.map((term) => ({
-        type: FILTER_FIELDS[name],
+        type: LIKE_FIELDS[name],
         value: {
             type: "contains",
             value: name === "name" ? toFoundryActionTypeName(term) : term,

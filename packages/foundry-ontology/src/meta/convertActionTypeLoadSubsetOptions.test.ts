@@ -6,6 +6,20 @@ import {
 } from "./convertActionTypeLoadSubsetOptions.js";
 
 describe("convertActionTypeLoadSubsetFilter", () => {
+    it("converts id equality to an exact RID predicate", () => {
+        expect(
+            convertActionTypeLoadSubsetFilter(
+                eq(
+                    new IR.PropRef<string>(["id"]),
+                    "ri.actions.main.action-type.create-task"
+                )
+            )
+        ).toEqual({
+            type: "actionTypeRid",
+            value: "ri.actions.main.action-type.create-task",
+        });
+    });
+
     it("converts name equality to an exact apiName predicate with kebab-case", () => {
         const filter = convertActionTypeLoadSubsetFilter(
             eq(new IR.PropRef<string>(["name"]), "streamlineCreateToken")
@@ -51,6 +65,17 @@ describe("convertActionTypeLoadSubsetFilter", () => {
             type: "actionTypeDisplayName",
             value: { type: "contains", value: "token" },
         });
+    });
+
+    it("rejects LIKE predicates for ID fields", () => {
+        expect(() =>
+            convertActionTypeLoadSubsetFilter(
+                like(
+                    new IR.PropRef<string>(["id"]),
+                    "%ri.actions.main.action-type%"
+                )
+            )
+        ).toThrow(/does not support LIKE filtering/);
     });
 
     it("converts each like wildcard-delimited term to a contains predicate", () => {

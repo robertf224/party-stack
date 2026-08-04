@@ -17,6 +17,13 @@ function actionType(parameters: Record<string, ActionParameterV2>): ActionTypeFu
 }
 
 describe("convertFoundryMetaActionType parameter validation", () => {
+    it("maps the Foundry action type RID to the runtime metadata ID", () => {
+        expect(convertFoundryMetaActionType(actionType({}))).toMatchObject({
+            id: "ri.actions.main.action-type.example",
+            name: "validatedAction",
+        });
+    });
+
     it("converts closed one-of string validation to an enum constraint", () => {
         const result = convertFoundryMetaActionType(
             actionType({
