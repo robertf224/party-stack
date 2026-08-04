@@ -1,3 +1,4 @@
+import { FoundryError } from "@party-stack/foundry-client";
 import { o } from "@party-stack/ontology";
 import { eq, gt, IR, type LoadSubsetOptions } from "@tanstack/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -1169,6 +1170,31 @@ describe("objectCollectionOptions", () => {
         });
         expect([...harness.syncedData.keys()]).toEqual([3, 4]);
 
+        harness.cleanup();
+    });
+
+    it("normalizes Foundry search failures at the collection boundary", async () => {
+        mockState.search.mockRejectedValue({
+            statusCode: 403,
+            errorCode: "PERMISSION_DENIED",
+            errorName: "ObjectTypePermissionDenied",
+            message: "Not allowed to load Employee.",
+            parameters: { objectType: "Employee" },
+        });
+        const harness = createSyncHarness();
+
+        const error = await harness.loadSubset({}).then(
+            () => undefined,
+            (cause: unknown) => cause
+        );
+
+        expect(error).toBeInstanceOf(FoundryError);
+        expect(error).toMatchObject({
+            statusCode: 403,
+            errorCode: "PERMISSION_DENIED",
+            errorName: "ObjectTypePermissionDenied",
+            parameters: { objectType: "Employee" },
+        });
         harness.cleanup();
     });
 });

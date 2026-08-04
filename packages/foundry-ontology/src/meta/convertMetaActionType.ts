@@ -483,6 +483,7 @@ export function convertFoundryMetaActionType(actionType: ActionTypeFullMetadata)
 
     return {
         name: toOntologyActionTypeName(actionType.actionType.apiName),
+        id: actionType.actionType.rid,
         displayName: actionType.actionType.displayName ?? actionType.actionType.apiName,
         description: actionType.actionType.description,
         deprecated:

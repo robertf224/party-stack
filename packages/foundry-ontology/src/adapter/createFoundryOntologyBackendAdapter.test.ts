@@ -1,14 +1,17 @@
-import { o } from "@party-stack/ontology";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { OntologyClient } from "@party-stack/foundry-client";
 import {
-    createFoundryOntologyBackendAdapter,
+    FoundryActionValidationError,
     isFoundryNotFoundError,
-} from "./createFoundryOntologyBackendAdapter.js";
+    normalizeFoundryError,
+    type OntologyClient,
+} from "@party-stack/foundry-client";
+import { NonRetryableError, o } from "@party-stack/ontology";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createFoundryOntologyBackendAdapter } from "./createFoundryOntologyBackendAdapter.js";
 import { encodeFoundryMediaId } from "./foundryMediaId.js";
 
 const mediaMocks = vi.hoisted(() => ({
     uploadMedia: vi.fn(),
+    metadata: vi.fn(),
 }));
 const ontologyMocks = vi.hoisted(() => ({
     applyWithOverrides: vi.fn(),
@@ -37,6 +40,10 @@ vi.mock("@osdk/foundry.ontologies", async (importOriginal) => {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    mediaMocks.metadata.mockResolvedValue({
+        type: "imagery",
+        dimensions: { width: 640, height: 480 },
+    });
 });
 
 describe("isFoundryNotFoundError", () => {
@@ -176,6 +183,40 @@ describe("Foundry media attachments", () => {
         });
     });
 
+    it("preserves invalid action validation details in a non-retryable error", async () => {
+        const validation = {
+            result: "INVALID",
+            parameters: {
+                media: {
+                    result: "INVALID",
+                    message: "Media is required.",
+                },
+            },
+        };
+        ontologyMocks.applyWithOverrides.mockResolvedValue({
+            validation,
+            edits: { type: "edits", edits: [] },
+        });
+
+        const error = await adapter
+            .applyAction("createMedia", {}, { objects: {} })
+            .then(
+                () => undefined,
+                (cause: unknown) => cause
+            );
+
+        expect(error).toBeInstanceOf(NonRetryableError);
+        const normalized = normalizeFoundryError(error);
+        expect(normalized).toBeInstanceOf(FoundryActionValidationError);
+        expect(normalized).toMatchObject({
+            statusCode: 400,
+            errorCode: "INVALID_ARGUMENT",
+            errorName: "ActionValidationError",
+            parameters: { actionType: "createMedia" },
+            validation,
+        });
+    });
+
     it("reads confirmed media through its object property source", async () => {
         const id = encodeFoundryMediaId(mediaId);
         const attachment = {
@@ -200,8 +241,18 @@ describe("Foundry media attachments", () => {
         await expect(attachments.getAttachmentMetadata(attachment)).resolves.toEqual({
             ...attachment,
             size: 5,
+            type: "image/png",
             name: undefined,
+            width: 640,
+            height: 480,
+            provider: "media",
         });
+        expect(mediaMocks.metadata).toHaveBeenCalledWith(
+            expect.anything(),
+            mediaId.mediaSetRid,
+            mediaId.mediaItemRid,
+            { preview: true }
+        );
         expect(ontologyMocks.getMediaContent).toHaveBeenCalledWith(
             expect.anything(),
             "ri.ontology.main.1",

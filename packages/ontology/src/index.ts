@@ -4,6 +4,7 @@ export * from "./live/index.js";
 export * from "./OntologyConfig.js";
 export type { OntologyObject } from "./live/objects/OntologyObject.js";
 export * from "./meta/pull.js";
+export * from "./meta/createStaticMetaOntologyBackend.js";
 export type {
     MetaOntology,
     LinkType as MetaLinkType,

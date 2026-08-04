@@ -8,6 +8,7 @@ import {
     type LiveOntologyAttachments,
 } from "./attachments/createLiveOntologyAttachments.js";
 import { unsupportedOntologyAttachmentsAdapter } from "./attachments/unsupportedOntologyAttachmentsAdapter.js";
+import { createLiveOntologyLinks, type LiveOntologyLinks } from "./links/createLiveOntologyLinks.js";
 import { createLiveOntologyObjectCollection } from "./objects/createLiveOntologyObjectCollection.js";
 import type { LiveOntologyAction } from "./actions/createLiveOntologyAction.js";
 import type { OntologyMutatorRegistry } from "./mutators/types.js";
@@ -21,6 +22,8 @@ import type { attachment } from "../utils/values.js";
 export type { LiveOntologyAction, LiveOntologyActionOptions } from "./actions/createLiveOntologyAction.js";
 export type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
 export type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
+export type { LiveOntologyLinks } from "./links/createLiveOntologyLinks.js";
+export { OntologyLinkError } from "./links/resolveOntologyLink.js";
 
 export type LiveOntologyWriteMode = "direct" | "outbox";
 
@@ -85,6 +88,7 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
     objects: LiveOntologyObjects<Ontology["objectTypes"]>;
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
     queryFunctions: LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>;
+    links: LiveOntologyLinks;
     attachments: LiveOntologyAttachments;
     outbox: OntologyOutbox;
     cleanup: () => Promise<void>;
@@ -162,6 +166,11 @@ export async function createLiveOntology<
                 }),
         ])
     );
+    const links = createLiveOntologyLinks({
+        ir: opts.ir,
+        objects: objects as Record<string, Collection<Record<string, unknown>>>,
+        backendLinks: backendAdapter.links,
+    });
 
     return {
         ir: opts.ir,
@@ -170,6 +179,7 @@ export async function createLiveOntology<
         queryFunctions: queryFunctions as unknown as LiveOntologyQueryFunctions<
             Ontology["queryFunctionTypes"]
         >,
+        links,
         attachments,
         outbox: actionsSubsystem.outbox,
         cleanup: async () => {

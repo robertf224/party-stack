@@ -4,7 +4,7 @@ import { getTargetValueType } from "../../utils/types.js";
 import * as v from "../../utils/values.js";
 import type { OntologyIR } from "../../ir/index.js";
 import type { OntologyAttachmentCreateTarget } from "../../utils/targets.js";
-import type { OntologyAttachmentsAdapter } from "../OntologyBackendAdapter.js";
+import type { OntologyAttachmentsAdapter, OntologyAttachmentMetadata } from "../OntologyBackendAdapter.js";
 
 export interface LiveOntologyEagerAttachmentCreation {
     attachment: v.attachment;
@@ -25,9 +25,7 @@ export interface LiveOntologyAttachments {
         blob: Blob | File,
         opts?: Options
     ) => Promise<LiveOntologyAttachmentCreateResult<Options>>;
-    metadata: (
-        attachment: v.attachment
-    ) => Promise<v.attachment & { size: number; type: string; name?: string }>;
+    metadata: (attachment: v.attachment) => Promise<OntologyAttachmentMetadata>;
     blob: (attachment: v.attachment) => Promise<Blob>;
 }
 
@@ -93,6 +91,8 @@ export function createLiveOntologyAttachments(opts: {
 
     return {
         create,
+        // TODO: Remote ontology attachment metadata should bypass or extend BlobManager's
+        // reduced cached metadata shape so width/height/provider/source survive after blob reads.
         metadata: (attachment) =>
             blobManager.metadata(attachment.id, {
                 meta: { source: attachment.source },
