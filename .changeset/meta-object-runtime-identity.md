@@ -3,6 +3,6 @@
 "@party-stack/foundry-ontology": minor
 ---
 
-Add required object and property identifiers plus title expressions to runtime object metadata, while keeping portable ontology definitions provider-neutral.
+Add required object and property identifiers plus title property metadata to runtime object metadata, while keeping portable ontology definitions provider-neutral.
 
-Resolve Foundry object metadata by RID through TanStack queries with `ObjectTypesV2.getByRidBatch` pushdown.
+Map Foundry object and property RIDs into runtime metadata so downstream TanStack queries can filter the shared ontology metadata snapshot by ID.

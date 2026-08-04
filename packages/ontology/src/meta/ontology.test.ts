@@ -37,10 +37,7 @@ describe("meta ontology runtime fields", () => {
         expect(objectType?.properties.find(({ name }) => name === "title")?.type).toEqual({
             kind: "optional",
             value: {
-                type: {
-                    kind: "ref",
-                    value: { name: "Expression" },
-                },
+                type: { kind: "string", value: {} },
             },
         });
 

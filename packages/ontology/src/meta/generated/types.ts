@@ -291,8 +291,8 @@ export type ObjectType = {
     pluralDisplayName: string;
     /** The name of the property that serves as primary key. */
     primaryKey: string;
-    /** An optional expression used to derive a human-readable title for an object. */
-    title?: Expression;
+    /** The optional property name used as the human-readable title for an object. */
+    title?: string;
     /** The object type's propertieo. */
     properties: Array<PropertyDef>;
     /** Optional description. */

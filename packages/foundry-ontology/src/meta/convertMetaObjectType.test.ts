@@ -34,29 +34,20 @@ function objectType(): ObjectTypeV2 {
 }
 
 describe("convertFoundryMetaObjectType", () => {
-    it.each([
-        ["ObjectTypeV2", objectType()],
-        [
-            "ObjectTypeFullMetadata",
-            {
-                objectType: objectType(),
-                linkTypes: [],
-                implementsInterfaces: [],
-                implementsInterfaces2: {},
-                sharedPropertyTypeMapping: {},
-            } as ObjectTypeFullMetadata,
-        ],
-    ])("maps runtime identifiers and title expression from %s", (_label, input) => {
-        const result = convertFoundryMetaObjectType(input);
+    it("maps runtime identifiers and the title property", () => {
+        const result = convertFoundryMetaObjectType({
+            objectType: objectType(),
+            linkTypes: [],
+            implementsInterfaces: [],
+            implementsInterfaces2: {},
+            sharedPropertyTypeMapping: {},
+        } as ObjectTypeFullMetadata);
 
         expect(result).toMatchObject({
             id: "ri.ontology.main.object-type.employee",
             name: "Employee",
             primaryKey: "id",
-            title: {
-                kind: "valueReference",
-                value: { path: ["fullName"] },
-            },
+            title: "fullName",
         });
         expect(result.properties).toEqual([
             expect.objectContaining({

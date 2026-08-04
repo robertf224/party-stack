@@ -1,16 +1,9 @@
-import {
-    OntologiesV2,
-    ObjectTypesV2,
-} from "@osdk/foundry.ontologies";
+import { OntologiesV2 } from "@osdk/foundry.ontologies";
 import {
     createCollection,
     eq,
-    FieldPath,
     liveQueryCollectionOptions,
-    LoadSubsetOptions,
-    parseWhereExpression,
     Query,
-    queryOnce,
 } from "@tanstack/db";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
@@ -21,7 +14,6 @@ import type {
     MetaValueType,
     OntologyCollectionOptions,
 } from "@party-stack/ontology";
-import { chunk } from "../utils/chunk.js";
 import { convertFoundryMetaLinkTypes } from "./convertMetaLinkType.js";
 import { convertFoundryMetaObjectType } from "./convertMetaObjectType.js";
 import { convertFoundryMetaValueType } from "./convertMetaValueType.js";
@@ -49,7 +41,7 @@ export function createMetaEntityCollection(opts: MetaEntityStoreOpts) {
                 }
             },
             queryKey: ["foundry", "ontology", "metadata"],
-            syncMode: "on-demand",
+            syncMode: "eager",
             queryFn: async () => {
                 const loaded = await loadFoundryMetaOntology(opts.client);
                 return [
@@ -76,29 +68,11 @@ export function createMetaEntityCollection(opts: MetaEntityStoreOpts) {
 
 export type MetaEntityCollection = ReturnType<typeof createMetaEntityCollection>;
 
-export function objectTypeCollectionOptions(
-    metadata: MetaEntityCollection,
-    opts: MetaEntityStoreOpts
-): OntologyCollectionOptions {
-    return queryCollectionOptions<MetaObjectType>({
-        queryClient: new QueryClient(),
-        getKey: (row) => row.name,
-        queryKey: ["foundry", "ontology", "objectTypes"],
-        syncMode: "on-demand",
-        queryFn: async (ctx) => {
-            const query = convertObjectTypeQuery(ctx.meta?.loadSubsetOptions);
-            if (query.type === "byRid") {
-                return loadObjectTypesByRid(opts.client, query.rids);
-            }
-            const rows = await queryOnce((q) =>
-                q
-                    .from({ metadata })
-                    .where(({ metadata }) => eq(metadata.entityType, "ObjectType"))
-            );
-            return rows.flatMap((row) =>
-                row.entityType === "ObjectType" ? [row.entity] : []
-            );
-        },
+export function objectTypeCollectionOptions(metadata: MetaEntityCollection): OntologyCollectionOptions {
+    return liveQueryCollectionOptions({
+        query: new Query()
+            .from({ metadata })
+            .where(({ metadata }) => eq(metadata.entityType, "ObjectType")),
     }) as unknown as OntologyCollectionOptions;
 }
 
@@ -135,94 +109,4 @@ async function loadFoundryMetaOntology(client: OntologyClient): Promise<{
         valueTypes,
         linkTypes,
     };
-}
-
-type ObjectTypeQuery =
-    | { type: "byRid"; rids: string[] }
-    | { type: "fullMetadata" };
-
-function convertObjectTypeQuery(options?: LoadSubsetOptions): ObjectTypeQuery {
-    if (!options?.where) {
-        return { type: "fullMetadata" };
-    }
-
-    const ridQuery =
-        parseWhereExpression<ObjectTypeQuery | undefined>(options.where, {
-            handlers: {
-                and: (...queries: Array<ObjectTypeQuery | undefined>) => {
-                    const rids = queries.flatMap((query) =>
-                        query?.type === "byRid" ? query.rids : []
-                    );
-                    return rids.length > 0
-                        ? { type: "byRid", rids: Array.from(new Set(rids)) }
-                        : undefined;
-                },
-                or: (...queries: Array<ObjectTypeQuery | undefined>) => {
-                    if (
-                        queries.length === 0 ||
-                        queries.some((query) => query?.type !== "byRid")
-                    ) {
-                        return undefined;
-                    }
-                    return {
-                        type: "byRid",
-                        rids: Array.from(
-                            new Set(
-                                queries.flatMap((query) =>
-                                    query?.type === "byRid" ? query.rids : []
-                                )
-                            )
-                        ),
-                    };
-                },
-                eq: (field: FieldPath, value: unknown) => {
-                    if (field.join(".") === "id" && typeof value === "string") {
-                        return { type: "byRid", rids: [value] };
-                    }
-                },
-                in: (field: FieldPath, values: unknown[]) => {
-                    if (field.join(".") === "id") {
-                        return {
-                            type: "byRid",
-                            rids: values.filter(
-                                (value): value is string =>
-                                    typeof value === "string" && value.length > 0
-                            ),
-                        };
-                    }
-                },
-            },
-            onUnknownOperator: () => undefined,
-        }) ?? undefined;
-
-    return ridQuery?.type === "byRid"
-        ? ridQuery
-        : { type: "fullMetadata" };
-}
-
-async function loadObjectTypesByRid(
-    client: OntologyClient,
-    rids: string[]
-): Promise<MetaObjectType[]> {
-    const uniqueRids = Array.from(new Set(rids));
-    if (uniqueRids.length === 0) {
-        return [];
-    }
-
-    const responses = await Promise.all(
-        chunk(uniqueRids, 100).map((batch) =>
-            ObjectTypesV2.getByRidBatch(
-                client,
-                client.ontologyRid,
-                {
-                    requests: batch.map((objectTypeRid) => ({ objectTypeRid })),
-                },
-                { preview: true }
-            )
-        )
-    );
-
-    return responses
-        .flatMap((response) => response.data)
-        .map(convertFoundryMetaObjectType);
 }

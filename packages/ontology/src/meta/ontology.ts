@@ -40,9 +40,9 @@ function addRuntimeMetaFields(type: NamedTypeDef): NamedTypeDef {
                   {
                       name: "title",
                       displayName: "Title",
-                      type: o.optional({ type: o.ref({ name: "Expression" }) }),
+                      type: o.optional({ type: o.string({}) }),
                       description:
-                          "An optional expression used to derive a human-readable title for an object.",
+                          "The optional property name used as the human-readable title for an object.",
                   } satisfies FieldDef,
               ]
             : [field]

@@ -6,7 +6,6 @@ import { createFoundryMetaOntologyBackendAdapter } from "./createFoundryMetaOnto
 import type { ObjectTypeV2 } from "@osdk/foundry.ontologies";
 
 const mocks = vi.hoisted(() => ({
-    getByRidBatch: vi.fn(),
     getFullMetadata: vi.fn(),
 }));
 
@@ -17,10 +16,6 @@ vi.mock("@osdk/foundry.ontologies", async (importOriginal) => {
         OntologiesV2: {
             ...original.OntologiesV2,
             getFullMetadata: mocks.getFullMetadata,
-        },
-        ObjectTypesV2: {
-            ...original.ObjectTypesV2,
-            getByRidBatch: mocks.getByRidBatch,
         },
     };
 });
@@ -59,70 +54,11 @@ const client: OntologyClient = {
 };
 
 beforeEach(() => {
-    mocks.getByRidBatch.mockReset();
     mocks.getFullMetadata.mockReset();
 });
 
 describe("Foundry ObjectType metadata queries", () => {
-    it("pushes exact ID queries to getByRidBatch", async () => {
-        mocks.getByRidBatch.mockResolvedValue({ data: [objectType()] });
-        const meta = await createMetaLiveOntology({
-            backend: () => createFoundryMetaOntologyBackendAdapter({ client }),
-            persistObjects: false,
-        });
-
-        try {
-            const rows = await queryOnce((q) =>
-                q
-                    .from({ ObjectType: meta.objects.ObjectType })
-                    .where(({ ObjectType }) =>
-                        eq(
-                            ObjectType.id,
-                            "ri.ontology.main.object-type.employee"
-                        )
-                    )
-            );
-
-            expect(mocks.getByRidBatch).toHaveBeenCalledWith(
-                expect.anything(),
-                "ri.ontology.main.ontology.example",
-                {
-                    requests: [
-                        {
-                            objectTypeRid:
-                                "ri.ontology.main.object-type.employee",
-                        },
-                    ],
-                },
-                { preview: true }
-            );
-            expect(mocks.getFullMetadata).not.toHaveBeenCalled();
-            expect(rows).toEqual([
-                expect.objectContaining({
-                    id: "ri.ontology.main.object-type.employee",
-                    name: "Employee",
-                    title: {
-                        kind: "valueReference",
-                        value: { path: ["fullName"] },
-                    },
-                    properties: [
-                        expect.objectContaining({
-                            id: "ri.ontology.main.property.employee-id",
-                            name: "id",
-                        }),
-                        expect.objectContaining({
-                            id: "ri.ontology.main.property.employee-name",
-                            name: "fullName",
-                        }),
-                    ],
-                }),
-            ]);
-        } finally {
-            await meta.cleanup();
-        }
-    });
-
-    it("uses the shared full-metadata snapshot for non-ID queries", async () => {
+    it("filters the shared full-metadata snapshot by ID", async () => {
         mocks.getFullMetadata.mockResolvedValue({
             objectTypes: {
                 Employee: {
@@ -144,15 +80,30 @@ describe("Foundry ObjectType metadata queries", () => {
             const rows = await queryOnce((q) =>
                 q
                     .from({ ObjectType: meta.objects.ObjectType })
-                    .where(({ ObjectType }) => eq(ObjectType.name, "Employee"))
+                    .where(({ ObjectType }) =>
+                        eq(
+                            ObjectType.id,
+                            "ri.ontology.main.object-type.employee"
+                        )
+                    )
             );
 
             expect(mocks.getFullMetadata).toHaveBeenCalledOnce();
-            expect(mocks.getByRidBatch).not.toHaveBeenCalled();
             expect(rows).toEqual([
                 expect.objectContaining({
                     id: "ri.ontology.main.object-type.employee",
                     name: "Employee",
+                    title: "fullName",
+                    properties: [
+                        expect.objectContaining({
+                            id: "ri.ontology.main.property.employee-id",
+                            name: "id",
+                        }),
+                        expect.objectContaining({
+                            id: "ri.ontology.main.property.employee-name",
+                            name: "fullName",
+                        }),
+                    ],
                 }),
             ]);
         } finally {
