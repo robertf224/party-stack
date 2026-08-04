@@ -1,6 +1,67 @@
 import { invariant } from "@bobbyfidz/panic";
+import { o } from "../ir/generated/builders.js";
 import OntologyIRSchema from "../ir/schema.js";
-import type { OntologyIR } from "../ir/generated/types.js";
+import type {
+    FieldDef,
+    NamedTypeDef,
+    OntologyIR,
+} from "../ir/generated/types.js";
+
+const idField = (description: string): FieldDef => ({
+    name: "id",
+    displayName: "ID",
+    type: o.string({}),
+    description,
+});
+
+function addRuntimeMetaFields(type: NamedTypeDef): NamedTypeDef {
+    if (type.name !== "ObjectTypeDef" && type.name !== "PropertyDef") {
+        return type;
+    }
+
+    invariant(type.type.kind === "struct", `${type.name} must be a struct.`);
+
+    if (type.name === "PropertyDef") {
+        return {
+            ...type,
+            type: o.struct({
+                fields: [
+                    idField("The provider-assigned stable identifier for this property."),
+                    ...type.type.value.fields,
+                ],
+            }),
+        };
+    }
+
+    const fields = type.type.value.fields.flatMap((field) =>
+        field.name === "primaryKey"
+            ? [
+                  field,
+                  {
+                      name: "title",
+                      displayName: "Title",
+                      type: o.optional({ type: o.ref({ name: "Expression" }) }),
+                      description:
+                          "An optional expression used to derive a human-readable title for an object.",
+                  } satisfies FieldDef,
+              ]
+            : [field]
+    );
+
+    return {
+        ...type,
+        type: o.struct({
+            fields: [
+                idField("The provider-assigned stable identifier for this object type."),
+                ...fields,
+            ],
+        }),
+    };
+}
+
+const metaTypes = OntologyIRSchema.types
+    .filter((type) => type.name !== "OntologyIR")
+    .map(addRuntimeMetaFields);
 
 function lift(
     schema: Pick<OntologyIR, "types">,
@@ -31,7 +92,7 @@ function lift(
 
 export default {
     ...lift(
-        { types: OntologyIRSchema.types.filter((type) => type.name !== "OntologyIR") },
+        { types: metaTypes },
         {
             ObjectTypeDef: {
                 name: "ObjectType",

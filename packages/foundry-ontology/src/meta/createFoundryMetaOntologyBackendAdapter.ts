@@ -24,7 +24,7 @@ export function createFoundryMetaOntologyBackendAdapter(
         getCollectionOptions: (objectType: string) => {
             switch (objectType) {
                 case "ObjectType":
-                    return objectTypeCollectionOptions(metadata);
+                    return objectTypeCollectionOptions(metadata, opts);
                 case "ValueType":
                     return valueTypeCollectionOptions(metadata);
                 case "LinkType":

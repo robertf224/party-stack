@@ -8,6 +8,7 @@ export type {
     MetaOntology,
     LinkType as MetaLinkType,
     ObjectType as MetaObjectType,
+    PropertyDef as MetaObjectProperty,
     ValueType as MetaValueType,
     ActionType as MetaActionType,
     QueryFunctionType as MetaQueryFunctionType,
