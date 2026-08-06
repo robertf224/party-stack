@@ -114,16 +114,17 @@ export async function createLiveOntology<
     const blobManager: BlobManager = createBlobManager({
         runtime,
         remote: {
-            read: (id, readOptions) =>
-                attachmentsAdapter.getAttachmentContent({
-                    id,
-                    source: readOptions?.meta?.source as attachment["source"],
-                }),
-            metadata: (id, readOptions) =>
-                attachmentsAdapter.getAttachmentMetadata({
-                    id,
-                    source: readOptions?.meta?.source as attachment["source"],
-                }),
+            read: (id, readOptions) => {
+                const attachmentValue = readOptions?.meta?.attachment as attachment | undefined;
+                return attachmentsAdapter.getAttachmentContent(attachmentValue ?? { id });
+            },
+            metadata: attachmentsAdapter.getAttachmentMetadata
+                ? (id, readOptions) =>
+                      attachmentsAdapter.getAttachmentMetadata!(
+                          (readOptions?.meta?.attachment as attachment | undefined) ?? { id },
+                          readOptions?.select ?? ["size", "type", "name"]
+                      )
+                : undefined,
         },
     });
     const attachments = createLiveOntologyAttachments({

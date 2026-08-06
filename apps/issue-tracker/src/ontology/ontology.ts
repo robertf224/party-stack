@@ -53,6 +53,14 @@ export default defineOntology({
                         meta: {
                             type: "media",
                         },
+                        constraint: {
+                            content: {
+                                kind: "image",
+                                value: {
+                                    mediaTypes: ["image/png", "image/jpeg"],
+                                },
+                            },
+                        },
                     }),
                 },
                 {
@@ -138,6 +146,14 @@ export default defineOntology({
                         type: o.attachment({
                             meta: {
                                 type: "media",
+                            },
+                            constraint: {
+                                content: {
+                                    kind: "image",
+                                    value: {
+                                        mediaTypes: ["image/png", "image/jpeg"],
+                                    },
+                                },
                             },
                         }),
                     }),

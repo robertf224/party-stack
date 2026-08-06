@@ -4,6 +4,7 @@ import type {
     OntologyAttachmentIdMapping,
     OntologyAttachmentUpload,
     OntologyIR,
+    PartialAttachmentMetadata,
 } from "@party-stack/ontology";
 import type { attachment } from "@party-stack/ontology/values";
 
@@ -58,6 +59,10 @@ export interface RemoteAttachmentRequest {
     attachment: attachment;
 }
 
+export interface RemoteAttachmentMetadataRequest extends RemoteAttachmentRequest {
+    selection: ReadonlyArray<keyof PartialAttachmentMetadata>;
+}
+
 export interface RemoteOntologyTransportOptions {
     signal?: AbortSignal;
     attachments?: OntologyAttachmentUpload[];
@@ -78,9 +83,9 @@ export interface RemoteOntologyTransport {
         options?: RemoteOntologyTransportOptions
     ) => Promise<RemoteRunQueryFunctionResponse>;
     getAttachmentMetadata: (
-        request: RemoteAttachmentRequest,
+        request: RemoteAttachmentMetadataRequest,
         options?: RemoteOntologyTransportOptions
-    ) => Promise<attachment & { size: number; type: string; name?: string }>;
+    ) => Promise<PartialAttachmentMetadata>;
     getAttachmentContent: (
         request: RemoteAttachmentRequest,
         options?: RemoteOntologyTransportOptions
@@ -92,7 +97,7 @@ export type RemoteOntologyRequestByEndpoint = {
     "load-subset": RemoteLoadSubsetRequest;
     "apply-action": RemoteApplyActionRequest;
     "run-query-function": RemoteRunQueryFunctionRequest;
-    "attachment-metadata": RemoteAttachmentRequest;
+    "attachment-metadata": RemoteAttachmentMetadataRequest;
     "attachment-content": RemoteAttachmentRequest;
 };
 
@@ -101,7 +106,7 @@ export type RemoteOntologyResponseByEndpoint = {
     "load-subset": RemoteLoadSubsetResponse;
     "apply-action": RemoteApplyActionResponse;
     "run-query-function": RemoteRunQueryFunctionResponse;
-    "attachment-metadata": attachment & { size: number; type: string; name?: string };
+    "attachment-metadata": PartialAttachmentMetadata;
     "attachment-content": Blob;
 };
 
@@ -110,7 +115,7 @@ export type RemoteOntologyRequestEnvelope =
     | { endpoint: "load-subset"; input: RemoteLoadSubsetRequest }
     | { endpoint: "apply-action"; input: RemoteApplyActionRequest }
     | { endpoint: "run-query-function"; input: RemoteRunQueryFunctionRequest }
-    | { endpoint: "attachment-metadata"; input: RemoteAttachmentRequest }
+    | { endpoint: "attachment-metadata"; input: RemoteAttachmentMetadataRequest }
     | { endpoint: "attachment-content"; input: RemoteAttachmentRequest };
 
 const recordSchema = z.record(z.string(), z.unknown());
@@ -169,9 +174,7 @@ const attachmentSourceSchema = z
 export const remoteAttachmentSchema = z
     .object({
         id: z.string().min(1),
-        size: z.number().optional(),
         type: z.string().optional(),
-        name: z.string().optional(),
         source: attachmentSourceSchema.optional(),
     })
     .strict() satisfies z.ZodType<attachment>;
@@ -181,6 +184,13 @@ export const remoteAttachmentRequestSchema = z
         attachment: remoteAttachmentSchema,
     })
     .strict() satisfies z.ZodType<RemoteAttachmentRequest>;
+
+export const remoteAttachmentMetadataRequestSchema = z
+    .object({
+        attachment: remoteAttachmentSchema,
+        selection: z.array(z.enum(["size", "type", "name", "dimensions"])),
+    })
+    .strict() satisfies z.ZodType<RemoteAttachmentMetadataRequest>;
 
 const remoteOntologyRpc = {
     describe: {
@@ -201,7 +211,7 @@ const remoteOntologyRpc = {
     },
     attachmentMetadata: {
         endpoint: "attachment-metadata",
-        schema: remoteAttachmentRequestSchema,
+        schema: remoteAttachmentMetadataRequestSchema,
     },
     attachmentContent: {
         endpoint: "attachment-content",

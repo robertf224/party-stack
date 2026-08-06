@@ -1,5 +1,6 @@
 import type {
     RemoteApplyActionResponse,
+    RemoteAttachmentMetadataRequest,
     RemoteAttachmentRequest,
     RemoteRunQueryFunctionResponse,
     RemoteLoadSubsetResponse,
@@ -7,9 +8,8 @@ import type {
     RemoteOntologyTransport,
     RemoteOntologyTransportOptions,
 } from "./protocol.js";
-import type { OntologyIR } from "@party-stack/ontology";
+import type { OntologyIR, PartialAttachmentMetadata } from "@party-stack/ontology";
 import { decode, encode } from "@party-stack/ontology/json";
-import type { attachment } from "@party-stack/ontology/values";
 import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
 
 export interface HttpRemoteOntologyTransportOptions {
@@ -66,7 +66,9 @@ async function postMultipart<TResponse>(
         formData.append(
             `attachment:${upload.attachment.id}`,
             upload.blob,
-            upload.attachment.name ?? upload.attachment.id
+            "name" in upload.blob && typeof upload.blob.name === "string"
+                ? upload.blob.name
+                : upload.attachment.id
         );
     }
 
@@ -212,8 +214,8 @@ export function createHttpRemoteOntologyTransport(
                 }),
             };
         },
-        getAttachmentMetadata: (request: RemoteAttachmentRequest, options) =>
-            postJson<attachment & { size: number; type: string; name?: string }>(
+        getAttachmentMetadata: (request: RemoteAttachmentMetadataRequest, options) =>
+            postJson<PartialAttachmentMetadata>(
                 fetchImpl,
                 resolveEndpoint(opts.url, "attachment-metadata"),
                 request,

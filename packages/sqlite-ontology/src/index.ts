@@ -3,6 +3,7 @@ import { decode, encode } from "@party-stack/ontology/json";
 import { resolveType } from "@party-stack/ontology/utils";
 import { createTransaction, eq, queryOnce } from "@tanstack/db";
 import type {
+    AttachmentMetadata,
     OntologyBackendAdapter,
     OntologyBackendAdapterProvider,
     OntologyAttachmentsAdapter,
@@ -319,7 +320,7 @@ async function prepareAttachmentRows(
                 name:
                     typeof File !== "undefined" && blob instanceof File && blob.name.length > 0
                         ? blob.name
-                        : (attachmentValue.name ?? null),
+                        : null,
                 size: blob.size,
                 createdAt: now,
                 updatedAt: now,
@@ -454,7 +455,7 @@ function createAttachmentsAdapter(database: BetterSqlite3Database): OntologyAtta
         },
         getAttachmentMetadata: (
             attachmentValue
-        ): Promise<attachment & { size: number; type: string; name: string }> => {
+        ): Promise<AttachmentMetadata & { name: string }> => {
             const row = getAttachmentRow(attachmentValue.id);
             if (!row) {
                 throw new Error(`Attachment "${attachmentValue.id}" not found.`);
@@ -463,7 +464,7 @@ function createAttachmentsAdapter(database: BetterSqlite3Database): OntologyAtta
                 ...attachmentValue,
                 size: row.size,
                 type: row.type,
-                name: row.name ?? attachmentValue.name ?? attachmentValue.id,
+                name: row.name ?? attachmentValue.id,
             });
         },
     };

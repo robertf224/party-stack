@@ -141,8 +141,51 @@ export type TypeDef = v.Union<{
     unknown: UnknownTypeDef;
 }>;
 
-/** A file handle. */
+/** A supported image media type. */
+export type ImageMediaType =
+    | "image/bmp"
+    | "image/tiff"
+    | "image/nitf"
+    | "image/jp2"
+    | "image/jpeg"
+    | "image/png"
+    | "image/webp";
+
+/** Constrains intrinsic pixel dimensions. */
+export type DimensionsConstraint = {
+    width?: {
+        min?: v.integer;
+        max?: v.integer;
+    };
+    height?: {
+        min?: v.integer;
+        max?: v.integer;
+    };
+};
+
+/** Constraints specific to image attachments. */
+export type ImageAttachmentConstraint = {
+    mediaTypes?: Array<ImageMediaType>;
+    dimensions?: DimensionsConstraint;
+};
+
+/** Content-specific attachment constraints. */
+export type AttachmentContentConstraint = v.Union<{
+    image: ImageAttachmentConstraint;
+}>;
+
+/** Constraints applied to an attachment. */
+export type AttachmentConstraint = {
+    size?: {
+        min?: v.double;
+        max?: v.double;
+    };
+    content?: AttachmentContentConstraint;
+};
+
+/** A file handle with optional constraints. */
 export type AttachmentTypeDef = {
+    constraint?: AttachmentConstraint;
     meta?: Record<string, unknown>;
 };
 

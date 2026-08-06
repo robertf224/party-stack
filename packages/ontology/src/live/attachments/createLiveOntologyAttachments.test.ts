@@ -1,9 +1,11 @@
 import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { BlobManager } from "@party-stack/blobs";
 import { o } from "../../ir/index.js";
 import { createLiveOntology } from "../LiveOntology.js";
+import { createLiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
 import type { OntologyIR } from "../../ir/index.js";
-import type { OntologyBackendAdapter } from "../index.js";
+import type { OntologyAttachmentsAdapter, OntologyBackendAdapter } from "../index.js";
 
 const ir: OntologyIR = {
     types: [],
@@ -43,6 +45,119 @@ const actionIr: OntologyIR = {
 };
 
 describe("createLiveOntologyAttachments", () => {
+    it("rejects blobs outside a target's allowed media types", async () => {
+        const constrainedIr: OntologyIR = {
+            ...ir,
+            objectTypes: [
+                {
+                    ...ir.objectTypes[0]!,
+                    properties: [
+                        ir.objectTypes[0]!.properties[0]!,
+                        {
+                            name: "file",
+                            displayName: "File",
+                            type: o.attachment({
+                                constraint: {
+                                    content: o.AttachmentContentConstraint.image({
+                                        mediaTypes: ["image/png", "image/jpeg"],
+                                    }),
+                                },
+                            }),
+                        },
+                    ],
+                },
+            ],
+        };
+        const stage = vi.fn();
+        const attachments = createLiveOntologyAttachments({
+            ir: constrainedIr,
+            attachmentsAdapter: {} as OntologyAttachmentsAdapter,
+            blobManager: { stage } as unknown as BlobManager,
+        });
+
+        await expect(
+            attachments.create(new Blob(["pdf"], { type: "application/pdf" }), {
+                target: {
+                    kind: "objectProperty",
+                    objectType: "Document",
+                    property: "file",
+                },
+            })
+        ).rejects.toThrow(
+            'Attachment media type "application/pdf" is not allowed by the target.'
+        );
+        expect(stage).not.toHaveBeenCalled();
+    });
+
+    it("enforces cheap attachment constraints before staging", async () => {
+        const constrainedIr: OntologyIR = {
+            ...ir,
+            objectTypes: [
+                {
+                    ...ir.objectTypes[0]!,
+                    properties: [
+                        ir.objectTypes[0]!.properties[0]!,
+                        {
+                            name: "file",
+                            displayName: "File",
+                            type: o.attachment({
+                                constraint: {
+                                    size: { max: 10 },
+                                    content: o.AttachmentContentConstraint.image({
+                                        dimensions: {
+                                            width: { max: 100 },
+                                        },
+                                    }),
+                                },
+                            }),
+                        },
+                    ],
+                },
+            ],
+        };
+        const stage = vi.fn(() => Promise.resolve());
+        const attachments = createLiveOntologyAttachments({
+            ir: constrainedIr,
+            attachmentsAdapter: {
+                generateAttachmentId: () => "image-1",
+                getAttachmentContent: () =>
+                    Promise.reject(new Error("unexpected content read")),
+            },
+            blobManager: { stage } as unknown as BlobManager,
+        });
+
+        await expect(
+            attachments.create(new Blob(["gif"], { type: "image/gif" }), {
+                target: {
+                    kind: "objectProperty",
+                    objectType: "Document",
+                    property: "file",
+                },
+            })
+        ).rejects.toThrow('Attachment media type "image/gif" is not allowed by the target.');
+        await expect(
+            attachments.create(new Blob(["12345678901"], { type: "image/png" }), {
+                target: {
+                    kind: "objectProperty",
+                    objectType: "Document",
+                    property: "file",
+                },
+            })
+        ).rejects.toThrow("Attachment size 11 is outside the allowed range.");
+        await expect(
+            attachments.create(new Blob(["image"], { type: "image/png" }), {
+                target: {
+                    kind: "objectProperty",
+                    objectType: "Document",
+                    property: "file",
+                },
+            })
+        ).resolves.toMatchObject({
+            attachment: { id: "image-1" },
+        });
+        expect(stage).toHaveBeenCalledOnce();
+    });
+
     it("starts eager materialization in the background when the adapter supports it", async () => {
         const runtime = {
             owner: "test-user",

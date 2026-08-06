@@ -4,13 +4,12 @@ import { eq, ilike, useLiveQuery } from "@tanstack/react-db";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import React, { useEffect, useRef, useState } from "react";
-import {
-    createOntologyDevtoolsPlugin,
-    ontologyDevtoolsTrigger,
-} from "@party-stack/ontology-devtools";
+import { createOntologyDevtoolsPlugin, ontologyDevtoolsTrigger } from "@party-stack/ontology-devtools";
+import type { AttachmentMetadata } from "@party-stack/ontology";
 import { getIssueTrackerCollections } from "./collections";
 import { MiniMap } from "./MiniMap";
 import { useAction } from "./useAction";
+import type { Task } from "../ontology/generated/types";
 import type * as v from "@party-stack/ontology/values";
 
 function formatFileSize(size: number) {
@@ -127,12 +126,28 @@ function useGeolocation() {
     return coords;
 }
 
-const TaskAttachmentPreview: React.FC<{
-    attachment: v.attachment;
-}> = ({ attachment }) => {
+type TaskMediaAttachment = Task["media"];
+type TaskMediaType = NonNullable<TaskMediaAttachment["type"]>;
+type TaskMediaMetadata = AttachmentMetadata<
+    TaskMediaType,
+    "size" | "type" | "name" | "dimensions"
+>;
+
+type TaskAttachmentPreviewProps =
+    | {
+          attachment: TaskMediaAttachment;
+          includeDimensions: true;
+      }
+    | {
+          attachment: v.attachment;
+          includeDimensions?: false;
+      };
+
+const TaskAttachmentPreview: React.FC<TaskAttachmentPreviewProps> = (props) => {
+    const { attachment } = props;
     const { ontology } = getIssueTrackerCollections();
     const [preview, setPreview] = useState<{
-        metadata: Partial<v.attachment>;
+        metadata: AttachmentMetadata | TaskMediaMetadata;
         src: string;
     }>();
     const [status, setStatus] = useState<AttachmentStatus>("loading");
@@ -143,7 +158,13 @@ const TaskAttachmentPreview: React.FC<{
         let cancelled = false;
         let objectUrl: string | undefined;
 
-        void Promise.all([attachments.metadata(attachment), attachments.blob(attachment)])
+        const metadata = props.includeDimensions
+            ? attachments.metadata(props.attachment, {
+                  select: ["size", "type", "name", "dimensions"],
+              })
+            : attachments.metadata(props.attachment);
+
+        void Promise.all([metadata, attachments.blob(attachment)])
             .then(([metadata, blob]) => {
                 const nextObjectUrl = URL.createObjectURL(blob);
                 if (cancelled) {
@@ -168,9 +189,7 @@ const TaskAttachmentPreview: React.FC<{
                 URL.revokeObjectURL(objectUrl);
             }
         };
-    }, [attachment]);
-
-    const attachmentMetadata = preview?.metadata ?? attachment;
+    }, [attachment, props.includeDimensions]);
 
     if (!preview?.src) {
         return (
@@ -180,16 +199,24 @@ const TaskAttachmentPreview: React.FC<{
         );
     }
 
+    const dimensions =
+        "dimensions" in preview.metadata ? preview.metadata.dimensions : undefined;
+
     return (
         <div className="relative">
             <img
-                alt={attachmentMetadata.name ?? "Task attachment"}
+                alt={preview.metadata.name ?? "Task attachment"}
                 className="max-h-64 w-full rounded-lg border border-zinc-200 object-cover dark:border-zinc-800"
                 src={preview.src}
             />
             <span className="absolute right-2 top-2">
                 <AttachmentStatusBadge status={status} />
             </span>
+            {dimensions && (
+                <span className="absolute bottom-2 left-2 rounded bg-black/70 px-2 py-1 text-xs text-white">
+                    {dimensions.width} × {dimensions.height}
+                </span>
+            )}
         </div>
     );
 };
@@ -252,7 +279,10 @@ export const TaskList: React.FC = () => {
 
         const attachment = selectedImage?.attachment;
         const attachments = attachment && !useMediaReference ? [attachment] : undefined;
-        const media = attachment && useMediaReference ? attachment : undefined;
+        const media =
+            attachment && useMediaReference
+                ? (attachment as TaskMediaAttachment)
+                : undefined;
 
         setTitle("");
         setSelectedImage(null);
@@ -661,6 +691,7 @@ export const TaskList: React.FC = () => {
                                                 <TaskAttachmentPreview
                                                     key={task.media.id}
                                                     attachment={task.media}
+                                                    includeDimensions
                                                 />
                                             )}
                                         </div>

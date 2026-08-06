@@ -9,7 +9,15 @@ import {
     type RuntimeAdapter,
 } from "@party-stack/runtime";
 import { eq, or, queryOnce, type Collection } from "@tanstack/db";
-import type { BlobOperation, BlobRef } from "../types.js";
+import type {
+    BlobMetadataRecord,
+    BlobOperation,
+    BlobRef,
+    PartialBlobMetadata,
+} from "../types.js";
+
+type BlobWriteRecord = BlobMetadataRecord &
+    Required<Pick<PartialBlobMetadata, "size" | "type">>;
 
 export const BLOB_COORDINATION_SERVICE = "party-stack.blobs.v1";
 
@@ -47,14 +55,24 @@ export interface FailBlobWriteInput extends BlobOperationInput {
     error: string;
 }
 
+export interface UpsertBlobMetadataInput {
+    id: string;
+    metadata: PartialBlobMetadata;
+    remote: boolean;
+}
+
 export type BlobCoordinationService = {
     methods: {
         beginWrite(input: BeginBlobWriteInput): Promise<BeginBlobWriteResult>;
         commitWrite(input: BlobOperationInput): Promise<BlobRef>;
         failWrite(input: FailBlobWriteInput): Promise<BlobRef>;
-        find(input: { id: string }): Promise<BlobRef | undefined>;
-        touch(input: { id: string }): Promise<BlobRef>;
-        bindRemoteId(input: { localId: string; remoteId: string }): Promise<BlobRef>;
+        find(input: { id: string }): Promise<BlobMetadataRecord | undefined>;
+        upsertMetadata(input: UpsertBlobMetadataInput): Promise<BlobMetadataRecord>;
+        touch(input: { id: string }): Promise<BlobMetadataRecord>;
+        bindRemoteId(input: {
+            localId: string;
+            remoteId: string;
+        }): Promise<BlobRef>;
         purge(input: { id: string }): Promise<void>;
         recover(input: { recoveryId: string }): Promise<void>;
     };
@@ -72,16 +90,24 @@ export class BlobBytesUnavailableError extends Error {
 }
 
 export interface BlobStore {
-    readonly collection: Collection<BlobRef, string>;
+    readonly collection: Collection<BlobMetadataRecord, string>;
     readonly ready: Promise<void>;
     beginWrite(input: BeginBlobWriteInput): Promise<BeginBlobWriteResult>;
     commitWrite(input: BlobOperationInput): Promise<BlobRef>;
     failWrite(input: FailBlobWriteInput): Promise<BlobRef>;
     stage(id: string, blob: Blob | File): Promise<BlobRef>;
     cache(id: string, blob: Blob | File): Promise<BlobRef>;
-    find(id: string): Promise<BlobRef | undefined>;
+    find(id: string): Promise<BlobMetadataRecord | undefined>;
+    upsertMetadata(
+        id: string,
+        metadata: PartialBlobMetadata,
+        remote: boolean
+    ): Promise<BlobMetadataRecord>;
     read(id: string): Promise<Blob>;
-    bindRemoteId(localId: string, remoteId: string): Promise<BlobRef>;
+    bindRemoteId(
+        localId: string,
+        remoteId: string
+    ): Promise<BlobRef>;
     purge(id: string, options?: CoordinationCallOptions): Promise<void>;
     recoverAsLeader(signal: AbortSignal): Promise<void>;
     clearActiveOperations(): void;
@@ -126,11 +152,11 @@ function throwIfAborted(signal: AbortSignal): void {
 }
 
 export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
-    const collection = createLocalCollection<BlobRef, string>({
+    const collection = createLocalCollection<BlobMetadataRecord, string>({
         name: "blob-metadata",
         getKey: (ref) => ref.id,
         runtime: options.runtime,
-        schemaVersion: 1,
+        schemaVersion: 2,
     });
     const ready = collection.preload();
     const bytes = options.runtime.blobBytes;
@@ -138,7 +164,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
     const client = options.runtime.coordination.service<BlobCoordinationService>(BLOB_COORDINATION_SERVICE);
     let activeRecoveryId: string | undefined;
 
-    const findRef = async (id: string): Promise<BlobRef | undefined> => {
+    const findRef = async (id: string): Promise<BlobMetadataRecord | undefined> => {
         await ready;
         const result = await queryOnce((query) =>
             query
@@ -150,6 +176,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                     type: blob.type,
                     size: blob.size,
                     name: blob.name,
+                    dimensions: blob.dimensions,
                     state: blob.state,
                     operation: blob.operation,
                     lastAccessedAt: blob.lastAccessedAt,
@@ -158,10 +185,10 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                 }))
                 .findOne()
         );
-        return result as BlobRef | undefined;
+        return result as BlobMetadataRecord | undefined;
     };
 
-    const putRef = async (ref: BlobRef): Promise<void> => {
+    const putRef = async (ref: BlobMetadataRecord): Promise<void> => {
         const transaction = collection.has(ref.id)
             ? collection.update(ref.id, { optimistic: false }, (draft) => {
                   Object.assign(draft, ref);
@@ -177,8 +204,8 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
 
     const patchRef = async (
         id: string,
-        patch: (draft: BlobRef, timestamp: number) => void
-    ): Promise<BlobRef> => {
+        patch: (draft: BlobMetadataRecord, timestamp: number) => void
+    ): Promise<BlobMetadataRecord> => {
         const ref = await findRef(id);
         if (!ref) {
             return rejectTask("BLOB_NOT_FOUND", `Blob metadata not found for "${id}".`);
@@ -199,21 +226,54 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
         }).isPersisted.promise;
     };
 
+    const applyMetadata = (
+        draft: BlobMetadataRecord,
+        metadata: PartialBlobMetadata
+    ): void => {
+        if (metadata.size !== undefined) draft.size = metadata.size;
+        if (metadata.type !== undefined) draft.type = metadata.type;
+        if (Object.hasOwn(metadata, "name")) {
+            draft.name = metadata.name ?? null;
+        }
+        if (Object.hasOwn(metadata, "dimensions")) {
+            draft.dimensions = metadata.dimensions ?? null;
+        }
+    };
+
+    const requireBlobRef = (record: BlobMetadataRecord): BlobRef => {
+        invariant(
+            record.size !== undefined && record.type !== undefined,
+            `Blob "${record.id}" is missing size or type metadata.`
+        );
+        return {
+            id: record.id,
+            size: record.size,
+            type: record.type,
+            ...(typeof record.name === "string" ? { name: record.name } : {}),
+        };
+    };
+
     const currentOperation = async (
         input: BlobOperationInput
     ): Promise<{
-        ref: BlobRef;
+        ref: BlobWriteRecord;
         operation: Extract<BlobOperation, { status: "pending" }>;
     }> => {
         const ref = await findRef(input.id);
         const operation = ref?.operation;
-        if (!ref || operation?.status !== "pending" || operation.operationId !== input.operationId) {
+        if (
+            !ref ||
+            ref.size === undefined ||
+            ref.type === undefined ||
+            operation?.status !== "pending" ||
+            operation.operationId !== input.operationId
+        ) {
             return rejectTask(
                 "BLOB_OPERATION_STALE",
                 `Blob operation "${input.operationId}" is no longer current for "${input.id}".`
             );
         }
-        return { ref, operation };
+        return { ref: ref as BlobWriteRecord, operation };
     };
 
     const host = isCoordinationHost(options.runtime.coordination) ? options.runtime.coordination : undefined;
@@ -231,7 +291,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
 
                   const operationId = randomOperationId();
                   const timestamp = Date.now();
-                  const ref: BlobRef = {
+                  const ref: BlobWriteRecord = {
                       id: existing?.id ?? input.id,
                       remoteId:
                           input.kind === "cache"
@@ -239,7 +299,9 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                               : existing?.remoteId,
                       type: input.metadata.type,
                       size: input.metadata.size,
-                      name: input.metadata.name,
+                      name:
+                          input.metadata.name ??
+                          (typeof existing?.name === "string" ? existing.name : null),
                       state: input.kind === "cache" ? (existing?.state ?? "persisted") : existing?.state,
                       operation: {
                           kind: input.kind,
@@ -285,7 +347,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                       if (operation.kind === "cache") {
                           options.onCacheChanged?.();
                       }
-                      return committed;
+                      return requireBlobRef(committed);
                   } finally {
                       activeOperationIds.delete(input.operationId);
                   }
@@ -312,7 +374,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                       failure += `; cleanup failed: ${errorMessage(cleanupError)}`;
                   }
                   try {
-                      return await patchRef(ref.id, (draft, updatedAt) => {
+                      return requireBlobRef(await patchRef(ref.id, (draft, updatedAt) => {
                           draft.updatedAt = updatedAt;
                           draft.operation = {
                               kind: operation.kind,
@@ -320,7 +382,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                               operationId: input.operationId,
                               error: failure,
                           };
-                      });
+                      }));
                   } finally {
                       activeOperationIds.delete(input.operationId);
                   }
@@ -328,6 +390,27 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
 
               find(input) {
                   return findRef(input.id);
+              },
+
+              async upsertMetadata(input) {
+                  const existing = await findRef(input.id);
+                  if (existing) {
+                      return patchRef(existing.id, (draft, updatedAt) => {
+                          applyMetadata(draft, input.metadata);
+                          draft.updatedAt = updatedAt;
+                      });
+                  }
+                  const timestamp = Date.now();
+                  const record: BlobMetadataRecord = {
+                      id: input.id,
+                      remoteId: input.remote ? input.id : undefined,
+                      state: input.remote ? "persisted" : undefined,
+                      createdAt: timestamp,
+                      updatedAt: timestamp,
+                  };
+                  applyMetadata(record, input.metadata);
+                  await putRef(record);
+                  return record;
               },
 
               touch(input) {
@@ -348,12 +431,12 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                           `Blob "${ref.id}" has an active ${ref.operation.kind} operation.`
                       );
                   }
-                  return patchRef(ref.id, (draft, updatedAt) => {
+                  return requireBlobRef(await patchRef(ref.id, (draft, updatedAt) => {
                       draft.remoteId = input.remoteId;
                       draft.state = "persisted";
                       draft.updatedAt = updatedAt;
                       draft.operation = undefined;
-                  });
+                  }));
               },
 
               async purge(input) {
@@ -414,7 +497,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                               id: blob.id,
                               operation: blob.operation,
                           }))
-                  )) as Array<Pick<BlobRef, "id" | "operation">>;
+                  )) as Array<Pick<BlobMetadataRecord, "id" | "operation">>;
 
                   for (const pending of refs) {
                       throwIfAborted(context.signal);
@@ -479,7 +562,11 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
             ? host.serve<BlobCoordinationService>(BLOB_COORDINATION_SERVICE, handlers)
             : undefined;
 
-    const write = async (id: string, blob: Blob | File, kind: BlobWriteKind): Promise<BlobRef> => {
+    const write = async (
+        id: string,
+        blob: Blob | File,
+        kind: BlobWriteKind
+    ): Promise<BlobRef> => {
         const operation = await client.methods.beginWrite({
             id,
             kind,
@@ -516,6 +603,8 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
         stage: (id, blob) => write(id, blob, "stage"),
         cache: (id, blob) => write(id, blob, "cache"),
         find: (id) => client.methods.find({ id }),
+        upsertMetadata: (id, metadata, remote) =>
+            client.methods.upsertMetadata({ id, metadata, remote }),
 
         async read(id) {
             const ref = await client.methods.find({ id });

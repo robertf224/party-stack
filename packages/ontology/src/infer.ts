@@ -1,4 +1,9 @@
-import type { NamedTypeDef, OntologyIR, TypeDef } from "./ir/generated/types.js";
+import type {
+    ImageMediaType,
+    NamedTypeDef,
+    OntologyIR,
+    TypeDef,
+} from "./ir/generated/types.js";
 import type { OntologyDefinition } from "./live/LiveOntology.js";
 import type {
     ActionTypeName,
@@ -142,6 +147,23 @@ type InferObjectReference<Value, Ontology> = Value extends {
     ? InferType<FieldType<ObjectTypeProperties<ObjectTypeByName<Ontology, Name>>, ObjectPrimaryKey<ObjectTypeByName<Ontology, Name>>>, Ontology>
     : never;
 
+type InferImageAttachment<Value> = Value extends { readonly mediaTypes: infer MediaTypes }
+    ? attachment<Extract<ArrayElement<MediaTypes>, string>>
+    : attachment<ImageMediaType>;
+
+type InferAttachment<Value> = Value extends {
+    readonly constraint: {
+        readonly content: infer Content;
+    };
+}
+    ? Content extends {
+          readonly kind: "image";
+          readonly value: infer ImageConstraint;
+      }
+        ? InferImageAttachment<ImageConstraint>
+        : attachment
+    : attachment;
+
 type InferByKind<Type, Ontology> = {
     string: InferString<TypeValue<Type>>;
     boolean: boolean;
@@ -151,7 +173,7 @@ type InferByKind<Type, Ontology> = {
     date: date;
     timestamp: timestamp;
     geopoint: geopoint;
-    attachment: attachment;
+    attachment: InferAttachment<TypeValue<Type>>;
     objectReference: InferObjectReference<TypeValue<Type>, Ontology>;
     unknown: unknown;
     list: TypeValue<Type> extends { readonly elementType: infer ElementType }

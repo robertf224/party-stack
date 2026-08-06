@@ -16,8 +16,16 @@ import {
     type Task,
 } from "effection";
 import { collectBlobGarbage } from "./gc/collectBlobGarbage.js";
+import { measureBlobDimensions } from "./metadata/measureBlobDimensions.js";
 import { BlobBytesUnavailableError, createBlobStore, type BlobStore } from "./store/createBlobStore.js";
-import type { BlobManager, BlobManagerOptions, BlobRef, BlobRemoteMetadata } from "./types.js";
+import type {
+    BlobManager,
+    BlobManagerOptions,
+    BlobMetadataField,
+    BlobMetadataOptions,
+    BlobMetadataRecord,
+    PartialBlobMetadata,
+} from "./types.js";
 
 const DEFAULT_GC_TIME = 5 * 60 * 1_000;
 const GC_WAKE_BATCH_TIME = 1;
@@ -146,12 +154,12 @@ function* useManagerLifetime(
     }
 }
 
-function toRemoteMetadata(ref: BlobRef, id = ref.id): BlobRemoteMetadata {
+function toPartialMetadata(ref: BlobMetadataRecord): PartialBlobMetadata {
     return {
-        id,
-        size: ref.size,
-        type: ref.type,
-        name: ref.name,
+        ...(ref.size !== undefined ? { size: ref.size } : {}),
+        ...(ref.type !== undefined ? { type: ref.type } : {}),
+        ...(ref.name !== undefined ? { name: ref.name } : {}),
+        ...(ref.dimensions !== undefined ? { dimensions: ref.dimensions } : {}),
     };
 }
 
@@ -166,64 +174,169 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
     const lifetime = run(() => useManagerLifetime(options, store, wake, gcTime));
     void lifetime.catch(() => undefined);
 
+    const isResolved = (
+        record: BlobMetadataRecord | undefined,
+        field: BlobMetadataField
+    ): boolean => record !== undefined && record[field] !== undefined;
+
+    const readLocalBlob = async (id: string): Promise<Blob | undefined> => {
+        try {
+            return await store.read(id);
+        } catch (error) {
+            if (error instanceof BlobBytesUnavailableError) return undefined;
+            throw error;
+        }
+    };
+
+    const mergeBlobMetadata = async (
+        id: string,
+        record: BlobMetadataRecord | undefined,
+        blob: Blob,
+        selection: readonly BlobMetadataField[],
+        finalize: boolean
+    ): Promise<BlobMetadataRecord> => {
+        const metadata: PartialBlobMetadata = {};
+        if (!isResolved(record, "size")) metadata.size = blob.size;
+        if (!isResolved(record, "type") && (blob.type || finalize)) {
+            metadata.type = blob.type;
+        }
+        if (!isResolved(record, "name")) {
+            if ("name" in blob && typeof blob.name === "string") {
+                metadata.name = blob.name;
+            } else if (finalize) {
+                metadata.name = null;
+            }
+        }
+        if (selection.includes("dimensions") && !isResolved(record, "dimensions")) {
+            try {
+                metadata.dimensions = await measureBlobDimensions(blob);
+            } catch {
+                if (finalize) metadata.dimensions = null;
+            }
+        }
+        return store.upsertMetadata(id, metadata, false);
+    };
+
+    // Resolve selected fields in progressively more expensive steps:
+    // persisted metadata -> available local bytes -> remote metadata for gaps
+    // -> remote bytes as the final calculation fallback.
+    const resolveMetadata = async (
+        id: string,
+        metadataOptions: BlobMetadataOptions = {}
+    ) => {
+        let record = await store.find(id);
+
+        const selection = metadataOptions.select ?? ["size", "type", "name"];
+        let localBlob = await readLocalBlob(id);
+        if (localBlob) {
+            record = await mergeBlobMetadata(id, record, localBlob, selection, false);
+        }
+
+        const missing = selection.filter((field) => !isResolved(record, field));
+        const canLoadRemote =
+            !record || record.state === "cached" || record.state === "persisted";
+        let remoteMetadataError: unknown;
+        if (missing.length > 0 && canLoadRemote && options.remote.metadata) {
+            try {
+                const remoteMetadata = await options.remote.metadata(
+                    record?.remoteId ?? id,
+                    {
+                        meta: metadataOptions.meta,
+                        select: missing,
+                    }
+                );
+                record = await store.upsertMetadata(id, remoteMetadata, true);
+            } catch (error) {
+                remoteMetadataError = error;
+            }
+        }
+
+        const unresolved = selection.filter((field) => !isResolved(record, field));
+        if (unresolved.length > 0) {
+            try {
+                localBlob ??= await readBytes(id, {
+                    meta: metadataOptions.meta,
+                });
+                record = await mergeBlobMetadata(id, record, localBlob, unresolved, true);
+            } catch (error) {
+                if (remoteMetadataError !== undefined) {
+                    throw new AggregateError(
+                        [remoteMetadataError, error],
+                        `Unable to resolve metadata for blob "${id}".`
+                    );
+                }
+                throw error;
+            }
+        }
+
+        const result: PartialBlobMetadata & { id: string } = {
+            id,
+            ...(record ? toPartialMetadata(record) : {}),
+        };
+        return result;
+    };
+
     const fetchRemote = async (
         id: string,
-        ref: BlobRef | undefined,
+        ref: BlobMetadataRecord | undefined,
         readOptions: Parameters<BlobManager["read"]>[1]
     ): Promise<Blob> => {
         const remoteId = ref?.remoteId ?? id;
-        const [blob, metadata] = await Promise.all([
-            options.remote.read(remoteId, readOptions),
-            options.remote.metadata(remoteId, readOptions),
-        ]);
-        const cached = metadata.name
-            ? new File([blob], metadata.name, {
-                  type: metadata.type || blob.type,
+        const blob = await options.remote.read(remoteId, readOptions);
+        const name = typeof ref?.name === "string" ? ref.name : undefined;
+        const cached = name
+            ? new File([blob], name, {
+                  type: ref?.type || blob.type,
               })
             : new Blob([blob], {
-                  type: metadata.type || blob.type,
+                  type: ref?.type || blob.type,
               });
         await store.cache(ref?.id ?? id, cached);
         return blob;
     };
 
+    async function readBytes(
+        id: string,
+        readOptions?: Parameters<BlobManager["read"]>[1]
+    ): Promise<Blob> {
+        const ref = await store.find(id);
+        try {
+            return await store.read(id);
+        } catch (error) {
+            if (!(error instanceof BlobBytesUnavailableError)) {
+                throw error;
+            }
+            if (ref && ref.state !== "cached" && ref.state !== "persisted") {
+                throw error;
+            }
+            return fetchRemote(id, ref, readOptions);
+        }
+    }
+
     let cleanupPromise: Promise<void> | undefined;
     return {
         collection: store.collection,
 
-        stage(id, blob) {
-            return store.stage(id, blob);
+        async stage(id, blob) {
+            await store.stage(id, blob);
         },
 
-        async metadata(id, readOptions) {
-            const ref = await store.find(id);
-            if (ref) return toRemoteMetadata(ref, id);
-            return options.remote.metadata(id, readOptions);
+        metadata(id, metadataOptions) {
+            return resolveMetadata(id, metadataOptions);
         },
 
-        async read(id, readOptions) {
-            const ref = await store.find(id);
-            try {
-                return await store.read(id);
-            } catch (error) {
-                if (!(error instanceof BlobBytesUnavailableError)) {
-                    throw error;
-                }
-                if (ref && ref.state !== "cached" && ref.state !== "persisted") {
-                    throw error;
-                }
-                return fetchRemote(id, ref, readOptions);
-            }
-        },
+        read: readBytes,
 
-        bindRemoteId(localId, remoteId) {
-            return store.bindRemoteId(localId, remoteId);
+        async bindRemoteId(localId, remoteId) {
+            await store.bindRemoteId(localId, remoteId);
         },
 
         cleanup() {
             cleanupPromise ??= Promise.resolve(lifetime.halt())
                 .catch(ignoreEffectionHalt)
-                .then(() => store.cleanup());
+                .then(() => {
+                    return store.cleanup();
+                });
             return cleanupPromise;
         },
     };

@@ -16,8 +16,8 @@ import type {
     OntologyAttachmentUpload,
     OntologyDefinition,
     OntologyIR,
+    PartialAttachmentMetadata,
 } from "@party-stack/ontology";
-import type { attachment } from "@party-stack/ontology/values";
 import {
     parseRemoteOntologyJson,
     parseRemoteOntologyRequest,
@@ -33,6 +33,7 @@ import {
 import type {
     RemoteApplyActionRequest,
     RemoteApplyActionResponse,
+    RemoteAttachmentMetadataRequest,
     RemoteAttachmentRequest,
     RemoteDescribeRequest,
     RemoteLoadSubsetRequest,
@@ -641,14 +642,16 @@ async function handleRunQueryFunction<Context, Ontology extends OntologyDefiniti
     }
 }
 
-async function handleAttachmentRead<Context, Ontology extends OntologyDefinition = OntologyDefinition>(
+async function withReadableAttachment<
+    Result,
+    Context,
+    Ontology extends OntologyDefinition = OntologyDefinition,
+>(
     ctx: Context,
     opts: CreateRemoteOntologyServerOptions<Context, Ontology>,
-    request: RemoteAttachmentRequest
-): Promise<{
-    attachment: attachment & { size: number; type: string; name?: string };
-    blob: Blob;
-}> {
+    request: RemoteAttachmentRequest,
+    read: (ontology: LiveOntology<Ontology>) => Promise<Result>
+): Promise<Result> {
     const source = request.attachment.source;
     if (!source) {
         throw new RemoteOntologyForbiddenError("Attachment reads require a source.");
@@ -712,11 +715,7 @@ async function handleAttachmentRead<Context, Ontology extends OntologyDefinition
             throw new RemoteOntologyForbiddenError("Attachment is not readable.");
         }
 
-        const attachment = await ontology.attachments.metadata(request.attachment);
-        return {
-            attachment,
-            blob: await ontology.attachments.blob(request.attachment),
-        };
+        return await read(ontology);
     } finally {
         await ontology.cleanup();
     }
@@ -758,12 +757,23 @@ export function createRemoteOntologyServer<
                     opts,
                     input as RemoteRunQueryFunctionRequest
                 )) as RemoteOntologyResponseByEndpoint[TEndpoint];
-            case "attachment-metadata":
-                return (await handleAttachmentRead(ctx, opts, input as RemoteAttachmentRequest))
-                    .attachment as RemoteOntologyResponseByEndpoint[TEndpoint];
+            case "attachment-metadata": {
+                const request = input as RemoteAttachmentMetadataRequest;
+                return (await withReadableAttachment(ctx, opts, request, (ontology) => {
+                    const metadata = ontology.attachments.metadata as (
+                        attachment: RemoteAttachmentRequest["attachment"],
+                        options: { select: readonly (keyof PartialAttachmentMetadata)[] }
+                    ) => Promise<PartialAttachmentMetadata>;
+                    return metadata(request.attachment, { select: request.selection });
+                })) as RemoteOntologyResponseByEndpoint[TEndpoint];
+            }
             case "attachment-content":
-                return (await handleAttachmentRead(ctx, opts, input as RemoteAttachmentRequest))
-                    .blob as RemoteOntologyResponseByEndpoint[TEndpoint];
+                return (await withReadableAttachment(
+                    ctx,
+                    opts,
+                    input as RemoteAttachmentRequest,
+                    (ontology) => ontology.attachments.blob((input as RemoteAttachmentRequest).attachment)
+                )) as RemoteOntologyResponseByEndpoint[TEndpoint];
         }
     }
 
@@ -774,10 +784,15 @@ export function createRemoteOntologyServer<
                 const endpoint = remoteOntologyEndpointSchema.parse(normalizePath(url.pathname));
                 if (request.method === "GET" && endpoint === "attachment-content") {
                     const ctx = opts.getContext ? await opts.getContext(request) : ({} as Context);
-                    const { blob, attachment } = await handleAttachmentRead(
+                    const attachmentRequest = parseAttachmentQuery(url);
+                    const { blob, attachment } = await withReadableAttachment(
                         ctx,
                         opts,
-                        parseAttachmentQuery(url)
+                        attachmentRequest,
+                        async (ontology) => ({
+                            attachment: await ontology.attachments.metadata(attachmentRequest.attachment),
+                            blob: await ontology.attachments.blob(attachmentRequest.attachment),
+                        })
                     );
                     return new Response(blob, {
                         headers: {

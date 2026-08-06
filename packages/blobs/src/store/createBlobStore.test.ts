@@ -11,7 +11,9 @@ import {
     BlobBytesUnavailableError,
     createBlobStore,
 } from "./createBlobStore.js";
-import type { BlobRef } from "../types.js";
+import type { BlobMetadataRecord, BlobRef } from "../types.js";
+
+type TestBlobRecord = BlobMetadataRecord & BlobRef;
 
 class TestBlobBytesStore extends MemoryBlobBytesStore {
     writeError?: Error;
@@ -93,9 +95,11 @@ describe("createBlobStore", () => {
         expect(ref).toMatchObject({
             id: "local-id",
             name: "hello.txt",
-            state: "staged",
         });
-        expect(ref.operation).toBeUndefined();
+        expect(store.collection.get("local-id")).toMatchObject({
+            state: "staged",
+            operation: undefined,
+        });
         await expect(
             bytes.read("local-id").then((blob) => blob.text())
         ).resolves.toBe("hello");
@@ -115,9 +119,11 @@ describe("createBlobStore", () => {
         expect(ref).toMatchObject({
             id: "remote-id",
             name: "remote.txt",
-            state: "cached",
         });
-        expect(ref.operation).toBeUndefined();
+        expect(store.collection.get("remote-id")).toMatchObject({
+            state: "cached",
+            operation: undefined,
+        });
         await expect(
             store.read("remote-id").then((blob) => blob.text())
         ).resolves.toBe("remote");
@@ -281,6 +287,10 @@ describe("createBlobStore", () => {
             store.commitWrite(second)
         ).resolves.toMatchObject({
             id: "local-id",
+            size: 5,
+            type: "text/plain",
+        });
+        expect(store.collection.get("local-id")).toMatchObject({
             state: "staged",
             operation: undefined,
         });
@@ -315,7 +325,7 @@ describe("createBlobStore", () => {
             new Map([["local-id", new Blob(["partial"])]])
         );
         const timestamp = Date.now();
-        const ref: BlobRef = {
+        const ref: TestBlobRecord = {
             id: "local-id",
             type: "text/plain",
             size: 7,

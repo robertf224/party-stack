@@ -429,6 +429,54 @@ describe("Ontology Validation", () => {
 
             expectOk(validate(ontology));
         });
+
+        it("should validate attachment media type constraints", () => {
+            const valid: OntologyIR = {
+                ...emptyOntology,
+                types: [
+                    {
+                        name: "Image",
+                        type: o.attachment({
+                            constraint: {
+                                size: { min: 1, max: 10_000_000 },
+                                content: o.AttachmentContentConstraint.image({
+                                    mediaTypes: ["image/png", "image/jpeg"],
+                                    dimensions: {
+                                        width: { min: 320, max: 4096 },
+                                        height: { min: 320, max: 4096 },
+                                    },
+                                }),
+                            },
+                        }),
+                    },
+                ],
+            };
+            expectOk(validate(valid));
+
+            const invalid: OntologyIR = {
+                ...emptyOntology,
+                types: [
+                    {
+                        name: "Image",
+                        type: o.attachment({
+                            constraint: {
+                                size: { min: 10, max: 1 },
+                                content: o.AttachmentContentConstraint.image({
+                                    mediaTypes: ["image/gif" as never],
+                                    dimensions: {
+                                        width: { min: -1 },
+                                    },
+                                }),
+                            },
+                        }),
+                    },
+                ],
+            };
+            const errors = getErrors(validate(invalid));
+            expect(errors).toContain('Unsupported image media type: "image/gif".');
+            expect(errors).toContain("Range min must be less than or equal to max.");
+            expect(errors).toContain("Range min must be a finite, non-negative number.");
+        });
     });
 
     describe("Action Validation", () => {

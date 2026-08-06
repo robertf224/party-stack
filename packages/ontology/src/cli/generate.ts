@@ -6,6 +6,7 @@ import { pascalCase } from "change-case";
 import { createJiti } from "jiti";
 import { format, resolveConfig } from "prettier";
 import { generateBuilders } from "../generate/builders.js";
+import { generateConstants } from "../generate/constants.js";
 import { generateLive } from "../generate/live.js";
 import { generateTypeDefinitions, generateTypes } from "../generate/types.js";
 import type { OntologyIR } from "../ir/generated/types.js";
@@ -106,6 +107,7 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
     if (isTypeOnlyOntology(ontology)) {
         const typesFilePath = join(outDir, "types.ts");
         const buildersFilePath = join(outDir, "builders.ts");
+        const constantsFilePath = join(outDir, "constants.ts");
         const typesOutput = generateTypeDefinitions(ontology, {
             valuesImportPath: resolveValuesImportPath(outDir),
         });
@@ -113,14 +115,17 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
             exportName: "o",
             promoted: "TypeDef",
         });
+        const constantsOutput = generateConstants(ontology);
 
         await Promise.all([
             formatAndWrite(typesFilePath, typesOutput, prettierConfig),
             formatAndWrite(buildersFilePath, buildersOutput, prettierConfig),
+            formatAndWrite(constantsFilePath, constantsOutput, prettierConfig),
         ]);
 
         console.log(`Generated types written to: ${typesFilePath}`);
         console.log(`Generated builders written to: ${buildersFilePath}`);
+        console.log(`Generated constants written to: ${constantsFilePath}`);
         return;
     }
 
@@ -138,6 +143,7 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
     const typesOutput = generateTypes(ontology, {
         outputTypeName: generatedOntologyTypeName,
     });
+    const constantsOutput = generateConstants(ontology);
     const liveOutput = generateLive(ontology, {
         ontologyImportPath,
         ontologyTypesImportPath: maybeStripJsExtension("./types.js", jsExtensions),
@@ -148,12 +154,15 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
 
     const typesFilePath = join(outDir, "types.ts");
     const liveFilePath = join(outDir, "live.ts");
+    const constantsFilePath = join(outDir, "constants.ts");
 
     await Promise.all([
         formatAndWrite(typesFilePath, typesOutput, prettierConfig),
         formatAndWrite(liveFilePath, liveOutput, prettierConfig),
+        formatAndWrite(constantsFilePath, constantsOutput, prettierConfig),
     ]);
 
     console.log(`Generated types written to: ${typesFilePath}`);
     console.log(`Generated live helpers written to: ${liveFilePath}`);
+    console.log(`Generated constants written to: ${constantsFilePath}`);
 }

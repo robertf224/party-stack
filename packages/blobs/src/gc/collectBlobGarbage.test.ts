@@ -9,12 +9,11 @@ import {
     BLOB_GC_SIZE_UNIT_BYTES,
     collectBlobGarbage,
 } from "./collectBlobGarbage.js";
-import type { BlobRef } from "../types.js";
+import type { BlobMetadataRecord, BlobRef } from "../types.js";
 
-function ref(
-    id: string,
-    overrides: Partial<BlobRef> = {}
-): BlobRef {
+type TestBlobRecord = BlobMetadataRecord & BlobRef;
+
+function ref(id: string, overrides: Partial<TestBlobRecord> = {}): TestBlobRecord {
     return {
         id,
         type: "application/octet-stream",
@@ -26,7 +25,7 @@ function ref(
     };
 }
 
-function setup(refs: BlobRef[]) {
+function setup(refs: TestBlobRecord[]) {
     const blobBytes = new MemoryBlobBytesStore(
         new Map(
             refs.map(({ id }) => [
@@ -51,7 +50,7 @@ function setup(refs: BlobRef[]) {
 
 async function insertRefs(
     store: ReturnType<typeof createBlobStore>,
-    refs: BlobRef[]
+    refs: TestBlobRecord[]
 ): Promise<void> {
     for (const value of refs) {
         await store.collection.insert(value, {

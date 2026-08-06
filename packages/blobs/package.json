@@ -30,6 +30,7 @@
         "@bobbyfidz/panic": "^0.1.0",
         "@effectionx/stream-helpers": "^0.8.1",
         "@party-stack/runtime": "workspace:*",
-        "effection": "^4.0.2"
+        "effection": "^4.0.2",
+        "image-dimensions": "^2.5.1"
     }
 }

@@ -67,11 +67,14 @@ export async function writePulledOntology(
     });
 
     try {
-        const ontology = await pull(liveOntology, {
+        const pulledOntology = await pull(liveOntology, {
             objectTypeNames: config.objectTypeNames,
             actionTypeNames: config.actionTypeNames,
             queryFunctionTypeNames: config.queryFunctionTypeNames ?? [],
         });
+        const ontology = config.adapter.transformOntology
+            ? await config.adapter.transformOntology(pulledOntology, config.opts)
+            : pulledOntology;
         const output = generateOntology(ontology, { ontologyImportPath });
 
         mkdirSync(dirname(outPath), { recursive: true });

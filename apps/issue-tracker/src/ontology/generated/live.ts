@@ -1,8 +1,8 @@
 // Auto-generated file - do not edit manually
 
 import { createLiveOntology, type LiveOntology } from "@party-stack/ontology";
-import ontology from "../ontology";
-import type { IssueTrackerOntology } from "./types";
+import ontology from "../ontology.js";
+import type { IssueTrackerOntology } from "./types.js";
 import type { CreateLiveOntologyOpts } from "@party-stack/ontology";
 
 export async function createIssueTrackerLiveOntology<

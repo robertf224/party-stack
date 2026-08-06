@@ -3,18 +3,29 @@ import { invariant } from "@bobbyfidz/panic";
 import { createOntologyClient, type OntologyClient } from "@party-stack/foundry-client";
 import type { OntologyConfig, OntologyConfigAdapter } from "@party-stack/ontology";
 import { createFoundryMetaOntologyBackendAdapter } from "../meta/createFoundryMetaOntologyBackendAdapter.js";
+import {
+    applyAttachmentConstraintOverrides,
+    type FoundryAttachmentConstraintOverride,
+} from "./applyAttachmentConstraintOverrides.js";
+
+export type { FoundryAttachmentConstraintOverride } from "./applyAttachmentConstraintOverrides.js";
 
 const DEFAULT_FOUNDRY_SCOPES = ["api:use-ontologies-read", "offline_access"];
 
-export interface FoundryOntologyConfigAdapterOpts {
+export interface FoundryOntologyClientOpts {
     foundryUrl: string;
     foundryOntologyRid: string;
     foundryClientId: string;
     foundryRedirectUrl: string;
 }
 
+export interface FoundryOntologyConfigAdapterOpts
+    extends Partial<FoundryOntologyClientOpts> {
+    attachmentConstraints?: FoundryAttachmentConstraintOverride[];
+}
+
 export async function createFoundryOntologyClient(
-    config: FoundryOntologyConfigAdapterOpts
+    config: FoundryOntologyClientOpts
 ): Promise<OntologyClient> {
     const { accessToken } = await performLocalOAuthFlow({
         issuerUrl: `${config.foundryUrl}/multipass/api`,
@@ -54,6 +65,11 @@ export const foundryOntologyConfigAdapter: OntologyConfigAdapter<
         });
         return createFoundryMetaOntologyBackendAdapter({ client });
     },
+    transformOntology: (ontology, opts) =>
+        applyAttachmentConstraintOverrides(
+            ontology,
+            opts?.attachmentConstraints ?? []
+        ),
 };
 
 export type FoundryOntologyConfig = OntologyConfig<FoundryOntologyConfigAdapterOpts>;
