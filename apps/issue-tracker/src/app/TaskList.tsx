@@ -128,10 +128,7 @@ function useGeolocation() {
 
 type TaskMediaAttachment = Task["media"];
 type TaskMediaType = NonNullable<TaskMediaAttachment["type"]>;
-type TaskMediaMetadata = AttachmentMetadata<
-    TaskMediaType,
-    "size" | "type" | "name" | "dimensions"
->;
+type TaskMediaMetadata = AttachmentMetadata<TaskMediaType, "size" | "type" | "name" | "dimensions">;
 
 type TaskAttachmentPreviewProps =
     | {
@@ -199,8 +196,7 @@ const TaskAttachmentPreview: React.FC<TaskAttachmentPreviewProps> = (props) => {
         );
     }
 
-    const dimensions =
-        "dimensions" in preview.metadata ? preview.metadata.dimensions : undefined;
+    const dimensions = "dimensions" in preview.metadata ? preview.metadata.dimensions : undefined;
 
     return (
         <div className="relative">
@@ -279,10 +275,7 @@ export const TaskList: React.FC = () => {
 
         const attachment = selectedImage?.attachment;
         const attachments = attachment && !useMediaReference ? [attachment] : undefined;
-        const media =
-            attachment && useMediaReference
-                ? (attachment as TaskMediaAttachment)
-                : undefined;
+        const media = attachment && useMediaReference ? (attachment as TaskMediaAttachment) : undefined;
 
         setTitle("");
         setSelectedImage(null);

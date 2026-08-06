@@ -85,7 +85,7 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
     objects: LiveOntologyObjects<Ontology["objectTypes"]>;
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
     queryFunctions: LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>;
-    attachments: LiveOntologyAttachments;
+    attachments: LiveOntologyAttachments<Ontology>;
     outbox: OntologyOutbox;
     cleanup: () => Promise<void>;
 }
@@ -127,7 +127,7 @@ export async function createLiveOntology<
                 : undefined,
         },
     });
-    const attachments = createLiveOntologyAttachments({
+    const attachments = createLiveOntologyAttachments<Ontology>({
         ir: opts.ir,
         attachmentsAdapter,
         blobManager,

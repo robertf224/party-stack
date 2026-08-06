@@ -22,19 +22,78 @@ interface LiveOntologyAttachmentCreateOptions {
     eager?: boolean;
 }
 
-type LiveOntologyAttachmentCreateResult<Options extends LiveOntologyAttachmentCreateOptions | undefined> = {
-    attachment: v.attachment;
-} & (Options extends { eager: true } ? { isMaterialized?: Promise<void> } : { isMaterialized?: never });
+interface AttachmentOntologyDefinition {
+    objectTypes: Record<string, Record<string, unknown>>;
+    actionTypes: Record<
+        string,
+        {
+            parameters: Record<string, unknown>;
+        }
+    >;
+}
+
+type ExtractAttachment<Value> =
+    Value extends v.attachment<infer Type>
+        ? v.attachment<Type>
+        : NonNullable<Value> extends ReadonlyArray<infer Element>
+          ? ExtractAttachment<Element>
+          : never;
+
+type AttachmentAtTarget<
+    Ontology extends AttachmentOntologyDefinition,
+    Target,
+> = string extends keyof Ontology["objectTypes"]
+    ? v.attachment
+    : Target extends {
+            kind: "objectProperty";
+            objectType: infer ObjectType;
+            property: infer Property;
+        }
+      ? ObjectType extends keyof Ontology["objectTypes"]
+          ? Property extends keyof Ontology["objectTypes"][ObjectType]
+              ? ExtractAttachment<
+                    Ontology["objectTypes"][ObjectType][Property]
+                >
+              : never
+          : never
+      : Target extends {
+            kind: "actionParameter";
+            actionType: infer ActionType;
+            parameter: infer Parameter;
+        }
+        ? ActionType extends keyof Ontology["actionTypes"]
+            ? Parameter extends keyof Ontology["actionTypes"][ActionType]["parameters"]
+                ? ExtractAttachment<
+                      Ontology["actionTypes"][ActionType]["parameters"][Parameter]
+                  >
+                : never
+            : never
+        : v.attachment;
+
+type LiveOntologyAttachmentCreateResult<
+    Ontology extends AttachmentOntologyDefinition,
+    Options extends LiveOntologyAttachmentCreateOptions | undefined,
+> = {
+    attachment: Options extends { target: infer Target }
+        ? AttachmentAtTarget<Ontology, Target>
+        : v.attachment;
+} & (Options extends { eager: true }
+    ? { isMaterialized?: Promise<void> }
+    : { isMaterialized?: never });
 
 function satisfiesRange(value: number, range: { min?: number; max?: number }): boolean {
     return (range.min === undefined || value >= range.min) && (range.max === undefined || value <= range.max);
 }
 
-export interface LiveOntologyAttachments {
-    create: <Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined>(
+export interface LiveOntologyAttachments<
+    Ontology extends AttachmentOntologyDefinition = AttachmentOntologyDefinition,
+> {
+    create: <
+        const Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined,
+    >(
         blob: Blob | File,
         opts?: Options
-    ) => Promise<LiveOntologyAttachmentCreateResult<Options>>;
+    ) => Promise<LiveOntologyAttachmentCreateResult<Ontology, Options>>;
     metadata: {
         <Type extends string>(attachment: v.attachment<Type>): Promise<AttachmentMetadata<Type>>;
         <Type extends string, const Selection extends AttachmentMetadataSelection<Type>>(
@@ -45,18 +104,23 @@ export interface LiveOntologyAttachments {
     blob: (attachment: v.attachment) => Promise<Blob>;
 }
 
-export function createLiveOntologyAttachments(opts: {
+export function createLiveOntologyAttachments<
+    Ontology extends AttachmentOntologyDefinition = AttachmentOntologyDefinition,
+>(opts: {
     ir: OntologyIR;
     attachmentsAdapter: OntologyAttachmentsAdapter;
     blobManager: BlobManager;
-}): LiveOntologyAttachments {
+}): LiveOntologyAttachments<Ontology> {
     const { attachmentsAdapter, blobManager } = opts;
 
-    const create = async <Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined>(
+    const create = async <
+        const Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined,
+    >(
         blob: Blob | File,
         createOpts?: Options
-    ): Promise<LiveOntologyAttachmentCreateResult<Options>> => {
-        const normalizedOpts: LiveOntologyAttachmentCreateOptions = createOpts ?? {};
+    ): Promise<LiveOntologyAttachmentCreateResult<Ontology, Options>> => {
+        const normalizedOpts: LiveOntologyAttachmentCreateOptions =
+            createOpts ?? {};
         const targetType = normalizedOpts.target
             ? getTargetValueType(opts.ir, normalizedOpts.target)
             : undefined;
@@ -113,9 +177,11 @@ export function createLiveOntologyAttachments(opts: {
             return {
                 attachment,
                 isMaterialized: promise,
-            } as unknown as LiveOntologyAttachmentCreateResult<Options>;
+            } as unknown as LiveOntologyAttachmentCreateResult<Ontology, Options>;
         }
-        return { attachment } as LiveOntologyAttachmentCreateResult<Options>;
+        return {
+            attachment,
+        } as LiveOntologyAttachmentCreateResult<Ontology, Options>;
     };
 
     const blob = (attachment: v.attachment) =>
