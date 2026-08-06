@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { o } from "../ir/generated/builders.js";
+import { generateConstants } from "./constants.js";
 import { generateTypeDefinitions, generateTypes } from "./types.js";
 import type { OntologyIR } from "../ir/generated/types.js";
 
@@ -41,11 +42,84 @@ describe("generateTypes", () => {
             types: [
                 { name: "CreatedAt", type: o.timestamp({}) },
                 { name: "File", type: o.attachment({}) },
+                {
+                    name: "Image",
+                    type: o.attachment({
+                        constraint: {
+                            content: o.AttachmentContentConstraint.image({
+                                mediaTypes: ["image/png", "image/jpeg"],
+                            }),
+                        },
+                    }),
+                },
+                {
+                    name: "AnyImage",
+                    type: o.attachment({
+                        constraint: {
+                            content: o.AttachmentContentConstraint.image({}),
+                        },
+                    }),
+                },
             ],
         };
 
         expect(generateTypeDefinitions(ontology)).toContain("export type CreatedAt = v.timestamp;");
         expect(generateTypeDefinitions(ontology)).toContain("export type File = v.attachment;");
+        expect(generateTypeDefinitions(ontology)).toContain(
+            'export type Image = v.attachment<"image/png" | "image/jpeg">;'
+        );
+        expect(generateTypeDefinitions(ontology)).toContain(
+            'export type AnyImage = v.attachment<"image/bmp" | "image/tiff" | "image/nitf" | "image/jp2" | "image/jpeg" | "image/png" | "image/webp">;'
+        );
+    });
+
+    it("generates runtime options separately from named string enum types", () => {
+        const ontology: Pick<OntologyIR, "types"> = {
+            types: [
+                {
+                    name: "Status",
+                    description: "A workflow status.",
+                    type: o.string({
+                        constraint: o.StringConstraint.enum({
+                            options: [
+                                { value: "open", label: "Open" },
+                                { value: "closed", label: "Closed" },
+                            ],
+                        }),
+                    }),
+                },
+                {
+                    name: "StatusHolder",
+                    type: o.struct({
+                        fields: [
+                            {
+                                name: "status",
+                                displayName: "Status",
+                                type: o.ref({ name: "Status" }),
+                            },
+                        ],
+                    }),
+                },
+                {
+                    name: "Priority",
+                    type: o.string({
+                        constraint: o.StringConstraint.enum({
+                            options: [{ value: "high", label: "High" }],
+                        }),
+                    }),
+                },
+            ],
+        };
+
+        const constants = generateConstants(ontology);
+        expect(constants).toContain("export const StatusOptions =");
+        expect(constants).toContain('"value":"open","label":"Open"');
+        expect(constants).toMatch(/StatusOptions[\s\S]+as const;\n\nexport const PriorityOptions/);
+        expect(constants).not.toContain("export type Status");
+
+        const types = generateTypeDefinitions(ontology);
+        expect(types).toContain('export type Status = "open" | "closed";');
+        expect(types).not.toContain("StatusOptions");
     });
 
     it("requires object type context to generate object references", () => {

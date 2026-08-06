@@ -16,12 +16,16 @@ export type BlobOperation =
           error: string;
       };
 
-export interface BlobRef {
+export interface PartialBlobMetadata {
+    size?: number;
+    type?: string;
+    name?: string | null;
+    dimensions?: BlobDimensions | null;
+}
+
+export interface BlobMetadataRecord extends PartialBlobMetadata {
     id: string;
     remoteId?: string;
-    type: string;
-    size: number;
-    name?: string;
     state?: BlobState;
     operation?: BlobOperation;
     lastAccessedAt?: number;
@@ -29,28 +33,42 @@ export interface BlobRef {
     updatedAt: number;
 }
 
-export interface BlobRemoteMetadata {
+export interface BlobRef {
     id: string;
-    size: number;
     type: string;
+    size: number;
     name?: string;
+}
+
+export interface BlobDimensions {
+    width: number;
+    height: number;
 }
 
 export interface BlobReadOptions {
     meta?: Record<string, unknown>;
 }
 
+export type BlobMetadataField = keyof PartialBlobMetadata;
+
+export interface BlobMetadataOptions extends BlobReadOptions {
+    select?: readonly BlobMetadataField[];
+}
+
 export interface BlobRemoteSource {
-    metadata: (id: string, opts?: BlobReadOptions) => Promise<BlobRemoteMetadata>;
+    metadata?: (id: string, opts?: BlobMetadataOptions) => Promise<PartialBlobMetadata>;
     read: (id: string, opts?: BlobReadOptions) => Promise<Blob>;
 }
 
 export interface BlobManager {
-    readonly collection: Collection<BlobRef, string>;
-    stage: (id: string, blob: Blob | File) => Promise<BlobRef>;
-    metadata: (id: string, opts?: BlobReadOptions) => Promise<BlobRemoteMetadata>;
+    readonly collection: Collection<BlobMetadataRecord, string>;
+    stage: (id: string, blob: Blob | File) => Promise<void>;
+    metadata: (
+        id: string,
+        opts?: BlobMetadataOptions
+    ) => Promise<PartialBlobMetadata & { id: string }>;
     read: (id: string, opts?: BlobReadOptions) => Promise<Blob>;
-    bindRemoteId: (localId: string, remoteId: string) => Promise<BlobRef>;
+    bindRemoteId: (localId: string, remoteId: string) => Promise<void>;
     cleanup: () => Promise<void>;
 }
 

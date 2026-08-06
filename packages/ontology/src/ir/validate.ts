@@ -1,3 +1,4 @@
+import { ImageMediaTypeOptions } from "./generated/constants.js";
 import type {
     ActionParameterDef,
     ActionTypeDef,
@@ -20,6 +21,68 @@ export interface ValidationError {
 
 export type ValidationResult = { kind: "ok" } | { kind: "err"; errors: ValidationError[] };
 
+// TODO: Replace this attachment-specific range validation with real numeric constraints in the meta ontology.
+function validateNonNegativeRange(
+    range: { min?: number; max?: number } | undefined,
+    path: ValidationPathElement[]
+): ValidationError[] {
+    if (!range) return [];
+    const errors: ValidationError[] = [];
+    for (const bound of ["min", "max"] as const) {
+        const value = range[bound];
+        if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
+            errors.push({
+                message: `Range ${bound} must be a finite, non-negative number.`,
+                path: [...path, bound],
+            });
+        }
+    }
+    if (range.min !== undefined && range.max !== undefined && range.min > range.max) {
+        errors.push({
+            message: "Range min must be less than or equal to max.",
+            path,
+        });
+    }
+    return errors;
+}
+
+function validateAttachmentConstraints(
+    type: Extract<TypeDef, { kind: "attachment" }>
+): ValidationError[] {
+    const constraint = type.value.constraint;
+    if (!constraint) return [];
+
+    const errors = validateNonNegativeRange(constraint.size, ["constraint", "size"]);
+    const content = constraint.content;
+    if (content?.kind !== "image") return errors;
+
+    for (const [index, mediaType] of (content.value.mediaTypes ?? []).entries()) {
+        if (!ImageMediaTypeOptions.some((option) => option.value === mediaType)) {
+            errors.push({
+                message: `Unsupported image media type: "${mediaType}".`,
+                path: ["constraint", "content", "value", "mediaTypes", index],
+            });
+        }
+    }
+    errors.push(
+        ...validateNonNegativeRange(content.value.dimensions?.width, [
+            "constraint",
+            "content",
+            "value",
+            "dimensions",
+            "width",
+        ]),
+        ...validateNonNegativeRange(content.value.dimensions?.height, [
+            "constraint",
+            "content",
+            "value",
+            "dimensions",
+            "height",
+        ])
+    );
+    return errors;
+}
+
 function validateTypeDef(
     type: TypeDef,
     path: ValidationPathElement[],
@@ -35,9 +98,14 @@ function validateTypeDef(
         case "date":
         case "timestamp":
         case "geopoint":
-        case "attachment":
         case "unknown":
             return [];
+
+        case "attachment":
+            return validateAttachmentConstraints(type).map((error) => ({
+                ...error,
+                path: [...path, ...error.path],
+            }));
 
         case "objectReference":
             return objectTypeNames.has(type.value.objectType)

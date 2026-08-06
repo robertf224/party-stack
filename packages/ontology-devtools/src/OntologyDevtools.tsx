@@ -52,6 +52,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import type {
+    AttachmentMetadata,
     LiveOntology,
     OntologyDefinition,
     OntologyIR,
@@ -731,7 +732,7 @@ function AttachmentPreview({
     ontology: LiveOntology;
 }) {
     const [preview, setPreview] = useState<{
-        metadata: v.attachment & { size: number; type: string; name?: string };
+        metadata: AttachmentMetadata;
         src?: string;
     }>();
     useEffect(() => {
@@ -754,7 +755,7 @@ function AttachmentPreview({
         };
     }, [attachment, ontology]);
 
-    const label = preview?.metadata.name ?? attachment.name ?? attachment.id;
+    const label = preview?.metadata.name ?? attachment.id;
     if (!preview?.src) {
         return (
             <DevtoolsTooltip label={label}>

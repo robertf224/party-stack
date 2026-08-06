@@ -18,11 +18,9 @@ export type Union<T extends Record<string, unknown>> = {
 
 export type Result<T, E> = Union<{ ok: T; err: E }>;
 
-export type attachment = {
+export type attachment<Type extends string = string> = {
     id: string;
-    size?: number;
-    type?: string;
-    name?: string;
+    type?: Type;
     source?: {
         objectType: string;
         primaryKey: string | number;

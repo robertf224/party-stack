@@ -9,6 +9,7 @@ import {
 } from "@osdk/foundry.ontologies";
 import {
     NonRetryableError,
+    type PartialAttachmentMetadata,
     type OntologyAttachmentIdMapping,
     type OntologyBackendAdapter,
     type OntologyBackendAdapterProvider,
@@ -134,7 +135,7 @@ export function createFoundryOntologyBackendAdapter(opts: {
                 // The stable attachment RID has not been materialized yet.
             }
             await Attachments.uploadWithRid(opts.client, attachment.id as AttachmentRid, blob, {
-                filename: getAttachmentName(attachment as unknown) ?? "",
+                filename: getAttachmentName(blob) ?? "",
                 preview: true,
             });
         },
@@ -159,9 +160,36 @@ export function createFoundryOntologyBackendAdapter(opts: {
             const contents = await Attachments.read(opts.client, attachment.id as AttachmentRid);
             return contents.blob();
         },
-        getAttachmentMetadata: async (attachment) => {
+        getAttachmentMetadata: async (attachment, selection) => {
             const media = decodeFoundryMediaId(attachment.id);
             if (media) {
+                const result: PartialAttachmentMetadata = {};
+                if (attachment.type !== undefined) {
+                    result.type = attachment.type;
+                }
+                if (selection.includes("dimensions")) {
+                    const detailed = await MediaSets.metadata(
+                        opts.client,
+                        media.mediaSetRid,
+                        media.mediaItemRid,
+                        { preview: true }
+                    );
+                    result.size = detailed.sizeBytes;
+                    if (detailed.type === "imagery" && detailed.dimensions) {
+                        result.dimensions = {
+                            width: detailed.dimensions.width,
+                            height: detailed.dimensions.height,
+                        };
+                    }
+                }
+                const missingMetadata = selection.filter(
+                    (field) => result[field] === undefined
+                );
+                const needsBasicMetadata = missingMetadata.some(
+                    (field) => field !== "dimensions"
+                );
+                if (!needsBasicMetadata) return result;
+
                 const source = attachment.source;
                 invariant(
                     source,
@@ -176,7 +204,7 @@ export function createFoundryOntologyBackendAdapter(opts: {
                     { preview: true }
                 );
                 return {
-                    ...attachment,
+                    ...result,
                     size: Number(info.sizeBytes),
                     type: info.mediaType,
                     name: info.path,
@@ -221,7 +249,7 @@ export function createFoundryOntologyBackendAdapter(opts: {
                         `Foundry attachment "${upload.attachment.id}" was not materialized before action execution.`
                     );
                     const reference = await MediaSets.uploadMedia(opts.client, upload.blob, {
-                        filename: getAttachmentName(upload.attachment) ?? upload.attachment.id,
+                        filename: getAttachmentName(upload.blob) ?? upload.attachment.id,
                         preview: true,
                     });
                     mediaReferences.set(upload.attachment.id, reference);

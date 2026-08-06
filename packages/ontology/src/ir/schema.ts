@@ -85,6 +85,7 @@ export default {
             description: "A 32-bit integer type.",
             type: o.struct({ fields: [] }),
         },
+        // TODO: Add a 64-bit integer ("long") type for integral values such as byte sizes.
         {
             name: "FloatTypeDef",
             description: "A 32-bit floating point type.",
@@ -339,10 +340,149 @@ export default {
             }),
         },
         {
-            name: "AttachmentTypeDef",
-            description: "A file handle.",
+            name: "ImageMediaType",
+            description: "A supported image media type.",
+            type: o.string({
+                constraint: o.StringConstraint.enum({
+                    options: [
+                        { value: "image/bmp", label: "BMP" },
+                        { value: "image/tiff", label: "TIFF" },
+                        { value: "image/nitf", label: "NITF" },
+                        { value: "image/jp2", label: "JPEG 2000" },
+                        { value: "image/jpeg", label: "JPEG" },
+                        { value: "image/png", label: "PNG" },
+                        { value: "image/webp", label: "WebP" },
+                    ],
+                }),
+            }),
+        },
+        {
+            name: "DimensionsConstraint",
+            description: "Constrains intrinsic pixel dimensions.",
             type: o.struct({
                 fields: [
+                    {
+                        name: "width",
+                        displayName: "Width",
+                        type: o.optional({
+                            type: o.struct({
+                                fields: [
+                                    {
+                                        name: "min",
+                                        displayName: "Minimum",
+                                        type: o.optional({ type: o.integer({}) }),
+                                    },
+                                    {
+                                        name: "max",
+                                        displayName: "Maximum",
+                                        type: o.optional({ type: o.integer({}) }),
+                                    },
+                                ],
+                            }),
+                        }),
+                    },
+                    {
+                        name: "height",
+                        displayName: "Height",
+                        type: o.optional({
+                            type: o.struct({
+                                fields: [
+                                    {
+                                        name: "min",
+                                        displayName: "Minimum",
+                                        type: o.optional({ type: o.integer({}) }),
+                                    },
+                                    {
+                                        name: "max",
+                                        displayName: "Maximum",
+                                        type: o.optional({ type: o.integer({}) }),
+                                    },
+                                ],
+                            }),
+                        }),
+                    },
+                ],
+            }),
+        },
+        {
+            name: "ImageAttachmentConstraint",
+            description: "Constraints specific to image attachments.",
+            type: o.struct({
+                fields: [
+                    {
+                        name: "mediaTypes",
+                        displayName: "Media types",
+                        type: o.optional({
+                            type: o.list({ elementType: o.ref({ name: "ImageMediaType" }) }),
+                        }),
+                    },
+                    {
+                        name: "dimensions",
+                        displayName: "Dimensions",
+                        type: o.optional({
+                            type: o.ref({ name: "DimensionsConstraint" }),
+                        }),
+                    },
+                ],
+            }),
+        },
+        {
+            name: "AttachmentContentConstraint",
+            description: "Content-specific attachment constraints.",
+            type: o.union({
+                variants: [
+                    {
+                        name: "image",
+                        type: o.ref({ name: "ImageAttachmentConstraint" }),
+                    },
+                ],
+            }),
+        },
+        {
+            name: "AttachmentConstraint",
+            description: "Constraints applied to an attachment.",
+            type: o.struct({
+                fields: [
+                    {
+                        name: "size",
+                        displayName: "Size",
+                        type: o.optional({
+                            type: o.struct({
+                                fields: [
+                                    {
+                                        name: "min",
+                                        displayName: "Minimum",
+                                        type: o.optional({ type: o.double({}) }),
+                                    },
+                                    {
+                                        name: "max",
+                                        displayName: "Maximum",
+                                        type: o.optional({ type: o.double({}) }),
+                                    },
+                                ],
+                            }),
+                        }),
+                    },
+                    {
+                        name: "content",
+                        displayName: "Content",
+                        type: o.optional({
+                            type: o.ref({ name: "AttachmentContentConstraint" }),
+                        }),
+                    },
+                ],
+            }),
+        },
+        {
+            name: "AttachmentTypeDef",
+            description: "A file handle with optional constraints.",
+            type: o.struct({
+                fields: [
+                    {
+                        name: "constraint",
+                        displayName: "Constraint",
+                        type: o.optional({ type: o.ref({ name: "AttachmentConstraint" }) }),
+                    },
                     {
                         name: "meta",
                         displayName: "Meta",

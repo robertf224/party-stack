@@ -91,6 +91,12 @@ export const StringConstraint = {
     }),
 };
 
+export const AttachmentContentConstraint = {
+    image: <const Value extends Extract<t.AttachmentContentConstraint, { kind: "image" }>["value"]>(
+        value: Value
+    ) => ({ kind: "image" as const, value }),
+};
+
 export const FunctionCallExpression = {
     uuid: <const Value extends Extract<t.FunctionCallExpression, { kind: "uuid" }>["value"]>(
         value: Value
@@ -149,6 +155,7 @@ export const o = {
     objectReference,
     unknown,
     StringConstraint,
+    AttachmentContentConstraint,
     FunctionCallExpression,
     Expression,
     ActionLogicStep,

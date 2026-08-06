@@ -142,8 +142,19 @@ describe("Infer", () => {
 
     it("infers individual type definitions against an ontology", () => {
         const userReference = defineType(o.objectReference({ objectType: "User" }));
+        const image = defineType(
+            o.attachment({
+                constraint: {
+                    content: o.AttachmentContentConstraint.image({
+                        mediaTypes: ["image/png", "image/jpeg"],
+                    }),
+                },
+            })
+        );
 
         expect(userReference).toBeDefined();
+        expect(image).toBeDefined();
         expectTypeOf<Infer<typeof userReference, typeof ontology>>().toEqualTypeOf<string>();
+        expectTypeOf<Infer<typeof image>["type"]>().toEqualTypeOf<"image/png" | "image/jpeg" | undefined>();
     });
 });

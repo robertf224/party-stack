@@ -1,5 +1,6 @@
 import * as v from "../utils/values.js";
 import type { AttachmentTypeDef, OntologyIR } from "../ir/index.js";
+import type { PartialAttachmentMetadata } from "./attachments/types.js";
 import type { Collection, CollectionConfig } from "@tanstack/db";
 
 export type OntologyCollectionOptions = Omit<
@@ -55,9 +56,10 @@ export interface OntologyAttachmentsAdapter {
         }
     ) => Promise<v.attachment | void>;
     getAttachmentContent: (attachment: v.attachment) => Promise<Blob>;
-    getAttachmentMetadata: (
-        attachment: v.attachment
-    ) => Promise<v.attachment & { size: number; type: string; name?: string }>;
+    getAttachmentMetadata?: (
+        attachment: v.attachment,
+        selection: readonly (keyof PartialAttachmentMetadata)[]
+    ) => Promise<PartialAttachmentMetadata>;
 }
 
 export interface OntologyBackendAdapter {

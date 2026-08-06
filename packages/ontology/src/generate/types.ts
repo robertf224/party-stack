@@ -1,5 +1,6 @@
 import { pascalCase } from "change-case";
 import { CodeBlockWriter, Project, Writers, type WriterFunction } from "ts-morph";
+import { ImageMediaTypeOptions } from "../ir/generated/constants.js";
 import { unwrapType } from "../utils/types.js";
 import { buildJsDocs } from "./utils/buildJsDocs.js";
 import type {
@@ -70,8 +71,16 @@ export function generateForTypeDef(type: TypeDef, ctx: GenerateTypeContext = {})
         case "geopoint":
             return "v.geopoint";
 
-        case "attachment":
-            return "v.attachment";
+        case "attachment": {
+            const content = type.value.constraint?.content;
+            if (content?.kind !== "image") return "v.attachment";
+            const mediaTypes = content.value.mediaTypes;
+            return mediaTypes
+                ? `v.attachment<${union(mediaTypes.map((mediaType) => JSON.stringify(mediaType)))}>`
+                : `v.attachment<${union(
+                      ImageMediaTypeOptions.map((option) => JSON.stringify(option.value))
+                  )}>`;
+        }
 
         case "objectReference": {
             const objectType = ctx.objectTypes?.get(type.value.objectType);

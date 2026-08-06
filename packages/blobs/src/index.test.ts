@@ -29,6 +29,16 @@ const unexpectedRemote: BlobRemoteSource = {
         Promise.reject(new Error("unexpected remote blob read")),
 };
 
+function pngBlob(width: number, height: number): Blob {
+    const bytes = new Uint8Array(24);
+    bytes.set([137, 80, 78, 71, 13, 10, 26, 10]);
+    bytes.set([73, 72, 68, 82], 12);
+    const view = new DataView(bytes.buffer);
+    view.setUint32(16, width);
+    view.setUint32(20, height);
+    return new Blob([bytes], { type: "image/png" });
+}
+
 function setup(
     options: Partial<BlobManagerOptions> & {
         bytes?: BlobBytesStore;
@@ -80,25 +90,21 @@ describe("createBlobManager", () => {
         vi.spyOn(Date, "now").mockReturnValue(100);
         const { bytes, manager } = setup();
 
-        const ref = await manager.stage(
+        await manager.stage(
             "attachment-1",
             new File(["hello"], "hello.txt", {
                 type: "text/plain",
             })
         );
 
-        expect(ref).toMatchObject({
+        expect(
+            manager.collection.get("attachment-1")
+        ).toMatchObject({
             id: "attachment-1",
             name: "hello.txt",
             size: 5,
             state: "staged",
             createdAt: 100,
-        });
-        expect(
-            manager.collection.get("attachment-1")
-        ).toMatchObject({
-            id: "attachment-1",
-            state: "staged",
         });
         expect("stage" in manager.collection.utils).toBe(false);
         await expect(
@@ -112,6 +118,30 @@ describe("createBlobManager", () => {
         await expect(
             bytes.read("attachment-1")
         ).resolves.toBeInstanceOf(Blob);
+        await manager.cleanup();
+    });
+
+    it("calculates selected dimensions from local bytes before remote metadata", async () => {
+        const metadata = vi.fn(unexpectedRemote.metadata);
+        const { manager } = setup({
+            remote: {
+                metadata,
+                read: unexpectedRemote.read,
+            },
+        });
+        await manager.stage(
+            "image-1",
+            pngBlob(320, 200)
+        );
+
+        await expect(
+            manager.metadata("image-1", {
+                select: ["dimensions"],
+            })
+        ).resolves.toMatchObject({
+            dimensions: { width: 320, height: 200 },
+        });
+        expect(metadata).not.toHaveBeenCalled();
         await manager.cleanup();
     });
 
@@ -132,6 +162,115 @@ describe("createBlobManager", () => {
             id: "attachment-1",
             size: 5,
         });
+        await manager.cleanup();
+    });
+
+    it("pushes down metadata gaps and caches extra fields", async () => {
+        const metadata = vi.fn((_id: string, options?: { select?: readonly string[] }) => {
+            expect(options?.select).toEqual(["dimensions"]);
+            return Promise.resolve({
+                size: 5,
+                dimensions: { width: 800, height: 600 },
+            });
+        });
+        const { manager } = setup({
+            remote: {
+                metadata,
+                read: () => Promise.reject(new Error("unexpected remote blob read")),
+            },
+        });
+        await expect(
+            manager.metadata("image-1", {
+                select: ["dimensions"],
+            })
+        ).resolves.toEqual({
+            id: "image-1",
+            size: 5,
+            dimensions: { width: 800, height: 600 },
+        });
+        await expect(
+            manager.metadata("image-1", {
+                select: ["size"],
+            })
+        ).resolves.toMatchObject({ size: 5 });
+        expect(metadata).toHaveBeenCalledOnce();
+        await manager.cleanup();
+    });
+
+    it("persists null as resolved unavailable metadata", async () => {
+        const metadata = vi.fn(() =>
+            Promise.resolve({
+                name: undefined,
+                dimensions: null,
+            })
+        );
+        const { manager } = setup({
+            remote: {
+                metadata,
+                read: () => Promise.reject(new Error("unexpected remote blob read")),
+            },
+        });
+
+        await expect(
+            manager.metadata("image-1", {
+                select: ["name", "dimensions"],
+            })
+        ).resolves.toEqual({
+            id: "image-1",
+            name: null,
+            dimensions: null,
+        });
+        expect(manager.collection.get("image-1")).toMatchObject({
+            name: null,
+            dimensions: null,
+        });
+        await manager.metadata("image-1", {
+            select: ["name", "dimensions"],
+        });
+        expect(metadata).toHaveBeenCalledOnce();
+        await manager.cleanup();
+    });
+
+    it("falls back to remote bytes when selected metadata is unavailable", async () => {
+        const read = vi.fn(() => Promise.resolve(pngBlob(640, 480)));
+        const { manager } = setup({
+            remote: {
+                metadata: () => Promise.reject(new Error("metadata unavailable")),
+                read,
+            },
+        });
+
+        await expect(
+            manager.metadata("image-1", {
+                select: ["dimensions"],
+            })
+        ).resolves.toMatchObject({
+            dimensions: { width: 640, height: 480 },
+        });
+        expect(read).toHaveBeenCalledOnce();
+        await manager.cleanup();
+    });
+
+    it("preserves provider and byte errors when metadata cannot be resolved", async () => {
+        const metadataError = new Error("metadata unavailable");
+        const contentError = new Error("content unavailable");
+        const { manager } = setup({
+            remote: {
+                metadata: () => Promise.reject(metadataError),
+                read: () => Promise.reject(contentError),
+            },
+        });
+
+        const error = await manager
+            .metadata("image-1", {
+                select: ["dimensions"],
+            })
+            .catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(AggregateError);
+        expect((error as AggregateError).errors).toEqual([
+            metadataError,
+            expect.any(Error),
+        ]);
         await manager.cleanup();
     });
 
@@ -163,6 +302,23 @@ describe("createBlobManager", () => {
             manager.read("remote-id").then((blob) => blob.text())
         ).resolves.toBe("remote");
         expect(reads).toBe(1);
+        await manager.cleanup();
+    });
+
+    it("does not fetch metadata while pulling remote bytes", async () => {
+        const metadata = vi.fn(unexpectedRemote.metadata);
+        const remoteBlob = new Blob(["remote"], {
+            type: "image/png",
+        });
+        const { manager } = setup({
+            remote: {
+                metadata,
+                read: () => Promise.resolve(remoteBlob),
+            },
+        });
+
+        await expect(manager.read("remote-id")).resolves.toBe(remoteBlob);
+        expect(metadata).not.toHaveBeenCalled();
         await manager.cleanup();
     });
 
@@ -260,10 +416,7 @@ describe("createBlobManager", () => {
                     type: "text/plain",
                 })
             )
-        ).resolves.toMatchObject({
-            id: "local-id",
-            state: "staged",
-        });
+        ).resolves.toBeUndefined();
         await expect(
             host.metadata("local-id")
         ).resolves.toMatchObject({

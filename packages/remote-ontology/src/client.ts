@@ -121,7 +121,8 @@ export function createRemoteOntologyBackendAdapter(
         attachments: {
             generateAttachmentId: () => crypto.randomUUID(),
             getAttachmentContent: (attachment) => transport.getAttachmentContent({ attachment }),
-            getAttachmentMetadata: (attachment) => transport.getAttachmentMetadata({ attachment }),
+            getAttachmentMetadata: (attachment, selection) =>
+                transport.getAttachmentMetadata({ attachment, selection }),
         },
         cleanup: () => queryClient.clear(),
     };

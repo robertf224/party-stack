@@ -8,6 +8,7 @@ import {
 import { encodeFoundryMediaId } from "./foundryMediaId.js";
 
 const mediaMocks = vi.hoisted(() => ({
+    metadata: vi.fn(),
     uploadMedia: vi.fn(),
 }));
 const ontologyMocks = vi.hoisted(() => ({
@@ -101,6 +102,7 @@ describe("Foundry media attachments", () => {
         },
     });
     const attachments = adapter.attachments!;
+    const getAttachmentMetadata = attachments.getAttachmentMetadata!;
     const target = mediaType.value;
 
     it("routes media through action attachment uploads", () => {
@@ -197,9 +199,11 @@ describe("Foundry media attachments", () => {
         await expect(attachments.getAttachmentContent(attachment).then((blob) => blob.text())).resolves.toBe(
             "image"
         );
-        await expect(attachments.getAttachmentMetadata(attachment)).resolves.toEqual({
-            ...attachment,
+        await expect(
+            getAttachmentMetadata(attachment, ["size", "type", "name"])
+        ).resolves.toEqual({
             size: 5,
+            type: "image/png",
             name: undefined,
         });
         expect(ontologyMocks.getMediaContent).toHaveBeenCalledWith(
@@ -210,5 +214,49 @@ describe("Foundry media attachments", () => {
             "media",
             { preview: true }
         );
+    });
+
+    it("pushes image dimension selection into media set metadata", async () => {
+        const attachment = {
+            id: encodeFoundryMediaId(mediaId),
+            type: "image/png",
+        };
+        mediaMocks.metadata.mockResolvedValue({
+            type: "imagery",
+            sizeBytes: 5,
+            dimensions: { width: 800, height: 600 },
+            bands: [],
+            attributes: {},
+        });
+
+        await expect(
+            getAttachmentMetadata(attachment, ["dimensions"])
+        ).resolves.toEqual({
+            type: "image/png",
+            size: 5,
+            dimensions: { width: 800, height: 600 },
+        });
+        expect(mediaMocks.metadata).toHaveBeenCalledWith(
+            expect.anything(),
+            mediaId.mediaSetRid,
+            mediaId.mediaItemRid,
+            { preview: true }
+        );
+        expect(ontologyMocks.getMediaMetadata).not.toHaveBeenCalled();
+    });
+
+    it("resolves inline media type without a Foundry request", async () => {
+        const attachment = {
+            id: encodeFoundryMediaId(mediaId),
+            type: "image/png",
+        };
+
+        await expect(
+            getAttachmentMetadata(attachment, ["type"])
+        ).resolves.toEqual({
+            type: "image/png",
+        });
+        expect(mediaMocks.metadata).not.toHaveBeenCalled();
+        expect(ontologyMocks.getMediaMetadata).not.toHaveBeenCalled();
     });
 });
