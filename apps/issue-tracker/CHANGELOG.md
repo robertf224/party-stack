@@ -1,5 +1,14 @@
 # @party-stack/issue-tracker
 
+## 0.0.12
+
+### Patch Changes
+
+- Updated dependencies [a973080]
+    - @party-stack/ontology-devtools@0.3.0
+    - @party-stack/foundry-ontology@0.7.0
+    - @party-stack/ontology@0.8.0
+
 ## 0.0.11
 
 ### Patch Changes

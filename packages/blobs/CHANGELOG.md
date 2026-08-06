@@ -1,5 +1,11 @@
 # @party-stack/blobs
 
+## 0.4.0
+
+### Minor Changes
+
+- a973080: add attachment constraints + metadata selection
+
 ## 0.3.0
 
 ### Minor Changes

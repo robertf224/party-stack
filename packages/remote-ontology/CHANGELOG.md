@@ -1,5 +1,16 @@
 # @party-stack/remote-ontology
 
+## 0.2.0
+
+### Minor Changes
+
+- a973080: add attachment constraints + metadata selection
+
+### Patch Changes
+
+- Updated dependencies [a973080]
+    - @party-stack/ontology@0.8.0
+
 ## 0.1.3
 
 ### Patch Changes

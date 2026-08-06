@@ -1,5 +1,16 @@
 # @party-stack/ontology-devtools
 
+## 0.3.0
+
+### Minor Changes
+
+- a973080: add attachment constraints + metadata selection
+
+### Patch Changes
+
+- Updated dependencies [a973080]
+    - @party-stack/ontology@0.8.0
+
 ## 0.2.2
 
 ### Patch Changes
