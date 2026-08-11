@@ -1777,8 +1777,8 @@ export function IssueTracker({
 
     return (
         <Tooltip.Provider>
-            <div className="surface-base flex h-screen min-h-[560px] overflow-hidden bg-white text-slate-900">
-                <aside className="surface-sunken flex w-64 shrink-0 flex-col border-r border-slate-200 bg-[#f7f7f8]">
+            <div className="surface-sunken flex h-screen min-h-[560px] overflow-hidden bg-white text-slate-900">
+                <aside className="surface-sunken flex w-64 shrink-0 flex-col bg-[#f7f7f8]">
                     <div className="flex h-14 items-center gap-2 px-3">
                         <div className="grid size-7 shrink-0 place-items-center rounded-md bg-[#5e6ad2] text-white">
                             <Icon className="size-4" name="issue" />
@@ -1786,24 +1786,6 @@ export function IssueTracker({
                         <span className="shrink-0 whitespace-nowrap text-sm font-semibold">
                             Issue tracker
                         </span>
-                        <FormSelect
-                            aria-label="Data backend"
-                            className="min-w-0 w-24 font-medium text-slate-600"
-                            containerClassName="ml-auto"
-                            controlSize="tiny"
-                            fullWidth={false}
-                            onChange={(event) => {
-                                setSelectedIssueId(null);
-                                showAllIssues();
-                                setBackendKind(
-                                    event.target.value as BackendKind
-                                );
-                            }}
-                            value={backendKind}
-                        >
-                            <option value="foundry">Foundry</option>
-                            <option value="sqlite">SQLite</option>
-                        </FormSelect>
                     </div>
                     <nav className="px-2">
                         <button
@@ -1919,10 +1901,31 @@ export function IssueTracker({
                             </DeleteContextMenu>
                         ))}
                     </div>
+                    <label className="mt-auto block px-3 pb-3">
+                        <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                            System
+                        </span>
+                        <FormSelect
+                            aria-label="Data backend"
+                            className="font-medium text-slate-600"
+                            controlSize="compact"
+                            onChange={(event) => {
+                                setSelectedIssueId(null);
+                                showAllIssues();
+                                setBackendKind(
+                                    event.target.value as BackendKind
+                                );
+                            }}
+                            value={backendKind}
+                        >
+                            <option value="foundry">Foundry</option>
+                            <option value="sqlite">SQLite</option>
+                        </FormSelect>
+                    </label>
                 </aside>
 
-                <main className="flex min-w-0 flex-1 flex-col">
-                    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-slate-200 px-5">
+                <main className="surface-base my-2 mr-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-slate-100">
+                    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-slate-100 px-5">
                         <div className="flex min-w-0 items-center gap-2">
                             {selectedProject ? (
                                 <>
@@ -1967,7 +1970,7 @@ export function IssueTracker({
                             {selectedProject.projectDescription}
                         </div>
                     )}
-                    <div className="flex h-12 shrink-0 items-center gap-2 border-b border-slate-100 px-5">
+                    <div className="flex h-12 shrink-0 items-center gap-2 px-3">
                         <div className="relative w-64">
                             <Icon className="absolute left-2.5 top-2 size-4 text-slate-400" name="search" />
                             <FormInput
@@ -2075,11 +2078,14 @@ export function IssueTracker({
                                 </div>
                             </div>
                         ) : (
-                            <div>
+                            <div className="pb-4">
                                 {issueSections.map((section) => (
-                                    <section key={section.status}>
+                                    <section
+                                        className="py-1 first:pt-2"
+                                        key={section.status}
+                                    >
                                         <div
-                                            className={`status-section-header ${statusSurfaceClass(section.status)} sticky top-0 z-10 flex h-9 w-full items-center border-b border-slate-100 backdrop-blur-sm`}
+                                            className={`status-section-header status-section-toggle group ${statusSurfaceClass(section.status)} sticky top-1 z-10 mx-3 flex h-9 w-auto items-center rounded-lg backdrop-blur-sm`}
                                         >
                                             <button
                                                 aria-expanded={
@@ -2087,7 +2093,7 @@ export function IssueTracker({
                                                         section.status
                                                     )
                                                 }
-                                                className="status-section-toggle group flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 px-5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500"
+                                                className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 px-5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500"
                                                 onClick={() =>
                                                     toggleIssueSection(
                                                         section.status
@@ -2142,7 +2148,7 @@ export function IssueTracker({
                                         ) &&
                                             section.issues.map((issue) => (
                                     <div
-                                        className="group flex min-h-14 w-full cursor-pointer items-center gap-3 border-b border-slate-100 pl-10 pr-5 transition hover:bg-slate-50"
+                                        className="group mx-3 flex min-h-12 w-auto cursor-pointer items-center gap-3 rounded-lg pl-10 pr-3 transition hover:bg-slate-50"
                                         key={issue.issueId}
                                         onClick={(event) => {
                                             if (

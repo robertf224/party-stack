@@ -96,8 +96,8 @@ select {
     background:
         linear-gradient(
             90deg,
-            rgb(var(--status-color) / 0.045),
-            rgb(var(--status-color) / 0.0125) 42%,
+            rgb(var(--status-color) / 0.08),
+            rgb(var(--status-color) / 0.025) 42%,
             transparent 78%
         ),
         var(--surface-sunken);
@@ -113,13 +113,11 @@ select {
     background:
         linear-gradient(
             90deg,
-            rgb(var(--status-color) / 0.075),
-            rgb(var(--status-color) / 0.025) 48%,
+            rgb(var(--status-color) / 0.14),
+            rgb(var(--status-color) / 0.05) 48%,
             transparent 82%
         ),
         var(--surface-raised);
-    box-shadow: inset 3px 0 0
-        rgb(var(--status-color) / 0.8);
 }
 
 .status-add-button:hover {
@@ -295,8 +293,8 @@ select {
         background:
             linear-gradient(
                 90deg,
-                rgb(var(--status-color) / 0.05),
-                rgb(var(--status-color) / 0.015) 42%,
+                rgb(var(--status-color) / 0.09),
+                rgb(var(--status-color) / 0.03) 42%,
                 transparent 78%
             ),
             var(--surface-sunken);
@@ -306,12 +304,10 @@ select {
         background:
             linear-gradient(
                 90deg,
-                rgb(var(--status-color) / 0.085),
-                rgb(var(--status-color) / 0.03) 48%,
+                rgb(var(--status-color) / 0.16),
+                rgb(var(--status-color) / 0.055) 48%,
                 transparent 82%
             ),
             var(--surface-raised);
-        box-shadow: inset 3px 0 0
-            rgb(var(--status-color) / 0.9);
     }
 }
