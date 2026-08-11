@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { TaskList } from "../app/TaskList";
+import { IssueTracker } from "../app/IssueTracker";
 
 export const Route = createFileRoute("/")({
-    component: TaskList,
+    component: IssueTracker,
 });

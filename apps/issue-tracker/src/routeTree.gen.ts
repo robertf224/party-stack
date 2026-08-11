@@ -10,33 +10,58 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ProjectProjectIdRouteImport } from './routes/project.$projectId'
+import { Route as ApiRemoteOntologyEndpointRouteImport } from './routes/api.remote-ontology.$endpoint'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProjectProjectIdRoute = ProjectProjectIdRouteImport.update({
+  id: '/project/$projectId',
+  path: '/project/$projectId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiRemoteOntologyEndpointRoute =
+  ApiRemoteOntologyEndpointRouteImport.update({
+    id: '/api/remote-ontology/$endpoint',
+    path: '/api/remote-ontology/$endpoint',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/project/$projectId': typeof ProjectProjectIdRoute
+  '/api/remote-ontology/$endpoint': typeof ApiRemoteOntologyEndpointRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/project/$projectId': typeof ProjectProjectIdRoute
+  '/api/remote-ontology/$endpoint': typeof ApiRemoteOntologyEndpointRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/project/$projectId': typeof ProjectProjectIdRoute
+  '/api/remote-ontology/$endpoint': typeof ApiRemoteOntologyEndpointRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/project/$projectId' | '/api/remote-ontology/$endpoint'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/project/$projectId' | '/api/remote-ontology/$endpoint'
+  id:
+    | '__root__'
+    | '/'
+    | '/project/$projectId'
+    | '/api/remote-ontology/$endpoint'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ProjectProjectIdRoute: typeof ProjectProjectIdRoute
+  ApiRemoteOntologyEndpointRoute: typeof ApiRemoteOntologyEndpointRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +73,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/project/$projectId': {
+      id: '/project/$projectId'
+      path: '/project/$projectId'
+      fullPath: '/project/$projectId'
+      preLoaderRoute: typeof ProjectProjectIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/remote-ontology/$endpoint': {
+      id: '/api/remote-ontology/$endpoint'
+      path: '/api/remote-ontology/$endpoint'
+      fullPath: '/api/remote-ontology/$endpoint'
+      preLoaderRoute: typeof ApiRemoteOntologyEndpointRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ProjectProjectIdRoute: ProjectProjectIdRoute,
+  ApiRemoteOntologyEndpointRoute: ApiRemoteOntologyEndpointRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

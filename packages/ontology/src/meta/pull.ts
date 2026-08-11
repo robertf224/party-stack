@@ -45,10 +45,7 @@ export interface PullOptions {
     queryFunctionTypeNames: string[];
 }
 
-export async function pull(
-    ontology: LiveOntology<MetaOntology>,
-    options: PullOptions
-): Promise<OntologyIR> {
+export async function pull(ontology: LiveOntology<MetaOntology>, options: PullOptions): Promise<OntologyIR> {
     const { ValueType, ObjectType, LinkType, ActionType, QueryFunctionType } = ontology.objects;
     const { objectTypeNames, actionTypeNames, queryFunctionTypeNames } = options;
 
@@ -69,9 +66,13 @@ export async function pull(
                     )
                 )
         ),
-        queryOnce((q) => q.from({ ActionType }).where(({ ActionType }) => inArray(ActionType.name, actionTypeNames))),
         queryOnce((q) =>
-            q.from({ QueryFunctionType }).where(({ QueryFunctionType }) => inArray(QueryFunctionType.name, queryFunctionTypeNames))
+            q.from({ ActionType }).where(({ ActionType }) => inArray(ActionType.name, actionTypeNames))
+        ),
+        queryOnce((q) =>
+            q
+                .from({ QueryFunctionType })
+                .where(({ QueryFunctionType }) => inArray(QueryFunctionType.name, queryFunctionTypeNames))
         ),
     ]);
 

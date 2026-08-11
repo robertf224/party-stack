@@ -6,6 +6,9 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
     envPrefix: ["VITE_", "NEXT_PUBLIC_"],
+    ssr: {
+        external: ["better-sqlite3"],
+    },
     server: {
         port: 3000,
     },
