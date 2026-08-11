@@ -573,6 +573,7 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
             idempotencyKey: request.idempotencyKey,
         });
     } finally {
+        coordination.close();
         await ontology.cleanup();
     }
 

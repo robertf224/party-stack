@@ -9,6 +9,18 @@ import { FieldPath, LoadSubsetOptions, parseOrderByExpression, parseWhereExpress
 import { Temporal } from "temporal-polyfill";
 
 const ALWAYS_FALSE_FILTER: SearchJsonQueryV2 = { type: "or", value: [] };
+const ALWAYS_TRUE_FILTER: SearchJsonQueryV2 = { type: "and", value: [] };
+
+function convertLikePattern(value: string): string {
+    return value
+        .toLowerCase()
+        .replaceAll("_", "?")
+        .replaceAll("%", "*");
+}
+
+function isMatchAllLikePattern(value: string): boolean {
+    return value.length > 0 && /^%+$/.test(value);
+}
 
 function convertQueryValue(
     value: unknown
@@ -119,24 +131,24 @@ export function convertLoadSubsetFilter(filter: LoadSubsetOptions["where"]): Sea
                         .map(convertQueryValue),
                 }),
                 ilike: (field: FieldPath, value: string) =>
-                    value !== "%"
+                    !isMatchAllLikePattern(value)
                         ? {
                               type: "wildcard",
                               propertyIdentifier: fieldPathToPropertyIdentifier(field),
                               // https://github.com/TanStack/db/blob/dab41aec8d8fa042384b4c0f878b3731c1d4a2b0/packages/db/src/query/compiler/evaluators.ts#L479-L481
                               // https://www.palantir.com/docs/foundry/object-explorer/search-syntax#wildcards
-                              value: value.toLowerCase().replace("_", "?").replace("%", "*"),
+                              value: convertLikePattern(value),
                           }
-                        : { type: "and", value: [] },
+                        : ALWAYS_TRUE_FILTER,
                 like: (field: FieldPath, value: string) =>
                     // We can copy the ilike logic -- this will return slightly more results but still better than querying everything.
-                    value !== "%"
+                    !isMatchAllLikePattern(value)
                         ? {
                               type: "wildcard",
                               propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value: value.toLowerCase().replace("_", "?").replace("%", "*"),
+                              value: convertLikePattern(value),
                           }
-                        : { type: "and", value: [] },
+                        : ALWAYS_TRUE_FILTER,
             },
         }) ?? undefined
     );

@@ -10,23 +10,38 @@ const imageConstraint = {
 
 export default {
     adapter: foundryOntologyConfigAdapter,
-    objectTypeNames: ["Task"],
-    actionTypeNames: ["createTask", "completeTask", "reopenTask", "deleteTask"],
+    objectTypeNames: ["Issue", "Project"],
+    actionTypeNames: [
+        "createIssue",
+        "createProject",
+        "updateIssue",
+        "updateProject",
+        "deleteProject",
+        "deleteIssue",
+    ],
     opts: {
         attachmentConstraints: [
             {
                 target: {
                     kind: "objectProperty",
-                    objectType: "Task",
-                    property: "media",
+                    objectType: "Issue",
+                    property: "issueAttachments",
                 },
                 constraint: imageConstraint,
             },
             {
                 target: {
                     kind: "actionParameter",
-                    actionType: "createTask",
-                    parameter: "media",
+                    actionType: "createIssue",
+                    parameter: "attachments",
+                },
+                constraint: imageConstraint,
+            },
+            {
+                target: {
+                    kind: "actionParameter",
+                    actionType: "updateIssue",
+                    parameter: "attachments",
                 },
                 constraint: imageConstraint,
             },

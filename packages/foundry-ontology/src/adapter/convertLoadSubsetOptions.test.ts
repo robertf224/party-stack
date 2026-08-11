@@ -1,4 +1,4 @@
-import { eq, gt, IR, lt } from "@tanstack/db";
+import { eq, gt, ilike, IR, like, lt } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
 import { describe, expect, it } from "vitest";
 import { convertLoadSubsetFilter, isAlwaysFalseFilter } from "./convertLoadSubsetOptions.js";
@@ -37,4 +37,42 @@ describe("convertLoadSubsetFilter", () => {
             value: "2026-07-27T12:00:00Z",
         });
     });
+
+    it.each([ilike, like])(
+        "converts every SQL wildcard in like patterns",
+        (operator) => {
+            const filter = convertLoadSubsetFilter(
+                operator(
+                    new IR.PropRef<string>(["title"]),
+                    "%ISSUE_one_two%"
+                )
+            );
+
+            expect(filter).toEqual({
+                type: "wildcard",
+                propertyIdentifier: {
+                    type: "property",
+                    apiName: "title",
+                },
+                value: "*issue?one?two*",
+            });
+        }
+    );
+
+    it.each([ilike, like])(
+        "treats patterns containing only percent wildcards as unfiltered",
+        (operator) => {
+            const filter = convertLoadSubsetFilter(
+                operator(
+                    new IR.PropRef<string>(["title"]),
+                    "%%"
+                )
+            );
+
+            expect(filter).toEqual({
+                type: "and",
+                value: [],
+            });
+        }
+    );
 });
