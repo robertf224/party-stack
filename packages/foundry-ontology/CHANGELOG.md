@@ -1,5 +1,11 @@
 # @party-stack/foundry-ontology
 
+## 0.8.1
+
+### Patch Changes
+
+- bc97879: Safely translate two-sided LIKE and ILIKE predicates into Foundry contains queries while preserving downstream exact filtering.
+
 ## 0.8.0
 
 ### Minor Changes
