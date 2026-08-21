@@ -1,7 +1,7 @@
 import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
 import { describe, expect, it, vi } from "vitest";
 import { o } from "../ir/index.js";
-import { createLiveOntology, type OntologyDefinition } from "./LiveOntology.js";
+import { createLiveOntology, waitForLiveOntologyReady, type OntologyDefinition } from "./LiveOntology.js";
 import type { OntologyBackendAdapter } from "./OntologyBackendAdapter.js";
 import type { OntologyIR } from "../ir/index.js";
 
@@ -163,6 +163,134 @@ describe("createLiveOntology", () => {
         }
         await queued;
         expect(applyAction).toHaveBeenCalledTimes(2);
+        await ontology.cleanup();
+        await coordination.close();
+    });
+
+    it("exposes ready and settles immediate cleanup without unhandled rejections", async () => {
+        const unhandled: unknown[] = [];
+        const onUnhandled = (reason: unknown) => {
+            unhandled.push(reason);
+        };
+        process.on("unhandledRejection", onUnhandled);
+
+        const coordination = new SingleProcessCoordination({
+            scope: "lifecycle-cleanup",
+        });
+        const backendAdapter: OntologyBackendAdapter = {
+            name: "test",
+            getCollectionOptions: () => ({
+                syncMode: "on-demand",
+                sync: {
+                    sync: ({ markReady }) => {
+                        markReady();
+                        return {};
+                    },
+                },
+            }),
+            applyAction: () => Promise.resolve(),
+            runQueryFunction: () => Promise.resolve(undefined),
+        };
+
+        try {
+            const ontology = await createLiveOntology({
+                id: "lifecycle-cleanup",
+                ir: {
+                    ...ir,
+                    objectTypes: [
+                        {
+                            name: "Note",
+                            displayName: "Note",
+                            pluralDisplayName: "Notes",
+                            primaryKey: "id",
+                            properties: [
+                                {
+                                    name: "id",
+                                    displayName: "ID",
+                                    type: o.string({}),
+                                },
+                            ],
+                        },
+                    ],
+                    queryFunctionTypes: [],
+                },
+                backend: () => backendAdapter,
+                runtime: () => ({
+                    owner: "user",
+                    namespace: "lifecycle-cleanup",
+                    blobBytes: new MemoryBlobBytesStore(),
+                    coordination,
+                }),
+            });
+
+            const ready = ontology.ready;
+            await expect(Promise.all([ready, ontology.cleanup()])).resolves.toBeDefined();
+            await expect(ontology.cleanup()).resolves.toBeUndefined();
+            expect(unhandled).toEqual([]);
+        } finally {
+            process.off("unhandledRejection", onUnhandled);
+            await coordination.close();
+        }
+    });
+
+    it("waits for on-demand collections via waitForLiveOntologyReady", async () => {
+        let syncStarted = false;
+        const coordination = new SingleProcessCoordination({
+            scope: "wait-ready",
+        });
+        const backendAdapter: OntologyBackendAdapter = {
+            name: "test",
+            getCollectionOptions: () => ({
+                syncMode: "on-demand",
+                sync: {
+                    sync: ({ markReady }) => {
+                        syncStarted = true;
+                        // Defer ready so waitForCollectionReady must start sync first.
+                        queueMicrotask(() => markReady());
+                        return {
+                            loadSubset: () => true as const,
+                        };
+                    },
+                },
+            }),
+            applyAction: () => Promise.resolve(),
+            runQueryFunction: () => Promise.resolve(undefined),
+        };
+
+        const ontology = await createLiveOntology({
+            id: "wait-ready",
+            ir: {
+                ...ir,
+                objectTypes: [
+                    {
+                        name: "Note",
+                        displayName: "Note",
+                        pluralDisplayName: "Notes",
+                        primaryKey: "id",
+                        properties: [
+                            {
+                                name: "id",
+                                displayName: "ID",
+                                type: o.string({}),
+                            },
+                        ],
+                    },
+                ],
+                queryFunctionTypes: [],
+            },
+            backend: () => backendAdapter,
+            runtime: () => ({
+                owner: "user",
+                namespace: "wait-ready",
+                blobBytes: new MemoryBlobBytesStore(),
+                coordination,
+            }),
+        });
+
+        expect(ontology.objects.Note!.status).toBe("idle");
+        await expect(waitForLiveOntologyReady(ontology)).resolves.toBeUndefined();
+        expect(syncStarted).toBe(true);
+        expect(ontology.objects.Note!.status).toBe("ready");
         await ontology.cleanup();
         await coordination.close();
     });
