@@ -11,15 +11,100 @@ import { Temporal } from "temporal-polyfill";
 const ALWAYS_FALSE_FILTER: SearchJsonQueryV2 = { type: "or", value: [] };
 const ALWAYS_TRUE_FILTER: SearchJsonQueryV2 = { type: "and", value: [] };
 
-function convertLikePattern(value: string): string {
-    return value
-        .toLowerCase()
-        .replaceAll("_", "?")
-        .replaceAll("%", "*");
+type LikePatternPart =
+    | { type: "literal"; value: string }
+    | { type: "many" }
+    | { type: "single" };
+
+interface PushdownFilter {
+    query: SearchJsonQueryV2;
+    safeToNegate: boolean;
 }
 
-function isMatchAllLikePattern(value: string): boolean {
-    return value.length > 0 && /^%+$/.test(value);
+function pushdown(query: SearchJsonQueryV2, safeToNegate = true): PushdownFilter {
+    return { query, safeToNegate };
+}
+
+function parseLikePattern(pattern: string): LikePatternPart[] {
+    const parts: LikePatternPart[] = [];
+    let literal = "";
+
+    const flushLiteral = () => {
+        if (literal) {
+            parts.push({ type: "literal", value: literal });
+            literal = "";
+        }
+    };
+
+    for (let index = 0; index < pattern.length; index++) {
+        const character = pattern[index]!;
+        if (character === "\\") {
+            const escaped = pattern[index + 1];
+            if (escaped === "%" || escaped === "_" || escaped === "\\") {
+                literal += escaped;
+                index++;
+            } else {
+                literal += character;
+            }
+        } else if (character === "%") {
+            flushLiteral();
+            parts.push({ type: "many" });
+        } else if (character === "_") {
+            flushLiteral();
+            parts.push({ type: "single" });
+        } else {
+            literal += character;
+        }
+    }
+    flushLiteral();
+
+    return parts;
+}
+
+function escapeFoundryWildcardLiteral(value: string): string {
+    return value.replace(/[\\*?]/g, "\\$&");
+}
+
+function convertLikeFilter(field: FieldPath, value: string): PushdownFilter {
+    const parts = parseLikePattern(value.toLowerCase());
+    const hasLeadingWildcard = parts[0]?.type === "many";
+    const hasTrailingWildcard = parts.at(-1)?.type === "many";
+    const propertyIdentifier = fieldPathToPropertyIdentifier(field);
+
+    if (hasLeadingWildcard && hasTrailingWildcard) {
+        const terms = parts.flatMap((part) => (part.type === "literal" && part.value ? [part.value] : []));
+        const queries = terms.map<SearchJsonQueryV2>((term) => ({
+            // This is Foundry's substring/phrase query. It can over-fetch because
+            // wildcard-delimited terms are not required to be adjacent or ordered.
+            type: "containsAllTermsInOrder",
+            propertyIdentifier,
+            value: term,
+        }));
+        const query: SearchJsonQueryV2 =
+            queries.length === 0
+                ? ALWAYS_TRUE_FILTER
+                : queries.length === 1
+                  ? queries[0]!
+                  : { type: "and", value: queries };
+
+        // Contains is an approximation of SQL LIKE. Negating this superset
+        // would produce a subset and could hide exact matches.
+        return pushdown(query, false);
+    }
+
+    const wildcard = parts
+        .map((part) => {
+            if (part.type === "many") return "*";
+            if (part.type === "single") return "?";
+            return escapeFoundryWildcardLiteral(part.value);
+        })
+        .join("");
+
+    return pushdown({
+        type: "wildcard",
+        propertyIdentifier,
+        value: wildcard,
+    });
 }
 
 function convertQueryValue(
@@ -60,97 +145,107 @@ export function isAlwaysFalseFilter(filter: SearchJsonQueryV2 | undefined): bool
 
 export function convertLoadSubsetFilter(filter: LoadSubsetOptions["where"]): SearchJsonQueryV2 | undefined {
     return (
-        parseWhereExpression<SearchJsonQueryV2>(filter, {
+        parseWhereExpression<PushdownFilter>(filter, {
             handlers: {
-                and: (...filters: SearchJsonQueryV2[]) => ({ type: "and", value: filters }),
-                or: (...filters: SearchJsonQueryV2[]) => ({ type: "or", value: filters }),
-                not: (filter: SearchJsonQueryV2) => ({ type: "not", value: filter }),
+                and: (...filters: PushdownFilter[]) =>
+                    pushdown(
+                        { type: "and", value: filters.map(({ query }) => query) },
+                        filters.every(({ safeToNegate }) => safeToNegate)
+                    ),
+                or: (...filters: PushdownFilter[]) =>
+                    pushdown(
+                        { type: "or", value: filters.map(({ query }) => query) },
+                        filters.every(({ safeToNegate }) => safeToNegate)
+                    ),
+                not: (filter: PushdownFilter) =>
+                    filter.safeToNegate
+                        ? pushdown({ type: "not", value: filter.query })
+                        : pushdown(ALWAYS_TRUE_FILTER, false),
                 eq: (field: FieldPath, value) =>
-                    value == null
-                        ? {
-                              type: "isNull",
-                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value: true,
-                          }
-                        : {
-                              type: "eq",
-                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value:
-                                  convertQueryValue(value),
-                          },
+                    pushdown(
+                        value == null
+                            ? {
+                                  type: "isNull",
+                                  propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                                  value: true,
+                              }
+                            : {
+                                  type: "eq",
+                                  propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                                  value:
+                                      convertQueryValue(value),
+                              }
+                    ),
                 gt: (field: FieldPath, value) =>
-                    value == null
-                        ? ALWAYS_FALSE_FILTER
-                        : {
-                              type: "gt",
-                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value:
-                                  convertQueryValue(value),
-                          },
+                    pushdown(
+                        value == null
+                            ? ALWAYS_FALSE_FILTER
+                            : {
+                                  type: "gt",
+                                  propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                                  value:
+                                      convertQueryValue(value),
+                              }
+                    ),
                 gte: (field: FieldPath, value) =>
-                    value == null
-                        ? ALWAYS_FALSE_FILTER
-                        : {
-                              type: "gte",
-                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value:
-                                  convertQueryValue(value),
-                          },
+                    pushdown(
+                        value == null
+                            ? ALWAYS_FALSE_FILTER
+                            : {
+                                  type: "gte",
+                                  propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                                  value:
+                                      convertQueryValue(value),
+                              }
+                    ),
                 lt: (field: FieldPath, value) =>
-                    value == null
-                        ? ALWAYS_FALSE_FILTER
-                        : {
-                              type: "lt",
-                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value:
-                                  convertQueryValue(value),
-                          },
+                    pushdown(
+                        value == null
+                            ? ALWAYS_FALSE_FILTER
+                            : {
+                                  type: "lt",
+                                  propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                                  value:
+                                      convertQueryValue(value),
+                              }
+                    ),
                 lte: (field: FieldPath, value) =>
-                    value == null
-                        ? ALWAYS_FALSE_FILTER
-                        : {
-                              type: "lte",
-                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value:
-                                  convertQueryValue(value),
-                          },
+                    pushdown(
+                        value == null
+                            ? ALWAYS_FALSE_FILTER
+                            : {
+                                  type: "lte",
+                                  propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                                  value:
+                                      convertQueryValue(value),
+                              }
+                    ),
                 isNull: (field: FieldPath) => ({
-                    type: "isNull",
-                    propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                    value: true,
+                    query: {
+                        type: "isNull",
+                        propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                        value: true,
+                    },
+                    safeToNegate: true,
                 }),
-                in: (field: FieldPath, value: unknown[]) => ({
-                    type: "in",
-                    propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                    value: value
-                        .filter(
-                            (entry) =>
-                                entry !== null &&
-                                entry !== undefined
-                        )
-                        .map(convertQueryValue),
-                }),
-                ilike: (field: FieldPath, value: string) =>
-                    !isMatchAllLikePattern(value)
-                        ? {
-                              type: "wildcard",
-                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              // https://github.com/TanStack/db/blob/dab41aec8d8fa042384b4c0f878b3731c1d4a2b0/packages/db/src/query/compiler/evaluators.ts#L479-L481
-                              // https://www.palantir.com/docs/foundry/object-explorer/search-syntax#wildcards
-                              value: convertLikePattern(value),
-                          }
-                        : ALWAYS_TRUE_FILTER,
-                like: (field: FieldPath, value: string) =>
-                    // We can copy the ilike logic -- this will return slightly more results but still better than querying everything.
-                    !isMatchAllLikePattern(value)
-                        ? {
-                              type: "wildcard",
-                              propertyIdentifier: fieldPathToPropertyIdentifier(field),
-                              value: convertLikePattern(value),
-                          }
-                        : ALWAYS_TRUE_FILTER,
+                in: (field: FieldPath, value: unknown[]) =>
+                    pushdown({
+                        type: "in",
+                        propertyIdentifier: fieldPathToPropertyIdentifier(field),
+                        value: value
+                            .filter(
+                                (entry) =>
+                                    entry !== null &&
+                                    entry !== undefined
+                            )
+                            .map(convertQueryValue),
+                    }),
+                ilike: convertLikeFilter,
+                // Foundry wildcard and contains searches are case-insensitive,
+                // so LIKE can over-fetch while TanStack applies exact casing.
+                like: convertLikeFilter,
             },
-        }) ?? undefined
+        })?.query ?? undefined
     );
 }
 
