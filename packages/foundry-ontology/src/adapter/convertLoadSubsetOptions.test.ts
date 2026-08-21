@@ -212,4 +212,42 @@ describe("convertLoadSubsetFilter", () => {
             expect(fetchedRows).toEqual(expect.arrayContaining(exactRows));
         }
     });
+
+    it.each([ilike, like])(
+        "converts every SQL wildcard in one-sided like patterns",
+        (operator) => {
+            const filter = convertLoadSubsetFilter(
+                operator(
+                    new IR.PropRef<string>(["title"]),
+                    "ISSUE_one%two%"
+                )
+            );
+
+            expect(filter).toEqual({
+                type: "wildcard",
+                propertyIdentifier: {
+                    type: "property",
+                    apiName: "title",
+                },
+                value: "issue?one*two*",
+            });
+        }
+    );
+
+    it.each([ilike, like])(
+        "treats patterns containing only percent wildcards as unfiltered",
+        (operator) => {
+            const filter = convertLoadSubsetFilter(
+                operator(
+                    new IR.PropRef<string>(["title"]),
+                    "%%"
+                )
+            );
+
+            expect(filter).toEqual({
+                type: "and",
+                value: [],
+            });
+        }
+    );
 });

@@ -1,27 +1,313 @@
 @import "tailwindcss";
 
 :root {
+    color-scheme: light;
     --background: #ffffff;
-    --foreground: #171717;
-}
-
-@theme inline {
-    --color-background: var(--background);
-    --color-foreground: var(--foreground);
-    --font-sans: var(--font-geist-sans);
-    --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-    :root {
-        --background: #0a0a0a;
-        --foreground: #ededed;
-    }
+    --foreground: #0f172a;
+    --surface-base: #f8fafc;
+    --surface-sunken: #eef2f6;
+    --surface-raised: #ffffff;
+    --surface-overlay: #ffffff;
+    --surface-border: #e2e8f0;
 }
 
 body {
     background: var(--background);
     color: var(--foreground);
-    font-family: Arial, Helvetica, sans-serif;
+    font-family:
+        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    margin: 0;
 }
 
+button,
+input,
+textarea,
+select {
+    font: inherit;
+}
+
+:where(
+    button:not(:disabled),
+    [role="button"]:not([aria-disabled="true"]),
+    select:not(:disabled),
+    a[href]
+) {
+    cursor: pointer;
+}
+
+:where(
+    button:disabled,
+    [role="button"][aria-disabled="true"],
+    select:disabled
+) {
+    cursor: default;
+}
+
+.drag-handle {
+    cursor: grab !important;
+}
+
+.drag-handle:active,
+.kanban-card-dragging {
+    cursor: grabbing !important;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+::selection {
+    background: #dfe2ff;
+}
+
+.surface-base {
+    background-color: var(--surface-base);
+}
+
+.surface-sunken {
+    background-color: var(--surface-sunken);
+}
+
+.surface-raised {
+    border-color: var(--surface-border);
+    background-color: var(--surface-raised);
+    box-shadow:
+        0 1px 2px rgb(15 23 42 / 0.06),
+        0 4px 12px rgb(15 23 42 / 0.04);
+}
+
+.surface-overlay {
+    border-color: var(--surface-border);
+    background-color: var(--surface-overlay);
+    box-shadow:
+        0 18px 48px rgb(15 23 42 / 0.18),
+        0 4px 14px rgb(15 23 42 / 0.08);
+}
+
+.command-palette-input {
+    border: 0;
+    background: transparent !important;
+    box-shadow: none;
+}
+
+.status-section-header {
+    --status-color: 148 163 184;
+    background:
+        linear-gradient(
+            90deg,
+            rgb(var(--status-color) / 0.08),
+            rgb(var(--status-color) / 0.025) 42%,
+            transparent 78%
+        ),
+        var(--surface-sunken);
+}
+
+.status-section-toggle {
+    transition:
+        background 150ms ease,
+        box-shadow 150ms ease;
+}
+
+.status-section-toggle:hover {
+    background:
+        linear-gradient(
+            90deg,
+            rgb(var(--status-color) / 0.14),
+            rgb(var(--status-color) / 0.05) 48%,
+            transparent 82%
+        ),
+        var(--surface-raised);
+}
+
+.status-add-button:hover {
+    background-color: rgb(var(--status-color) / 0.18);
+    color: rgb(var(--status-color));
+}
+
+.status-detail-trigger {
+    background-color: rgb(var(--status-color) / 0.12);
+    transition: background-color 150ms ease;
+}
+
+.status-detail-trigger:hover {
+    background-color: rgb(var(--status-color) / 0.2);
+}
+
+.status-waiting {
+    --status-color: 56 189 248;
+}
+
+.status-in-progress {
+    --status-color: 245 158 11;
+}
+
+.status-open {
+    --status-color: 148 163 184;
+}
+
+.status-completed {
+    --status-color: 139 92 246;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        color-scheme: dark;
+        --background: #020617;
+        --foreground: #e2e8f0;
+        --surface-base: #111318;
+        --surface-sunken: #090b10;
+        --surface-raised: #1a1e27;
+        --surface-overlay: #222833;
+        --surface-border: #334155;
+    }
+
+    ::selection {
+        background: #3730a3;
+        color: #ffffff;
+    }
+
+    .bg-white {
+        background-color: #0f172a;
+    }
+
+    .bg-\[\#f7f7f8\] {
+        background-color: #020617;
+    }
+
+    .bg-slate-50,
+    .bg-slate-50\/70,
+    .bg-slate-50\/95 {
+        background-color: #0f172a;
+    }
+
+    .bg-slate-100,
+    .bg-slate-200\/60,
+    .bg-slate-200\/70 {
+        background-color: #1e293b;
+    }
+
+    .bg-slate-200,
+    .bg-slate-300\/60 {
+        background-color: #334155;
+    }
+
+    .bg-indigo-50\/70 {
+        background-color: rgb(49 46 129 / 0.35);
+    }
+
+    .border-slate-100 {
+        border-color: #1e293b;
+    }
+
+    .border-slate-200 {
+        border-color: #334155;
+    }
+
+    .border-slate-300 {
+        border-color: #475569;
+    }
+
+    .text-slate-950,
+    .text-slate-900,
+    .text-slate-800 {
+        color: #f1f5f9;
+    }
+
+    .text-slate-700,
+    .text-slate-600 {
+        color: #cbd5e1;
+    }
+
+    .text-slate-500 {
+        color: #94a3b8;
+    }
+
+    .text-slate-400,
+    .text-slate-300 {
+        color: #64748b;
+    }
+
+    .placeholder\:text-slate-400::placeholder {
+        color: #64748b;
+    }
+
+    .hover\:bg-slate-50:hover,
+    .hover\:bg-slate-100:hover {
+        background-color: #1e293b;
+    }
+
+    .hover\:bg-slate-200:hover,
+    .hover\:bg-slate-200\/60:hover,
+    .hover\:bg-slate-300\/60:hover {
+        background-color: #334155;
+    }
+
+    .hover\:text-slate-600:hover,
+    .hover\:text-slate-700:hover {
+        color: #e2e8f0;
+    }
+
+    .data-pressed\:bg-slate-100[data-pressed],
+    .data-\[highlighted\]\:bg-slate-100[data-highlighted] {
+        background-color: #1e293b;
+    }
+
+    .data-pressed\:text-slate-700[data-pressed] {
+        color: #e2e8f0;
+    }
+
+    input,
+    textarea,
+    select {
+        border-color: #334155;
+        background-color: #0f172a;
+        color: #f1f5f9;
+    }
+
+    .surface-base {
+        background-color: var(--surface-base);
+    }
+
+    .surface-sunken {
+        background-color: var(--surface-sunken);
+    }
+
+    .surface-raised {
+        border-color: var(--surface-border);
+        background-color: var(--surface-raised);
+        box-shadow:
+            0 1px 1px rgb(0 0 0 / 0.35),
+            0 8px 24px rgb(0 0 0 / 0.18);
+    }
+
+    .surface-overlay {
+        border-color: #475569;
+        background-color: var(--surface-overlay);
+        box-shadow:
+            0 24px 64px rgb(0 0 0 / 0.55),
+            0 8px 20px rgb(0 0 0 / 0.3);
+    }
+
+    .status-section-header {
+        background:
+            linear-gradient(
+                90deg,
+                rgb(var(--status-color) / 0.09),
+                rgb(var(--status-color) / 0.03) 42%,
+                transparent 78%
+            ),
+            var(--surface-sunken);
+    }
+
+    .status-section-toggle:hover {
+        background:
+            linear-gradient(
+                90deg,
+                rgb(var(--status-color) / 0.16),
+                rgb(var(--status-color) / 0.055) 48%,
+                transparent 82%
+            ),
+            var(--surface-raised);
+    }
+}

@@ -549,4 +549,22 @@ describe("createBlobStore", () => {
         );
         await store.cleanup();
     });
+
+    it("settles immediate and repeated cleanup during persistence startup", async () => {
+        const unhandled: unknown[] = [];
+        const onUnhandled = (reason: unknown) => {
+            unhandled.push(reason);
+        };
+        process.on("unhandledRejection", onUnhandled);
+
+        try {
+            const { store } = setup();
+            await expect(Promise.all([store.ready, store.cleanup()])).resolves.toBeDefined();
+            await expect(store.cleanup()).resolves.toBeUndefined();
+            expect(store.collection.status).toBe("cleaned-up");
+            expect(unhandled).toEqual([]);
+        } finally {
+            process.off("unhandledRejection", onUnhandled);
+        }
+    });
 });

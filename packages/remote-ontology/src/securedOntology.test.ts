@@ -98,6 +98,7 @@ describe("secured ontology projection", () => {
 
         const action = projected.actionTypes[0]!;
         expect(action.parameters.map((parameter) => parameter.name)).toEqual(["id", "title"]);
+        expect(projected.objectTypes).toHaveLength(1);
         const step = action.logic[0]!;
         expect(step.kind).toBe("createObject");
         if (step.kind !== "createObject") return;
@@ -116,6 +117,93 @@ describe("secured ontology projection", () => {
                 value: o.Expression.functionCall(o.FunctionCallExpression.now({})),
             },
         ]);
+    });
+
+    it("projects authorized object/property/link visibility and prunes unreachable types", () => {
+        const projected = projectRemoteOntologyIR({
+            ir: {
+                ...ir,
+                types: [
+                    {
+                        name: "SecretStruct",
+                        type: o.struct({
+                            fields: [{ name: "token", displayName: "Token", type: o.string({}) }],
+                        }),
+                    },
+                    {
+                        name: "VisibleStruct",
+                        type: o.struct({
+                            fields: [{ name: "label", displayName: "Label", type: o.string({}) }],
+                        }),
+                    },
+                ],
+                objectTypes: [
+                    ...ir.objectTypes,
+                    {
+                        name: "Hidden",
+                        displayName: "Hidden",
+                        pluralDisplayName: "Hidden",
+                        primaryKey: "id",
+                        properties: [
+                            { name: "id", displayName: "ID", type: o.string({}) },
+                            { name: "secret", displayName: "Secret", type: o.ref({ name: "SecretStruct" }) },
+                        ],
+                    },
+                ],
+                linkTypes: [
+                    {
+                        id: "note-hidden",
+                        source: {
+                            objectType: "Note",
+                            name: "notes",
+                            displayName: "Notes",
+                        },
+                        target: {
+                            objectType: "Hidden",
+                            name: "hidden",
+                            displayName: "Hidden",
+                        },
+                        foreignKey: "id",
+                        cardinality: "one",
+                    },
+                ],
+            },
+            serverContext: {},
+            projectionMode: "authorized",
+            allowedObjectTypeProperties: {
+                Note: ["id", "title", "ownerEmail"],
+            },
+            visibleQueryFunctionTypes: ["publicSearch"],
+        });
+
+        expect(projected.objectTypes.map((objectType) => objectType.name)).toEqual(["Note"]);
+        expect(projected.objectTypes[0]?.properties.map((property) => property.name)).toEqual([
+            "id",
+            "title",
+            "ownerEmail",
+        ]);
+        expect(projected.linkTypes).toEqual([]);
+        expect(projected.queryFunctionTypes.map((query) => query.name)).toEqual(["publicSearch"]);
+        expect(projected.types.map((type) => type.name)).toEqual([]);
+    });
+
+    it("retains explicitly visible write-only actions without leaking hidden logic targets", () => {
+        const projected = projectRemoteOntologyIR({
+            ir,
+            serverContext: {},
+            projectionMode: "authorized",
+            allowedObjectTypeProperties: {},
+            visibleActionTypes: ["createNote"],
+            visibleQueryFunctionTypes: [],
+        });
+
+        expect(projected.objectTypes).toEqual([]);
+        expect(
+            projected.actionTypes.map(
+                (action) => action.name,
+            ),
+        ).toEqual(["createNote"]);
+        expect(projected.actionTypes[0]?.logic).toEqual([]);
     });
 
     it("preserves context references exposed in client context", () => {
