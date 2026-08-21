@@ -9,6 +9,7 @@ import {
 } from "./attachments/createLiveOntologyAttachments.js";
 import { unsupportedOntologyAttachmentsAdapter } from "./attachments/unsupportedOntologyAttachmentsAdapter.js";
 import { createLiveOntologyObjectCollection } from "./objects/createLiveOntologyObjectCollection.js";
+import { waitForCollectionsReady } from "./waitForCollectionReady.js";
 import type { LiveOntologyAction } from "./actions/createLiveOntologyAction.js";
 import type { OntologyMutatorRegistry } from "./mutators/types.js";
 import type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
@@ -21,6 +22,10 @@ import type { attachment } from "../utils/values.js";
 export type { LiveOntologyAction, LiveOntologyActionOptions } from "./actions/createLiveOntologyAction.js";
 export type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
 export type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
+export {
+    waitForCollectionReady,
+    waitForCollectionsReady,
+} from "./waitForCollectionReady.js";
 
 export type LiveOntologyWriteMode = "direct" | "outbox";
 
@@ -82,6 +87,11 @@ export type LiveOntologyQueryFunctions<QueryFunctionTypes extends OntologyDefini
 
 export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefinition> {
     readonly ir: OntologyIR;
+    /**
+     * Resolves once outbox and blob metadata subsystems have finished starting.
+     * Object collections remain on-demand unless explicitly preloaded.
+     */
+    readonly ready: Promise<void>;
     objects: LiveOntologyObjects<Ontology["objectTypes"]>;
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
     queryFunctions: LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>;
@@ -99,6 +109,17 @@ export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> 
     writes?: LiveOntologyWrites;
     context?: Context;
     getUserId?: (context: Context) => string;
+}
+
+/**
+ * Waits for LiveOntology subsystems required before safe use.
+ * Starts on-demand object collection sync via preload without loading subsets.
+ */
+export async function waitForLiveOntologyReady(ontology: LiveOntology): Promise<void> {
+    await ontology.ready;
+    await waitForCollectionsReady(
+        Object.values(ontology.objects) as Collection<Record<string, unknown>, string | number>[]
+    );
 }
 
 export async function createLiveOntology<
@@ -163,9 +184,14 @@ export async function createLiveOntology<
                 }),
         ])
     );
+    const ready = Promise.all([actionsSubsystem.outbox.ready, blobManager.ready]).then(() => undefined);
+    void ready.catch(() => undefined);
+
+    let cleanupPromise: Promise<void> | undefined;
 
     return {
         ir: opts.ir,
+        ready,
         objects: objects as unknown as LiveOntologyObjects<Ontology["objectTypes"]>,
         actions: actionsSubsystem.actions as unknown as LiveOntologyActions<Ontology["actionTypes"]>,
         queryFunctions: queryFunctions as unknown as LiveOntologyQueryFunctions<
@@ -174,11 +200,30 @@ export async function createLiveOntology<
         attachments,
         outbox: actionsSubsystem.outbox,
         cleanup: async () => {
-            await actionsSubsystem.outbox.cleanup();
-            await Promise.all(Object.values(objects).map((collection) => collection.cleanup()));
-            await blobManager.cleanup();
-            await backendAdapter.cleanup?.();
-            await runtime.cleanup?.();
+            cleanupPromise ??= (async () => {
+                // Settle subsystem startups before tearing down persistence.
+                await Promise.allSettled([ready]);
+                await actionsSubsystem.outbox.cleanup();
+                await Promise.all(
+                    Object.values(objects).map(async (collection) => {
+                        const status = collection.status;
+                        if (status === "cleaned-up") return;
+                        // Settle in-flight startup only; ready/idle need no preload.
+                        if (status === "loading") {
+                            await Promise.allSettled([collection.preload()]);
+                        }
+                        try {
+                            await collection.cleanup();
+                        } catch {
+                            // Idempotent: already cleaned up during preload race.
+                        }
+                    })
+                );
+                await blobManager.cleanup();
+                await backendAdapter.cleanup?.();
+                await runtime.cleanup?.();
+            })();
+            return cleanupPromise;
         },
     };
 }

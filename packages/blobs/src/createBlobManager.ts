@@ -316,6 +316,7 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
     let cleanupPromise: Promise<void> | undefined;
     return {
         collection: store.collection,
+        ready: store.ready,
 
         async stage(id, blob) {
             await store.stage(id, blob);
@@ -332,11 +333,13 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
         },
 
         cleanup() {
-            cleanupPromise ??= Promise.resolve(lifetime.halt())
-                .catch(ignoreEffectionHalt)
-                .then(() => {
-                    return store.cleanup();
-                });
+            cleanupPromise ??= (async () => {
+                // Settle persistence startup before tearing down so loopback
+                // markReady cannot race a cleaned-up collection.
+                await Promise.allSettled([store.ready]);
+                await Promise.resolve(lifetime.halt()).catch(ignoreEffectionHalt);
+                await store.cleanup();
+            })();
             return cleanupPromise;
         },
     };
