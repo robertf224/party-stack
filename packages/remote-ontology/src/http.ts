@@ -10,7 +10,6 @@ import type {
 } from "./protocol.js";
 import type { OntologyIR, PartialAttachmentMetadata } from "@party-stack/ontology";
 import { decode, encode } from "@party-stack/ontology/json";
-import { parseRemoteOntologyErrorBody } from "./errors.js";
 import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
 
 export interface HttpRemoteOntologyTransportOptions {
@@ -27,12 +26,6 @@ function resolveEndpoint(baseUrl: string | URL, path: string): string {
         return new URL(path, normalizedBase).toString();
     }
     return `${normalizedBase}${path}`;
-}
-
-async function throwIfNotOk(response: Response): Promise<void> {
-    if (response.ok) return;
-    const message = await response.text();
-    throw parseRemoteOntologyErrorBody(message, response.status);
 }
 
 async function postJson<TResponse>(
@@ -52,7 +45,11 @@ async function postJson<TResponse>(
         signal: options?.signal,
     });
 
-    await throwIfNotOk(response);
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Remote ontology request failed with status ${response.status}.`);
+    }
+
     return parseRemoteOntologyJson(await response.text()) as TResponse;
 }
 
@@ -82,7 +79,11 @@ async function postMultipart<TResponse>(
         signal: options?.signal,
     });
 
-    await throwIfNotOk(response);
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Remote ontology request failed with status ${response.status}.`);
+    }
+
     return parseRemoteOntologyJson(await response.text()) as TResponse;
 }
 
@@ -103,7 +104,11 @@ async function postBlob(
         signal: options?.signal,
     });
 
-    await throwIfNotOk(response);
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Remote ontology request failed with status ${response.status}.`);
+    }
+
     return response.blob();
 }
 

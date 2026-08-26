@@ -688,24 +688,6 @@ export function validate(ontology: OntologyIR): ValidationResult {
                 path: [...ltPath, "target", "objectType"],
             });
         }
-
-        const foreignKeyRoot = lt.foreignKey.split(".")[0]!;
-        const sourceType = ontology.objectTypes.find(
-            (candidate) => candidate.name === lt.source.objectType
-        );
-        const targetType = ontology.objectTypes.find(
-            (candidate) => candidate.name === lt.target.objectType
-        );
-        const sourceHasFk =
-            sourceType?.properties.some((property) => property.name === foreignKeyRoot) ?? false;
-        const targetHasFk =
-            targetType?.properties.some((property) => property.name === foreignKeyRoot) ?? false;
-        if (!sourceHasFk && !targetHasFk) {
-            errors.push({
-                message: `Foreign key "${lt.foreignKey}" does not exist on either side of link "${lt.id}".`,
-                path: [...ltPath, "foreignKey"],
-            });
-        }
     }
 
     const actionNames = new Set<string>();
