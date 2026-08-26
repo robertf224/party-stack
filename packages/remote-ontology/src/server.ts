@@ -6,10 +6,7 @@ import {
     type QueryBuilder,
     type Context as QueryBuilderContext,
 } from "@tanstack/db";
-import {
-    createLiveOntology,
-    waitForLiveOntologyReady,
-} from "@party-stack/ontology";
+import { createLiveOntology } from "@party-stack/ontology";
 import { decode, encode } from "@party-stack/ontology/json";
 import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
 import type {
@@ -22,12 +19,6 @@ import type {
     PartialAttachmentMetadata,
 } from "@party-stack/ontology";
 import {
-    parseRemoteOntologyErrorBody,
-    remoteOntologyErrorFromUnknown,
-    RemoteOntologyError,
-    statusToCode,
-} from "./errors.js";
-import {
     parseRemoteOntologyJson,
     parseRemoteOntologyRequest,
     remoteOntologyEndpointSchema,
@@ -38,7 +29,6 @@ import {
     projectRemoteOntologyIR,
     type ClientContextProjectionMode,
     type FixedActionParameterValues,
-    type RemoteOntologySchemaProjectionMode,
 } from "./securedOntology.js";
 import type {
     RemoteApplyActionRequest,
@@ -143,25 +133,6 @@ export interface RemoteOntologyPolicy<Context, Ontology extends OntologyDefiniti
     allowedObjectTypeProperties?: RemoteOntologyAllowedObjectTypeProperties<Context, Ontology>;
     fixedActionParameterValues?: FixedActionParameterValues<Ontology>;
     clientContext?: RemoteOntologyClientContextPolicy<Context>;
-    /**
-     * Schema describe projection mode.
-     * Defaults to `authorized` when object visibility policy is configured, otherwise `legacy`.
-     */
-    schemaProjectionMode?: RemoteOntologySchemaProjectionMode;
-    /**
-     * Optional action-type visibility for describe. Defaults to all action types.
-     */
-    visibleActionTypes?:
-        | readonly string[]
-        | "all"
-        | ((ctx: Context) => readonly string[] | "all" | Promise<readonly string[] | "all">);
-    /**
-     * Optional query-function visibility for describe. Defaults to all query functions.
-     */
-    visibleQueryFunctionTypes?:
-        | readonly string[]
-        | "all"
-        | ((ctx: Context) => readonly string[] | "all" | Promise<readonly string[] | "all">);
     canApplyAction?: (
         ctx: Context,
         request: RemoteOntologyApplyActionRequest<Ontology>,
@@ -209,31 +180,17 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
     });
 }
 
-function errorResponse(error: unknown, status?: number): Response {
-    const remoteError = remoteOntologyErrorFromUnknown(error);
-    if (status !== undefined && status !== remoteError.status) {
-        // Preserve explicit status overrides while keeping structured fields.
-        const overridden = new RemoteOntologyError({
-            name: remoteError.name,
-            code: statusToCode(status),
-            status,
-            message: remoteError.message,
-            details: remoteError.details,
-            cause: error,
-        });
-        if (overridden.status >= 500) {
-            console.error("Remote ontology request failed.", error);
-        }
-        return jsonResponse(overridden.toJSON(), { status: overridden.status });
-    }
-    if (remoteError.status >= 500) {
+function errorResponse(error: unknown, status: number = 500): Response {
+    if (status >= 500) {
         console.error("Remote ontology request failed.", error);
     }
-    return jsonResponse(remoteError.toJSON(), { status: remoteError.status });
+    const message = error instanceof Error ? error.message : String(error);
+    return jsonResponse({ error: message }, { status });
 }
 
 function getErrorStatus(error: unknown): number {
-    return remoteOntologyErrorFromUnknown(error).status;
+    if (error instanceof Error && error.name === "RemoteOntologyForbiddenError") return 403;
+    return error instanceof Error && error.name === "ZodError" ? 400 : 500;
 }
 
 class RemoteOntologyForbiddenError extends Error {
@@ -261,27 +218,20 @@ async function resolveValue<Context, TValue>(
     return valueOrFactory;
 }
 
-function getInvalidatedObjectTypesFromActionLogic(
-    ir: OntologyIR,
-    actionType: string
-): string[] | undefined {
-    const action = ir.actionTypes.find((candidate) => candidate.name === actionType);
-    if (!action) return undefined;
-    const objectTypes = new Set<string>();
-    for (const step of action.logic) {
-        if (step.kind === "createObject") {
-            objectTypes.add(step.value.objectType);
-            continue;
-        }
-        if (step.kind === "updateObject" || step.kind === "deleteObject") {
-            const parameterName = step.value.object.path[0];
-            if (!parameterName) continue;
-            const parameter = action.parameters.find((candidate) => candidate.name === parameterName);
-            if (!parameter || parameter.type.kind !== "objectReference") continue;
-            objectTypes.add(parameter.type.value.objectType);
-        }
-    }
-    return objectTypes.size > 0 ? [...objectTypes] : undefined;
+async function waitForLiveOntologyReady(ontology: LiveOntology): Promise<void> {
+    await Promise.all(
+        Object.values(ontology.objects).map(async (collection) => {
+            if (collection.status === "ready") return;
+            if (collection.status === "error" || collection.status === "cleaned-up") {
+                throw new Error(`Collection "${collection.id}" is ${collection.status}.`);
+            }
+            await (
+                collection as typeof collection & {
+                    waitFor: (event: "status:ready") => Promise<unknown>;
+                }
+            ).waitFor("status:ready");
+        })
+    );
 }
 
 function normalizePath(pathname: string): string {
@@ -550,19 +500,6 @@ async function handleDescribe<Context, Ontology extends OntologyDefinition = Ont
 ): Promise<RemoteOntologyDescription> {
     const ir = await resolveValue(opts.ir, ctx);
     const clientContext = await resolveClientContext(ctx, opts.policy);
-    const hasObjectVisibilityPolicy =
-        opts.policy?.allowedObjectTypeProperties !== undefined ||
-        opts.policy?.baseObjectTypeQueries !== undefined;
-    const projectionMode =
-        opts.policy?.schemaProjectionMode ?? (hasObjectVisibilityPolicy ? "authorized" : "legacy");
-    const visibleActionTypes =
-        typeof opts.policy?.visibleActionTypes === "function"
-            ? await opts.policy.visibleActionTypes(ctx)
-            : opts.policy?.visibleActionTypes;
-    const visibleQueryFunctionTypes =
-        typeof opts.policy?.visibleQueryFunctionTypes === "function"
-            ? await opts.policy.visibleQueryFunctionTypes(ctx)
-            : opts.policy?.visibleQueryFunctionTypes;
     return {
         ir: projectRemoteOntologyIR({
             ir,
@@ -571,9 +508,6 @@ async function handleDescribe<Context, Ontology extends OntologyDefinition = Ont
             clientContextMode: clientContext.mode,
             fixedActionParameterValues: opts.policy?.fixedActionParameterValues,
             allowedObjectTypeProperties: resolveProjectedAllowedObjectTypeProperties(ctx, ir, opts.policy),
-            projectionMode,
-            visibleActionTypes,
-            visibleQueryFunctionTypes,
         }),
         ...(clientContext.context ? { context: clientContext.context } : {}),
     };
@@ -622,11 +556,7 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
         await waitForLiveOntologyReady(ontology);
         const canApply = await opts.policy?.canApplyAction?.(
             ctx,
-            {
-                actionType: request.actionType,
-                parameters,
-                idempotencyKey: executionId,
-            } as unknown as RemoteOntologyApplyActionRequest<Ontology>,
+            request as RemoteOntologyApplyActionRequest<Ontology>,
             {
                 objects: ontology.objects,
             }
@@ -640,20 +570,15 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
             throw new Error(`Unknown action "${request.actionType}".`);
         }
         actionResult = await action(parameters, {
-            idempotencyKey: executionId,
+            idempotencyKey: request.idempotencyKey,
         });
     } finally {
         coordination.close();
         await ontology.cleanup();
     }
 
-    const invalidatedObjectTypes =
-        actionResult?.invalidatedObjectTypes ??
-        getInvalidatedObjectTypesFromActionLogic(ir, request.actionType) ??
-        ir.objectTypes.map((objectType) => objectType.name);
-
     return {
-        invalidatedObjectTypes,
+        invalidatedObjectTypes: ir.objectTypes.map((objectType) => objectType.name),
         attachmentIdMappings: actionResult?.attachmentIdMappings,
     };
 }

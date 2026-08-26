@@ -62,8 +62,6 @@ export interface BlobRemoteSource {
 
 export interface BlobManager {
     readonly collection: Collection<BlobMetadataRecord, string>;
-    /** Resolves once blob metadata persistence has finished starting. */
-    readonly ready: Promise<void>;
     stage: (id: string, blob: Blob | File) => Promise<void>;
     metadata: (
         id: string,

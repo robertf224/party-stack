@@ -21,34 +21,7 @@ export interface OntologyAttachmentIdMapping {
 
 export interface OntologyApplyActionResult {
     attachmentIdMappings?: OntologyAttachmentIdMapping[];
-    /**
-     * Object types that may have changed as a result of the action.
-     * When omitted, clients may fall back to refreshing all known object types.
-     */
-    invalidatedObjectTypes?: string[];
 }
-
-export interface OntologyActionRefreshResult {
-    status: "ok" | "error" | "aborted";
-    objectType: string;
-    error?: {
-        name: string;
-        message: string;
-    };
-}
-
-export interface OntologyActionRefreshDiagnostics {
-    /**
-     * Best-effort cache refresh after a confirmed write.
-     * Never rejects; failures are reported in the resolved results.
-     */
-    completed: Promise<OntologyActionRefreshResult[]>;
-}
-
-export interface OntologyApplyActionClientResult extends OntologyApplyActionResult {
-    refresh?: OntologyActionRefreshDiagnostics;
-}
-
 
 export interface ApplyActionLiveOpts {
     objects: Record<string, Collection<Record<string, unknown>>>;

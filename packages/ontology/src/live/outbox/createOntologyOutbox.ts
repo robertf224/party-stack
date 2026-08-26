@@ -372,9 +372,6 @@ export function createOntologyOutbox(options: CreateOntologyOutboxOptions): Star
     const collection = createOutboxCollection(options);
     let outbox: OntologyOutbox | undefined;
     const ready = deferred<void>();
-    // Prevent unhandled rejection when cleanup races startup.
-    void ready.promise.catch(() => undefined);
-    let cleanupPromise: Promise<void> | undefined;
     const task = run(function* () {
         try {
             const value = yield* useOntologyOutbox(options, collection);
@@ -409,16 +406,7 @@ export function createOntologyOutbox(options: CreateOntologyOutboxOptions): Star
             return outbox!.retry(id);
         },
         async cleanup() {
-            cleanupPromise ??= (async () => {
-                // Let persistence startup settle before tearing down so
-                // loopback markReady cannot race cleaned-up status.
-                await Promise.allSettled([ready.promise, collection.preload()]);
-                await task.halt().catch(() => undefined);
-                if (collection.status !== "cleaned-up") {
-                    await collection.cleanup().catch(() => undefined);
-                }
-            })();
-            return cleanupPromise;
+            await task.halt();
         },
     };
 }

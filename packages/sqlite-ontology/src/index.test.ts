@@ -1,6 +1,5 @@
 import { createRequire } from "node:module";
 import { createLiveOntology, o, type OntologyIR } from "@party-stack/ontology";
-import { eq, queryOnce } from "@tanstack/db";
 import { afterEach, describe, expect, it } from "vitest";
 import type { attachment as OntologyAttachment } from "@party-stack/ontology/values";
 import { createSQLiteOntologyBackendAdapter } from "./index.js";
@@ -21,29 +20,8 @@ const BetterSqlite3 = require("better-sqlite3") as unknown;
 const Database = BetterSqlite3 as new (path: string) => TestDatabase;
 
 const ir: OntologyIR = {
-    types: [
-        {
-            name: "NoteMeta",
-            description: "Note metadata",
-            type: o.struct({
-                fields: [
-                    { name: "priority", displayName: "Priority", type: o.integer({}) },
-                    { name: "source", displayName: "Source", type: o.string({}) },
-                ],
-            }),
-        },
-    ],
+    types: [],
     objectTypes: [
-        {
-            name: "Author",
-            displayName: "Author",
-            pluralDisplayName: "Authors",
-            primaryKey: "id",
-            properties: [
-                { name: "id", displayName: "ID", type: o.string({}) },
-                { name: "email", displayName: "Email", type: o.string({}) },
-            ],
-        },
         {
             name: "Note",
             displayName: "Note",
@@ -52,18 +30,6 @@ const ir: OntologyIR = {
             properties: [
                 { name: "id", displayName: "ID", type: o.string({}) },
                 { name: "title", displayName: "Title", type: o.string({}) },
-                { name: "ownerEmail", displayName: "Owner email", type: o.string({}) },
-                { name: "authorId", displayName: "Author ID", type: o.string({}) },
-                {
-                    name: "tags",
-                    displayName: "Tags",
-                    type: o.list({ elementType: o.string({}) }),
-                },
-                {
-                    name: "meta",
-                    displayName: "Meta",
-                    type: o.ref({ name: "NoteMeta" }),
-                },
                 { name: "updatedAt", displayName: "Updated at", type: o.timestamp({}) },
             ],
         },
@@ -79,66 +45,14 @@ const ir: OntologyIR = {
             ],
         },
     ],
-    linkTypes: [
-        {
-            id: "note-author",
-            source: { objectType: "Note", name: "notes", displayName: "Notes" },
-            target: { objectType: "Author", name: "author", displayName: "Author" },
-            foreignKey: "authorId",
-            cardinality: "many",
-        },
-    ],
+    linkTypes: [],
     actionTypes: [
-        {
-            name: "createAuthor",
-            displayName: "Create author",
-            parameters: [
-                { name: "id", displayName: "ID", type: o.string({}) },
-                { name: "email", displayName: "Email", type: o.string({}) },
-            ],
-            logic: [
-                o.ActionLogicStep.createObject({
-                    objectType: "Author",
-                    values: [
-                        {
-                            property: ["id"],
-                            value: o.Expression.valueReference({ path: ["id"] }),
-                        },
-                        {
-                            property: ["email"],
-                            value: o.Expression.valueReference({ path: ["email"] }),
-                        },
-                    ],
-                }),
-            ],
-        },
         {
             name: "createNote",
             displayName: "Create note",
             parameters: [
                 { name: "id", displayName: "ID", type: o.string({}) },
                 { name: "title", displayName: "Title", type: o.string({}) },
-                {
-                    name: "ownerEmail",
-                    displayName: "Owner email",
-                    type: o.string({}),
-                    defaultValue: o.Expression.contextReference({ path: ["user", "email"] }),
-                },
-                {
-                    name: "author",
-                    displayName: "Author",
-                    type: o.objectReference({ objectType: "Author" }),
-                },
-                {
-                    name: "tags",
-                    displayName: "Tags",
-                    type: o.list({ elementType: o.string({}) }),
-                },
-                {
-                    name: "meta",
-                    displayName: "Meta",
-                    type: o.ref({ name: "NoteMeta" }),
-                },
             ],
             logic: [
                 o.ActionLogicStep.createObject({
@@ -151,22 +65,6 @@ const ir: OntologyIR = {
                         {
                             property: ["title"],
                             value: o.Expression.valueReference({ path: ["title"] }),
-                        },
-                        {
-                            property: ["ownerEmail"],
-                            value: o.Expression.valueReference({ path: ["ownerEmail"] }),
-                        },
-                        {
-                            property: ["authorId"],
-                            value: o.Expression.valueReference({ path: ["author"] }),
-                        },
-                        {
-                            property: ["tags"],
-                            value: o.Expression.valueReference({ path: ["tags"] }),
-                        },
-                        {
-                            property: ["meta"],
-                            value: o.Expression.valueReference({ path: ["meta"] }),
                         },
                         {
                             property: ["updatedAt"],
@@ -225,14 +123,10 @@ const ir: OntologyIR = {
     queryFunctionTypes: [],
 };
 
-describe("SQLite LiveOntology MVP acceptance", () => {
+describe("createSQLiteOntologyBackendAdapter", () => {
     const databases: TestDatabase[] = [];
-    const ontologies: Array<{ cleanup: () => Promise<void> }> = [];
 
-    afterEach(async () => {
-        for (const ontology of ontologies.splice(0)) {
-            await ontology.cleanup();
-        }
+    afterEach(() => {
         for (const database of databases.splice(0)) {
             database.close();
         }
@@ -244,96 +138,22 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         return database;
     }
 
-    async function createOntology(opts?: { context?: Record<string, unknown>; name?: string }) {
+    it("persists action mutations and hydrates Temporal values on reload", async () => {
         const database = createDatabase();
         const backendAdapter = createSQLiteOntologyBackendAdapter({
             ir,
             database,
-            name: opts?.name ?? "test",
+            name: "test",
         });
         const ontology = await createLiveOntology({
             ir,
             backend: () => backendAdapter,
-            context: opts?.context,
         });
-        ontologies.push(ontology);
-        return { database, ontology };
-    }
 
-    async function readObjectById(
-        collection: { get: (id: string) => unknown },
-        primaryKey: string,
-        id: string
-    ) {
-        await queryOnce((q) =>
-            q
-                .from({ object: collection as never })
-                .where(({ object }) => eq((object as Record<string, unknown>)[primaryKey], id))
-                .select(({ object }) => object)
-        );
-        return collection.get(id);
-    }
-
-    it("supports primitive, struct, list, object-reference, and defaultValue parameters", async () => {
-        const { ontology } = await createOntology({
-            context: { user: { email: "alice@example.com" } },
-        });
-        await ontology.ready;
-
-        await ontology.actions.createAuthor!({
-            id: "author-1",
-            email: "author@example.com",
-        });
         await ontology.actions.createNote!({
             id: "note-1",
             title: "Hello",
-            author: "author-1",
-            tags: ["mvp", "sqlite"],
-            meta: { priority: 2, source: "demo" },
         });
-
-        const note = (await readObjectById(ontology.objects.Note!, "id", "note-1")) as Record<
-            string,
-            unknown
-        >;
-        expect(note).toMatchObject({
-            id: "note-1",
-            title: "Hello",
-            ownerEmail: "alice@example.com",
-            authorId: "author-1",
-            tags: ["mvp", "sqlite"],
-            meta: { priority: 2, source: "demo" },
-        });
-        expect(note.updatedAt).toHaveProperty("epochMilliseconds");
-        expect(
-            ((await readObjectById(ontology.objects.Author!, "id", "author-1")) as { email: string })
-                .email
-        ).toBe("author@example.com");
-        expect(ir.linkTypes[0]).toMatchObject({
-            foreignKey: "authorId",
-            cardinality: "many",
-        });
-    });
-
-    it("persists action mutations and hydrates Temporal values on reload", async () => {
-        const { database, ontology } = await createOntology({
-            context: { user: { email: "alice@example.com" } },
-        });
-        await ontology.ready;
-
-        await ontology.actions.createAuthor!({
-            id: "author-1",
-            email: "author@example.com",
-        });
-        await ontology.actions.createNote!({
-            id: "note-1",
-            title: "Hello",
-            author: "author-1",
-            tags: ["reload"],
-            meta: { priority: 1, source: "persist" },
-        });
-        await ontology.cleanup();
-        ontologies.splice(ontologies.indexOf(ontology), 1);
 
         const reloadedOntology = await createLiveOntology({
             ir,
@@ -343,34 +163,28 @@ describe("SQLite LiveOntology MVP acceptance", () => {
                     database,
                     name: "test",
                 }),
-            context: { user: { email: "alice@example.com" } },
         });
-        ontologies.push(reloadedOntology);
-        await reloadedOntology.ready;
 
         const note = reloadedOntology.objects.Note!.get("note-1");
         expect(note?.title).toBe("Hello");
-        expect(note?.tags).toEqual(["reload"]);
-        expect(note?.meta).toEqual({ priority: 1, source: "persist" });
         expect(note?.updatedAt).toHaveProperty("epochMilliseconds");
     });
 
     it("stores action attachment uploads in SQLite", async () => {
-        const { ontology } = await createOntology({
-            context: { user: { email: "alice@example.com" } },
+        const database = createDatabase();
+        const backendAdapter = createSQLiteOntologyBackendAdapter({
+            ir,
+            database,
+            name: "test",
         });
-        await ontology.ready;
+        const ontology = await createLiveOntology({
+            ir,
+            backend: () => backendAdapter,
+        });
 
-        await ontology.actions.createAuthor!({
-            id: "author-1",
-            email: "author@example.com",
-        });
         await ontology.actions.createNote!({
             id: "note-1",
             title: "Hello",
-            author: "author-1",
-            tags: [],
-            meta: { priority: 0, source: "attachment" },
         });
         const creation = await ontology.attachments.create(
             new File(["hello attachment"], "hello.txt", { type: "text/plain" }),
@@ -399,23 +213,5 @@ describe("SQLite LiveOntology MVP acceptance", () => {
             type: "text/plain",
         });
         expect(await blob.text()).toBe("hello attachment");
-        expect(
-            (
-                (await readObjectById(
-                    ontology.objects.NoteAttachment!,
-                    "id",
-                    "attachment-object-1"
-                )) as { noteId: string }
-            ).noteId
-        ).toBe("note-1");
-    });
-
-    it("supports safe initialization and idempotent cleanup", async () => {
-        const { ontology } = await createOntology({
-            context: { user: { email: "alice@example.com" } },
-        });
-        await ontology.ready;
-        await ontology.cleanup();
-        await expect(ontology.cleanup()).resolves.toBeUndefined();
     });
 });
