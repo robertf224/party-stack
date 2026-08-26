@@ -26,15 +26,10 @@ const MILLISECONDS_PER_SECOND = 1000;
 
 function throwIfAborted(signal?: AbortSignal): void {
     if (!signal?.aborted) return;
-    throw signal.reason instanceof Error
-        ? signal.reason
-        : new Error("Blob garbage collection was aborted.");
+    throw signal.reason instanceof Error ? signal.reason : new Error("Blob garbage collection was aborted.");
 }
 
-export async function collectBlobGarbage(
-    store: BlobStore,
-    opts: CollectBlobGarbageOptions
-): Promise<void> {
+export async function collectBlobGarbage(store: BlobStore, opts: CollectBlobGarbageOptions): Promise<void> {
     throwIfAborted(opts.signal);
     await store.ready;
     // Drain every eligible blob in bounded query pages. Waiting for another
@@ -47,18 +42,9 @@ export async function collectBlobGarbage(
                 .from({ blob: store.collection })
                 .where(({ blob }) =>
                     and(
-                        or(
-                            eq(blob.state, "cached"),
-                            eq(blob.state, "persisted")
-                        ),
+                        or(eq(blob.state, "cached"), eq(blob.state, "persisted")),
                         isUndefined(blob.operation),
-                        lt(
-                            coalesce(
-                                blob.lastAccessedAt,
-                                blob.updatedAt
-                            ),
-                            opts.cutoff
-                        )
+                        lt(coalesce(blob.lastAccessedAt, blob.updatedAt), opts.cutoff)
                     )
                 )
                 .orderBy(
@@ -76,20 +62,11 @@ export async function collectBlobGarbage(
                         // purged first.
                         multiply(
                             divide(
-                                subtract(
-                                    opts.now,
-                                    coalesce(
-                                        blob.lastAccessedAt,
-                                        blob.updatedAt
-                                    )
-                                ),
+                                subtract(opts.now, coalesce(blob.lastAccessedAt, blob.updatedAt)),
                                 MILLISECONDS_PER_SECOND
                             ),
                             divide(
-                                add(
-                                    blob.size,
-                                    BLOB_GC_ESTIMATED_ENTRY_OVERHEAD_BYTES
-                                ),
+                                add(blob.size, BLOB_GC_ESTIMATED_ENTRY_OVERHEAD_BYTES),
                                 BLOB_GC_SIZE_UNIT_BYTES
                             )
                         ),

@@ -20,6 +20,12 @@ export function createFoundryUsersIntegration(options: {
             const userId = decodeFoundryUserProfilePictureAttachment(attachment.id);
             if (!userId) return;
             const profilePicture = await Users.profilePicture(client, userId);
+            if (
+                profilePicture.status ===
+                204
+            ) {
+                return new Blob();
+            }
             return profilePicture.blob();
         },
         getAttachmentMetadata(_client, attachment) {

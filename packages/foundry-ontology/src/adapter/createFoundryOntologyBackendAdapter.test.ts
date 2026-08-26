@@ -199,9 +199,7 @@ describe("Foundry media attachments", () => {
         await expect(attachments.getAttachmentContent(attachment).then((blob) => blob.text())).resolves.toBe(
             "image"
         );
-        await expect(
-            getAttachmentMetadata(attachment, ["size", "type", "name"])
-        ).resolves.toEqual({
+        await expect(getAttachmentMetadata(attachment, ["size", "type", "name"])).resolves.toEqual({
             size: 5,
             type: "image/png",
             name: undefined,
@@ -229,9 +227,7 @@ describe("Foundry media attachments", () => {
             attributes: {},
         });
 
-        await expect(
-            getAttachmentMetadata(attachment, ["dimensions"])
-        ).resolves.toEqual({
+        await expect(getAttachmentMetadata(attachment, ["dimensions"])).resolves.toEqual({
             type: "image/png",
             size: 5,
             dimensions: { width: 800, height: 600 },
@@ -251,9 +247,7 @@ describe("Foundry media attachments", () => {
             type: "image/png",
         };
 
-        await expect(
-            getAttachmentMetadata(attachment, ["type"])
-        ).resolves.toEqual({
+        await expect(getAttachmentMetadata(attachment, ["type"])).resolves.toEqual({
             type: "image/png",
         });
         expect(mediaMocks.metadata).not.toHaveBeenCalled();

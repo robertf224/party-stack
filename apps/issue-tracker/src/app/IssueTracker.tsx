@@ -360,6 +360,12 @@ function UserAvatar({
             void ontology.attachments
                 .blob(user.avatar)
                 .then((blob) => {
+                    if (blob.size === 0) {
+                        if (active) {
+                            setSrc(undefined);
+                        }
+                        return;
+                    }
                     url = URL.createObjectURL(blob);
                     if (active) setSrc(url);
                 })

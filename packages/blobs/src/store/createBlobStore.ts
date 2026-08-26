@@ -9,15 +9,9 @@ import {
     type RuntimeAdapter,
 } from "@party-stack/runtime";
 import { eq, or, queryOnce, type Collection } from "@tanstack/db";
-import type {
-    BlobMetadataRecord,
-    BlobOperation,
-    BlobRef,
-    PartialBlobMetadata,
-} from "../types.js";
+import type { BlobMetadataRecord, BlobOperation, BlobRef, PartialBlobMetadata } from "../types.js";
 
-type BlobWriteRecord = BlobMetadataRecord &
-    Required<Pick<PartialBlobMetadata, "size" | "type">>;
+type BlobWriteRecord = BlobMetadataRecord & Required<Pick<PartialBlobMetadata, "size" | "type">>;
 
 export const BLOB_COORDINATION_SERVICE = "party-stack.blobs.v1";
 
@@ -69,10 +63,7 @@ export type BlobCoordinationService = {
         find(input: { id: string }): Promise<BlobMetadataRecord | undefined>;
         upsertMetadata(input: UpsertBlobMetadataInput): Promise<BlobMetadataRecord>;
         touch(input: { id: string }): Promise<BlobMetadataRecord>;
-        bindRemoteId(input: {
-            localId: string;
-            remoteId: string;
-        }): Promise<BlobRef>;
+        bindRemoteId(input: { localId: string; remoteId: string }): Promise<BlobRef>;
         purge(input: { id: string }): Promise<void>;
         recover(input: { recoveryId: string }): Promise<void>;
     };
@@ -98,16 +89,9 @@ export interface BlobStore {
     stage(id: string, blob: Blob | File): Promise<BlobRef>;
     cache(id: string, blob: Blob | File): Promise<BlobRef>;
     find(id: string): Promise<BlobMetadataRecord | undefined>;
-    upsertMetadata(
-        id: string,
-        metadata: PartialBlobMetadata,
-        remote: boolean
-    ): Promise<BlobMetadataRecord>;
+    upsertMetadata(id: string, metadata: PartialBlobMetadata, remote: boolean): Promise<BlobMetadataRecord>;
     read(id: string): Promise<Blob>;
-    bindRemoteId(
-        localId: string,
-        remoteId: string
-    ): Promise<BlobRef>;
+    bindRemoteId(localId: string, remoteId: string): Promise<BlobRef>;
     purge(id: string, options?: CoordinationCallOptions): Promise<void>;
     recoverAsLeader(signal: AbortSignal): Promise<void>;
     clearActiveOperations(): void;
@@ -226,10 +210,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
         }).isPersisted.promise;
     };
 
-    const applyMetadata = (
-        draft: BlobMetadataRecord,
-        metadata: PartialBlobMetadata
-    ): void => {
+    const applyMetadata = (draft: BlobMetadataRecord, metadata: PartialBlobMetadata): void => {
         if (metadata.size !== undefined) draft.size = metadata.size;
         if (metadata.type !== undefined) draft.type = metadata.type;
         if (Object.hasOwn(metadata, "name")) {
@@ -300,8 +281,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                       type: input.metadata.type,
                       size: input.metadata.size,
                       name:
-                          input.metadata.name ??
-                          (typeof existing?.name === "string" ? existing.name : null),
+                          input.metadata.name ?? (typeof existing?.name === "string" ? existing.name : null),
                       state: input.kind === "cache" ? (existing?.state ?? "persisted") : existing?.state,
                       operation: {
                           kind: input.kind,
@@ -374,15 +354,17 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                       failure += `; cleanup failed: ${errorMessage(cleanupError)}`;
                   }
                   try {
-                      return requireBlobRef(await patchRef(ref.id, (draft, updatedAt) => {
-                          draft.updatedAt = updatedAt;
-                          draft.operation = {
-                              kind: operation.kind,
-                              status: "failed",
-                              operationId: input.operationId,
-                              error: failure,
-                          };
-                      }));
+                      return requireBlobRef(
+                          await patchRef(ref.id, (draft, updatedAt) => {
+                              draft.updatedAt = updatedAt;
+                              draft.operation = {
+                                  kind: operation.kind,
+                                  status: "failed",
+                                  operationId: input.operationId,
+                                  error: failure,
+                              };
+                          })
+                      );
                   } finally {
                       activeOperationIds.delete(input.operationId);
                   }
@@ -431,12 +413,14 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                           `Blob "${ref.id}" has an active ${ref.operation.kind} operation.`
                       );
                   }
-                  return requireBlobRef(await patchRef(ref.id, (draft, updatedAt) => {
-                      draft.remoteId = input.remoteId;
-                      draft.state = "persisted";
-                      draft.updatedAt = updatedAt;
-                      draft.operation = undefined;
-                  }));
+                  return requireBlobRef(
+                      await patchRef(ref.id, (draft, updatedAt) => {
+                          draft.remoteId = input.remoteId;
+                          draft.state = "persisted";
+                          draft.updatedAt = updatedAt;
+                          draft.operation = undefined;
+                      })
+                  );
               },
 
               async purge(input) {
@@ -562,11 +546,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
             ? host.serve<BlobCoordinationService>(BLOB_COORDINATION_SERVICE, handlers)
             : undefined;
 
-    const write = async (
-        id: string,
-        blob: Blob | File,
-        kind: BlobWriteKind
-    ): Promise<BlobRef> => {
+    const write = async (id: string, blob: Blob | File, kind: BlobWriteKind): Promise<BlobRef> => {
         const operation = await client.methods.beginWrite({
             id,
             kind,
@@ -603,8 +583,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
         stage: (id, blob) => write(id, blob, "stage"),
         cache: (id, blob) => write(id, blob, "cache"),
         find: (id) => client.methods.find({ id }),
-        upsertMetadata: (id, metadata, remote) =>
-            client.methods.upsertMetadata({ id, metadata, remote }),
+        upsertMetadata: (id, metadata, remote) => client.methods.upsertMetadata({ id, metadata, remote }),
 
         async read(id) {
             const ref = await client.methods.find({ id });

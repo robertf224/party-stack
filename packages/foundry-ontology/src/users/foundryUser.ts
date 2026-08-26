@@ -42,17 +42,60 @@ export const foundryUserObjectType: ObjectTypeDef = {
 };
 
 const PROFILE_PICTURE_PREFIX = "foundry-user-profile:";
+const PROFILE_PICTURE_CACHE_WINDOW_MS =
+    60 * 60 * 1_000;
 
+/**
+ * Foundry exposes profile pictures through a mutable endpoint but does not
+ * include presence or version metadata on User records. The hourly bucket acts
+ * as a pseudo-version so BlobManager can retain its immutable-ID cache model:
+ * user rows loaded in the same hour share cached content, while a later row
+ * load produces a new ID and refetches the picture. Missing pictures are stored
+ * as empty blobs for that bucket and retried when the ID rotates.
+ */
 export function foundryUserProfilePictureAttachment(userId: string): v.attachment {
+    const cacheBucket = Math.floor(
+        Date.now() /
+            PROFILE_PICTURE_CACHE_WINDOW_MS
+    );
     return {
-        id: `${PROFILE_PICTURE_PREFIX}${encodeURIComponent(userId)}`,
+        id: `${PROFILE_PICTURE_PREFIX}${encodeURIComponent(userId)}:${cacheBucket}`,
     };
 }
 
 export function decodeFoundryUserProfilePictureAttachment(attachmentId: string): string | undefined {
-    return attachmentId.startsWith(PROFILE_PICTURE_PREFIX)
-        ? decodeURIComponent(attachmentId.slice(PROFILE_PICTURE_PREFIX.length))
-        : undefined;
+    if (
+        !attachmentId.startsWith(
+            PROFILE_PICTURE_PREFIX
+        )
+    ) {
+        return;
+    }
+    const encoded = attachmentId.slice(
+        PROFILE_PICTURE_PREFIX.length
+    );
+    const separator =
+        encoded.lastIndexOf(":");
+    if (
+        separator >= 0 &&
+        !/^\d+$/.test(
+            encoded.slice(separator + 1)
+        )
+    ) {
+        return;
+    }
+    try {
+        return decodeURIComponent(
+            separator < 0
+                ? encoded
+                : encoded.slice(
+                      0,
+                      separator
+                  )
+        );
+    } catch {
+        return;
+    }
 }
 
 export function createFoundryUserObjectType(objectType: string, lens: Lens): ObjectTypeDef {
