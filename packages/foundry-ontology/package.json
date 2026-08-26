@@ -30,21 +30,25 @@
     },
     "dependencies": {
         "@bobbyfidz/local-oauth-flow": "^0.1.0",
-        "@bobbyfidz/osdk-utils": "workspace:*",
         "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/urls": "^0.2.1",
         "@osdk/foundry.admin": "^2.71.0",
         "@osdk/foundry.core": "^2.71.0",
         "@osdk/foundry.mediasets": "^2.71.0",
         "@osdk/foundry.ontologies": "^2.71.0",
+        "@osdk/oauth": "^1.5.0",
+        "@party-stack/connections": "workspace:*",
+        "@party-stack/errors": "workspace:*",
         "@party-stack/foundry-client": "workspace:*",
         "@party-stack/foundry-object-set-watcher": "workspace:*",
+        "@party-stack/oauth": "workspace:*",
         "@party-stack/ontology": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
         "@tanstack/store": "^0.11.0",
         "change-case": "^5.4.4",
         "effection": "^4.0.2",
         "temporal-polyfill": "^0.3.0",
-        "zod": "^4.1.13"
+        "zod": "^4.4.3"
     },
     "devDependencies": {
         "@bobbyfidz/react-build-config": "^0.1.1",

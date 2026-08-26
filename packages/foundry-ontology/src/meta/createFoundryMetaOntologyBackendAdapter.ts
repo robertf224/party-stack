@@ -17,7 +17,9 @@ export interface CreateFoundryMetaOntologyBackendAdapterOpts {
 export function createFoundryMetaOntologyBackendAdapter(
     opts: CreateFoundryMetaOntologyBackendAdapterOpts
 ): OntologyBackendAdapter {
-    const metadata = createMetaEntityCollection({ client: opts.client });
+    const metadata = createMetaEntityCollection({
+        client: opts.client,
+    });
 
     return {
         name: "foundry-metadata",

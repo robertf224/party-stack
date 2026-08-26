@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/rules-of-hooks */
 import { ObjectSet } from "@osdk/foundry.ontologies";
-import { Channel, createChannel, Operation, resource, spawn, Stream, until } from "effection";
-import type { OntologyClient } from "@party-stack/foundry-client";
+import { createFoundryWebSocket, type OntologyClient } from "@party-stack/foundry-client";
+import { Channel, createChannel, Operation, resource, spawn, Stream } from "effection";
 import { useValueSignal } from "./effection-utils/useValueSignal.js";
 import { ObjectSetSubscription, ObjectSetSubscriptionMessage } from "./types.js";
 import { useObjectSetWatcherSession } from "./useObjectSetWatcherSession.js";
@@ -44,9 +44,10 @@ export function useObjectSetWatcherManager(client: OntologyClient): Operation<Ob
     return resource(function* (provide) {
         const desiredSubscriptions = yield* useValueSignal<ObjectSetSubscription[]>([]);
         const sharedSubscriptions = new Map<string, SharedSubscription>();
+        const createWebSocket = client.createWebSocket ?? createFoundryWebSocket(client);
         const messages = yield* useObjectSetWatcherSession(
             client.baseUrl,
-            () => until(client.tokenProvider()),
+            createWebSocket,
             client.ontologyRid,
             desiredSubscriptions
         );

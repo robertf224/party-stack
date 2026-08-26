@@ -135,6 +135,17 @@ export const ActionLogicStep = {
     ) => ({ kind: "deleteObject" as const, value }),
 };
 
+export const LensOp = {
+    move: <const Value extends Extract<t.LensOp, { kind: "move" }>["value"]>(value: Value) => ({
+        kind: "move" as const,
+        value,
+    }),
+    select: <const Value extends Extract<t.LensOp, { kind: "select" }>["value"]>(value: Value) => ({
+        kind: "select" as const,
+        value,
+    }),
+};
+
 export const o = {
     string,
     boolean,
@@ -159,4 +170,5 @@ export const o = {
     FunctionCallExpression,
     Expression,
     ActionLogicStep,
+    LensOp,
 };

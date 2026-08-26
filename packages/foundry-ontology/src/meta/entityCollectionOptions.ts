@@ -43,7 +43,10 @@ export function createMetaEntityCollection(opts: MetaEntityStoreOpts) {
             queryKey: ["foundry", "ontology", "metadata"],
             syncMode: "eager",
             queryFn: async () => {
-                const loaded = await loadFoundryMetaOntology(opts.client);
+                const loaded =
+                    await loadFoundryMetaOntology(
+                        opts.client
+                    );
                 return [
                     ...loaded.objectTypes.map((entity) => ({
                         entityType: "ObjectType" as const,
@@ -92,7 +95,9 @@ export function linkTypeCollectionOptions(metadata: MetaEntityCollection): Ontol
     }) as unknown as OntologyCollectionOptions;
 }
 
-async function loadFoundryMetaOntology(client: OntologyClient): Promise<{
+async function loadFoundryMetaOntology(
+    client: OntologyClient
+): Promise<{
     objectTypes: MetaObjectType[];
     valueTypes: MetaValueType[];
     linkTypes: MetaLinkType[];
@@ -100,7 +105,9 @@ async function loadFoundryMetaOntology(client: OntologyClient): Promise<{
     const ontology = await OntologiesV2.getFullMetadata(client, client.ontologyRid);
     const objectTypeMetadata = Object.values(ontology.objectTypes);
 
-    const objectTypes = objectTypeMetadata.map(convertFoundryMetaObjectType);
+    const objectTypes = objectTypeMetadata.map((metadata) =>
+        convertFoundryMetaObjectType(metadata)
+    );
     const valueTypes = Object.values(ontology.valueTypes).map(convertFoundryMetaValueType);
     const linkTypes = convertFoundryMetaLinkTypes(objectTypeMetadata);
 

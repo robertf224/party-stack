@@ -1,11 +1,11 @@
 import { SingleProcessCoordination } from "@party-stack/coordination";
 import { MemoryBlobBytesStore } from "../memory/MemoryBlobBytesStore.js";
-import type { RuntimeAdapter } from "../types.js";
+import { defineRuntime } from "./defineRuntime.js";
 
-export function createDefaultRuntime(
-    owner: string,
-    namespace: string
-): RuntimeAdapter {
+export const createDefaultRuntime = defineRuntime((
+    owner,
+    namespace
+) => {
     const scope = `party-stack:${owner}:${namespace}`;
     const coordination =
         new SingleProcessCoordination({ scope });
@@ -16,4 +16,4 @@ export function createDefaultRuntime(
         coordination,
         cleanup: () => coordination.close(),
     };
-}
+});

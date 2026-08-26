@@ -83,9 +83,7 @@ describe("Ontology Validation", () => {
 
             const result = validate(ontology);
             expectErr(result, 1);
-            expect(getErrors(result)).toContain(
-                'Title "nonExistent" does not reference a valid property.'
-            );
+            expect(getErrors(result)).toContain('Title "nonExistent" does not reference a valid property.');
         });
 
         it("should accept a valid title property reference", () => {
@@ -485,7 +483,7 @@ describe("Ontology Validation", () => {
                             constraint: {
                                 size: { min: 10, max: 1 },
                                 content: o.AttachmentContentConstraint.image({
-                                    mediaTypes: ["image/gif" as never],
+                                    mediaTypes: ["image/avif" as never],
                                     dimensions: {
                                         width: { min: -1 },
                                     },
@@ -496,7 +494,7 @@ describe("Ontology Validation", () => {
                 ],
             };
             const errors = getErrors(validate(invalid));
-            expect(errors).toContain('Unsupported image media type: "image/gif".');
+            expect(errors).toContain('Unsupported image media type: "image/avif".');
             expect(errors).toContain("Range min must be less than or equal to max.");
             expect(errors).toContain("Range min must be a finite, non-negative number.");
         });
@@ -711,6 +709,130 @@ describe("Ontology Validation", () => {
             };
 
             expectOk(validate(ontology));
+        });
+    });
+
+    describe("Context Validation", () => {
+        const userObjectType = {
+            name: "User",
+            displayName: "User",
+            pluralDisplayName: "Users",
+            primaryKey: "id",
+            properties: [{ name: "id", displayName: "ID", type: o.string({}) }],
+        };
+
+        it("validates context.user references in action logic", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                contextType: o.struct({
+                    fields: [
+                        {
+                            name: "user",
+                            displayName: "User",
+                            type: o.objectReference({ objectType: "User" }),
+                        },
+                    ],
+                }),
+                objectTypes: [
+                    userObjectType,
+                    {
+                        name: "Task",
+                        displayName: "Task",
+                        pluralDisplayName: "Tasks",
+                        primaryKey: "id",
+                        properties: [
+                            { name: "id", displayName: "ID", type: o.string({}) },
+                            {
+                                name: "createdBy",
+                                displayName: "Created by",
+                                type: o.objectReference({ objectType: "User" }),
+                            },
+                        ],
+                    },
+                ],
+                actionTypes: [
+                    {
+                        name: "createTask",
+                        displayName: "Create task",
+                        parameters: [],
+                        logic: [
+                            o.ActionLogicStep.createObject({
+                                objectType: "Task",
+                                values: [
+                                    {
+                                        property: ["id"],
+                                        value: o.Expression.literal({
+                                            value: "task-1",
+                                        }),
+                                    },
+                                    {
+                                        property: ["createdBy"],
+                                        value: o.Expression.contextReference({
+                                            path: ["user"],
+                                        }),
+                                    },
+                                ],
+                            }),
+                        ],
+                    },
+                ],
+            };
+
+            expectOk(validate(ontology));
+        });
+
+        it("allows context.user to optionally reference any object type", () => {
+            expectOk(
+                validate({
+                    ...emptyOntology,
+                    objectTypes: [
+                        {
+                            name: "Membership",
+                            displayName: "Membership",
+                            pluralDisplayName: "Memberships",
+                            primaryKey: "id",
+                            properties: [
+                                {
+                                    name: "id",
+                                    displayName: "ID",
+                                    type: o.string({}),
+                                },
+                            ],
+                        },
+                    ],
+                    contextType: o.struct({
+                        fields: [
+                            {
+                                name: "user",
+                                displayName: "User",
+                                type: o.optional({
+                                    type: o.objectReference({
+                                        objectType: "Membership",
+                                    }),
+                                }),
+                            },
+                        ],
+                    }),
+                })
+            );
+        });
+
+        it("rejects a non-reference type for reserved context.user", () => {
+            const result = validate({
+                ...emptyOntology,
+                contextType: o.struct({
+                    fields: [
+                        {
+                            name: "user",
+                            displayName: "User",
+                            type: o.string({}),
+                        },
+                    ],
+                }),
+            });
+
+            expectErr(result, 1);
+            expect(getErrors(result)).toContain('Reserved context field "user" must be an object reference.');
         });
     });
 

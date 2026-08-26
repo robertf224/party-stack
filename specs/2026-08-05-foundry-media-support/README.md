@@ -64,7 +64,7 @@ Initial schema mapping:
 
 The ontology image media-type enum currently mirrors Foundry imagery decode support: BMP, TIFF, NITF, JPEG 2000, JPEG, PNG, and WebP.
 
-Until Foundry exposes enough datasource schema metadata, applications can supply targeted attachment constraints through `FoundryOntologyConfig.opts.attachmentConstraints`. These are applied after every pull, so generated ontology files remain disposable.
+Until Foundry exposes enough datasource schema metadata, applications can supply targeted attachment constraints through `FoundryOntologyPullConfig.options.attachmentConstraints`. These are applied after every pull, so generated ontology files remain disposable.
 
 ### Action parameters
 

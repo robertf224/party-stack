@@ -27,4 +27,41 @@ describe("generateOntology", () => {
 
         expect(generateOntology(ontology)).toContain('title: "name"');
     });
+
+    it("preserves the ontology context type", () => {
+        const ontology: OntologyIR = {
+            types: [],
+            objectTypes: [
+                {
+                    name: "Membership",
+                    displayName: "Membership",
+                    pluralDisplayName: "Memberships",
+                    primaryKey: "id",
+                    properties: [
+                        { name: "id", displayName: "ID", type: o.string({}) },
+                    ],
+                },
+            ],
+            linkTypes: [],
+            actionTypes: [],
+            queryFunctionTypes: [],
+            contextType: o.struct({
+                fields: [
+                    {
+                        name: "user",
+                        displayName: "User",
+                        type: o.optional({
+                            type: o.objectReference({
+                                objectType: "Membership",
+                            }),
+                        }),
+                    },
+                ],
+            }),
+        };
+
+        const output = generateOntology(ontology);
+        expect(output).toContain("contextType: o.struct");
+        expect(output).toContain('objectType: "Membership"');
+    });
 });

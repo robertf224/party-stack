@@ -83,9 +83,7 @@ describe("createLiveOntologyAttachments", () => {
                     property: "file",
                 },
             })
-        ).rejects.toThrow(
-            'Attachment media type "application/pdf" is not allowed by the target.'
-        );
+        ).rejects.toThrow('Attachment media type "application/pdf" is not allowed by the target.');
         expect(stage).not.toHaveBeenCalled();
     });
 
@@ -120,21 +118,20 @@ describe("createLiveOntologyAttachments", () => {
             ir: constrainedIr,
             attachmentsAdapter: {
                 generateAttachmentId: () => "image-1",
-                getAttachmentContent: () =>
-                    Promise.reject(new Error("unexpected content read")),
+                getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
             },
             blobManager: { stage } as unknown as BlobManager,
         });
 
         await expect(
-            attachments.create(new Blob(["gif"], { type: "image/gif" }), {
+            attachments.create(new Blob(["avif"], { type: "image/avif" }), {
                 target: {
                     kind: "objectProperty",
                     objectType: "Document",
                     property: "file",
                 },
             })
-        ).rejects.toThrow('Attachment media type "image/gif" is not allowed by the target.');
+        ).rejects.toThrow('Attachment media type "image/avif" is not allowed by the target.');
         await expect(
             attachments.create(new Blob(["12345678901"], { type: "image/png" }), {
                 target: {

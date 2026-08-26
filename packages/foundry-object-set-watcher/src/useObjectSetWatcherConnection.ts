@@ -5,7 +5,7 @@ import { Pathnames, Urls } from "@bobbyfidz/urls";
 import { map } from "@effectionx/stream-helpers";
 import { useWebSocket } from "@effectionx/websocket";
 import { ObjectSetStreamSubscribeRequests, ObjectSetUpdate, StreamMessage } from "@osdk/foundry.ontologies";
-import { resource, spawn, race, sleep, Stream, Operation, createChannel } from "effection";
+import { resource, spawn, race, sleep, Stream, Operation, createChannel, until } from "effection";
 import {
     ObjectSetSubscription,
     ObjectSetSubscriptionsMessage,
@@ -77,23 +77,24 @@ function filterChangeMessages(updates: ObjectSetUpdate[]): ObjectSetUpdate[] {
  */
 export function useObjectSetWatcherConnection(
     baseUrl: string,
-    token: string,
+    createWebSocket: (url: string) => Promise<WebSocket>,
     ontologyRid: string,
     desiredSubscriptions: ValueSignal<ObjectSetSubscription[]>
 ): Operation<Stream<ObjectSetSubscriptionsMessage, CloseEvent | void>> {
     return resource(function* (provide) {
         const subscriptionMessages = createChannel<ObjectSetSubscriptionsMessage, CloseEvent | void>();
 
-        const socket = yield* useWebSocket(
-            Urls.extend(baseUrl, {
+        const url = Urls.extend(baseUrl, {
                 protocol: "wss:",
                 pathname: Pathnames.join(
                     "/api/v2/ontologySubscriptions/ontologies",
                     ontologyRid,
                     "streamSubscriptions"
                 ),
-            }).toString(),
-            `Bearer-${token}`
+            }).toString();
+        const webSocket = yield* until(createWebSocket(url));
+        const socket = yield* useWebSocket(
+            () => webSocket
         );
 
         let latestRequestId = 0n;

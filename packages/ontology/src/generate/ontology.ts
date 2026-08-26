@@ -490,6 +490,14 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
                     )
                 ),
             },
+            ...(ir.contextType
+                ? [
+                      {
+                          name: "contextType",
+                          value: renderType(ir.contextType),
+                      },
+                  ]
+                : []),
         ]);
         writer.write(");");
         writer.newLine();

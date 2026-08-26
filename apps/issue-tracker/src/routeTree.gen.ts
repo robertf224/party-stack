@@ -11,7 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ProjectProjectIdRouteImport } from './routes/project.$projectId'
+import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as ApiRemoteOntologyEndpointRouteImport } from './routes/api.remote-ontology.$endpoint'
+import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -23,44 +25,74 @@ const ProjectProjectIdRoute = ProjectProjectIdRouteImport.update({
   path: '/project/$projectId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/auth/callback',
+  path: '/auth/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiRemoteOntologyEndpointRoute =
   ApiRemoteOntologyEndpointRouteImport.update({
     id: '/api/remote-ontology/$endpoint',
     path: '/api/remote-ontology/$endpoint',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
+  id: '/api/auth/$',
+  path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/project/$projectId': typeof ProjectProjectIdRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/remote-ontology/$endpoint': typeof ApiRemoteOntologyEndpointRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/project/$projectId': typeof ProjectProjectIdRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/remote-ontology/$endpoint': typeof ApiRemoteOntologyEndpointRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/project/$projectId': typeof ProjectProjectIdRoute
+  '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/remote-ontology/$endpoint': typeof ApiRemoteOntologyEndpointRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/project/$projectId' | '/api/remote-ontology/$endpoint'
+  fullPaths:
+    | '/'
+    | '/auth/callback'
+    | '/project/$projectId'
+    | '/api/auth/$'
+    | '/api/remote-ontology/$endpoint'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/project/$projectId' | '/api/remote-ontology/$endpoint'
+  to:
+    | '/'
+    | '/auth/callback'
+    | '/project/$projectId'
+    | '/api/auth/$'
+    | '/api/remote-ontology/$endpoint'
   id:
     | '__root__'
     | '/'
+    | '/auth/callback'
     | '/project/$projectId'
+    | '/api/auth/$'
     | '/api/remote-ontology/$endpoint'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AuthCallbackRoute: typeof AuthCallbackRoute
   ProjectProjectIdRoute: typeof ProjectProjectIdRoute
+  ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiRemoteOntologyEndpointRoute: typeof ApiRemoteOntologyEndpointRoute
 }
 
@@ -80,6 +112,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectProjectIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/auth/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/remote-ontology/$endpoint': {
       id: '/api/remote-ontology/$endpoint'
       path: '/api/remote-ontology/$endpoint'
@@ -87,12 +126,21 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiRemoteOntologyEndpointRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/auth/$': {
+      id: '/api/auth/$'
+      path: '/api/auth/$'
+      fullPath: '/api/auth/$'
+      preLoaderRoute: typeof ApiAuthSplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AuthCallbackRoute: AuthCallbackRoute,
   ProjectProjectIdRoute: ProjectProjectIdRoute,
+  ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiRemoteOntologyEndpointRoute: ApiRemoteOntologyEndpointRoute,
 }
 export const routeTree = rootRouteImport

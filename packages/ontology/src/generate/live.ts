@@ -24,7 +24,7 @@ export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
     });
     sourceFile.addImportDeclaration({
         moduleSpecifier: opts.ontologyTypesImportPath,
-        namedImports: [opts.ontologyTypeName],
+        namedImports: [opts.ontologyTypeName, `${opts.ontologyTypeName}Context`],
         isTypeOnly: true,
     });
     sourceFile.addImportDeclaration({
@@ -37,21 +37,14 @@ export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
         name: opts.outputFactoryName,
         isExported: true,
         isAsync: true,
-        typeParameters: [
-            {
-                name: "Context",
-                constraint: "Record<string, unknown>",
-                default: "Record<string, unknown>",
-            },
-        ],
         parameters: [
             {
                 name: "opts",
-                type: 'Omit<CreateLiveOntologyOpts<Context>, "ir">',
+                type: `Omit<CreateLiveOntologyOpts<${opts.ontologyTypeName}Context>, "ir">`,
             },
         ],
         returnType: `Promise<LiveOntology<${opts.ontologyTypeName}>>`,
-        statements: `return createLiveOntology<${opts.ontologyTypeName}, Context>({
+        statements: `return createLiveOntology<${opts.ontologyTypeName}, ${opts.ontologyTypeName}Context>({
             ...opts,
             ir: ${ontologyImportName},
         });`,
