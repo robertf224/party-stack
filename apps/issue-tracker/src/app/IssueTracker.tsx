@@ -1,5 +1,3 @@
-"use client";
-
 import { Button } from "@base-ui/react/button";
 import { ContextMenu } from "@base-ui/react/context-menu";
 import { Dialog } from "@base-ui/react/dialog";
@@ -43,8 +41,7 @@ import {
     subscribeProfileConnection,
     type ConnectedProfile,
     type TrackerOntology,
-} from "./collections";
-import { useAction } from "./useAction";
+} from "./profiles";
 import { FormInput, FormSelect, FormTextarea } from "../components/FormControls";
 
 const STATUSES = ["Open", "In Progress", "Waiting", "Completed"] as const;
@@ -875,8 +872,7 @@ function IssueDetails({
     users: User[];
     onClose: () => void;
 }) {
-    const updateIssue = useAction(ontology.actions.updateIssue);
-    const deleteIssue = useAction(ontology.actions.deleteIssue);
+    const { updateIssue, deleteIssue } = ontology.actions;
     const [editing, setEditing] = useState(false);
     const { data: issue } = useLiveQuery(
         (q) =>
@@ -1625,12 +1621,8 @@ function ConnectedIssueTracker({
     const [connectingProfile, setConnectingProfile] = useState(false);
     const activeProfile = profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0]!;
     const ontology = activeProfile.ontology;
-    const createIssue = useAction(ontology.actions.createIssue);
-    const deleteIssue = useAction(ontology.actions.deleteIssue);
-    const updateIssue = useAction(ontology.actions.updateIssue);
-    const createProject = useAction(ontology.actions.createProject);
-    const updateProject = useAction(ontology.actions.updateProject);
-    const deleteProject = useAction(ontology.actions.deleteProject);
+    const { createIssue, deleteIssue, updateIssue, createProject, updateProject, deleteProject } =
+        ontology.actions;
     const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId);
     const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
     const [search, setSearch] = useState("");

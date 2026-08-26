@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { completeFoundryOAuthRedirect } from "../app/collections";
+import { completeFoundryOAuthRedirect } from "../app/profiles";
 
 export const Route = createFileRoute("/auth/callback")({
     component: FoundryOAuthCallback,

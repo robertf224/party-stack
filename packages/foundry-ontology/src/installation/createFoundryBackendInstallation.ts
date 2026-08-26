@@ -19,6 +19,9 @@ import {
 } from "../connection.js";
 
 export type FoundryConnectionOptions = Omit<CreateFoundryConnectionAdapterOptions, "baseUrl">;
+export type FoundryOntologyRoute = (
+    baseUrl: string
+) => OntologyRoute;
 
 export interface CreateFoundryBackendInstallationOptions<
     AuthenticationClient extends object = FoundryAuthenticationClient,
@@ -27,23 +30,22 @@ export interface CreateFoundryBackendInstallationOptions<
     baseUrl: string;
     runtime: RuntimeAdapterProvider;
     connections: FoundryConnectionOptions | BackendConnectionAdapterProvider<AuthenticationClient>;
-    routes: readonly OntologyRoute[];
+    routes: readonly FoundryOntologyRoute[];
     createContext?: (userId: string, ontologyId: string) => Record<string, unknown>;
 }
 
 export function createFoundryOntologyRoute(options: {
     ontologyId: string;
     ir: OntologyIR;
-    baseUrl: string;
     users?: FoundryUsersIntegration | ((userId: string) => FoundryUsersIntegration);
     persistObjects?: boolean;
     writes?: LiveOntologyWrites;
-}): OntologyRoute {
-    return {
+}): FoundryOntologyRoute {
+    return (baseUrl) => ({
         matches: (ontologyId) => ontologyId === options.ontologyId,
         configure: ({ connection, egress }) => {
             const client = createOntologyClient({
-                baseUrl: options.baseUrl,
+                baseUrl,
                 ontologyRid: options.ontologyId,
                 // Authentication is applied by ConnectionEgress. This
                 // placeholder only satisfies the current OSDK client context.
@@ -69,7 +71,7 @@ export function createFoundryOntologyRoute(options: {
                 writes: options.writes,
             };
         },
-    };
+    });
 }
 
 export function createFoundryBackendInstallation<
@@ -88,7 +90,10 @@ export function createFoundryBackendInstallation<
         installationId: options.installationId ?? new URL(options.baseUrl).origin,
         connections: connectionAdapter,
         runtime: options.runtime,
-        routes: options.routes,
+        routes: options.routes.map(
+            (route) =>
+                route(options.baseUrl)
+        ),
         createContext: options.createContext,
     });
 }

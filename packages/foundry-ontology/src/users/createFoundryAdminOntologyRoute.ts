@@ -1,5 +1,8 @@
-import { defineOntology, o, type OntologyRoute } from "@party-stack/ontology";
-import { createFoundryOntologyRoute } from "../installation/createFoundryBackendInstallation.js";
+import { defineOntology, o } from "@party-stack/ontology";
+import {
+    createFoundryOntologyRoute,
+    type FoundryOntologyRoute,
+} from "../installation/createFoundryBackendInstallation.js";
 import { createFoundryUsersIntegration } from "./createFoundryUsersIntegration.js";
 import { foundryUserObjectType } from "./foundryUser.js";
 
@@ -30,20 +33,18 @@ export const foundryAdminOntology = defineOntology({
     }),
 });
 
-export function createFoundryAdminOntologyRoute(options: {
-    baseUrl: string;
-    ontologyId?: string;
-}): OntologyRoute {
+export function createFoundryAdminOntologyRoute(
+    options: {
+        ontologyId?: string;
+    } = {}
+): FoundryOntologyRoute {
     const ontologyId = options.ontologyId ?? "admin";
     return createFoundryOntologyRoute({
         ontologyId,
-        baseUrl: options.baseUrl,
         ir: foundryAdminOntology,
-        users: () =>
-            createFoundryUsersIntegration({
-                objectType: "FoundryUser",
-                lens: foundryUserIdentityLens,
-            }),
-        persistObjects: true,
+        users: createFoundryUsersIntegration({
+            objectType: "FoundryUser",
+            lens: foundryUserIdentityLens,
+        }),
     });
 }
