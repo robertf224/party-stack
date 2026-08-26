@@ -328,7 +328,8 @@ export function createFoundryOntologyBackendAdapter(opts: {
             }
             if (context) {
                 const operationId = getApplyActionOperationId(result);
-                const targetCollections = Array.from(getEditedObjectTypes(result.edits))
+                const editedObjectTypes = Array.from(getEditedObjectTypes(result.edits));
+                const targetCollections = editedObjectTypes
                     .map((objectType) => context.objects[objectType] as CollectionWithUtils | undefined)
                     .filter((collection): collection is CollectionWithUtils =>
                         Boolean(collection?.utils?.awaitOperationId)
@@ -337,8 +338,22 @@ export function createFoundryOntologyBackendAdapter(opts: {
                 await Promise.all(
                     targetCollections.map((collection) => collection.utils.awaitOperationId(operationId))
                 );
+
+                return {
+                    ...(editedObjectTypes.length > 0
+                        ? { invalidatedObjectTypes: editedObjectTypes }
+                        : {}),
+                    ...(attachmentIdMappings.length > 0 ? { attachmentIdMappings } : {}),
+                };
             }
-            return attachmentIdMappings.length > 0 ? { attachmentIdMappings } : undefined;
+            const editedObjectTypes = Array.from(getEditedObjectTypes(result.edits));
+            if (editedObjectTypes.length === 0 && attachmentIdMappings.length === 0) {
+                return undefined;
+            }
+            return {
+                ...(editedObjectTypes.length > 0 ? { invalidatedObjectTypes: editedObjectTypes } : {}),
+                ...(attachmentIdMappings.length > 0 ? { attachmentIdMappings } : {}),
+            };
         },
         runQueryFunction: async (name, parameters) => {
             const queryFunctionType = opts.ir.queryFunctionTypes.find((candidate) => candidate.name === name);

@@ -285,6 +285,103 @@ function projectLogicStep<Context>(opts: {
     }
 }
 
+export type RemoteOntologySchemaProjectionMode = "legacy" | "authorized";
+
+function typeReferencesObjectTypes(type: TypeDef, ir: OntologyIR, seen = new Set<string>()): Set<string> {
+    if (type.kind === "ref") {
+        if (seen.has(type.value.name)) return new Set();
+        seen.add(type.value.name);
+        const named = ir.types.find((candidate) => candidate.name === type.value.name);
+        return named ? typeReferencesObjectTypes(named.type, ir, seen) : new Set();
+    }
+    switch (type.kind) {
+        case "objectReference":
+            return new Set([type.value.objectType]);
+        case "optional":
+            return typeReferencesObjectTypes(type.value.type, ir, seen);
+        case "list":
+            return typeReferencesObjectTypes(type.value.elementType, ir, seen);
+        case "map": {
+            const names = typeReferencesObjectTypes(type.value.keyType, ir, seen);
+            for (const name of typeReferencesObjectTypes(type.value.valueType, ir, seen)) names.add(name);
+            return names;
+        }
+        case "result": {
+            const names = typeReferencesObjectTypes(type.value.okType, ir, seen);
+            for (const name of typeReferencesObjectTypes(type.value.errType, ir, seen)) names.add(name);
+            return names;
+        }
+        case "struct": {
+            const names = new Set<string>();
+            for (const field of type.value.fields) {
+                for (const name of typeReferencesObjectTypes(field.type, ir, seen)) names.add(name);
+            }
+            return names;
+        }
+        case "union": {
+            const names = new Set<string>();
+            for (const variant of type.value.variants) {
+                for (const name of typeReferencesObjectTypes(variant.type, ir, seen)) names.add(name);
+            }
+            return names;
+        }
+        default:
+            return new Set();
+    }
+}
+
+function collectReferencedNamedTypes(type: TypeDef, ir: OntologyIR, into: Set<string>, seen = new Set<string>()): void {
+    if (type.kind === "ref") {
+        if (seen.has(type.value.name)) return;
+        seen.add(type.value.name);
+        into.add(type.value.name);
+        const named = ir.types.find((candidate) => candidate.name === type.value.name);
+        if (named) collectReferencedNamedTypes(named.type, ir, into, seen);
+        return;
+    }
+    switch (type.kind) {
+        case "optional":
+            collectReferencedNamedTypes(type.value.type, ir, into, seen);
+            break;
+        case "list":
+            collectReferencedNamedTypes(type.value.elementType, ir, into, seen);
+            break;
+        case "map":
+            collectReferencedNamedTypes(type.value.keyType, ir, into, seen);
+            collectReferencedNamedTypes(type.value.valueType, ir, into, seen);
+            break;
+        case "result":
+            collectReferencedNamedTypes(type.value.okType, ir, into, seen);
+            collectReferencedNamedTypes(type.value.errType, ir, into, seen);
+            break;
+        case "struct":
+            for (const field of type.value.fields) {
+                collectReferencedNamedTypes(field.type, ir, into, seen);
+            }
+            break;
+        case "union":
+            for (const variant of type.value.variants) {
+                collectReferencedNamedTypes(variant.type, ir, into, seen);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+function actionParametersReferenceHiddenObjectType(
+    actionType: ActionTypeDef,
+    ir: OntologyIR,
+    visibleObjectTypes: Set<string>
+): boolean {
+    for (const parameter of actionType.parameters) {
+        for (const objectType of typeReferencesObjectTypes(parameter.type, ir)) {
+            if (!visibleObjectTypes.has(objectType)) return true;
+        }
+    }
+    return false;
+}
+
 export function projectRemoteOntologyIR<
     Context,
     Ontology extends OntologyDefinition = OntologyDefinition,
@@ -295,10 +392,72 @@ export function projectRemoteOntologyIR<
     clientContextMode?: ClientContextProjectionMode;
     fixedActionParameterValues?: FixedActionParameterValues<Ontology>;
     allowedObjectTypeProperties: Record<string, readonly string[]>;
+    /**
+     * `authorized` projects object/property/link/action/query visibility.
+     * `legacy` keeps historical behavior (full object/link schema; action fixed-param projection only).
+     */
+    projectionMode?: RemoteOntologySchemaProjectionMode;
+    visibleActionTypes?: readonly string[] | "all";
+    visibleQueryFunctionTypes?: readonly string[] | "all";
 }): OntologyIR {
-    return {
-        ...opts.ir,
-        actionTypes: opts.ir.actionTypes.map((actionType) => {
+    const projectionMode = opts.projectionMode ?? "legacy";
+    const visibleObjectTypes = new Set(
+        projectionMode === "authorized"
+            ? Object.entries(opts.allowedObjectTypeProperties)
+                  .filter(([, properties]) => properties.length > 0)
+                  .map(([objectType]) => objectType)
+            : opts.ir.objectTypes.map((objectType) => objectType.name)
+    );
+
+    const objectTypes =
+        projectionMode === "legacy"
+            ? opts.ir.objectTypes
+            : opts.ir.objectTypes
+                  .filter((objectType) => visibleObjectTypes.has(objectType.name))
+                  .map((objectType) => {
+                      const allowed = new Set(opts.allowedObjectTypeProperties[objectType.name] ?? []);
+                      return {
+                          ...objectType,
+                          title:
+                              objectType.title && allowed.has(objectType.title) ? objectType.title : undefined,
+                          properties: objectType.properties.filter((property) => allowed.has(property.name)),
+                      };
+                  });
+
+    const linkTypes =
+        projectionMode === "legacy"
+            ? opts.ir.linkTypes
+            : opts.ir.linkTypes.filter((link) => {
+                  if (
+                      !visibleObjectTypes.has(link.source.objectType) ||
+                      !visibleObjectTypes.has(link.target.objectType)
+                  ) {
+                      return false;
+                  }
+                  if (!link.foreignKey) return true;
+                  const sourceAllowed = new Set(
+                      opts.allowedObjectTypeProperties[link.source.objectType] ?? []
+                  );
+                  const targetAllowed = new Set(
+                      opts.allowedObjectTypeProperties[link.target.objectType] ?? []
+                  );
+                  return sourceAllowed.has(link.foreignKey) || targetAllowed.has(link.foreignKey);
+              });
+
+    const visibleActions =
+        opts.visibleActionTypes === undefined || opts.visibleActionTypes === "all"
+            ? opts.ir.actionTypes
+            : opts.ir.actionTypes.filter((actionType) =>
+                  (opts.visibleActionTypes as readonly string[]).includes(actionType.name)
+              );
+
+    const actionTypes = visibleActions
+        .filter(
+            (actionType) =>
+                projectionMode === "legacy" ||
+                !actionParametersReferenceHiddenObjectType(actionType, opts.ir, visibleObjectTypes)
+        )
+        .map((actionType) => {
             const visibleParameters = new Set(
                 actionType.parameters
                     .filter(
@@ -315,6 +474,13 @@ export function projectRemoteOntologyIR<
                 ...actionType,
                 parameters: actionType.parameters.filter((parameter) => visibleParameters.has(parameter.name)),
                 logic: actionType.logic.flatMap((step) => {
+                    if (
+                        projectionMode === "authorized" &&
+                        step.kind === "createObject" &&
+                        !visibleObjectTypes.has(step.value.objectType)
+                    ) {
+                        return [];
+                    }
                     const projectedStep = projectLogicStep({
                         step,
                         serverContext: opts.serverContext,
@@ -329,7 +495,54 @@ export function projectRemoteOntologyIR<
                     return projectedStep ? [projectedStep] : [];
                 }),
             };
-        }),
+        });
+
+    const queryFunctionTypes =
+        opts.visibleQueryFunctionTypes === undefined || opts.visibleQueryFunctionTypes === "all"
+            ? opts.ir.queryFunctionTypes.filter((queryFunction) => {
+                  if (projectionMode === "legacy") return true;
+                  for (const parameter of queryFunction.parameters) {
+                      for (const objectType of typeReferencesObjectTypes(parameter.type, opts.ir)) {
+                          if (!visibleObjectTypes.has(objectType)) return false;
+                      }
+                  }
+                  for (const objectType of typeReferencesObjectTypes(queryFunction.returnType, opts.ir)) {
+                      if (!visibleObjectTypes.has(objectType)) return false;
+                  }
+                  return true;
+              })
+            : opts.ir.queryFunctionTypes.filter((queryFunction) =>
+                  (opts.visibleQueryFunctionTypes as readonly string[]).includes(queryFunction.name)
+              );
+
+    const referencedNamedTypes = new Set<string>();
+    for (const objectType of objectTypes) {
+        for (const property of objectType.properties) {
+            collectReferencedNamedTypes(property.type, opts.ir, referencedNamedTypes);
+        }
+    }
+    for (const actionType of actionTypes) {
+        for (const parameter of actionType.parameters) {
+            collectReferencedNamedTypes(parameter.type, opts.ir, referencedNamedTypes);
+        }
+    }
+    for (const queryFunction of queryFunctionTypes) {
+        for (const parameter of queryFunction.parameters) {
+            collectReferencedNamedTypes(parameter.type, opts.ir, referencedNamedTypes);
+        }
+        collectReferencedNamedTypes(queryFunction.returnType, opts.ir, referencedNamedTypes);
+    }
+
+    return {
+        ...opts.ir,
+        types:
+            projectionMode === "legacy"
+                ? opts.ir.types
+                : opts.ir.types.filter((type) => referencedNamedTypes.has(type.name)),
+        objectTypes,
+        linkTypes,
+        actionTypes,
+        queryFunctionTypes,
     };
 }
 
