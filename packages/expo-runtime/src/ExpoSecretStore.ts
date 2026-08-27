@@ -1,9 +1,11 @@
-import {
-    deleteItemAsync,
-    getItemAsync,
-    setItemAsync,
-} from "expo-secure-store";
+import { deleteItemAsync, getItemAsync, setItemAsync } from "expo-secure-store";
 import type { SecretStore } from "@party-stack/runtime";
+
+// https://docs.expo.dev/versions/latest/sdk/securestore#securestoresetitemkey-value-options
+function encodeKey(value: string): string {
+    const bytes = new TextEncoder().encode(value);
+    return `party-stack.${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
 
 export class ExpoSecretStore implements SecretStore {
     constructor(private readonly prefix: string) {}
@@ -21,6 +23,6 @@ export class ExpoSecretStore implements SecretStore {
     }
 
     private key(key: string): string {
-        return `${this.prefix}:${encodeURIComponent(key)}`;
+        return encodeKey(JSON.stringify([this.prefix, key]));
     }
 }

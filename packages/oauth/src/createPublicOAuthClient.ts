@@ -129,20 +129,22 @@ export async function createPublicOAuthClient(
 
     const writeSession = async (
         tokens: StoredTokenSet,
-        expectedUserId?: string
+        existingUserId?: string
     ): Promise<OAuthSession> => {
         const resolvedUserId = await options.resolveUserId(
             tokens.accessToken
         );
         if (
-            expectedUserId &&
-            resolvedUserId !== expectedUserId
+            existingUserId &&
+            resolvedUserId !== existingUserId
         ) {
             throw new Error(
-                `OAuth refresh changed user from "${expectedUserId}" to "${resolvedUserId}".`
+                `OAuth session changed user from "${existingUserId}" to "${resolvedUserId}".`
             );
         }
-        const userId = expectedUserId ?? resolvedUserId;
+        const userId =
+            existingUserId ??
+            resolvedUserId;
         const secretKey = sessionSecretKey(userId);
         const existing = sessions.get(userId);
         if (!existing) {
@@ -277,13 +279,17 @@ export async function createPublicOAuthClient(
                     response
                 );
             return writeSession({
-                accessToken: result.access_token,
-                refreshToken: result.refresh_token,
+                accessToken:
+                    result.access_token,
+                refreshToken:
+                    result.refresh_token,
                 expiresAt:
-                    result.expires_in === undefined
+                    result.expires_in ===
+                    undefined
                         ? undefined
                         : Date.now() +
-                          result.expires_in * 1_000,
+                          result.expires_in *
+                              1_000,
                 scope: result.scope,
             });
         } finally {

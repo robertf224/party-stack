@@ -1,6 +1,6 @@
 import { invariant } from "@bobbyfidz/panic";
 import { createFetchOrThrow } from "@osdk/shared.net.fetch";
-import { createFoundryFetch } from "./network.js";
+import { createFoundryFetch, createFoundryWebSocket } from "./network.js";
 import type { SharedClient, SharedClientContext } from "@osdk/shared.client2";
 
 type Optional<T, K extends keyof T> = Pick<Partial<T>, K> & Omit<T, K>;
@@ -22,17 +22,23 @@ function normalizeBaseUrl(baseUrl: string): string {
 }
 
 export function createClient(context: Optional<Client, "fetch">): Client {
+    const baseUrl = normalizeBaseUrl(context.baseUrl);
     const fetchImpl =
         context.fetch ??
         createFoundryFetch({
-            tokenProvider:
-                context.tokenProvider,
+            baseUrl,
+            tokenProvider: context.tokenProvider,
         });
     return {
-        baseUrl: normalizeBaseUrl(context.baseUrl),
+        baseUrl,
         fetch: createFetchOrThrow(fetchImpl),
         tokenProvider: context.tokenProvider,
-        createWebSocket: context.createWebSocket,
+        createWebSocket:
+            context.createWebSocket ??
+            createFoundryWebSocket({
+                baseUrl,
+                tokenProvider: context.tokenProvider,
+            }),
     };
 }
 

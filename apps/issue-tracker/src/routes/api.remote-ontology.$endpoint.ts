@@ -40,8 +40,7 @@ const remoteServer = createRemoteOntologyServer<{ user: string }, IssueTrackerOn
     },
     policy: {
         baseObjectTypeQueries: {
-            Issue: ({ ctx, q, collection }) =>
-                q.from({ object: collection }).where(({ object }) => eq(object.createdBy, ctx.user)),
+            Issue: ({ q, collection }) => q.from({ object: collection }),
             Project: ({ q, collection }) => q.from({ object: collection }),
             User: ({ q, collection }) => q.from({ object: collection }),
         },

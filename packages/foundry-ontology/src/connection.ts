@@ -42,11 +42,10 @@ export interface FoundryAuthenticationClient {
     completeOAuthRedirect(url: string): Promise<Connection<"active"> | undefined>;
     signIn: {
         oauth(options?: {
-            expectedUserId?: string;
             browserPresentation?: BrowserAuthenticationPresentation;
         }): Promise<Connection<"active">>;
-        clientCredentials(options?: { expectedUserId?: string }): Promise<Connection<"active">>;
-        apiToken(options?: { token?: string; expectedUserId?: string }): Promise<Connection<"active">>;
+        clientCredentials(): Promise<Connection<"active">>;
+        apiToken(options?: { token?: string }): Promise<Connection<"active">>;
     };
 }
 
@@ -58,12 +57,6 @@ const DEFAULT_SCOPES = [
 ];
 
 type ConfidentialOauthClient = ReturnType<typeof createConfidentialOauthClient>;
-
-function assertExpectedUser(connection: Connection<"active">, expectedUserId?: string): void {
-    if (expectedUserId && connection.userId !== expectedUserId) {
-        throw new Error(`Expected user "${expectedUserId}", but connected "${connection.userId}".`);
-    }
-}
 
 function activeState(expiresAt: number | undefined, refreshable: boolean): Connection<"active">["state"] {
     return expiresAt === undefined
@@ -78,14 +71,17 @@ function activeState(expiresAt: number | undefined, refreshable: boolean): Conne
 }
 
 function createFoundryEgressWrapper(options: {
+    baseUrl: string;
     tokenProvider: () => Promise<string>;
 }): (handlers: ConnectionEgressHandlers) => ConnectionEgressHandlers {
     return (handlers) => {
         const fetch = createFoundryFetch({
+            baseUrl: options.baseUrl,
             tokenProvider: options.tokenProvider,
             fetch: (input, init) => handlers.fetch(new Request(input, init)),
         });
         const createWebSocket = createFoundryWebSocket({
+            baseUrl: options.baseUrl,
             tokenProvider: options.tokenProvider,
             createWebSocket: (url, protocols) => handlers.createWebSocket(url, protocols),
         });
@@ -160,6 +156,7 @@ async function createFoundryConnectionAdapterInstance(
                 return Promise.resolve();
             },
             egress: createFoundryEgressWrapper({
+                baseUrl: options.baseUrl,
                 tokenProvider: () => Promise.resolve(token),
             }),
         };
@@ -179,6 +176,7 @@ async function createFoundryConnectionAdapterInstance(
             refresh: () => createConfidentialSession(oauth),
             disconnect: () => oauth.signOut(),
             egress: createFoundryEgressWrapper({
+                baseUrl: options.baseUrl,
                 tokenProvider: oauth,
             }),
             cleanup() {
@@ -212,6 +210,7 @@ async function createFoundryConnectionAdapterInstance(
                 await publicOauth?.revoke(userId);
             },
             egress: createFoundryEgressWrapper({
+                baseUrl: options.baseUrl,
                 tokenProvider: () => {
                     if (!publicOauth) {
                         throw unauthenticated("Foundry public OAuth is not configured.");
@@ -244,14 +243,10 @@ async function createFoundryConnectionAdapterInstance(
                             browserPresentation: authenticationOptions.browserPresentation,
                         });
                         const connectionSession = createPublicSession(session);
-                        assertExpectedUser(
-                            connectionSession.connection,
-                            authenticationOptions.expectedUserId
-                        );
                         await controller.connect(connectionSession);
                         return connectionSession.connection;
                     },
-                    async clientCredentials(authenticationOptions = {}) {
+                    async clientCredentials() {
                         if (!confidentialOauth) {
                             throw new Error("Foundry client credentials are not configured.");
                         }
@@ -259,7 +254,6 @@ async function createFoundryConnectionAdapterInstance(
                             throw new Error("Foundry client credentials cannot run in a browser.");
                         }
                         const session = await createConfidentialSession(confidentialOauth);
-                        assertExpectedUser(session.connection, authenticationOptions.expectedUserId);
                         await controller.connect(session);
                         return session.connection;
                     },
@@ -268,7 +262,6 @@ async function createFoundryConnectionAdapterInstance(
                         if (authenticationOptions.token === undefined && options.token) {
                             tokenActive = true;
                         }
-                        assertExpectedUser(session.connection, authenticationOptions.expectedUserId);
                         await controller.connect(session);
                         return session.connection;
                     },

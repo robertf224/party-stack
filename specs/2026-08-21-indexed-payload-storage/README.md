@@ -193,6 +193,88 @@ The implementation should use `RuntimeAdapter.coordination` for:
 The exact service contract should be derived from the existing blob
 coordination protocol rather than invented independently.
 
+### Refresh-token rotation crash window
+
+Coordination serializes healthy refresh callers and routes work to the current
+leader, but it cannot make an OAuth server request atomic with writes to local
+storage.
+
+```text
+tab A becomes leader
+    -> reads refresh token R0
+    -> sends refresh request
+OAuth server consumes R0 and returns access token A1 + refresh token R1
+    -> tab A crashes or loses leadership before durably storing R1
+tab B becomes leader
+    -> reads stale R0
+    -> retries refresh
+OAuth server rejects R0 with invalid_grant
+```
+
+At that point R1 may be valid at the provider but unavailable locally. No local
+operation journal can reconstruct a replacement token that was never persisted.
+An abort signal also cannot undo a refresh request that the provider already
+processed.
+
+A second variant is recoverable:
+
+```text
+tab A stores R1
+    -> loses leadership before replying to the coordination caller
+tab B retries using an in-memory copy of R0
+    -> receives invalid_grant
+```
+
+Before deleting credentials after `invalid_grant`, the new leader must force a
+read from the shared secret store. If the stored refresh-token marker differs
+from the token it attempted, another leader completed the rotation and its
+stored result should win. The stale caller must not delete the newer secret.
+
+The OAuth operation journal should therefore record enough safe metadata to
+distinguish refresh generations without exposing refresh tokens:
+
+```ts
+interface PendingOAuthRefresh {
+    kind: "refresh";
+    status: "pending";
+    userId: string;
+    refreshTokenMarker: string;
+    operationId: string;
+}
+```
+
+Proposed protocol:
+
+```text
+persist pending refresh intent + marker for R0
+    -> call token endpoint with R0
+    -> durably write A1/R1 to SecretStore
+    -> commit the new marker and clear pending intent
+```
+
+Takeover/recovery:
+
+```text
+stored marker changed
+    -> prior leader committed; reload stored tokens
+
+stored marker unchanged + provider accepts R0
+    -> commit returned tokens normally
+
+stored marker unchanged + invalid_grant
+    -> replacement token was likely lost; transition to needs-auth
+
+invalid_grant after any retry
+    -> force-read shared storage before deleting credentials
+    -> never delete a newer token generation
+```
+
+This journal narrows the ambiguous window and prevents a stale leader from
+deleting successfully rotated credentials. It cannot eliminate the fundamental
+failure interval between provider-side rotation and the first durable local
+write unless the provider supports idempotency, refresh-token grace reuse, or
+another recovery mechanism.
+
 ### Payload adapters
 
 Domain packages adapt platform stores:
@@ -263,6 +345,10 @@ OAuth-specific tests should additionally cover:
 
 - stale pending PKCE cleanup;
 - refresh-token rotation;
+- leader loss after provider rotation but before the new secret is written;
+- leader loss after the new secret is written but before the coordination
+  response is delivered;
+- `invalid_grant` rereads shared storage and preserves a newer token generation;
 - callback completion after process restart;
 - credential index without secret payload;
 - no secret payload without a discoverable index after simulated crashes.
