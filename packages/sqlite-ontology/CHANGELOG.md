@@ -1,5 +1,23 @@
 # @party-stack/sqlite-ontology
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [46268bc]
+    - @party-stack/ontology@0.10.0
+
+## 0.3.0
+
+### Minor Changes
+
+- 515f8dc: OSDK-free LiveOntology Gateway MVP: collection readiness and race-safe cleanup, non-blocking action refresh, structured remote errors, policy-aware describe projection, precise invalidation, attachments, and public Foundry action metadata. No generic link traversal, object-query helpers, or OMS/prefill metadata.
+
+### Patch Changes
+
+- Updated dependencies [515f8dc]
+    - @party-stack/ontology@0.9.0
+
 ## 0.2.0
 
 ### Minor Changes

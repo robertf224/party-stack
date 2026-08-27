@@ -11,8 +11,31 @@ import type {
     OntologyBackendAdapterProvider,
     OntologyCollectionOptions,
     OntologyIR,
+    OntologyApplyActionResult,
 } from "@party-stack/ontology";
 import { serializeLoadSubsetOptions, type RemoteOntologyTransport } from "./protocol.js";
+
+export interface OntologyActionRefreshResult {
+    status: "ok" | "error" | "aborted";
+    objectType: string;
+    error?: {
+        name: string;
+        message: string;
+    };
+}
+
+export interface OntologyActionRefreshDiagnostics {
+    /**
+     * Best-effort cache refresh after a confirmed remote write.
+     * Never rejects; failures are reported in the resolved results.
+     */
+    completed: Promise<OntologyActionRefreshResult[]>;
+}
+
+export interface OntologyApplyActionClientResult extends OntologyApplyActionResult {
+    invalidatedObjectTypes?: string[];
+    refresh?: OntologyActionRefreshDiagnostics;
+}
 
 export interface CreateRemoteOntologyBackendAdapterOptions {
     ir: OntologyIR;
@@ -48,6 +71,55 @@ function getObjectTypePrimaryKey(ir: OntologyIR, objectType: string): string {
         throw new Error(`Unknown ontology object type "${objectType}".`);
     }
     return objectTypeDef.primaryKey;
+}
+
+function toRefreshError(error: unknown): OntologyActionRefreshResult["error"] {
+    if (error instanceof Error) {
+        return { name: error.name, message: error.message };
+    }
+    return { name: "Error", message: String(error) };
+}
+
+function isAbortError(error: unknown): boolean {
+    return (
+        (error instanceof Error && error.name === "AbortError") ||
+        (typeof DOMException !== "undefined" &&
+            error instanceof DOMException &&
+            error.name === "AbortError")
+    );
+}
+
+async function refreshInvalidatedCollections(opts: {
+    objectTypes: string[];
+    objects: Record<string, Collection<Record<string, unknown>>>;
+}): Promise<OntologyActionRefreshResult[]> {
+    return Promise.all(
+        opts.objectTypes.map(async (objectType): Promise<OntologyActionRefreshResult> => {
+            const collection = opts.objects[objectType] as
+                | Collection<Record<string, unknown>, string | number, QueryCollectionUtils<Record<string, unknown>>>
+                | undefined;
+            if (!collection?.utils?.refetch) {
+                return { status: "ok", objectType };
+            }
+            try {
+                await collection.utils.refetch({ throwOnError: true });
+                return { status: "ok", objectType };
+            } catch (error) {
+                if (isAbortError(error)) {
+                    return {
+                        status: "aborted",
+                        objectType,
+                        error: toRefreshError(error),
+                    };
+                }
+                return {
+                    status: "error",
+                    objectType,
+                    error: toRefreshError(error),
+                };
+            }
+        })
+    );
 }
 
 export function createRemoteOntologyBackendAdapter(
@@ -96,19 +168,23 @@ export function createRemoteOntologyBackendAdapter(
                     ? response.invalidatedObjectTypes
                     : opts.ir.objectTypes.map((objectType) => objectType.name);
 
-            await Promise.all(
-                invalidatedObjectTypes.map((objectType) => {
-                    const collection = live.objects[objectType] as Collection<
-                        Record<string, unknown>,
-                        string | number,
-                        QueryCollectionUtils<Record<string, unknown>>
-                    >;
-                    return collection.utils.refetch({ throwOnError: true });
-                })
-            );
-            return {
+            // Confirmed writes remain successful even when cache refresh fails
+            // or is aborted by navigation. Refresh is best-effort and observable.
+            const refreshCompleted = refreshInvalidatedCollections({
+                objectTypes: invalidatedObjectTypes,
+                objects: live.objects,
+            });
+            // Prevent unhandled rejections if callers never await diagnostics.
+            void refreshCompleted.catch(() => undefined);
+
+            const result: OntologyApplyActionClientResult = {
                 attachmentIdMappings: response.attachmentIdMappings,
+                invalidatedObjectTypes,
+                refresh: {
+                    completed: refreshCompleted,
+                },
             };
+            return result;
         },
         runQueryFunction: async (queryFunctionType, parameters) => {
             const response = await transport.runQueryFunction({

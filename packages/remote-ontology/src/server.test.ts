@@ -5,7 +5,7 @@ import {
     type OntologyBackendAdapter,
     type OntologyIR,
 } from "@party-stack/ontology";
-import { eq, gt, IR } from "@tanstack/db";
+import { eq, gt, IR, queryOnce } from "@tanstack/db";
 import { createRemoteOntologyServer } from "./server.js";
 import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
 import type { RemoteOntologyDescription } from "./protocol.js";
@@ -334,5 +334,164 @@ describe("remote ontology server policy projection", () => {
                 },
             ],
         });
+    });
+
+    it("starts on-demand collections for apply-action without hanging", async () => {
+        let syncStarted = false;
+        let cleanedUp = false;
+        const onDemandIr: OntologyIR = {
+            ...ir,
+            objectTypes: [noteObjectType],
+            actionTypes: [
+                {
+                    name: "createNote",
+                    displayName: "Create note",
+                    parameters: [
+                        { name: "title", displayName: "Title", type: o.string({}) },
+                        {
+                            name: "note",
+                            displayName: "Note",
+                            type: o.objectReference({ objectType: "Note" }),
+                        },
+                    ],
+                    logic: [
+                        o.ActionLogicStep.createObject({
+                            objectType: "Note",
+                            values: [
+                                {
+                                    property: ["id"],
+                                    value: o.Expression.literal({ value: "created" }),
+                                },
+                            ],
+                        }),
+                    ],
+                },
+            ],
+        };
+        const backendAdapter: OntologyBackendAdapter = {
+            name: "test",
+            getCollectionOptions: () => ({
+                syncMode: "on-demand",
+                sync: {
+                    sync: ({ begin, write, commit, markReady }) => {
+                        syncStarted = true;
+                        begin({ immediate: true });
+                        write({
+                            type: "insert",
+                            value: {
+                                id: "note-1",
+                                ownerEmail: "alice@example.com",
+                                status: "open",
+                                priority: 1,
+                            },
+                        });
+                        commit();
+                        queueMicrotask(() => markReady());
+                        return {
+                            loadSubset: () => true as const,
+                            cleanup: () => {
+                                cleanedUp = true;
+                            },
+                        };
+                    },
+                },
+            }),
+            applyAction: async () => {},
+            runQueryFunction: async () => undefined,
+        };
+        const server = createRemoteOntologyServer<any, any>({
+            ir: onDemandIr,
+            backendAdapter,
+            getContext: () => ({ user: { email: "alice@example.com" } }),
+            policy: {
+                canApplyAction: async (_ctx, request, { objects }) => {
+                    const note = await queryOnce((q) =>
+                        q
+                            .from({ object: objects.Note! })
+                            .where(({ object }) => eq((object as any).id, request.parameters.note))
+                            .findOne()
+                    );
+                    return note != null;
+                },
+                baseObjectTypeQueries: {
+                    Note: ({ q, collection }: { q: any; collection: any }) =>
+                        q.from({ object: collection }),
+                } as any,
+            },
+        });
+
+        const response = await server.handleRequest(
+            new Request("http://example.test/apply-action", {
+                method: "POST",
+                body: serializeRemoteOntologyJson({
+                    actionType: "createNote",
+                    parameters: {
+                        title: "Hello",
+                        note: "note-1",
+                    },
+                }),
+            })
+        );
+
+        expect(response.status).toBe(200);
+        expect(syncStarted).toBe(true);
+        expect(cleanedUp).toBe(true);
+        expect(parseRemoteOntologyJson(await response.text())).toMatchObject({
+            invalidatedObjectTypes: ["Note"],
+        });
+    });
+
+    it("cleans up on-demand collections after apply-action failure", async () => {
+        let cleanedUp = false;
+        const onDemandIr: OntologyIR = {
+            ...ir,
+            objectTypes: [noteObjectType],
+        };
+        const backendAdapter: OntologyBackendAdapter = {
+            name: "test",
+            getCollectionOptions: () => ({
+                syncMode: "on-demand",
+                sync: {
+                    sync: ({ markReady }) => {
+                        queueMicrotask(() => markReady());
+                        return {
+                            loadSubset: () => true as const,
+                            cleanup: () => {
+                                cleanedUp = true;
+                            },
+                        };
+                    },
+                },
+            }),
+            applyAction: async () => {
+                throw new Error("backend failed");
+            },
+            runQueryFunction: async () => undefined,
+        };
+        const server = createRemoteOntologyServer<any, any>({
+            ir: onDemandIr,
+            backendAdapter,
+            getContext: () => ({}),
+            policy: {
+                canApplyAction: () => true,
+            },
+        });
+
+        const response = await server.handleRequest(
+            new Request("http://example.test/apply-action", {
+                method: "POST",
+                body: serializeRemoteOntologyJson({
+                    actionType: "createNote",
+                    parameters: {
+                        title: "Hello",
+                        ownerEmail: "alice@example.com",
+                        dueDate: "2026-06-15",
+                    },
+                }),
+            })
+        );
+
+        expect(response.status).toBe(500);
+        expect(cleanedUp).toBe(true);
     });
 });

@@ -38,6 +38,6 @@ export type OntologyQueryFunctionHandler = (options: {
     tx: OntologyReadTx;
     args: Record<string, unknown>;
     context: Record<string, unknown>;
-}) => unknown | Promise<unknown>;
+}) => unknown;
 
 export type OntologyQueryFunctionRegistry = Record<string, OntologyQueryFunctionHandler>;

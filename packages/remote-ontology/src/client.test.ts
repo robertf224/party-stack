@@ -1,12 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Temporal } from "temporal-polyfill";
 import { o, type OntologyIR } from "@party-stack/ontology";
-import { createRemoteLiveOntology } from "./client.js";
+import {
+    createRemoteLiveOntology,
+    createRemoteOntologyBackendAdapter,
+    type OntologyApplyActionClientResult,
+} from "./client.js";
 import type { RemoteOntologyTransport } from "./protocol.js";
 
 const ir: OntologyIR = {
     types: [],
-    objectTypes: [],
+    objectTypes: [
+        {
+            name: "Note",
+            displayName: "Note",
+            pluralDisplayName: "Notes",
+            primaryKey: "id",
+            properties: [{ name: "id", displayName: "ID", type: o.string({}) }],
+        },
+    ],
     linkTypes: [],
     actionTypes: [
         {
@@ -75,5 +87,74 @@ describe("createRemoteLiveOntology", () => {
             dueDate: Temporal.PlainDate.from("2026-06-15"),
         });
         await expect(ontology.queryFunctions.greet!({ name: "Alice" })).resolves.toBe("Hello Alice");
+        await ontology.cleanup();
+    });
+});
+
+describe("createRemoteOntologyBackendAdapter.applyAction", () => {
+    it("resolves successful writes even when subsequent refetches reject or abort", async () => {
+        const transport: RemoteOntologyTransport = {
+            describe: async () => ({ ir }),
+            loadSubset: async (request) => ({
+                objectType: request.objectType,
+                objects: [],
+            }),
+            applyAction: async () => ({
+                invalidatedObjectTypes: ["Note"],
+                attachmentIdMappings: [{ localId: "local", remoteId: "remote" }],
+            }),
+            runQueryFunction: async () => ({ value: undefined }),
+            getAttachmentMetadata: async () => ({}),
+            getAttachmentContent: async () => new Blob(),
+        };
+        const adapter = createRemoteOntologyBackendAdapter({ ir, transport });
+        const abortError = new DOMException("The operation was aborted.", "AbortError");
+        const refetch = vi
+            .fn()
+            .mockRejectedValueOnce(abortError)
+            .mockRejectedValueOnce(new Error("network failed"));
+
+        const first = (await adapter.applyAction(
+            "createNote",
+            { title: "one" },
+            {
+                objects: {
+                    Note: {
+                        utils: { refetch },
+                    } as never,
+                },
+            }
+        )) as OntologyApplyActionClientResult;
+
+        expect(first.attachmentIdMappings).toEqual([{ localId: "local", remoteId: "remote" }]);
+        expect(first.invalidatedObjectTypes).toEqual(["Note"]);
+        await expect(first.refresh!.completed).resolves.toEqual([
+            {
+                status: "aborted",
+                objectType: "Note",
+                error: { name: "AbortError", message: "The operation was aborted." },
+            },
+        ]);
+
+        const second = (await adapter.applyAction(
+            "createNote",
+            { title: "two" },
+            {
+                objects: {
+                    Note: {
+                        utils: { refetch },
+                    } as never,
+                },
+            }
+        )) as OntologyApplyActionClientResult;
+
+        await expect(second.refresh!.completed).resolves.toEqual([
+            {
+                status: "error",
+                objectType: "Note",
+                error: { name: "Error", message: "network failed" },
+            },
+        ]);
+        expect(refetch).toHaveBeenCalledTimes(2);
     });
 });

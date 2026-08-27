@@ -349,7 +349,8 @@ export function createFoundryOntologyBackendAdapter(opts: {
             }
             if (context) {
                 const operationId = getApplyActionOperationId(result);
-                const targetCollections = Array.from(getEditedObjectTypes(result.edits))
+                const editedObjectTypes = Array.from(getEditedObjectTypes(result.edits));
+                const targetCollections = editedObjectTypes
                     .map((objectType) => context.objects[objectType] as CollectionWithUtils | undefined)
                     .filter((collection): collection is CollectionWithUtils =>
                         Boolean(collection?.utils?.awaitOperationId)
@@ -359,7 +360,12 @@ export function createFoundryOntologyBackendAdapter(opts: {
                     targetCollections.map((collection) => collection.utils.awaitOperationId(operationId))
                 );
             }
-            return attachmentIdMappings.length > 0 ? { attachmentIdMappings } : undefined;
+            if (attachmentIdMappings.length === 0) {
+                return undefined;
+            }
+            return {
+                attachmentIdMappings,
+            };
         },
         runQueryFunction: async (name, parameters) => {
             const queryFunctionType = opts.ir.queryFunctionTypes.find((candidate) => candidate.name === name);

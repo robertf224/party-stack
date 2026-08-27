@@ -1,6 +1,6 @@
 {
     "name": "@party-stack/ontology-explorer",
-    "version": "0.0.10",
+    "version": "0.0.13",
     "private": true,
     "type": "module",
     "scripts": {

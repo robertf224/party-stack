@@ -142,11 +142,17 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
         runtime: options.runtime,
         schemaVersion: 2,
     });
-    const ready = collection.preload();
+    // Suppress unhandled rejection if cleanup races persistence startup.
+    const ready = collection.preload().catch((error) => {
+        if (collection.status === "cleaned-up") return;
+        throw error;
+    });
+    void ready.catch(() => undefined);
     const bytes = options.runtime.blobBytes;
     const activeOperationIds = new Set<string>();
     const client = options.runtime.coordination.service<BlobCoordinationService>(BLOB_COORDINATION_SERVICE);
     let activeRecoveryId: string | undefined;
+    let disposing = false;
 
     const findRef = async (id: string): Promise<BlobMetadataRecord | undefined> => {
         await ready;
@@ -577,7 +583,12 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
     return {
         collection,
         ready,
-        beginWrite: (input) => client.methods.beginWrite(input),
+        beginWrite: (input) => {
+            if (disposing) {
+                return Promise.reject(new Error("Blob store is disposing."));
+            }
+            return client.methods.beginWrite(input);
+        },
         commitWrite: (input) => client.methods.commitWrite(input),
         failWrite: (input) => client.methods.failWrite(input),
         stage: (id, blob) => write(id, blob, "stage"),
@@ -635,9 +646,15 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
         },
         cleanup() {
             cleanupPromise ??= (async () => {
+                disposing = true;
                 activeOperationIds.clear();
+                // Await persistence startup before cleaning the collection so
+                // TanStack loopback cannot call markReady after cleaned-up.
+                await Promise.allSettled([ready]);
                 await server?.close();
-                await collection.cleanup();
+                if (collection.status !== "cleaned-up") {
+                    await collection.cleanup();
+                }
             })();
             return cleanupPromise;
         },
