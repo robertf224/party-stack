@@ -22,10 +22,6 @@ import type { attachment } from "../utils/values.js";
 export type { LiveOntologyAction, LiveOntologyActionOptions } from "./actions/createLiveOntologyAction.js";
 export type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
 export type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
-export {
-    waitForCollectionReady,
-    waitForCollectionsReady,
-} from "./waitForCollectionReady.js";
 
 export type LiveOntologyWriteMode = "direct" | "outbox";
 
@@ -113,7 +109,7 @@ export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> 
 
 /**
  * Waits for LiveOntology subsystems required before safe use.
- * Starts on-demand object collection sync via preload without loading subsets.
+ * Starts on-demand object collection sync without loading subsets.
  */
 export async function waitForLiveOntologyReady(ontology: LiveOntology): Promise<void> {
     await ontology.ready;

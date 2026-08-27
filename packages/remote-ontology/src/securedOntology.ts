@@ -285,8 +285,6 @@ function projectLogicStep<Context>(opts: {
     }
 }
 
-export type RemoteOntologySchemaProjectionMode = "legacy" | "authorized";
-
 function typeReferencesObjectTypes(type: TypeDef, ir: OntologyIR, seen = new Set<string>()): Set<string> {
     if (type.kind === "ref") {
         if (seen.has(type.value.name)) return new Set();
@@ -393,16 +391,17 @@ export function projectRemoteOntologyIR<
     fixedActionParameterValues?: FixedActionParameterValues<Ontology>;
     allowedObjectTypeProperties: Record<string, readonly string[]>;
     /**
-     * `authorized` projects object/property/link/action/query visibility.
-     * `legacy` keeps historical behavior (full object/link schema; action fixed-param projection only).
+     * Projects object/property/link/action/query visibility from the resolved
+     * authorization policy. Otherwise the full schema is retained while action
+     * parameters and logic are still projected.
      */
-    projectionMode?: RemoteOntologySchemaProjectionMode;
+    filterSchemaByAuthorization?: boolean;
     visibleActionTypes?: readonly string[] | "all";
     visibleQueryFunctionTypes?: readonly string[] | "all";
 }): OntologyIR {
-    const projectionMode = opts.projectionMode ?? "legacy";
+    const filterSchemaByAuthorization = opts.filterSchemaByAuthorization ?? false;
     const visibleObjectTypes = new Set(
-        projectionMode === "authorized"
+        filterSchemaByAuthorization
             ? Object.entries(opts.allowedObjectTypeProperties)
                   .filter(([, properties]) => properties.length > 0)
                   .map(([objectType]) => objectType)
@@ -410,9 +409,8 @@ export function projectRemoteOntologyIR<
     );
 
     const objectTypes =
-        projectionMode === "legacy"
+        filterSchemaByAuthorization
             ? opts.ir.objectTypes
-            : opts.ir.objectTypes
                   .filter((objectType) => visibleObjectTypes.has(objectType.name))
                   .map((objectType) => {
                       const allowed = new Set(opts.allowedObjectTypeProperties[objectType.name] ?? []);
@@ -422,12 +420,12 @@ export function projectRemoteOntologyIR<
                               objectType.title && allowed.has(objectType.title) ? objectType.title : undefined,
                           properties: objectType.properties.filter((property) => allowed.has(property.name)),
                       };
-                  });
+                  })
+            : opts.ir.objectTypes;
 
     const linkTypes =
-        projectionMode === "legacy"
-            ? opts.ir.linkTypes
-            : opts.ir.linkTypes.filter((link) => {
+        filterSchemaByAuthorization
+            ? opts.ir.linkTypes.filter((link) => {
                   if (
                       !visibleObjectTypes.has(link.source.objectType) ||
                       !visibleObjectTypes.has(link.target.objectType)
@@ -442,7 +440,8 @@ export function projectRemoteOntologyIR<
                       opts.allowedObjectTypeProperties[link.target.objectType] ?? []
                   );
                   return sourceAllowed.has(link.foreignKey) || targetAllowed.has(link.foreignKey);
-              });
+              })
+            : opts.ir.linkTypes;
 
     const visibleActions =
         opts.visibleActionTypes === undefined || opts.visibleActionTypes === "all"
@@ -454,7 +453,7 @@ export function projectRemoteOntologyIR<
     const actionTypes = visibleActions
         .filter(
             (actionType) =>
-                projectionMode === "legacy" ||
+                !filterSchemaByAuthorization ||
                 !actionParametersReferenceHiddenObjectType(actionType, opts.ir, visibleObjectTypes)
         )
         .map((actionType) => {
@@ -475,7 +474,7 @@ export function projectRemoteOntologyIR<
                 parameters: actionType.parameters.filter((parameter) => visibleParameters.has(parameter.name)),
                 logic: actionType.logic.flatMap((step) => {
                     if (
-                        projectionMode === "authorized" &&
+                        filterSchemaByAuthorization &&
                         step.kind === "createObject" &&
                         !visibleObjectTypes.has(step.value.objectType)
                     ) {
@@ -500,7 +499,7 @@ export function projectRemoteOntologyIR<
     const queryFunctionTypes =
         opts.visibleQueryFunctionTypes === undefined || opts.visibleQueryFunctionTypes === "all"
             ? opts.ir.queryFunctionTypes.filter((queryFunction) => {
-                  if (projectionMode === "legacy") return true;
+                  if (!filterSchemaByAuthorization) return true;
                   for (const parameter of queryFunction.parameters) {
                       for (const objectType of typeReferencesObjectTypes(parameter.type, opts.ir)) {
                           if (!visibleObjectTypes.has(objectType)) return false;
@@ -535,10 +534,9 @@ export function projectRemoteOntologyIR<
 
     return {
         ...opts.ir,
-        types:
-            projectionMode === "legacy"
-                ? opts.ir.types
-                : opts.ir.types.filter((type) => referencedNamedTypes.has(type.name)),
+        types: filterSchemaByAuthorization
+            ? opts.ir.types.filter((type) => referencedNamedTypes.has(type.name))
+            : opts.ir.types,
         objectTypes,
         linkTypes,
         actionTypes,

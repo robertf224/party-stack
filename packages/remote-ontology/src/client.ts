@@ -11,10 +11,31 @@ import type {
     OntologyBackendAdapterProvider,
     OntologyCollectionOptions,
     OntologyIR,
-    OntologyActionRefreshResult,
-    OntologyApplyActionClientResult,
+    OntologyApplyActionResult,
 } from "@party-stack/ontology";
 import { serializeLoadSubsetOptions, type RemoteOntologyTransport } from "./protocol.js";
+
+export interface OntologyActionRefreshResult {
+    status: "ok" | "error" | "aborted";
+    objectType: string;
+    error?: {
+        name: string;
+        message: string;
+    };
+}
+
+export interface OntologyActionRefreshDiagnostics {
+    /**
+     * Best-effort cache refresh after a confirmed remote write.
+     * Never rejects; failures are reported in the resolved results.
+     */
+    completed: Promise<OntologyActionRefreshResult[]>;
+}
+
+export interface OntologyApplyActionClientResult extends OntologyApplyActionResult {
+    invalidatedObjectTypes?: string[];
+    refresh?: OntologyActionRefreshDiagnostics;
+}
 
 export interface CreateRemoteOntologyBackendAdapterOptions {
     ir: OntologyIR;

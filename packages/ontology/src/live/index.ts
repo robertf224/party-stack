@@ -7,7 +7,3 @@ export type {
 export * from "./mutators/types.js";
 export * from "./mutators/runOptimisticAction.js";
 export * from "./outbox/types.js";
-export {
-    waitForCollectionReady,
-    waitForCollectionsReady,
-} from "./waitForCollectionReady.js";

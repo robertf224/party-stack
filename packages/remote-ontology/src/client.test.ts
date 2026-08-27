@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { Temporal } from "temporal-polyfill";
-import { o, type OntologyIR, type OntologyApplyActionClientResult } from "@party-stack/ontology";
+import { o, type OntologyIR } from "@party-stack/ontology";
 import {
     createRemoteLiveOntology,
     createRemoteOntologyBackendAdapter,
+    type OntologyApplyActionClientResult,
 } from "./client.js";
 import type { RemoteOntologyTransport } from "./protocol.js";
 

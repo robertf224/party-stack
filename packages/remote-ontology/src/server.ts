@@ -38,7 +38,6 @@ import {
     projectRemoteOntologyIR,
     type ClientContextProjectionMode,
     type FixedActionParameterValues,
-    type RemoteOntologySchemaProjectionMode,
 } from "./securedOntology.js";
 import type {
     RemoteApplyActionRequest,
@@ -143,11 +142,6 @@ export interface RemoteOntologyPolicy<Context, Ontology extends OntologyDefiniti
     allowedObjectTypeProperties?: RemoteOntologyAllowedObjectTypeProperties<Context, Ontology>;
     fixedActionParameterValues?: FixedActionParameterValues<Ontology>;
     clientContext?: RemoteOntologyClientContextPolicy<Context>;
-    /**
-     * Schema describe projection mode.
-     * Defaults to `authorized` when object visibility policy is configured, otherwise `legacy`.
-     */
-    schemaProjectionMode?: RemoteOntologySchemaProjectionMode;
     /**
      * Optional action-type visibility for describe. Defaults to all action types.
      */
@@ -553,8 +547,6 @@ async function handleDescribe<Context, Ontology extends OntologyDefinition = Ont
     const hasObjectVisibilityPolicy =
         opts.policy?.allowedObjectTypeProperties !== undefined ||
         opts.policy?.baseObjectTypeQueries !== undefined;
-    const projectionMode =
-        opts.policy?.schemaProjectionMode ?? (hasObjectVisibilityPolicy ? "authorized" : "legacy");
     const visibleActionTypes =
         typeof opts.policy?.visibleActionTypes === "function"
             ? await opts.policy.visibleActionTypes(ctx)
@@ -571,7 +563,7 @@ async function handleDescribe<Context, Ontology extends OntologyDefinition = Ont
             clientContextMode: clientContext.mode,
             fixedActionParameterValues: opts.policy?.fixedActionParameterValues,
             allowedObjectTypeProperties: resolveProjectedAllowedObjectTypeProperties(ctx, ir, opts.policy),
-            projectionMode,
+            filterSchemaByAuthorization: hasObjectVisibilityPolicy,
             visibleActionTypes,
             visibleQueryFunctionTypes,
         }),
@@ -648,7 +640,6 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
     }
 
     const invalidatedObjectTypes =
-        actionResult?.invalidatedObjectTypes ??
         getInvalidatedObjectTypesFromActionLogic(ir, request.actionType) ??
         ir.objectTypes.map((objectType) => objectType.name);
 

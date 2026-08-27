@@ -1,17 +1,18 @@
 import type { Collection } from "@tanstack/db";
 
 /**
- * Starts idle/on-demand collection synchronization through the public
- * `startSyncImmediate()` API and waits until the collection is ready.
+ * Starts idle/on-demand collection synchronization and waits until the
+ * collection is ready.
  *
- * This initializes synchronization without eagerly loading every object subset.
- * Foundry on-demand collections mark ready as soon as their sync loop starts;
- * subset loads still happen only when queries request them.
+ * TanStack's `onFirstReady` only registers a callback: it does not start an
+ * idle collection, report terminal errors, or distinguish cleanup from
+ * readiness. Pending callbacks are also invoked during cleanup. This helper
+ * starts sync, returns an awaitable promise, and rejects on error or cleanup.
  *
  * Race-safe: status listeners are registered before starting sync / reading
  * the current status, so a transition cannot be missed.
  */
-export async function waitForCollectionReady(
+async function waitForCollectionReady(
     collection: Collection<Record<string, unknown>, string | number>
 ): Promise<void> {
     if (collection.status === "ready") return;

@@ -169,7 +169,7 @@ describe("secured ontology projection", () => {
                 ],
             },
             serverContext: {},
-            projectionMode: "authorized",
+            filterSchemaByAuthorization: true,
             allowedObjectTypeProperties: {
                 Note: ["id", "title", "ownerEmail"],
             },
@@ -191,7 +191,7 @@ describe("secured ontology projection", () => {
         const projected = projectRemoteOntologyIR({
             ir,
             serverContext: {},
-            projectionMode: "authorized",
+            filterSchemaByAuthorization: true,
             allowedObjectTypeProperties: {},
             visibleActionTypes: ["createNote"],
             visibleQueryFunctionTypes: [],

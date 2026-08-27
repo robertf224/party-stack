@@ -338,21 +338,12 @@ export function createFoundryOntologyBackendAdapter(opts: {
                 await Promise.all(
                     targetCollections.map((collection) => collection.utils.awaitOperationId(operationId))
                 );
-
-                return {
-                    ...(editedObjectTypes.length > 0
-                        ? { invalidatedObjectTypes: editedObjectTypes }
-                        : {}),
-                    ...(attachmentIdMappings.length > 0 ? { attachmentIdMappings } : {}),
-                };
             }
-            const editedObjectTypes = Array.from(getEditedObjectTypes(result.edits));
-            if (editedObjectTypes.length === 0 && attachmentIdMappings.length === 0) {
+            if (attachmentIdMappings.length === 0) {
                 return undefined;
             }
             return {
-                ...(editedObjectTypes.length > 0 ? { invalidatedObjectTypes: editedObjectTypes } : {}),
-                ...(attachmentIdMappings.length > 0 ? { attachmentIdMappings } : {}),
+                attachmentIdMappings,
             };
         },
         runQueryFunction: async (name, parameters) => {
