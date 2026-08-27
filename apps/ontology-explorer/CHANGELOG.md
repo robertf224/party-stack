@@ -1,5 +1,17 @@
 # @party-stack/ontology-explorer
 
+## 0.1.0
+
+### Minor Changes
+
+- 33f6858: auth + connections
+
+### Patch Changes
+
+- Updated dependencies [33f6858]
+    - @party-stack/foundry-ontology@0.10.0
+    - @party-stack/ontology@0.11.0
+
 ## 0.0.13
 
 ### Patch Changes
