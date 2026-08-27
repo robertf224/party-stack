@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { createNodeRuntime } from "@party-stack/node-runtime";
 import { pascalCase } from "change-case";
 import { Command } from "commander";
 import { generateFiles } from "./generate.js";
@@ -24,7 +25,7 @@ function readPackageNamespace(cwd: string): string {
         const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { name?: unknown };
         const packageName =
             typeof packageJson.name === "string"
-                ? packageJson.name.split("/").pop() ?? packageJson.name
+                ? (packageJson.name.split("/").pop() ?? packageJson.name)
                 : basename(cwd);
         return pascalCase(packageName);
     } catch {
@@ -47,34 +48,32 @@ async function main(): Promise<void> {
         .option("--outDir <path>", "Directory to write generated files", generatedDir)
         .option("--namespace <name>", "Namespace for generated ontology types/factories")
         .option("--no-js-extensions", "Omit .js extensions from generated relative imports")
-        .action(async (options: {
-            ontology: string;
-            outDir: string;
-            namespace?: string;
-            jsExtensions?: boolean;
-        }) => {
-            await generateFiles({
-                ontology: resolve(cwd, options.ontology),
-                outDir: resolve(cwd, options.outDir),
-                namespace: options.namespace ?? readPackageNamespace(cwd),
-                jsExtensions: options.jsExtensions,
-            });
-        });
+        .action(
+            async (options: {
+                ontology: string;
+                outDir: string;
+                namespace?: string;
+                jsExtensions?: boolean;
+            }) => {
+                await generateFiles({
+                    ontology: resolve(cwd, options.ontology),
+                    outDir: resolve(cwd, options.outDir),
+                    namespace: options.namespace ?? readPackageNamespace(cwd),
+                    jsExtensions: options.jsExtensions,
+                });
+            }
+        );
 
-    const configPath =
-        discoverOntologyPullConfigPath(cwd);
+    const configPath = discoverOntologyPullConfigPath(cwd);
     if (configPath) {
-        const config =
-            await loadOntologyPullConfig(
-                configPath
-            );
+        const config = await loadOntologyPullConfig(configPath);
         program
             .command("pull")
-            .description(
-                `Pull ontology metadata using ${ONTOLOGY_PULL_CONFIG_PATH}`
-            )
+            .description(`Pull ontology metadata using ${ONTOLOGY_PULL_CONFIG_PATH}`)
             .action(async () => {
-                await writePulledOntology(config, ontologyPath);
+                await writePulledOntology(config, ontologyPath, {
+                    runtime: createNodeRuntime,
+                });
                 console.log(`Generated ontology written to: ${ontologyPath}`);
             });
     }

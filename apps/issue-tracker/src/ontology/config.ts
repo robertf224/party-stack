@@ -1,4 +1,4 @@
-import { foundryOntologyPullSource } from "@party-stack/foundry-ontology/config";
+import { createFoundryOntologyPullSource } from "@party-stack/foundry-ontology/config";
 import { o } from "@party-stack/ontology";
 import type { FoundryOntologyPullConfig } from "@party-stack/foundry-ontology/config";
 import { foundryUserToUser } from "./user";
@@ -9,18 +9,24 @@ const imageConstraint = {
     }),
 };
 
+function requiredEnv(name: string): string {
+    const value = process.env[name];
+    if (!value) {
+        throw new Error(`Missing required environment variable ${name}.`);
+    }
+    return value;
+}
+
 export default {
-    source: foundryOntologyPullSource,
-    objectTypeNames: ["Issue", "Project"],
-    actionTypeNames: [
-        "createIssue",
-        "createProject",
-        "updateIssue",
-        "updateProject",
-        "deleteProject",
-        "deleteIssue",
-    ],
-    options: {
+    source: createFoundryOntologyPullSource({
+        baseUrl: requiredEnv("VITE_FOUNDRY_URL"),
+        ontologyRid: requiredEnv("VITE_FOUNDRY_ONTOLOGY_RID"),
+        connection: {
+            oauth: {
+                clientId: requiredEnv("VITE_FOUNDRY_CLIENT_ID"),
+                redirectUrl: requiredEnv("VITE_FOUNDRY_REDIRECT_URL"),
+            },
+        },
         users: {
             objectType: "User",
             lens: foundryUserToUser,
@@ -52,5 +58,14 @@ export default {
                 constraint: imageConstraint,
             },
         ],
-    },
+    }),
+    objectTypeNames: ["Issue", "Project"],
+    actionTypeNames: [
+        "createIssue",
+        "createProject",
+        "updateIssue",
+        "updateProject",
+        "deleteProject",
+        "deleteIssue",
+    ],
 } satisfies FoundryOntologyPullConfig;

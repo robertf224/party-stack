@@ -7,6 +7,7 @@ import type { RuntimeAdapterProvider } from "@party-stack/runtime";
 import type { OntologyIR } from "../ir/index.js";
 import type { CreateLiveOntologyOpts, LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 import type { OntologyBackendAdapterProvider } from "../live/OntologyBackendAdapter.js";
+import type { MetaOntology } from "../meta/generated/types.js";
 import type { Collection } from "@tanstack/db";
 
 export interface ConfigureOntologyOptions {
@@ -25,7 +26,8 @@ export interface OntologyConfiguration {
 
 export interface OntologyRoute {
     matches(ontologyId: string): boolean;
-    configure(options: ConfigureOntologyOptions): OntologyConfiguration | Promise<OntologyConfiguration>;
+    configure?(options: ConfigureOntologyOptions): OntologyConfiguration | Promise<OntologyConfiguration>;
+    configureMeta?(options: ConfigureOntologyOptions): OntologyConfiguration | Promise<OntologyConfiguration>;
 }
 
 export interface CreateOntologyBackendInstallationOptions<AuthenticationClient extends object = object> {
@@ -44,10 +46,7 @@ export interface CreateOntologyBackendInstallationOptions<AuthenticationClient e
 export interface OntologyBackendInstallation<AuthenticationClient extends object = object> {
     readonly installationId: string;
     readonly authentication: AuthenticationClient;
-    readonly connections: Collection<
-        Connection,
-        string
-    >;
+    readonly connections: Collection<Connection, string>;
 
     /**
      * Opens or returns the cached LiveOntology for one user and ontology ID.
@@ -57,15 +56,14 @@ export interface OntologyBackendInstallation<AuthenticationClient extends object
         userId: string;
         ontologyId: string;
     }): Promise<LiveOntology<Ontology>>;
+    openMetaOntology(options: { userId: string; ontologyId: string }): Promise<LiveOntology<MetaOntology>>;
+    closeMetaOntology(options: { userId: string; ontologyId: string }): Promise<void>;
     /**
      * Releases one cached LiveOntology and its process-local resources without
      * disconnecting the user's backend session or deleting durable local data
      * and pending writes.
      */
-    closeOntology(options: {
-        userId: string;
-        ontologyId: string;
-    }): Promise<void>;
+    closeOntology(options: { userId: string; ontologyId: string }): Promise<void>;
     /**
      * Logs the user out of this backend installation.
      *

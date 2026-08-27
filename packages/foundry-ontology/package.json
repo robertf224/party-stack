@@ -29,7 +29,6 @@
         "test": "vitest run --pass-with-no-tests"
     },
     "dependencies": {
-        "@bobbyfidz/local-oauth-flow": "^0.1.0",
         "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/urls": "^0.2.1",
         "@osdk/foundry.admin": "^2.71.0",
