@@ -20,13 +20,13 @@ describe("createFoundryOntologyRoute", () => {
         expect(route.configureMeta !== undefined).toBe(true);
     });
 
-    it("creates both application and metadata configurations with IR", () => {
+    it("defers IR metadata projection to the installation", () => {
         const route = createFoundryOntologyRoute({
             ontologyId: "ri.ontology.main",
             ir,
         })("https://foundry.example");
 
         expect(route.configure !== undefined).toBe(true);
-        expect(route.configureMeta !== undefined).toBe(true);
+        expect(route.configureMeta === undefined).toBe(true);
     });
 });

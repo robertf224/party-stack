@@ -1,6 +1,7 @@
 import { createDefaultRuntime, defineRuntime } from "@party-stack/runtime";
 import { describe, expect, it, vi } from "vitest";
 import type { BackendConnectionAdapter, ConnectionEgressHandlers } from "@party-stack/connections";
+import { o } from "../ir/generated/builders.js";
 import { createOntologyBackendInstallation } from "./createOntologyBackendInstallation.js";
 import type { OntologyIR } from "../ir/index.js";
 
@@ -197,6 +198,46 @@ describe("createOntologyBackendInstallation", () => {
         expect(configureMeta).toHaveBeenCalledTimes(2);
         await installation.disconnect(connection.userId);
         expect(cleanupMeta).toHaveBeenCalledTimes(2);
+        await installation.cleanup();
+    });
+
+    it("projects route IR into metadata when configureMeta is absent", async () => {
+        const adapter = createTestConnectionAdapter();
+        const sourceIR: OntologyIR = {
+            ...ir,
+            types: [
+                {
+                    name: "Priority",
+                    type: o.string({}),
+                },
+            ],
+        };
+        const installation = await createOntologyBackendInstallation({
+            installationId: "ir-meta-route",
+            connections: () => adapter,
+            runtime: createDefaultRuntime,
+            routes: [
+                {
+                    matches: (ontologyId) => ontologyId === "ontology",
+                    configure: () => ({
+                        ir: sourceIR,
+                        backend: createTestBackend,
+                    }),
+                },
+            ],
+        });
+        const connection = await installation.authentication.signIn();
+
+        const meta = await installation.openMetaOntology({
+            userId: connection.userId,
+            ontologyId: "ontology",
+        });
+        await meta.objects.ValueType.preload();
+
+        expect(meta.objects.ValueType.get("Priority")).toMatchObject({
+            name: "Priority",
+            type: o.string({}),
+        });
         await installation.cleanup();
     });
 

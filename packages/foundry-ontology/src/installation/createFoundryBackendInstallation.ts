@@ -71,7 +71,6 @@ export function createFoundryOntologyRoute(options: {
     return (baseUrl) => {
         const route: OntologyRoute = {
             matches: (ontologyId) => ontologyId === options.ontologyId,
-            configureMeta: (configureOptions) => configureFoundryMeta(baseUrl, configureOptions),
         };
         const ir = options.ir;
         if (ir) {
@@ -90,6 +89,8 @@ export function createFoundryOntologyRoute(options: {
                     writes: options.writes,
                 };
             };
+        } else {
+            route.configureMeta = (configureOptions) => configureFoundryMeta(baseUrl, configureOptions);
         }
         return route;
     };

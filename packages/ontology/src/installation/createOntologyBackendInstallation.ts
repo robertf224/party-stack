@@ -2,6 +2,7 @@ import { createConnectionManager, createConnectionMonitor } from "@party-stack/c
 import { createLocalCollection } from "@party-stack/runtime";
 import type { Connection } from "@party-stack/connections";
 import { createLiveOntology } from "../live/LiveOntology.js";
+import { createMetaOntologyConfiguration } from "./createMetaOntologyConfiguration.js";
 import type {
     CreateOntologyBackendInstallationOptions,
     OntologyBackendInstallation,
@@ -195,10 +196,16 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
             };
             let configured;
             if (meta) {
-                if (!route.configureMeta) {
+                if (route.configureMeta) {
+                    configured = await route.configureMeta(configureOptions);
+                } else if (route.configure) {
+                    const application = await route.configure(configureOptions);
+                    configured = createMetaOntologyConfiguration({
+                        ir: application.ir,
+                    });
+                } else {
                     throw new Error(`Ontology route for "${ontologyId}" does not support metadata.`);
                 }
-                configured = await route.configureMeta(configureOptions);
             } else {
                 if (!route.configure) {
                     throw new Error(
