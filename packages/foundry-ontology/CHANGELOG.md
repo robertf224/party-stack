@@ -1,5 +1,22 @@
 # @party-stack/foundry-ontology
 
+## 0.10.0
+
+### Minor Changes
+
+- 33f6858: auth + connections
+
+### Patch Changes
+
+- Updated dependencies [33f6858]
+    - @party-stack/foundry-object-set-watcher@0.4.0
+    - @party-stack/foundry-client@0.3.0
+    - @party-stack/connections@0.2.0
+    - @party-stack/ontology@0.11.0
+    - @party-stack/runtime@0.3.0
+    - @party-stack/errors@0.2.0
+    - @party-stack/oauth@0.2.0
+
 ## 0.9.0
 
 ### Minor Changes

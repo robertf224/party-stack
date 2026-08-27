@@ -1,5 +1,16 @@
 # @party-stack/sqlite-ontology
 
+## 0.4.0
+
+### Minor Changes
+
+- 33f6858: auth + connections
+
+### Patch Changes
+
+- Updated dependencies [33f6858]
+    - @party-stack/ontology@0.11.0
+
 ## 0.3.1
 
 ### Patch Changes

@@ -1,5 +1,16 @@
 # @party-stack/blobs
 
+## 0.5.0
+
+### Minor Changes
+
+- 33f6858: auth + connections
+
+### Patch Changes
+
+- Updated dependencies [33f6858]
+    - @party-stack/runtime@0.3.0
+
 ## 0.4.1
 
 ### Patch Changes
