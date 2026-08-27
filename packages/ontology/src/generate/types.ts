@@ -217,6 +217,10 @@ function addOntologyAggregateType(
 ): void {
     const properties = [
         {
+            name: "context",
+            type: `${outputTypeName}Context`,
+        },
+        {
             name: "objectTypes",
             type:
                 ir.objectTypes.length === 0
@@ -278,6 +282,25 @@ function addOntologyAggregateType(
         name: outputTypeName,
         isExported: true,
         type: Writers.objectType({ properties }),
+    });
+}
+
+function addOntologyContextType(
+    sourceFile: import("ts-morph").SourceFile,
+    ir: OntologyIR,
+    outputTypeName: string
+): void {
+    const objectTypes = new Map(
+        ir.objectTypes.map((objectType) => [objectType.name, objectType])
+    );
+    sourceFile.addTypeAlias({
+        name: `${outputTypeName}Context`,
+        isExported: true,
+        type: ir.contextType
+            ? `${generateForTypeDef(ir.contextType, {
+                  objectTypes,
+              })} & Record<string, unknown>`
+            : "Record<string, unknown>",
     });
 }
 
@@ -345,6 +368,7 @@ export function generateTypes(ir: OntologyIR, opts: GenerateTypesOpts = {}): str
     });
     const project = new Project({ useInMemoryFileSystem: true });
     const aggregateFile = project.createSourceFile("ontology-aggregate.ts", "");
+    addOntologyContextType(aggregateFile, ir, outputTypeName);
     addActionParameterTypes(aggregateFile, ir);
     addQueryParameterTypes(aggregateFile, ir);
     addOntologyAggregateType(aggregateFile, ir, outputTypeName);

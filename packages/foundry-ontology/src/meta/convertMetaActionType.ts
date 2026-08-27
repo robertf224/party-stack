@@ -19,7 +19,7 @@ import type {
     StructFieldArgument,
 } from "@osdk/foundry.ontologies";
 
-const FOUNDRY_CURRENT_USER_CONTEXT_PATH = ["userId"];
+const FOUNDRY_CURRENT_USER_CONTEXT_PATH = ["user"];
 const FOUNDRY_UUID_PARAMETER_PREFIX = "__uuid_";
 const FOUNDRY_NOW_PARAMETER_NAME = "__now";
 
@@ -96,6 +96,10 @@ function convertActionParameterType(
     const baseType: TypeDef = (() => {
         switch (type.type) {
             case "string":
+                // TODO: Convert Foundry "user input" parameters to a principal
+                // reference once Ontologies V2 exposes that setting in action
+                // metadata. It currently returns an unconstrained string.
+                // https://valinor-enterprises.slack.com/archives/C08549X3VDM/p1787718253341589
                 return stringType(convertActionParameterStringConstraint(validation));
             case "boolean":
                 return booleanType();

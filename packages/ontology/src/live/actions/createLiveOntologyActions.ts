@@ -1,5 +1,6 @@
 import { createTransaction, type Collection, type Transaction } from "@tanstack/db";
 import type { BlobManager } from "@party-stack/blobs";
+import type { ConnectionMonitor } from "@party-stack/connections";
 import type { RuntimeAdapter } from "@party-stack/runtime";
 import { runOptimisticAction } from "../mutators/runOptimisticAction.js";
 import { createOntologyOutbox, type OutboxProjection } from "../outbox/createOntologyOutbox.js";
@@ -26,6 +27,7 @@ export function createLiveOntologyActions(options: {
     objects: Record<string, OntologyCollection<OntologyObject>>;
     blobManager: BlobManager;
     writes?: LiveOntologyWrites;
+    connection?: ConnectionMonitor;
 }): LiveOntologyActionsSubsystem {
     const defaultMode = options.writes?.defaultMode ?? "direct";
     const defaultVisibility = options.writes?.defaultVisibility ?? "confirmed";
@@ -117,6 +119,7 @@ export function createLiveOntologyActions(options: {
         project,
         failureStrategy: options.writes?.outbox?.failureStrategy ?? "discard-all",
         maxRetries: options.writes?.outbox?.maxRetries,
+        connection: options.connection,
     });
 
     const executeDirect = async (

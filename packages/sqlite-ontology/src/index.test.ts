@@ -1,5 +1,11 @@
 import { createRequire } from "node:module";
-import { createLiveOntology, o, type OntologyIR } from "@party-stack/ontology";
+import {
+    createLiveOntology,
+    o,
+    type OntologyIR,
+    type OntologyMutatorRegistry,
+    type OntologyQueryFunctionRegistry,
+} from "@party-stack/ontology";
 import { eq, queryOnce } from "@tanstack/db";
 import { afterEach, describe, expect, it } from "vitest";
 import type { attachment as OntologyAttachment } from "@party-stack/ontology/values";
@@ -221,8 +227,42 @@ const ir: OntologyIR = {
                 }),
             ],
         },
+        {
+            name: "renameNote",
+            displayName: "Rename note",
+            parameters: [
+                {
+                    name: "note",
+                    displayName: "Note",
+                    type: o.objectReference({
+                        objectType: "Note",
+                    }),
+                },
+                {
+                    name: "title",
+                    displayName: "Title",
+                    type: o.string({}),
+                },
+            ],
+            logic: [],
+        },
     ],
-    queryFunctionTypes: [],
+    queryFunctionTypes: [
+        {
+            name: "noteTitle",
+            displayName: "Note title",
+            parameters: [
+                {
+                    name: "note",
+                    displayName: "Note",
+                    type: o.objectReference({
+                        objectType: "Note",
+                    }),
+                },
+            ],
+            returnType: o.string({}),
+        },
+    ],
 };
 
 describe("SQLite LiveOntology MVP acceptance", () => {
@@ -353,6 +393,117 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         expect(note?.tags).toEqual(["reload"]);
         expect(note?.meta).toEqual({ priority: 1, source: "persist" });
         expect(note?.updatedAt).toHaveProperty("epochMilliseconds");
+    });
+
+    it("executes shared mutators and query function handlers authoritatively", async () => {
+        const database = createDatabase();
+        const mutators = {
+            renameNote: async ({
+                tx,
+                args,
+            }) => {
+                await tx.mutate.Note!.update(
+                    args.note as string,
+                    {
+                        title:
+                            args.title,
+                    }
+                );
+            },
+        } satisfies OntologyMutatorRegistry;
+        const queryFunctions = {
+            noteTitle: async ({
+                tx,
+                args,
+            }) => {
+                const note = await tx.query<{
+                    title: unknown;
+                } | undefined>(
+                    (query, objects) =>
+                    query
+                        .from({
+                            note: objects.Note!,
+                        })
+                        .where(({ note }) =>
+                            eq(
+                                note.id,
+                                args.note
+                            )
+                        )
+                        .select(
+                            ({ note }) => ({
+                                title:
+                                    note.title,
+                            })
+                        )
+                        .findOne()
+                );
+                return note?.title;
+            },
+        } satisfies OntologyQueryFunctionRegistry;
+        const ontology =
+            await createLiveOntology({
+                ir,
+                backend: () =>
+                    createSQLiteOntologyBackendAdapter(
+                        {
+                            ir,
+                            database,
+                            name: "handlers",
+                            mutators,
+                            queryFunctions,
+                        }
+                    ),
+            });
+
+        await ontology.actions.createNote!({
+            id: "note-1",
+            title: "Before",
+        });
+        await ontology.actions.renameNote!({
+            note: "note-1",
+            title: "After",
+        });
+
+        await expect(
+            ontology.queryFunctions.noteTitle!(
+                {
+                    note: "note-1",
+                }
+            )
+        ).resolves.toBe("After");
+        expect(
+            ontology.objects.Note!.get(
+                "note-1"
+            )?.title
+        ).toBe("After");
+        await ontology.cleanup();
+    });
+
+    it("rejects non-declarative actions without a mutator", async () => {
+        const database = createDatabase();
+        const ontology =
+            await createLiveOntology({
+                ir,
+                backend: () =>
+                    createSQLiteOntologyBackendAdapter(
+                        {
+                            ir,
+                            database,
+                            name: "missing-mutator",
+                        }
+                    ),
+            });
+
+        await expect(
+            ontology.actions.renameNote!({
+                note: "note-1",
+                title: "After",
+            })
+        ).rejects.toThrow(
+            'SQLite ontology adapter cannot apply non-declarative action type "renameNote" without a registered mutator.'
+        );
+        await ontology.cleanup();
     });
 
     it("stores action attachment uploads in SQLite", async () => {

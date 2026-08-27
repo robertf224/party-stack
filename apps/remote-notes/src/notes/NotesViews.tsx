@@ -84,9 +84,8 @@ function createClientOntology(userEmail: string) {
             defaultVisibility: "optimistic",
         },
         context: {
-            user: { email: userEmail },
+            user: userEmail,
         },
-        getUserId: (context) => context.user.email,
     });
 }
 

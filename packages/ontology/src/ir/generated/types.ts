@@ -160,6 +160,8 @@ export type ImageMediaType =
     | "image/jp2"
     | "image/jpeg"
     | "image/png"
+    | "image/gif"
+    | "image/svg+xml"
     | "image/webp";
 
 /** Constrains intrinsic pixel dimensions. */
@@ -380,6 +382,28 @@ export type QueryFunctionTypeDef = {
     deprecated?: Deprecation;
 };
 
+/** Moves a property from one path to another. */
+export type MoveLensOp = {
+    from: Array<string>;
+    to: Array<string>;
+};
+
+/** Retains only the selected top-level properties. */
+export type SelectLensOp = {
+    properties: Array<string>;
+};
+
+/** One schema and value transformation operation. */
+export type LensOp = v.Union<{
+    move: MoveLensOp;
+    select: SelectLensOp;
+}>;
+
+/** An ordered sequence of source-to-target transformation operations. */
+export type Lens = {
+    operations: Array<LensOp>;
+};
+
 /** The root ontology definition containing all type definitions. */
 export type OntologyIR = {
     /** Named, reusable value types. */
@@ -392,4 +416,6 @@ export type OntologyIR = {
     actionTypes: Array<ActionTypeDef>;
     /** Query function type definitions. */
     queryFunctionTypes: Array<QueryFunctionTypeDef>;
+    /** Optional typed execution context available to ontology expressions. */
+    contextType?: TypeDef;
 };

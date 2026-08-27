@@ -61,4 +61,33 @@ describe("convertFoundryMetaObjectType", () => {
             }),
         ]);
     });
+
+    it("preserves the underlying type of Foundry-formatted identifiers", () => {
+        const metadata = {
+            objectType: objectType(),
+            linkTypes: [],
+            implementsInterfaces: [],
+            implementsInterfaces2: {},
+            sharedPropertyTypeMapping: {},
+        } as ObjectTypeFullMetadata;
+        (
+            metadata.objectType.properties.id as unknown as Record<
+                string,
+                unknown
+            >
+        ).valueFormatting = {
+            type: "knownType",
+            knownType: "USER_OR_GROUP_ID",
+        };
+
+        const result =
+            convertFoundryMetaObjectType(
+                metadata
+            );
+
+        expect(result.properties[0]?.type).toEqual({
+            kind: "string",
+            value: {},
+        });
+    });
 });

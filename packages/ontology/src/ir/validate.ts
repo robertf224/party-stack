@@ -1,3 +1,4 @@
+import { unwrapType } from "../utils/types.js";
 import { ImageMediaTypeOptions } from "./generated/constants.js";
 import type {
     ActionParameterDef,
@@ -308,7 +309,8 @@ function validateExpression(
     parameters: ReadonlyMap<string, ActionParameterDef>,
     path: ValidationPathElement[],
     valueTypes: ReadonlyMap<string, TypeDef>,
-    objectTypes: ReadonlyMap<string, ObjectTypeDef>
+    objectTypes: ReadonlyMap<string, ObjectTypeDef>,
+    contextType: TypeDef | undefined
 ): ValidationError[] {
     switch (expression.kind) {
         case "valueReference": {
@@ -337,9 +339,25 @@ function validateExpression(
                   ];
         }
         case "contextReference":
-            return expression.value.path.length > 0
+            if (expression.value.path.length === 0) {
+                return [{ message: "Context references must include a path.", path: [...path, "path"] }];
+            }
+            if (!contextType) {
+                return [];
+            }
+            return resolveParameterReferenceType(
+                contextType,
+                expression.value.path,
+                valueTypes,
+                objectTypes
+            )
                 ? []
-                : [{ message: "Context references must include a path.", path: [...path, "path"] }];
+                : [
+                      {
+                          message: `Invalid context reference path "${expression.value.path.join(".")}".`,
+                          path: [...path, "path"],
+                      },
+                  ];
         case "functionCall":
         case "literal":
             return [];
@@ -408,7 +426,8 @@ function validateActionPropertyAssignment(
     parameters: ReadonlyMap<string, ActionParameterDef>,
     path: ValidationPathElement[],
     valueTypes: ReadonlyMap<string, TypeDef>,
-    objectTypes: ReadonlyMap<string, ObjectTypeDef>
+    objectTypes: ReadonlyMap<string, ObjectTypeDef>,
+    contextType: TypeDef | undefined
 ): ValidationError[] {
     if (assignment.property.length === 0) {
         return [{ message: "Action property assignments must specify a property.", path: [...path, "property"] }];
@@ -431,7 +450,8 @@ function validateActionPropertyAssignment(
         parameters,
         [...path, "value"],
         valueTypes,
-        objectTypes
+        objectTypes,
+        contextType
     );
 
     return resolved
@@ -449,7 +469,8 @@ function validateAction(
     action: ActionTypeDef,
     path: ValidationPathElement[],
     valueTypes: ReadonlyMap<string, TypeDef>,
-    objectTypes: ReadonlyMap<string, ObjectTypeDef>
+    objectTypes: ReadonlyMap<string, ObjectTypeDef>,
+    contextType: TypeDef | undefined
 ): ValidationError[] {
     const errors: ValidationError[] = [];
     const parameters = new Map(action.parameters.map((parameter) => [parameter.name, parameter]));
@@ -483,7 +504,8 @@ function validateAction(
                     parameters,
                     [...parameterPath, "defaultValue"],
                     valueTypes,
-                    objectTypes
+                    objectTypes,
+                    contextType
                 )
             );
         }
@@ -511,7 +533,8 @@ function validateAction(
                             parameters,
                             [...stepPath, "value", "values", valueIndex],
                             valueTypes,
-                            objectTypes
+                            objectTypes,
+                            contextType
                         )
                     );
                 }
@@ -537,7 +560,8 @@ function validateAction(
                             parameters,
                             [...stepPath, "value", "values", valueIndex],
                             valueTypes,
-                            objectTypes
+                            objectTypes,
+                            contextType
                         )
                     );
                 }
@@ -619,6 +643,33 @@ export function validate(ontology: OntologyIR): ValidationResult {
 
     const valueTypes = new Map(ontology.types.map((type) => [type.name, type.type]));
     const objectTypes = new Map(ontology.objectTypes.map((objectType) => [objectType.name, objectType]));
+
+    if (ontology.contextType) {
+        errors.push(
+            ...validateTypeDef(
+                ontology.contextType,
+                ["contextType"],
+                valueTypeNames,
+                objectTypeNames
+            )
+        );
+        const resolvedContextType = resolveType(ontology.contextType, valueTypes);
+        if (resolvedContextType?.kind === "struct") {
+            const userField = resolvedContextType.value.fields.find((field) => field.name === "user");
+            const unwrappedUserType = userField
+                ? unwrapType(userField.type).type
+                : undefined;
+            const resolvedUserType = unwrappedUserType
+                ? resolveType(unwrappedUserType, valueTypes)
+                : undefined;
+            if (userField && resolvedUserType?.kind !== "objectReference") {
+                errors.push({
+                    message: 'Reserved context field "user" must be an object reference.',
+                    path: ["contextType", "fields", resolvedContextType.value.fields.indexOf(userField), "type"],
+                });
+            }
+        }
+    }
 
     // Validate value type definitions once both namespaces are known.
     for (let i = 0; i < ontology.types.length; i++) {
@@ -721,7 +772,15 @@ export function validate(ontology: OntologyIR): ValidationResult {
         }
         actionNames.add(action.name);
 
-        errors.push(...validateAction(action, actionPath, valueTypes, objectTypes));
+        errors.push(
+            ...validateAction(
+                action,
+                actionPath,
+                valueTypes,
+                objectTypes,
+                ontology.contextType
+            )
+        );
     }
 
     const queryFunctionTypeNames = new Set<string>();

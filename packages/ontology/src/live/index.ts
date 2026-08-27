@@ -5,5 +5,8 @@ export type {
     PartialAttachmentMetadata,
 } from "./attachments/types.js";
 export * from "./mutators/types.js";
+export {
+    createReadTx,
+} from "./mutators/createMutatorTx.js";
 export * from "./mutators/runOptimisticAction.js";
 export * from "./outbox/types.js";

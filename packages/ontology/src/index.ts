@@ -1,7 +1,9 @@
 export * from "./ir/index.js";
 export * from "./infer.js";
+export * from "./lenses.js";
 export * from "./live/index.js";
-export * from "./OntologyConfig.js";
+export * from "./installation/index.js";
+export * from "./OntologyPullConfig.js";
 export type { OntologyObject } from "./live/objects/OntologyObject.js";
 export * from "./meta/pull.js";
 export type {

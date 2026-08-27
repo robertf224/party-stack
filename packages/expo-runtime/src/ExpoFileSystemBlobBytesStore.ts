@@ -39,6 +39,13 @@ export class ExpoFileSystemBlobBytesStore implements BlobBytesStore {
         });
     }
 
+    clear(): Promise<void> {
+        return Promise.resolve().then(() => {
+            const directory = new Directory(Paths.document, this.#directoryName);
+            if (directory.exists) directory.delete();
+        });
+    }
+
     #directory(): Directory {
         const directory = new Directory(Paths.document, this.#directoryName);
         directory.create({ idempotent: true, intermediates: true });

@@ -154,4 +154,48 @@ describe("convertFoundryMetaActionType parameter validation", () => {
             value: { name: "PostalCode" },
         });
     });
+
+    it("maps Foundry current user arguments to the canonical user context", () => {
+        const metadata = actionType({});
+        metadata.fullLogicRules = [
+            {
+                type: "createObject",
+                objectTypeApiName: "Task",
+                propertyArguments: {
+                    createdBy: {
+                        type: "currentUser",
+                    },
+                },
+                structPropertyArguments: {},
+            } as never,
+        ];
+
+        expect(
+            convertFoundryMetaActionType(
+                metadata
+            ).logic
+        ).toEqual([
+            {
+                kind: "createObject",
+                value: {
+                    objectType: "Task",
+                    values: [
+                        {
+                            property: [
+                                "createdBy",
+                            ],
+                            value: {
+                                kind: "contextReference",
+                                value: {
+                                    path: [
+                                        "user",
+                                    ],
+                                },
+                            },
+                        },
+                    ],
+                },
+            },
+        ]);
+    });
 });

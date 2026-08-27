@@ -1,6 +1,15 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { IssueTracker } from "../app/IssueTracker";
+import {
+    createFileRoute,
+    lazyRouteComponent,
+} from "@tanstack/react-router";
 
 export const Route = createFileRoute("/")({
-    component: IssueTracker,
+    ssr: false,
+    component: lazyRouteComponent(
+        () =>
+            import(
+                "../app/IssueTracker"
+            ),
+        "IssueTracker"
+    ),
 });

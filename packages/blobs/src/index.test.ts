@@ -7,15 +7,9 @@ import {
     type RuntimeAdapter,
 } from "@party-stack/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-    BLOB_COORDINATION_SERVICE,
-    type BlobCoordinationService,
-} from "./store/createBlobStore.js";
+import { BLOB_COORDINATION_SERVICE, type BlobCoordinationService } from "./store/createBlobStore.js";
 import { createBlobManager } from "./index.js";
-import type {
-    BlobManagerOptions,
-    BlobRemoteSource,
-} from "./types.js";
+import type { BlobManagerOptions, BlobRemoteSource } from "./types.js";
 
 const unexpectedRemote: BlobRemoteSource = {
     metadata: (id) =>
@@ -25,8 +19,7 @@ const unexpectedRemote: BlobRemoteSource = {
             type: "",
             name: "",
         }),
-    read: () =>
-        Promise.reject(new Error("unexpected remote blob read")),
+    read: () => Promise.reject(new Error("unexpected remote blob read")),
 };
 
 function pngBlob(width: number, height: number): Blob {
@@ -67,14 +60,10 @@ function setup(
     return { bytes, coordination, manager, runtime };
 }
 
-function asClient(
-    coordination: Coordination
-): Coordination {
+function asClient(coordination: Coordination): Coordination {
     return {
         role: "client",
-        service<Service extends CoordinationService>(
-            namespace: string
-        ) {
+        service<Service extends CoordinationService>(namespace: string) {
             return coordination.service<Service>(namespace);
         },
         close: () => Promise.resolve(),
@@ -97,9 +86,7 @@ describe("createBlobManager", () => {
             })
         );
 
-        expect(
-            manager.collection.get("attachment-1")
-        ).toMatchObject({
+        expect(manager.collection.get("attachment-1")).toMatchObject({
             id: "attachment-1",
             name: "hello.txt",
             size: 5,
@@ -107,17 +94,13 @@ describe("createBlobManager", () => {
             createdAt: 100,
         });
         expect("stage" in manager.collection.utils).toBe(false);
-        await expect(
-            manager.metadata("attachment-1")
-        ).resolves.toEqual({
+        await expect(manager.metadata("attachment-1")).resolves.toEqual({
             id: "attachment-1",
             name: "hello.txt",
             size: 5,
             type: "text/plain",
         });
-        await expect(
-            bytes.read("attachment-1")
-        ).resolves.toBeInstanceOf(Blob);
+        await expect(bytes.read("attachment-1")).resolves.toBeInstanceOf(Blob);
         await manager.cleanup();
     });
 
@@ -129,10 +112,7 @@ describe("createBlobManager", () => {
                 read: unexpectedRemote.read,
             },
         });
-        await manager.stage(
-            "image-1",
-            pngBlob(320, 200)
-        );
+        await manager.stage("image-1", pngBlob(320, 200));
 
         await expect(
             manager.metadata("image-1", {
@@ -153,12 +133,8 @@ describe("createBlobManager", () => {
         };
         const { manager } = setup({ bytes });
 
-        await expect(
-            manager.stage("attachment-1", new Blob(["hello"]))
-        ).rejects.toThrow("disk full");
-        await expect(
-            manager.metadata("attachment-1")
-        ).resolves.toMatchObject({
+        await expect(manager.stage("attachment-1", new Blob(["hello"]))).rejects.toThrow("disk full");
+        await expect(manager.metadata("attachment-1")).resolves.toMatchObject({
             id: "attachment-1",
             size: 5,
         });
@@ -267,10 +243,7 @@ describe("createBlobManager", () => {
             })
             .catch((caught: unknown) => caught);
         expect(error).toBeInstanceOf(AggregateError);
-        expect((error as AggregateError).errors).toEqual([
-            metadataError,
-            expect.any(Error),
-        ]);
+        expect((error as AggregateError).errors).toEqual([metadataError, expect.any(Error)]);
         await manager.cleanup();
     });
 
@@ -295,12 +268,8 @@ describe("createBlobManager", () => {
             },
         });
 
-        await expect(manager.read("remote-id")).resolves.toBe(
-            remoteBlob
-        );
-        await expect(
-            manager.read("remote-id").then((blob) => blob.text())
-        ).resolves.toBe("remote");
+        await expect(manager.read("remote-id")).resolves.toBe(remoteBlob);
+        await expect(manager.read("remote-id").then((blob) => blob.text())).resolves.toBe("remote");
         expect(reads).toBe(1);
         await manager.cleanup();
     });
@@ -324,22 +293,15 @@ describe("createBlobManager", () => {
 
     it("resolves remote ids to locally staged bytes", async () => {
         const { manager } = setup();
-        await manager.stage(
-            "local-id",
-            new Blob(["hello"], { type: "text/plain" })
-        );
+        await manager.stage("local-id", new Blob(["hello"], { type: "text/plain" }));
         await manager.bindRemoteId("local-id", "remote-id");
 
-        await expect(
-            manager.read("remote-id").then((blob) => blob.text())
-        ).resolves.toBe("hello");
+        await expect(manager.read("remote-id").then((blob) => blob.text())).resolves.toBe("hello");
         await manager.cleanup();
     });
 
     it("does not remote-fetch missing local-only staged bytes", async () => {
-        const remoteBlob = vi.fn(() =>
-            Promise.resolve(new Blob(["unexpected"]))
-        );
+        const remoteBlob = vi.fn(() => Promise.resolve(new Blob(["unexpected"])));
         const { bytes, manager } = setup({
             remote: {
                 metadata: unexpectedRemote.metadata,
@@ -349,9 +311,7 @@ describe("createBlobManager", () => {
         await manager.stage("local-id", new Blob(["hello"]));
         await bytes.delete("local-id");
 
-        await expect(manager.read("local-id")).rejects.toThrow(
-            'Blob bytes are unavailable for "local-id".'
-        );
+        await expect(manager.read("local-id")).rejects.toThrow('Blob bytes are unavailable for "local-id".');
         expect(remoteBlob).not.toHaveBeenCalled();
         await manager.cleanup();
     });
@@ -381,15 +341,11 @@ describe("createBlobManager", () => {
 
         await manager.read("remote-id");
         await vi.waitFor(async () => {
-            await expect(
-                bytes.read("remote-id")
-            ).rejects.toThrow("not found");
+            await expect(bytes.read("remote-id")).rejects.toThrow("not found");
         });
         await manager.read("remote-id");
         await vi.waitFor(async () => {
-            await expect(
-                bytes.read("remote-id")
-            ).rejects.toThrow("not found");
+            await expect(bytes.read("remote-id")).rejects.toThrow("not found");
         });
         expect(reads).toBe(2);
         await manager.cleanup();
@@ -417,17 +373,13 @@ describe("createBlobManager", () => {
                 })
             )
         ).resolves.toBeUndefined();
-        await expect(
-            host.metadata("local-id")
-        ).resolves.toMatchObject({
+        await expect(host.metadata("local-id")).resolves.toMatchObject({
             id: "local-id",
             name: "hello.txt",
             size: 5,
         });
         await client.bindRemoteId("local-id", "remote-id");
-        await expect(
-            host.read("remote-id").then((blob) => blob.text())
-        ).resolves.toBe("hello");
+        await expect(host.read("remote-id").then((blob) => blob.text())).resolves.toBe("hello");
 
         await client.cleanup();
         await host.cleanup();
@@ -467,9 +419,7 @@ describe("createBlobManager", () => {
 
         await client.read("remote-id");
         await vi.waitFor(async () => {
-            await expect(
-                bytes.read("remote-id")
-            ).rejects.toThrow("not found");
+            await expect(bytes.read("remote-id")).rejects.toThrow("not found");
         });
 
         await client.cleanup();
@@ -491,8 +441,7 @@ describe("createBlobManager", () => {
                         type: "text/plain",
                         name: "remote.txt",
                     }),
-                read: () =>
-                    Promise.resolve(new Blob(["remote"])),
+                read: () => Promise.resolve(new Blob(["remote"])),
             },
         });
 
@@ -500,9 +449,7 @@ describe("createBlobManager", () => {
         await expect(manager.cleanup()).resolves.toBeUndefined();
         await expect(
             coordination
-                .service<BlobCoordinationService>(
-                    BLOB_COORDINATION_SERVICE
-                )
+                .service<BlobCoordinationService>(BLOB_COORDINATION_SERVICE)
                 .methods.find({ id: "remote-id" })
         ).rejects.toMatchObject({
             code: "SERVICE_UNAVAILABLE",

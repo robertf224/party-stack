@@ -1,6 +1,7 @@
-import { foundryOntologyConfigAdapter } from "@party-stack/foundry-ontology/config";
+import { foundryOntologyPullSource } from "@party-stack/foundry-ontology/config";
 import { o } from "@party-stack/ontology";
-import type { FoundryOntologyConfig } from "@party-stack/foundry-ontology/config";
+import type { FoundryOntologyPullConfig } from "@party-stack/foundry-ontology/config";
+import { foundryUserToUser } from "./user";
 
 const imageConstraint = {
     content: o.AttachmentContentConstraint.image({
@@ -9,7 +10,7 @@ const imageConstraint = {
 };
 
 export default {
-    adapter: foundryOntologyConfigAdapter,
+    source: foundryOntologyPullSource,
     objectTypeNames: ["Issue", "Project"],
     actionTypeNames: [
         "createIssue",
@@ -19,7 +20,12 @@ export default {
         "deleteProject",
         "deleteIssue",
     ],
-    opts: {
+    options: {
+        users: {
+            objectType: "User",
+            lens: foundryUserToUser,
+        },
+        // TODO: scrap this
         attachmentConstraints: [
             {
                 target: {
@@ -47,4 +53,4 @@ export default {
             },
         ],
     },
-} satisfies FoundryOntologyConfig;
+} satisfies FoundryOntologyPullConfig;

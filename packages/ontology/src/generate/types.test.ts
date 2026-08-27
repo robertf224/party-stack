@@ -69,7 +69,7 @@ describe("generateTypes", () => {
             'export type Image = v.attachment<"image/png" | "image/jpeg">;'
         );
         expect(generateTypeDefinitions(ontology)).toContain(
-            'export type AnyImage = v.attachment<"image/bmp" | "image/tiff" | "image/nitf" | "image/jp2" | "image/jpeg" | "image/png" | "image/webp">;'
+            'export type AnyImage = v.attachment<"image/bmp" | "image/tiff" | "image/nitf" | "image/jp2" | "image/jpeg" | "image/png" | "image/gif" | "image/svg+xml" | "image/webp">;'
         );
     });
 

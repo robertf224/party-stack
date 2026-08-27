@@ -1,8 +1,8 @@
 import { o, type OntologyIR } from "@party-stack/ontology";
 import { describe, expect, it } from "vitest";
-import { foundryOntologyConfigAdapter } from "./index.js";
+import { foundryOntologyPullSource } from "./index.js";
 
-describe("foundryOntologyConfigAdapter", () => {
+describe("foundryOntologyPullSource", () => {
     it("applies targeted attachment constraints after pull", async () => {
         const ir: OntologyIR = {
             types: [],
@@ -51,7 +51,7 @@ describe("foundryOntologyConfigAdapter", () => {
             }),
         };
 
-        const transformed = await foundryOntologyConfigAdapter.transformOntology!(ir, {
+        const transformed = await foundryOntologyPullSource.transformPulledOntology!(ir, {
             attachmentConstraints: [
                 {
                     target: {
@@ -86,5 +86,89 @@ describe("foundryOntologyConfigAdapter", () => {
                 }),
             })
         );
+    });
+
+    it("adds the configured User type and context", async () => {
+        const ir: OntologyIR = {
+            types: [],
+            objectTypes: [
+                {
+                    name: "Task",
+                    displayName: "Task",
+                    pluralDisplayName: "Tasks",
+                    primaryKey: "id",
+                    properties: [
+                        { name: "id", displayName: "ID", type: o.string({}) },
+                        {
+                            name: "createdBy",
+                            displayName: "Created by",
+                            type: o.objectReference({ objectType: "User" }),
+                        },
+                    ],
+                },
+            ],
+            linkTypes: [],
+            actionTypes: [
+                {
+                    name: "createTask",
+                    displayName: "Create task",
+                    parameters: [],
+                    logic: [
+                        o.ActionLogicStep.createObject({
+                            objectType: "Task",
+                            values: [
+                                {
+                                    property: ["createdBy"],
+                                    value: o.Expression.contextReference({
+                                        path: ["user"],
+                                    }),
+                                },
+                            ],
+                        }),
+                    ],
+                },
+            ],
+            queryFunctionTypes: [],
+        };
+
+        const transformed = await foundryOntologyPullSource.transformPulledOntology!(
+            ir,
+            {
+                users: {
+                    objectType: "User",
+                    lens: {
+                        operations: [
+                            o.LensOp.move({
+                                from: ["profilePicture"],
+                                to: ["avatar"],
+                            }),
+                            o.LensOp.select({
+                                properties: ["id", "avatar"],
+                            }),
+                        ],
+                    },
+                },
+            }
+        );
+
+        expect(transformed.objectTypes.map((type) => type.name)).toContain(
+            "User"
+        );
+        expect(transformed.contextType).toEqual(
+            o.struct({
+                fields: [
+                    {
+                        name: "user",
+                        displayName: "User",
+                        type: o.objectReference({ objectType: "User" }),
+                    },
+                ],
+            })
+        );
+        expect(
+            transformed.actionTypes[0]?.logic[0]?.kind === "createObject"
+                ? transformed.actionTypes[0].logic[0].value.values[0]?.value
+                : undefined
+        ).toEqual(o.Expression.contextReference({ path: ["user"] }));
     });
 });

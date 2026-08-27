@@ -8,9 +8,7 @@ import { notesOntology } from "../ontology/ontology";
 import type { Note, RemoteNotesOntology } from "../ontology/generated/types";
 
 interface NotesContext {
-    user: {
-        email: string;
-    };
+    user: string;
 }
 
 mkdirSync("temp", { recursive: true });
@@ -45,17 +43,15 @@ const remoteServer = createRemoteOntologyServer<NotesContext, RemoteNotesOntolog
         name: "remote-notes-sqlite",
     }),
     getContext: (request) => ({
-        user: {
-            email: getDemoEmail(request),
-        },
+        user: getDemoEmail(request),
     }),
     policy: {
         clientContext: "forward",
         baseObjectTypeQueries: {
             Note: ({ ctx, q, collection }) =>
-                q.from({ object: collection }).where(({ object }) => eq(object.ownerEmail, ctx.user.email)),
+                q.from({ object: collection }).where(({ object }) => eq(object.ownerEmail, ctx.user)),
             NoteAttachment: ({ ctx, q, collection }) =>
-                q.from({ object: collection }).where(({ object }) => eq(object.ownerEmail, ctx.user.email)),
+                q.from({ object: collection }).where(({ object }) => eq(object.ownerEmail, ctx.user)),
         },
         allowedObjectTypeProperties: {
             Note: ["id", "ownerEmail", "title", "bodyMarkdown", "createdAt", "updatedAt"],
@@ -70,7 +66,7 @@ const remoteServer = createRemoteOntologyServer<NotesContext, RemoteNotesOntolog
                 case "createNoteAttachment": {
                     const noteId = request.parameters.note;
                     return userOwnsNote({
-                        email: ctx.user.email,
+                        email: ctx.user,
                         noteId,
                         notes: objects.Note,
                     });

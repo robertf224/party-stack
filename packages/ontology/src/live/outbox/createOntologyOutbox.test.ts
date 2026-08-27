@@ -1,4 +1,10 @@
 import {
+    type BackendConnectionAdapter,
+    createConnectionManager,
+    createConnectionMonitor,
+    type ConnectionEgressHandlers,
+} from "@party-stack/connections";
+import {
     type CoordinationCallOptions,
     type CoordinationClient,
     type CoordinationHost,
@@ -6,6 +12,7 @@ import {
     type CoordinationServiceClient,
     type CoordinationServiceHandlers,
     type CoordinationServiceServer,
+    createDefaultRuntime,
     MemoryBlobBytesStore,
     type NetworkConnectivity,
     type PersistenceAdapter,
@@ -293,6 +300,90 @@ describe("createOntologyOutbox", () => {
         await expect(action.completed).resolves.toBe("done");
         expect(execute).toHaveBeenCalledOnce();
         await outbox.cleanup();
+    });
+
+    it("waits until the owning user connection is ready", async () => {
+        const handlers: ConnectionEgressHandlers = {
+            fetch: () => Promise.resolve(new Response()),
+            createWebSocket: () =>
+                Promise.reject(new Error("unexpected websocket")),
+        };
+        const createConnection = () => ({
+            userId: "user-1",
+            state: { status: "active" as const },
+        });
+        const createEstablishedConnection = () => ({
+            connection: createConnection(),
+            session: {
+                disconnect: () => Promise.resolve(),
+                egress: () => handlers,
+            },
+        });
+        const adapter: BackendConnectionAdapter<{
+            signIn(): Promise<void>;
+        }> = {
+            name: "test",
+            createAuthenticationClient: (controller) => ({
+                signIn: () =>
+                    controller.connect(
+                        createEstablishedConnection()
+                    ),
+            }),
+            restoreConnections: () =>
+                Promise.resolve([
+                    createEstablishedConnection(),
+                ]),
+        };
+        const connectionRuntime = createDefaultRuntime(
+            "installation",
+            `connection-${crypto.randomUUID()}`
+        );
+        const connections = await createConnectionManager({
+            installationId: "test",
+            runtime: connectionRuntime,
+            adapter: () => adapter,
+        });
+        const connection = connections.connections.get("user-1")!;
+        const connectionEgress =
+            connections.egress("user-1");
+        await connections.disconnect("user-1");
+        const { runtime, coordination } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+            },
+            `auth-gate-${crypto.randomUUID()}`
+        );
+        const execute = vi.fn(() => Promise.resolve("done"));
+        const outbox = createOntologyOutbox({
+            runtime,
+            execute,
+            connection: createConnectionMonitor(
+                connections,
+                connection.userId
+            ),
+        });
+        await outbox.ready;
+        const action = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: {},
+        });
+
+        await Promise.resolve();
+        expect(execute).not.toHaveBeenCalled();
+
+        await connections.authentication.signIn();
+        await expect(
+            connectionEgress!.fetch(
+                new Request("https://example.com")
+            )
+        ).resolves.toBeInstanceOf(Response);
+        await expect(action.completed).resolves.toBe("done");
+        expect(execute).toHaveBeenCalledOnce();
+
+        await outbox.cleanup();
+        await connections.cleanup();
+        await connectionRuntime.cleanup?.();
+        await coordination.close();
     });
 
     it("edits and removes queued work", async () => {

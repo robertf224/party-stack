@@ -38,11 +38,21 @@ export default defineOntology({
                     description: "Stable system-generated identifier for an issue.",
                 },
                 {
+                    name: "createdBy",
+                    displayName: "Created by",
+                    type: o.string({}),
+                },
+                {
                     name: "issueTitle",
                     displayName: "Issue Title",
                     type: o.string({}),
                     description:
                         "Short, human-readable summary used to identify the issue in lists and workflows.",
+                },
+                {
+                    name: "assignee",
+                    displayName: "Assignee",
+                    type: o.string({}),
                 },
                 {
                     name: "issueAttachments",
@@ -135,6 +145,56 @@ export default defineOntology({
             description:
                 "A collection of related issues organized around a shared objective or body of work.",
         },
+        {
+            name: "User",
+            displayName: "User",
+            pluralDisplayName: "Users",
+            primaryKey: "id",
+            properties: [
+                {
+                    name: "id",
+                    displayName: "ID",
+                    type: o.string({}),
+                },
+                {
+                    name: "givenName",
+                    displayName: "Given name",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "familyName",
+                    displayName: "Family name",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "email",
+                    displayName: "Email",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "avatar",
+                    displayName: "Avatar",
+                    type: o.optional({
+                        type: o.attachment({
+                            constraint: {
+                                content: {
+                                    kind: "image",
+                                    value: {
+                                        mediaTypes: ["image/png", "image/jpeg", "image/gif", "image/svg+xml"],
+                                    },
+                                },
+                            },
+                        }),
+                    }),
+                },
+            ],
+        },
     ],
     linkTypes: [
         {
@@ -189,6 +249,13 @@ export default defineOntology({
                     description: "Optional files that support or explain the issue.",
                 },
                 {
+                    name: "createdBy",
+                    displayName: "Created by",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
                     name: "project",
                     displayName: "Project",
                     type: o.optional({
@@ -205,6 +272,15 @@ export default defineOntology({
                         type: o.string({}),
                     }),
                     description: "Detailed context or requirements for the issue.",
+                },
+                {
+                    name: "assignee",
+                    displayName: "Assignee",
+                    type: o.optional({
+                        type: o.objectReference({
+                            objectType: "User",
+                        }),
+                    }),
                 },
                 {
                     name: "title",
@@ -287,9 +363,21 @@ export default defineOntology({
                             }),
                         },
                         {
+                            property: ["createdBy"],
+                            value: o.Expression.contextReference({
+                                path: ["user"],
+                            }),
+                        },
+                        {
                             property: ["issueTitle"],
                             value: o.Expression.valueReference({
                                 path: ["title"],
+                            }),
+                        },
+                        {
+                            property: ["assignee"],
+                            value: o.Expression.valueReference({
+                                path: ["assignee"],
                             }),
                         },
                         {
@@ -522,6 +610,15 @@ export default defineOntology({
                     description: "Optional project used to group the issue.",
                 },
                 {
+                    name: "assignee",
+                    displayName: "Assignee",
+                    type: o.optional({
+                        type: o.objectReference({
+                            objectType: "User",
+                        }),
+                    }),
+                },
+                {
                     name: "title",
                     displayName: "Issue Title",
                     type: o.string({}),
@@ -592,6 +689,12 @@ export default defineOntology({
                             property: ["issueTitle"],
                             value: o.Expression.valueReference({
                                 path: ["title"],
+                            }),
+                        },
+                        {
+                            property: ["assignee"],
+                            value: o.Expression.valueReference({
+                                path: ["assignee"],
                             }),
                         },
                         {
@@ -704,4 +807,15 @@ export default defineOntology({
         },
     ],
     queryFunctionTypes: [],
+    contextType: o.struct({
+        fields: [
+            {
+                name: "user",
+                displayName: "User",
+                type: o.objectReference({
+                    objectType: "User",
+                }),
+            },
+        ],
+    }),
 });

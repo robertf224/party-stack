@@ -63,7 +63,6 @@ export interface CreateRemoteLiveOntologyOptions<
     runtime?: CreateLiveOntologyOpts<Context>["runtime"];
     persistObjects?: CreateLiveOntologyOpts<Context>["persistObjects"];
     writes?: CreateLiveOntologyOpts<Context>["writes"];
-    getUserId?: CreateLiveOntologyOpts<Context>["getUserId"];
 }
 
 function getObjectTypePrimaryKey(ir: OntologyIR, objectType: string): string {
@@ -230,6 +229,5 @@ export async function createRemoteLiveOntology<
         persistObjects: opts.persistObjects,
         writes: opts.writes,
         context: (description.context ?? {}) as Context,
-        getUserId: opts.getUserId,
     });
 }

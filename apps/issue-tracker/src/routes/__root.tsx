@@ -6,8 +6,6 @@ import {
     Scripts,
 } from "@tanstack/react-router";
 import {
-    useEffect,
-    useState,
     type ReactNode,
 } from "react";
 import "../app/globals.css";
@@ -33,29 +31,9 @@ export const Route = createRootRoute({
 function RootComponent() {
     return (
         <RootDocument>
-            <ClientGate>
-                <Outlet />
-            </ClientGate>
+            <Outlet />
         </RootDocument>
     );
-}
-
-function ClientGate({ children }: { children: ReactNode }) {
-    const [ready, setReady] = useState(false);
-    useEffect(() => setReady(true), []);
-
-    if (!ready) {
-        return (
-            <main className="grid min-h-screen place-items-center bg-slate-50">
-                <div className="flex items-center gap-2 text-sm text-slate-500">
-                    <span className="size-3 animate-spin rounded-full border-2 border-slate-300 border-r-indigo-500" />
-                    Connecting to Foundry…
-                </div>
-            </main>
-        );
-    }
-
-    return children;
 }
 
 function RootDocument({

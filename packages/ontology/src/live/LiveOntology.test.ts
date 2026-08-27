@@ -34,8 +34,45 @@ const actionIr: OntologyIR = {
 };
 
 describe("createLiveOntology", () => {
+    it("uses immutable context.user as the runtime owner", async () => {
+        const context = { user: "user-42" };
+        const ontology = await createLiveOntology({
+            ir: { ...ir, queryFunctionTypes: [] },
+            context,
+            backend: (_providerIr, providerContext) => {
+                expect(providerContext).toBe(context);
+                return {
+                    name: "test",
+                    getCollectionOptions: () => {
+                        throw new Error("unexpected collection");
+                    },
+                    applyAction: () => Promise.reject(new Error("unexpected action")),
+                    runQueryFunction: () => Promise.reject(new Error("unexpected query")),
+                };
+            },
+            runtime: (owner) => {
+                expect(owner).toBe("user-42");
+                return {
+                    owner,
+                    namespace: "auth-test",
+                    blobBytes: new MemoryBlobBytesStore(),
+                    coordination: new SingleProcessCoordination({
+                        scope: "auth-test",
+                    }),
+                };
+            },
+        });
+
+        expect(ontology.context.user).toBe("user-42");
+        await ontology.cleanup();
+    });
+
     it("derives runtime scope and owns the provider result", async () => {
-        const context = { account: { id: "user-1" }, role: "editor" };
+        const context = {
+            user: "user-1",
+            account: { id: "user-1" },
+            role: "editor",
+        };
         let receivedContext: Record<string, unknown> | undefined;
         const cleanupOrder: string[] = [];
         const coordination = new SingleProcessCoordination({
@@ -48,6 +85,9 @@ describe("createLiveOntology", () => {
         const cleanupRuntime = vi.fn(async () => {
             cleanupOrder.push("runtime");
             await coordination.close();
+        });
+        const destroyRuntime = vi.fn(() => {
+            cleanupOrder.push("destroy");
         });
         const backendAdapter: OntologyBackendAdapter = {
             name: "test",
@@ -74,7 +114,6 @@ describe("createLiveOntology", () => {
             ir,
             backend,
             context,
-            getUserId: (liveContext) => liveContext.account.id,
             runtime: (owner, namespace) => {
                 expect(owner).toBe("user-1");
                 expect(namespace).toBe("ontology-1");
@@ -88,6 +127,7 @@ describe("createLiveOntology", () => {
                     },
                     coordination,
                     cleanup: cleanupRuntime,
+                    destroy: destroyRuntime,
                 });
             },
         });
@@ -96,11 +136,26 @@ describe("createLiveOntology", () => {
         expect(ontology.outbox).toBeDefined();
         await expect(ontology.queryFunctions.currentUser!({})).resolves.toBe("user-1");
         expect(receivedContext).toBe(context);
-        await ontology.cleanup();
+        const firstDestroy =
+            ontology.destroy();
+        const secondDestroy =
+            ontology.destroy();
+        expect(firstDestroy).toBe(
+            secondDestroy
+        );
+        await firstDestroy;
         expect(backend).toHaveBeenCalledOnce();
         expect(closeCoordination).toHaveBeenCalledOnce();
         expect(cleanupRuntime).toHaveBeenCalledOnce();
-        expect(cleanupOrder).toEqual(["backend", "runtime", "coordination"]);
+        expect(
+            destroyRuntime
+        ).toHaveBeenCalledOnce();
+        expect(cleanupOrder).toEqual([
+            "backend",
+            "runtime",
+            "coordination",
+            "destroy",
+        ]);
     });
 
     it("routes individual writes independently of the defaults", async () => {

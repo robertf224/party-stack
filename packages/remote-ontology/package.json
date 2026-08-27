@@ -34,7 +34,7 @@
         "@tanstack/query-core": "^5.101.2",
         "@tanstack/query-db-collection": "^1.0.47",
         "temporal-polyfill": "^0.3.0",
-        "zod": "^4.1.13"
+        "zod": "^4.4.3"
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",

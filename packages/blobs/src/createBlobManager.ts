@@ -174,10 +174,8 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
     const lifetime = run(() => useManagerLifetime(options, store, wake, gcTime));
     void lifetime.catch(() => undefined);
 
-    const isResolved = (
-        record: BlobMetadataRecord | undefined,
-        field: BlobMetadataField
-    ): boolean => record !== undefined && record[field] !== undefined;
+    const isResolved = (record: BlobMetadataRecord | undefined, field: BlobMetadataField): boolean =>
+        record !== undefined && record[field] !== undefined;
 
     const readLocalBlob = async (id: string): Promise<Blob | undefined> => {
         try {
@@ -220,10 +218,7 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
     // Resolve selected fields in progressively more expensive steps:
     // persisted metadata -> available local bytes -> remote metadata for gaps
     // -> remote bytes as the final calculation fallback.
-    const resolveMetadata = async (
-        id: string,
-        metadataOptions: BlobMetadataOptions = {}
-    ) => {
+    const resolveMetadata = async (id: string, metadataOptions: BlobMetadataOptions = {}) => {
         let record = await store.find(id);
 
         const selection = metadataOptions.select ?? ["size", "type", "name"];
@@ -233,18 +228,14 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
         }
 
         const missing = selection.filter((field) => !isResolved(record, field));
-        const canLoadRemote =
-            !record || record.state === "cached" || record.state === "persisted";
+        const canLoadRemote = !record || record.state === "cached" || record.state === "persisted";
         let remoteMetadataError: unknown;
         if (missing.length > 0 && canLoadRemote && options.remote.metadata) {
             try {
-                const remoteMetadata = await options.remote.metadata(
-                    record?.remoteId ?? id,
-                    {
-                        meta: metadataOptions.meta,
-                        select: missing,
-                    }
-                );
+                const remoteMetadata = await options.remote.metadata(record?.remoteId ?? id, {
+                    meta: metadataOptions.meta,
+                    select: missing,
+                });
                 record = await store.upsertMetadata(id, remoteMetadata, true);
             } catch (error) {
                 remoteMetadataError = error;
@@ -295,10 +286,7 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
         return blob;
     };
 
-    async function readBytes(
-        id: string,
-        readOptions?: Parameters<BlobManager["read"]>[1]
-    ): Promise<Blob> {
+    async function readBytes(id: string, readOptions?: Parameters<BlobManager["read"]>[1]): Promise<Blob> {
         const ref = await store.find(id);
         try {
             return await store.read(id);

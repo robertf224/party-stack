@@ -5,10 +5,10 @@ import { pascalCase } from "change-case";
 import { Command } from "commander";
 import { generateFiles } from "./generate.js";
 import {
-    ONTOLOGY_CONFIG_PATH,
+    ONTOLOGY_PULL_CONFIG_PATH,
     ONTOLOGY_IR_PATH,
-    discoverOntologyConfigPath,
-    loadOntologyConfig,
+    discoverOntologyPullConfigPath,
+    loadOntologyPullConfig,
     writePulledOntology,
 } from "./pull.js";
 
@@ -61,12 +61,18 @@ async function main(): Promise<void> {
             });
         });
 
-    const configPath = discoverOntologyConfigPath(cwd);
+    const configPath =
+        discoverOntologyPullConfigPath(cwd);
     if (configPath) {
-        const config = await loadOntologyConfig(configPath);
+        const config =
+            await loadOntologyPullConfig(
+                configPath
+            );
         program
             .command("pull")
-            .description(`Pull ontology metadata using ${ONTOLOGY_CONFIG_PATH}`)
+            .description(
+                `Pull ontology metadata using ${ONTOLOGY_PULL_CONFIG_PATH}`
+            )
             .action(async () => {
                 await writePulledOntology(config, ontologyPath);
                 console.log(`Generated ontology written to: ${ontologyPath}`);
