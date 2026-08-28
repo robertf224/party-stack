@@ -33,5 +33,7 @@ Object installation; it delegates to `DurableObjectStorage.deleteAll()`.
 Use `@party-stack/cloudflare-runtime` for persistent runtime collections,
 single-isolate coordination, R2-backed blob bytes, reconstruction after Durable
 Object eviction, and a complete `blockConcurrencyWhile` construction example.
+Its `createCloudflareSQLiteBackendInstallation` factory composes these pieces
+and defaults ontology attachment bytes to R2.
 `createDurableObjectSQLiteDatabase(...).destroy()` deletes the whole Durable
 Object; it must not be used for per-user or per-ontology cleanup.

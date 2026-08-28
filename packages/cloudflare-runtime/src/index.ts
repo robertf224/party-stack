@@ -4,6 +4,14 @@ export {
     type CloudflareRuntimeHost,
     type CreateCloudflareRuntimeOptions,
 } from "./createCloudflareRuntime.js";
+export {
+    createCloudflareSQLiteBackendInstallation,
+    createCloudflareSQLiteOntologyRoute,
+    type CloudflareSQLiteAttachmentStorage,
+    type CloudflareSQLiteBackendInstallation,
+    type CreateCloudflareSQLiteBackendInstallationOptions,
+    type CreateCloudflareSQLiteOntologyRouteOptions,
+} from "./createCloudflareSQLiteBackendInstallation.js";
 export { DurableObjectPersistenceAdapter } from "./DurableObjectPersistenceAdapter.js";
 export { DurableObjectSecretStore } from "./DurableObjectSecretStore.js";
 export {

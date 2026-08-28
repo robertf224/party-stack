@@ -19,9 +19,12 @@
     },
     "dependencies": {
         "@party-stack/cloudflare-sqlite-ontology": "workspace:*",
+        "@party-stack/connections": "workspace:*",
         "@party-stack/coordination": "workspace:*",
+        "@party-stack/ontology": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "@party-stack/sqlite-ontology": "workspace:*",
+        "@tanstack/cloudflare-durable-objects-db-sqlite-persistence": "^0.2.19",
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
@@ -29,8 +32,6 @@
         "@cloudflare/vitest-plugin": "^1.1.1",
         "@cloudflare/workers-types": "^5.20260827.1",
         "@party-stack/better-auth": "workspace:*",
-        "@party-stack/connections": "workspace:*",
-        "@party-stack/ontology": "workspace:*",
         "@tanstack/db": "^0.8.6",
         "@tanstack/db-sqlite-persistence-core": "^0.2.19",
         "esbuild": "^0.28.1",

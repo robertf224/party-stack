@@ -11,7 +11,13 @@ import { createLocalCollection, type RuntimeAdapter } from "@party-stack/runtime
 import { createLiveOntology } from "@party-stack/ontology";
 import { eq, queryOnce } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
-import { createCloudflareRuntimeHost, R2BlobBytesStore, type CloudflareRuntimeHost } from "../src/index.js";
+import {
+    createCloudflareRuntimeHost,
+    createCloudflareSQLiteBackendInstallation,
+    createCloudflareSQLiteOntologyRoute,
+    R2BlobBytesStore,
+    type CloudflareRuntimeHost,
+} from "../src/index.js";
 import { createDurableObjectSQLiteDatabase } from "@party-stack/cloudflare-sqlite-ontology";
 
 interface TestEnvironment {
@@ -401,6 +407,86 @@ export class RuntimeTestDurableObject extends DurableObject<TestEnvironment> {
             ...result,
             orphanCollected,
         };
+    }
+
+    async runHighLevelFactory(): Promise<{
+        content: string;
+        sqlBytesAreExternal: boolean;
+    }> {
+        const installation = await createCloudflareSQLiteBackendInstallation({
+            installationId: "high-level-factory",
+            storage: this.ctx.storage,
+            bucket: this.env.BLOBS,
+            connections: () => ({
+                name: "factory-test",
+                createAuthenticationClient: (controller) => ({
+                    async connect() {
+                        const connection = {
+                            userId: "factory-user",
+                            state: {
+                                status: "active" as const,
+                            },
+                        };
+                        await controller.connect({
+                            connection,
+                            session: {
+                                disconnect: () => Promise.resolve(),
+                            },
+                        });
+                        return connection;
+                    },
+                }),
+                restoreConnections: () => Promise.resolve([]),
+            }),
+            routes: [
+                createCloudflareSQLiteOntologyRoute({
+                    ontologyId: "primary",
+                    ir: sqliteOntologyConformanceIR,
+                }),
+            ],
+        });
+        try {
+            await installation.authentication.connect();
+            const ontology = await installation.openOntology({
+                userId: "factory-user",
+                ontologyId: "primary",
+            });
+            const created = await ontology.attachments.create(
+                new Blob(["factory-r2"], {
+                    type: "text/plain",
+                }),
+                {
+                    target: {
+                        kind: "objectProperty",
+                        objectType: "Asset",
+                        property: "attachment",
+                    },
+                }
+            );
+            await ontology.actions.createAsset!({
+                id: "factory-asset",
+                attachment: created.attachment,
+            });
+            const blob = await ontology.attachments.blob(created.attachment);
+            const row = installation.database
+                .prepare(
+                    `SELECT bytes, storage_key
+                     FROM party_stack_attachments
+                     WHERE id = ?`
+                )
+                .get(created.attachment.id) as
+                | {
+                      bytes: unknown;
+                      storage_key: string | null;
+                  }
+                | undefined;
+            return {
+                content: await blob.text(),
+                sqlBytesAreExternal: row?.bytes === null && typeof row.storage_key === "string",
+            };
+        } finally {
+            await installation.cleanup();
+        }
     }
 
     async runBetterAuthIntegration(): Promise<{

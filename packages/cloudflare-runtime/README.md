@@ -6,6 +6,10 @@ secrets, and R2-backed `BlobBytesStore` instances. Ontology SQL remains in
 `@party-stack/sqlite-ontology`; the Durable Object SQL port remains in
 `@party-stack/cloudflare-sqlite-ontology`.
 
+Runtime collection persistence delegates to
+`@tanstack/cloudflare-durable-objects-db-sqlite-persistence`; Party Stack adds
+collision-safe owner/namespace scoping and surgical namespace destruction.
+
 ## Durable Object construction
 
 Create the runtime and authenticated installation under
@@ -15,41 +19,26 @@ requests are accepted:
 ```ts
 import { DurableObject } from "cloudflare:workers";
 import { createBetterAuthConnectionAdapter } from "@party-stack/better-auth";
-import { createCloudflareRuntimeHost, R2BlobBytesStore } from "@party-stack/cloudflare-runtime";
-import { createDurableObjectSQLiteDatabase } from "@party-stack/cloudflare-sqlite-ontology";
-import { createSQLiteBackendInstallation, createSQLiteOntologyRoute } from "@party-stack/sqlite-ontology";
+import {
+    createCloudflareSQLiteBackendInstallation,
+    createCloudflareSQLiteOntologyRoute,
+} from "@party-stack/cloudflare-runtime";
 
 export class OntologyCellDO extends DurableObject<Env> {
-    private readonly host = createCloudflareRuntimeHost({
-        installationId: this.ctx.id.toString(),
-        storage: this.ctx.storage,
-        bucket: this.env.BLOBS,
-    });
-
     private readonly installation = this.ctx.blockConcurrencyWhile(() =>
-        createSQLiteBackendInstallation({
+        createCloudflareSQLiteBackendInstallation({
             installationId: this.ctx.id.toString(),
-            database: createDurableObjectSQLiteDatabase(this.ctx.storage),
+            storage: this.ctx.storage,
+            bucket: this.env.BLOBS,
             connections: createBetterAuthConnectionAdapter({
                 client: this.env.AUTH_CLIENT,
             }),
-            runtime: this.host.runtime,
             routes: ["primary", "secondary"].map((ontologyId) =>
-                createSQLiteOntologyRoute({
+                createCloudflareSQLiteOntologyRoute({
                     ontologyId,
                     ir: ontologyId === "primary" ? primaryIR : secondaryIR,
                     storageVersion: 2,
                     migrations: ontologyMigrations,
-                    attachmentStorage: {
-                        external: {
-                            bytes: new R2BlobBytesStore({
-                                bucket: this.env.BLOBS,
-                                installationId: this.ctx.id.toString(),
-                                owner: "ontology",
-                                namespace: ontologyId,
-                            }),
-                        },
-                    },
                 })
             ),
         })
@@ -60,6 +49,9 @@ export class OntologyCellDO extends DurableObject<Env> {
 `context.user` always comes from the active backend connection. Database
 selection receives only the logical ontology ID, so Better Auth sessions and
 physical SQLite placement remain separate.
+The high-level factory defaults every route to authoritative R2 attachment
+bytes. Set `attachmentStorage: "sqlite"` on a route only when inline SQLite
+BLOBs are intentional.
 
 ## Storage and lifecycle
 

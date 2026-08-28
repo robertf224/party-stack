@@ -11,10 +11,11 @@ import {
     type R2BucketLike,
 } from "./R2BlobBytesStore.js";
 import { ServerNetworkConnectivity } from "./ServerNetworkConnectivity.js";
+import type { DurableObjectStorageLike } from "@tanstack/cloudflare-durable-objects-db-sqlite-persistence";
 
 export interface CreateCloudflareRuntimeOptions {
     installationId: string;
-    storage: DurableObjectSQLiteStorage;
+    storage: DurableObjectSQLiteStorage & DurableObjectStorageLike;
     bucket: R2BucketLike;
 }
 
@@ -27,7 +28,7 @@ export interface CloudflareRuntimeHost {
 
 export function createCloudflareRuntimeHost(options: CreateCloudflareRuntimeOptions): CloudflareRuntimeHost {
     const database = createDurableObjectSQLiteDatabase(options.storage);
-    const persistence = new DurableObjectPersistenceAdapter(database);
+    const persistence = new DurableObjectPersistenceAdapter(database, options.storage);
     const connectivity = new ServerNetworkConnectivity();
     const cleanups = new Set<() => Promise<void>>();
     const coordinationByScope = new Map<

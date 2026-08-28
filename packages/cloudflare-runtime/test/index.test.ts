@@ -118,6 +118,13 @@ describe("Cloudflare Durable Object runtime", () => {
         });
     });
 
+    it("wires DO SQLite, runtime persistence, and R2 through the high-level factory", async () => {
+        await expect(createStub().runHighLevelFactory()).resolves.toEqual({
+            content: "factory-r2",
+            sqlBytesAreExternal: true,
+        });
+    });
+
     it("integrates the real Better Auth connection adapter with owned SQLite", async () => {
         const result = await createStub().runBetterAuthIntegration();
         expect(result).toEqual({
