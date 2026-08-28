@@ -1,0 +1,20 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "party-stack-cloudflare-sqlite-ontology-test",
+    "main": "test/worker.ts",
+    "compatibility_date": "2026-08-27",
+    "durable_objects": {
+        "bindings": [
+            {
+                "name": "SQLITE_ONTOLOGY",
+                "class_name": "SQLiteOntologyTestDurableObject",
+            },
+        ],
+    },
+    "migrations": [
+        {
+            "tag": "v1",
+            "new_sqlite_classes": ["SQLiteOntologyTestDurableObject"],
+        },
+    ],
+}

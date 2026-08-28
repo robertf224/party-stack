@@ -6,6 +6,10 @@
         ".": {
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
+        },
+        "./testing": {
+            "types": "./lib/testing/index.d.ts",
+            "default": "./lib/testing/index.js"
         }
     },
     "files": [
@@ -17,7 +21,9 @@
         "test": "vitest run src --pass-with-no-tests"
     },
     "dependencies": {
+        "@party-stack/connections": "workspace:*",
         "@party-stack/ontology": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
@@ -32,5 +38,10 @@
     "peerDependencies": {
         "@tanstack/db": "^0.6.14",
         "better-sqlite3": "^12.4.6"
+    },
+    "peerDependenciesMeta": {
+        "better-sqlite3": {
+            "optional": true
+        }
     }
 }

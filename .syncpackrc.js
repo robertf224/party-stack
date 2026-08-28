@@ -1,6 +1,14 @@
 /** @type {import("syncpack").RcFile} */
 const config = {
     dependencyTypes: ["prod", "dev"],
+    versionGroups: [
+        {
+            label: "Cloudflare Vitest integration requires Vitest 4",
+            packages: ["@party-stack/cloudflare-sqlite-ontology"],
+            dependencies: ["vitest"],
+            isIgnored: true,
+        },
+    ],
     semverGroups: [
         {
             range: "~",

@@ -1,0 +1,35 @@
+{
+    "name": "@party-stack/cloudflare-sqlite-ontology",
+    "version": "0.1.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc && tsc --project tsconfig.test.json",
+        "lint": "eslint",
+        "test": "WRANGLER_WRITE_LOGS=0 vitest run && node scripts/verify-worker-bundle.mjs"
+    },
+    "dependencies": {
+        "@party-stack/sqlite-ontology": "workspace:*"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@cloudflare/vitest-plugin": "^1.1.1",
+        "@cloudflare/workers-types": "^5.20260827.1",
+        "@tanstack/db": "^0.6.14",
+        "esbuild": "^0.28.1",
+        "eslint": "^9.25.0",
+        "typescript": "~5.8.3",
+        "vitest": "^4.1.11"
+    },
+    "peerDependencies": {
+        "@tanstack/db": "^0.6.14"
+    }
+}
