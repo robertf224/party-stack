@@ -1,5 +1,11 @@
 # @party-stack/runtime
 
+## 0.3.1
+
+### Patch Changes
+
+- 45bcf88: upgrade tanstack db deps
+
 ## 0.3.0
 
 ### Minor Changes

@@ -1,3 +1,4 @@
+import { Temporal } from "temporal-polyfill";
 import { describe, expect, it } from "vitest";
 import { o } from "./ir/index.js";
 import { applyLensToObject, applyLensToObjectType, mapTargetPathToSourceWithLens } from "./lenses.js";
@@ -67,5 +68,26 @@ describe("ontology lenses", () => {
         });
         expect(mapTargetPathToSourceWithLens(["avatar", "id"], lens)).toEqual(["profilePicture", "id"]);
         expect(mapTargetPathToSourceWithLens(["familyName"], lens)).toEqual(["familyName"]);
+    });
+
+    it("preserves Temporal values while projecting plain object fields", () => {
+        const updatedAt = Temporal.Instant.from("2026-08-28T00:00:00Z");
+        const projected = applyLensToObject(
+            {
+                id: "user-1",
+                givenName: "Ada",
+                updatedAt,
+                profilePicture: undefined,
+                admin: false,
+            },
+            {
+                operations: [
+                    o.LensOp.select({
+                        properties: ["id", "updatedAt"],
+                    }),
+                ],
+            }
+        );
+        expect(projected.updatedAt).toBe(updatedAt);
     });
 });

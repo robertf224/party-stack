@@ -98,11 +98,28 @@ export function applyLensToObjectType(
     return target;
 }
 
-export function applyLensToObject<Source extends Record<string, unknown>, Target extends Record<string, unknown>>(
-    source: Source,
-    lens: Lens
-): Target {
-    const target = structuredClone(source) as Record<string, unknown>;
+function cloneLensValue(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map(cloneLensValue);
+    }
+    if (value && typeof value === "object") {
+        const prototype = Object.getPrototypeOf(
+            value
+        ) as unknown;
+        if (prototype === Object.prototype || prototype === null) {
+            return Object.fromEntries(
+                Object.entries(value).map(([key, entry]) => [key, cloneLensValue(entry)])
+            );
+        }
+    }
+    return value;
+}
+
+export function applyLensToObject<
+    Source extends Record<string, unknown>,
+    Target extends Record<string, unknown>,
+>(source: Source, lens: Lens): Target {
+    const target = cloneLensValue(source) as Record<string, unknown>;
     for (const operation of lens.operations) {
         switch (operation.kind) {
             case "move": {

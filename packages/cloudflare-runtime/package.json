@@ -1,0 +1,46 @@
+{
+    "name": "@party-stack/cloudflare-runtime",
+    "version": "0.1.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc && tsc --project tsconfig.test.json",
+        "dev:fixture": "WRANGLER_WRITE_LOGS=0 wrangler dev --config wrangler.fixture.jsonc --local --persist-to ../../temp/cloudflare-runtime-fixture",
+        "lint": "eslint",
+        "test": "WRANGLER_WRITE_LOGS=0 vitest run && node scripts/verify-worker-bundle.mjs"
+    },
+    "dependencies": {
+        "@party-stack/cloudflare-sqlite-ontology": "workspace:*",
+        "@party-stack/coordination": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
+        "@party-stack/sqlite-ontology": "workspace:*",
+        "temporal-polyfill": "^0.3.0"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@cloudflare/vitest-plugin": "^1.1.1",
+        "@cloudflare/workers-types": "^5.20260827.1",
+        "@party-stack/better-auth": "workspace:*",
+        "@party-stack/connections": "workspace:*",
+        "@party-stack/ontology": "workspace:*",
+        "@tanstack/db": "^0.8.6",
+        "@tanstack/db-sqlite-persistence-core": "^0.2.19",
+        "esbuild": "^0.28.1",
+        "eslint": "^9.25.0",
+        "typescript": "~5.8.3",
+        "vitest": "^4.1.11",
+        "wrangler": "^4.127.0"
+    },
+    "peerDependencies": {
+        "@tanstack/db": "^0.8.6",
+        "@tanstack/db-sqlite-persistence-core": "^0.2.19"
+    }
+}

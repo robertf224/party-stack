@@ -177,7 +177,7 @@ describe("createLiveOntologyObjectCollection", () => {
         const persistence = memoryPersistence();
         const collection = createLiveOntologyObjectCollection({
             ...options,
-            backendAdapter: backend(({ begin, write, commit, markReady }) => {
+            backendAdapter: backend(({ begin, write, commit, markError, markReady }) => {
                 begin({ immediate: true });
                 write({
                     type: "insert",
@@ -186,8 +186,12 @@ describe("createLiveOntologyObjectCollection", () => {
                         title: "From backend",
                     },
                 });
-                commit();
-                markReady();
+                const receipt = commit();
+                if (receipt === true) {
+                    markReady();
+                } else {
+                    void receipt.then(markReady, markError);
+                }
             }),
             runtime: {
                 owner: options.owner,

@@ -1,6 +1,6 @@
 {
     "name": "@party-stack/node-runtime",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "type": "module",
     "exports": {
         ".": {
@@ -20,7 +20,7 @@
         "@hono/node-server": "^2.1.1",
         "@party-stack/coordination": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "@tanstack/node-db-sqlite-persistence": "^0.2.6",
+        "@tanstack/node-db-sqlite-persistence": "^0.2.19",
         "better-sqlite3": "^12.4.6",
         "cross-keychain": "^1.1.0",
         "hono": "^4.13.5",

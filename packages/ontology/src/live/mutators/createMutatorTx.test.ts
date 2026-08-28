@@ -93,8 +93,7 @@ describe("createMutatorTx", () => {
                                     title: "Before",
                                 },
                             });
-                            commit();
-                            return Promise.resolve();
+                            return commit();
                         },
                     };
                 },
