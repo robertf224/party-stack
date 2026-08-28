@@ -1,5 +1,13 @@
 # @party-stack/expo-runtime
 
+## 0.3.1
+
+### Patch Changes
+
+- 45bcf88: upgrade tanstack db deps
+- Updated dependencies [45bcf88]
+    - @party-stack/runtime@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes

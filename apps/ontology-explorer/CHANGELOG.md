@@ -1,5 +1,14 @@
 # @party-stack/ontology-explorer
 
+## 0.1.2
+
+### Patch Changes
+
+- 45bcf88: upgrade tanstack db deps
+- Updated dependencies [45bcf88]
+    - @party-stack/foundry-ontology@0.11.1
+    - @party-stack/ontology@0.12.1
+
 ## 0.1.1
 
 ### Patch Changes

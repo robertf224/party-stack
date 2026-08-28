@@ -1,5 +1,16 @@
 # @party-stack/ontology
 
+## 0.12.1
+
+### Patch Changes
+
+- 45bcf88: upgrade tanstack db deps
+- Updated dependencies [45bcf88]
+    - @party-stack/node-runtime@0.2.1
+    - @party-stack/connections@0.2.1
+    - @party-stack/runtime@0.3.1
+    - @party-stack/blobs@0.5.1
+
 ## 0.12.0
 
 ### Minor Changes
