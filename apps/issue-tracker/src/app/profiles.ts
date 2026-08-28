@@ -37,11 +37,21 @@ const writes = {
     defaultVisibility: "optimistic" as const,
 };
 
-const FOUNDRY_URL = import.meta.env.NEXT_PUBLIC_FOUNDRY_URL;
-const FOUNDRY_ONTOLOGY_RID = import.meta.env.NEXT_PUBLIC_FOUNDRY_ONTOLOGY_RID;
-const FOUNDRY_CLIENT_ID = import.meta.env.NEXT_PUBLIC_FOUNDRY_CLIENT_ID;
+function requiredEnv(name: string, value: string | undefined): string {
+    if (!value) {
+        throw new Error(`Missing required environment variable ${name}.`);
+    }
+    return value;
+}
+
+const FOUNDRY_URL = requiredEnv("VITE_FOUNDRY_URL", import.meta.env.VITE_FOUNDRY_URL);
+const FOUNDRY_ONTOLOGY_RID = requiredEnv(
+    "VITE_FOUNDRY_ONTOLOGY_RID",
+    import.meta.env.VITE_FOUNDRY_ONTOLOGY_RID
+);
+const FOUNDRY_CLIENT_ID = requiredEnv("VITE_FOUNDRY_CLIENT_ID", import.meta.env.VITE_FOUNDRY_CLIENT_ID);
 const FOUNDRY_REDIRECT_URL =
-    import.meta.env.NEXT_PUBLIC_FOUNDRY_REDIRECT_URL ??
+    import.meta.env.VITE_FOUNDRY_REDIRECT_URL ??
     (typeof window === "undefined"
         ? "http://localhost:3000/auth/callback"
         : `${window.location.origin}/auth/callback`);
@@ -58,24 +68,21 @@ const foundryInstallation = await createFoundryBackendInstallation({
     baseUrl: FOUNDRY_URL,
     runtime: createWebRuntime,
     connections: {
-        token: import.meta.env.NEXT_PUBLIC_FOUNDRY_TOKEN,
-        oauth: FOUNDRY_CLIENT_ID
-            ? {
-                  clientId: FOUNDRY_CLIENT_ID,
-                  redirectUrl: FOUNDRY_REDIRECT_URL,
-                  // The web runtime does not yet provide a secure
-                  // SecretStore. This is acceptable only for the demo.
-                  dangerouslyPersistSecrets: true,
-                  scopes: [
-                      "api:admin-read",
-                      "api:use-ontologies-read",
-                      "api:use-ontologies-write",
-                      "api:use-mediasets-read",
-                      "api:use-mediasets-write",
-                      "offline_access",
-                  ],
-              }
-            : undefined,
+        oauth: {
+            clientId: FOUNDRY_CLIENT_ID,
+            redirectUrl: FOUNDRY_REDIRECT_URL,
+            // The web runtime does not yet provide a secure
+            // SecretStore. This is acceptable only for the demo.
+            dangerouslyPersistSecrets: true,
+            scopes: [
+                "api:admin-read",
+                "api:use-ontologies-read",
+                "api:use-ontologies-write",
+                "api:use-mediasets-read",
+                "api:use-mediasets-write",
+                "offline_access",
+            ],
+        },
     },
     routes: [
         createFoundryOntologyRoute({

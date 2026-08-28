@@ -4,17 +4,12 @@ import nextEnv from "@next/env";
 import { createJiti } from "jiti";
 import { format, resolveConfig } from "prettier";
 import { generateOntology } from "../generate/ontology.js";
-import { createMetaLiveOntology } from "../meta/generated/live.js";
 import { pull } from "../meta/pull.js";
-import type {
-    OntologyPullSource,
-    OntologyPullConfig,
-} from "../OntologyPullConfig.js";
+import type { OntologyPullContext, OntologyPullSource, OntologyPullConfig } from "../OntologyPullConfig.js";
 
 const { loadEnvConfig } = nextEnv;
 
-export const ONTOLOGY_PULL_CONFIG_PATH =
-    "src/ontology/config.ts";
+export const ONTOLOGY_PULL_CONFIG_PATH = "src/ontology/config.ts";
 export const ONTOLOGY_IR_PATH = "src/ontology/ontology.ts";
 
 type ConfigModule = Record<string, unknown> & { default?: unknown };
@@ -23,19 +18,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
 
-function isOntologyPullSource(
-    value: unknown
-): value is OntologyPullSource {
+function isOntologyPullSource(value: unknown): value is OntologyPullSource {
     return (
         isRecord(value) &&
-        typeof value.createBackend ===
-            "function"
+        typeof value.ontologyId === "string" &&
+        typeof value.createInstallation === "function" &&
+        typeof value.resolveConnection === "function"
     );
 }
 
-function isOntologyPullConfig(
-    value: unknown
-): value is OntologyPullConfig {
+function isOntologyPullConfig(value: unknown): value is OntologyPullConfig {
     return (
         isRecord(value) &&
         isOntologyPullSource(value.source) &&
@@ -49,19 +41,12 @@ function isOntologyPullConfig(
     );
 }
 
-export function discoverOntologyPullConfigPath(
-    cwd: string
-): string | null {
-    const configPath = resolve(
-        cwd,
-        ONTOLOGY_PULL_CONFIG_PATH
-    );
+export function discoverOntologyPullConfigPath(cwd: string): string | null {
+    const configPath = resolve(cwd, ONTOLOGY_PULL_CONFIG_PATH);
     return existsSync(configPath) ? configPath : null;
 }
 
-export async function loadOntologyPullConfig(
-    configPath: string
-): Promise<OntologyPullConfig> {
+export async function loadOntologyPullConfig(configPath: string): Promise<OntologyPullConfig> {
     loadEnvConfig(resolve(dirname(configPath), "../.."));
 
     const jiti = createJiti(import.meta.url);
@@ -69,9 +54,7 @@ export async function loadOntologyPullConfig(
     const config = configModule.default;
 
     if (!isOntologyPullConfig(config)) {
-        throw new Error(
-            `Config file "${configPath}" must default export an OntologyPullConfig value.`
-        );
+        throw new Error(`Config file "${configPath}" must default export an OntologyPullConfig value.`);
     }
 
     return config;
@@ -80,28 +63,24 @@ export async function loadOntologyPullConfig(
 export async function writePulledOntology(
     config: OntologyPullConfig,
     outPath: string,
+    context: OntologyPullContext,
     ontologyImportPath = "@party-stack/ontology"
 ): Promise<void> {
-    const backendAdapter =
-        await config.source.createBackend(
-            config.options
-        );
-    const liveOntology = await createMetaLiveOntology({
-        backend: () => backendAdapter,
-    });
+    const installation = await config.source.createInstallation(context);
 
     try {
+        const connection = await config.source.resolveConnection(installation);
+        const liveOntology = await installation.openMetaOntology({
+            userId: connection.userId,
+            ontologyId: config.source.ontologyId,
+        });
         const pulledOntology = await pull(liveOntology, {
             objectTypeNames: config.objectTypeNames,
             actionTypeNames: config.actionTypeNames,
             queryFunctionTypeNames: config.queryFunctionTypeNames ?? [],
         });
-        const ontology = config.source
-            .transformPulledOntology
-            ? await config.source.transformPulledOntology(
-                  pulledOntology,
-                  config.options
-              )
+        const ontology = config.source.transformPulledOntology
+            ? await config.source.transformPulledOntology(pulledOntology)
             : pulledOntology;
         const output = generateOntology(ontology, { ontologyImportPath });
 
@@ -115,6 +94,6 @@ export async function writePulledOntology(
 
         writeFileSync(outPath, formatted, "utf-8");
     } finally {
-        await liveOntology.cleanup();
+        await installation.cleanup();
     }
 }

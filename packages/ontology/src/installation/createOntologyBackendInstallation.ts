@@ -2,6 +2,7 @@ import { createConnectionManager, createConnectionMonitor } from "@party-stack/c
 import { createLocalCollection } from "@party-stack/runtime";
 import type { Connection } from "@party-stack/connections";
 import { createLiveOntology } from "../live/LiveOntology.js";
+import { createMetaOntologyConfiguration } from "./createMetaOntologyConfiguration.js";
 import type {
     CreateOntologyBackendInstallationOptions,
     OntologyBackendInstallation,
@@ -9,11 +10,13 @@ import type {
 } from "./types.js";
 import type { LiveOntology } from "../live/LiveOntology.js";
 import type { OntologyDefinition } from "../live/LiveOntology.js";
+import type { MetaOntology } from "../meta/generated/types.js";
 
 interface LocalOntologyPartition {
     id: string;
     userId: string;
     ontologyId: string;
+    meta?: true;
 }
 
 function scope(value: string): string {
@@ -22,6 +25,10 @@ function scope(value: string): string {
 
 function ontologyKey(userId: string, ontologyId: string): string {
     return `${scope(userId)}:${scope(ontologyId)}`;
+}
+
+function metaOntologyKey(userId: string, ontologyId: string): string {
+    return `${ontologyKey(userId, ontologyId)}:meta`;
 }
 
 function liveOntologyNamespace(installationId: string, ontologyId: string): string {
@@ -78,8 +85,7 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
     let disposed = false;
     let cleanupPromise: Promise<void> | undefined;
 
-    const close = async (userId: string, ontologyId: string) => {
-        const key = ontologyKey(userId, ontologyId);
+    const closeKey = async (key: string) => {
         const pending = opening.get(key);
         if (pending) {
             await pending.catch(() => undefined);
@@ -89,6 +95,7 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
         live.delete(key);
         await ontology.cleanup();
     };
+    const close = (userId: string, ontologyId: string) => closeKey(ontologyKey(userId, ontologyId));
     const recordPartition = async (partition: LocalOntologyPartition): Promise<void> => {
         const existing = partitions.get(partition.id);
         const transaction = existing
@@ -125,10 +132,11 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
         if (ontology) {
             await ontology.destroy();
         } else {
-            const runtime = await options.runtime(
-                partition.userId,
-                liveOntologyNamespace(options.installationId, partition.ontologyId)
-            );
+            const namespace = `${liveOntologyNamespace(
+                options.installationId,
+                partition.ontologyId
+            )}${partition.meta ? ":meta" : ""}`;
+            const runtime = await options.runtime(partition.userId, namespace);
             if (runtime.destroy) {
                 await runtime.destroy();
             } else {
@@ -151,12 +159,106 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
         const toClose = [...new Set([...live.keys(), ...opening.keys()])].filter((key) =>
             key.startsWith(prefix)
         );
-        await Promise.all(
-            toClose.map((key) => {
-                const ontologyId = decodeURIComponent(key.slice(prefix.length));
-                return close(userId, ontologyId);
-            })
-        );
+        await Promise.all(toClose.map(closeKey));
+    };
+    const openConfiguredOntology = async <Ontology extends OntologyDefinition>(openOptions: {
+        userId: string;
+        ontologyId: string;
+        meta: boolean;
+    }): Promise<LiveOntology<Ontology>> => {
+        const { userId, ontologyId, meta } = openOptions;
+        if (disposed) {
+            throw new Error(`Backend installation "${options.installationId}" is closed.`);
+        }
+        const current = connectionManager.connections.get(userId);
+        if (!isActiveConnection(current)) {
+            throw new Error(
+                `User "${userId}" is not connected to backend installation "${options.installationId}".`
+            );
+        }
+        const egress = connectionManager.egress(userId);
+        if (!egress) {
+            throw new Error(`Connection egress for user "${userId}" is unavailable.`);
+        }
+        const key = meta ? metaOntologyKey(userId, ontologyId) : ontologyKey(userId, ontologyId);
+        const existing = live.get(key);
+        if (existing) {
+            return existing as unknown as LiveOntology<Ontology>;
+        }
+        const pending = opening.get(key);
+        if (pending) {
+            return pending as unknown as Promise<LiveOntology<Ontology>>;
+        }
+        const open = (async () => {
+            const route = routeFor(options.routes, ontologyId);
+            const configureOptions = {
+                connection: current,
+                egress,
+                ontologyId,
+            };
+            let configured;
+            if (meta) {
+                if (route.configureMeta) {
+                    configured = await route.configureMeta(configureOptions);
+                } else if (route.configure) {
+                    const application = await route.configure(configureOptions);
+                    configured = createMetaOntologyConfiguration({
+                        ir: application.ir,
+                    });
+                } else {
+                    throw new Error(`Ontology route for "${ontologyId}" does not support metadata.`);
+                }
+            } else {
+                if (!route.configure) {
+                    throw new Error(
+                        `Ontology route for "${ontologyId}" does not support opening the application ontology.`
+                    );
+                }
+                configured = await route.configure(configureOptions);
+            }
+            const context = {
+                ...options.createContext?.(userId, ontologyId),
+                ...configured.context,
+                user: userId,
+            };
+            const runtimeNamespace = `${liveOntologyNamespace(options.installationId, ontologyId)}${
+                meta ? ":meta" : ""
+            }`;
+            await recordPartition({
+                id: key,
+                userId,
+                ontologyId,
+                meta: meta ? true : undefined,
+            });
+            const ontology = await createLiveOntology({
+                id: runtimeNamespace,
+                ir: configured.ir,
+                backend: configured.backend,
+                runtime: options.runtime,
+                context,
+                persistObjects: configured.persistObjects,
+                writes: configured.writes,
+                connection: createConnectionMonitor(connectionManager, userId),
+            });
+            if (disposed) {
+                await ontology.cleanup();
+                throw new Error(
+                    meta
+                        ? `Backend installation "${options.installationId}" closed while opening metadata for ontology "${ontologyId}".`
+                        : `Backend installation "${options.installationId}" closed while opening ontology "${ontologyId}".`
+                );
+            }
+            live.set(key, ontology);
+            return ontology;
+        })();
+        opening.set(key, open);
+        try {
+            return (await open) as unknown as LiveOntology<Ontology>;
+        } finally {
+            if (opening.get(key) === open) {
+                opening.delete(key);
+            }
+        }
     };
 
     const installation: OntologyBackendInstallation<AuthenticationClient> = {
@@ -196,75 +298,21 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
             userId: string;
             ontologyId: string;
         }): Promise<LiveOntology<Ontology>> {
-            if (disposed) {
-                throw new Error(`Backend installation "${options.installationId}" is closed.`);
-            }
-            const key = ontologyKey(userId, ontologyId);
-            const existing = live.get(key);
-            if (existing) {
-                return existing as LiveOntology<Ontology>;
-            }
-            const pending = opening.get(key);
-            if (pending) {
-                return pending as Promise<LiveOntology<Ontology>>;
-            }
-            const open = (async () => {
-                const current = connectionManager.connections.get(userId);
-                if (!isActiveConnection(current)) {
-                    throw new Error(
-                        `User "${userId}" is not connected to backend installation "${options.installationId}".`
-                    );
-                }
-                const egress = connectionManager.egress(userId);
-                if (!egress) {
-                    throw new Error(`Connection egress for user "${userId}" is unavailable.`);
-                }
-                const route = routeFor(options.routes, ontologyId);
-                const configured = await route.configure({
-                    connection: current,
-                    egress,
-                    ontologyId,
-                });
-                const context = {
-                    ...options.createContext?.(userId, ontologyId),
-                    ...configured.context,
-                    user: userId,
-                };
-                const runtimeNamespace = liveOntologyNamespace(options.installationId, ontologyId);
-                await recordPartition({
-                    id: key,
-                    userId,
-                    ontologyId,
-                });
-                const ontology = await createLiveOntology({
-                    id: runtimeNamespace,
-                    ir: configured.ir,
-                    backend: configured.backend,
-                    runtime: options.runtime,
-                    context,
-                    persistObjects: configured.persistObjects,
-                    writes: configured.writes,
-                    connection: createConnectionMonitor(connectionManager, userId),
-                });
-                if (disposed) {
-                    await ontology.cleanup();
-                    throw new Error(
-                        `Backend installation "${options.installationId}" closed while opening ontology "${ontologyId}".`
-                    );
-                }
-                live.set(key, ontology);
-                return ontology;
-            })();
-            opening.set(key, open);
-            try {
-                return (await open) as LiveOntology<Ontology>;
-            } finally {
-                if (opening.get(key) === open) {
-                    opening.delete(key);
-                }
-            }
+            return openConfiguredOntology<Ontology>({
+                userId,
+                ontologyId,
+                meta: false,
+            });
+        },
+        async openMetaOntology({ userId, ontologyId }) {
+            return openConfiguredOntology<MetaOntology>({
+                userId,
+                ontologyId,
+                meta: true,
+            });
         },
         closeOntology: ({ userId, ontologyId }) => close(userId, ontologyId),
+        closeMetaOntology: ({ userId, ontologyId }) => closeKey(metaOntologyKey(userId, ontologyId)),
         cleanup() {
             cleanupPromise ??= (async () => {
                 disposed = true;

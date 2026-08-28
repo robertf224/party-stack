@@ -1,5 +1,13 @@
 # @party-stack/ontology-devtools
 
+## 0.4.1
+
+### Patch Changes
+
+- e384777: Fix schema graph layout so relationship arrows connect to object type cards and labels avoid overlapping nodes.
+- Updated dependencies [b8fb08e]
+    - @party-stack/ontology@0.12.0
+
 ## 0.4.0
 
 ### Minor Changes
