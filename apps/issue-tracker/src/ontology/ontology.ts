@@ -249,13 +249,6 @@ export default defineOntology({
                     description: "Optional files that support or explain the issue.",
                 },
                 {
-                    name: "createdBy",
-                    displayName: "Created by",
-                    type: o.optional({
-                        type: o.string({}),
-                    }),
-                },
-                {
                     name: "project",
                     displayName: "Project",
                     type: o.optional({
@@ -277,9 +270,7 @@ export default defineOntology({
                     name: "assignee",
                     displayName: "Assignee",
                     type: o.optional({
-                        type: o.objectReference({
-                            objectType: "User",
-                        }),
+                        type: o.string({}),
                     }),
                 },
                 {
@@ -613,9 +604,7 @@ export default defineOntology({
                     name: "assignee",
                     displayName: "Assignee",
                     type: o.optional({
-                        type: o.objectReference({
-                            objectType: "User",
-                        }),
+                        type: o.string({}),
                     }),
                 },
                 {

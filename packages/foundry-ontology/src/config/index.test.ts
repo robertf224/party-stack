@@ -1,8 +1,19 @@
 import { o, type OntologyIR } from "@party-stack/ontology";
 import { describe, expect, it } from "vitest";
-import { foundryOntologyPullSource } from "./index.js";
+import { createFoundryOntologyPullSource, type CreateFoundryOntologyPullSourceOptions } from "./index.js";
 
-describe("foundryOntologyPullSource", () => {
+function createSource(options: Partial<CreateFoundryOntologyPullSourceOptions>) {
+    return createFoundryOntologyPullSource({
+        baseUrl: "https://foundry.example",
+        ontologyRid: "ri.ontology.main",
+        connection: {
+            token: "token",
+        },
+        ...options,
+    });
+}
+
+describe("createFoundryOntologyPullSource", () => {
     it("applies targeted attachment constraints after pull", async () => {
         const ir: OntologyIR = {
             types: [],
@@ -51,7 +62,7 @@ describe("foundryOntologyPullSource", () => {
             }),
         };
 
-        const transformed = await foundryOntologyPullSource.transformPulledOntology!(ir, {
+        const transformed = await createSource({
             attachmentConstraints: [
                 {
                     target: {
@@ -70,7 +81,7 @@ describe("foundryOntologyPullSource", () => {
                     constraint,
                 },
             ],
-        });
+        }).transformPulledOntology!(ir);
 
         expect(transformed.objectTypes[0]?.properties[1]?.type).toEqual(
             o.attachment({
@@ -131,29 +142,24 @@ describe("foundryOntologyPullSource", () => {
             queryFunctionTypes: [],
         };
 
-        const transformed = await foundryOntologyPullSource.transformPulledOntology!(
-            ir,
-            {
-                users: {
-                    objectType: "User",
-                    lens: {
-                        operations: [
-                            o.LensOp.move({
-                                from: ["profilePicture"],
-                                to: ["avatar"],
-                            }),
-                            o.LensOp.select({
-                                properties: ["id", "avatar"],
-                            }),
-                        ],
-                    },
+        const transformed = await createSource({
+            users: {
+                objectType: "User",
+                lens: {
+                    operations: [
+                        o.LensOp.move({
+                            from: ["profilePicture"],
+                            to: ["avatar"],
+                        }),
+                        o.LensOp.select({
+                            properties: ["id", "avatar"],
+                        }),
+                    ],
                 },
-            }
-        );
+            },
+        }).transformPulledOntology!(ir);
 
-        expect(transformed.objectTypes.map((type) => type.name)).toContain(
-            "User"
-        );
+        expect(transformed.objectTypes.map((type) => type.name)).toContain("User");
         expect(transformed.contextType).toEqual(
             o.struct({
                 fields: [

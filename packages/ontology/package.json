@@ -40,6 +40,7 @@
         "@party-stack/blobs": "workspace:*",
         "@party-stack/connections": "workspace:*",
         "@party-stack/errors": "workspace:*",
+        "@party-stack/node-runtime": "workspace:^",
         "@party-stack/runtime": "workspace:*",
         "@tanstack/db-sqlite-persistence-core": "^0.2.6",
         "change-case": "^5.4.4",
