@@ -85,7 +85,12 @@ export function resolveSQLiteNamespace(options: {
         .get(options.adapterName) as { sql_namespace: string } | undefined;
     const requested = resolveRequestedSQLiteNamespace(options);
     if (existingForAdapter) {
-        if (options.sqlNamespace !== undefined && existingForAdapter.sql_namespace !== requested) {
+        const requestedIsAutomatic = options.sqlNamespace === encodeSQLiteNamespace(options.adapterName);
+        if (
+            options.sqlNamespace !== undefined &&
+            !requestedIsAutomatic &&
+            existingForAdapter.sql_namespace !== requested
+        ) {
             throw new Error(
                 `SQLite ontology adapter "${options.adapterName}" is already pinned to SQL namespace ` +
                     `"${existingForAdapter.sql_namespace}", not "${requested}".`

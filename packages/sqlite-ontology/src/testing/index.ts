@@ -816,6 +816,52 @@ async function runCollidingOntologyIds(database: SQLiteDatabase): Promise<void> 
         caseCollisionDetected,
         "SQLite case-insensitive identifiers bypassed namespace collision detection."
     );
+
+    const legacyRouteId = "legacy-route-id";
+    createSQLiteOntologyBackendAdapter({
+        ir: conformanceIR,
+        database,
+        name: legacyRouteId,
+    });
+    database
+        .prepare(
+            `DELETE FROM party_stack_namespaces
+             WHERE adapter_name = ?`
+        )
+        .run(legacyRouteId);
+    const legacyInstallation = await createSQLiteBackendInstallation({
+        installationId: "legacy-route-reopen",
+        database,
+        connections: createConnectionProvider(),
+        runtime: createDefaultRuntime,
+        routes: [
+            createSQLiteOntologyRoute({
+                ontologyId: legacyRouteId,
+                ir: conformanceIR,
+            }),
+        ],
+    });
+    try {
+        await Promise.all([
+            legacyInstallation.authentication.connect("legacy-user-1"),
+            legacyInstallation.authentication.connect("legacy-user-2"),
+        ]);
+        await legacyInstallation.openOntology({
+            userId: "legacy-user-1",
+            ontologyId: legacyRouteId,
+        });
+        const reopened = await legacyInstallation.openOntology({
+            userId: "legacy-user-2",
+            ontologyId: legacyRouteId,
+        });
+        assertEqual(
+            reopened.context.user,
+            "legacy-user-2",
+            "Automatically migrated legacy namespace failed on reopen."
+        );
+    } finally {
+        await legacyInstallation.cleanup();
+    }
 }
 
 async function runDuplicateAttachmentIds(database: SQLiteDatabase): Promise<void> {
@@ -934,6 +980,42 @@ class ConformanceBlobBytesStore implements BlobBytesStore {
     }
 }
 
+class DelayedBlobBytesStore extends ConformanceBlobBytesStore {
+    private releaseWrite!: () => void;
+    readonly writeStarted: Promise<void>;
+    private readonly writeGate: Promise<void>;
+    deleteCalls = 0;
+
+    constructor() {
+        super();
+        let started!: () => void;
+        this.writeStarted = new Promise<void>((resolve) => {
+            started = resolve;
+        });
+        this.writeGate = new Promise<void>((resolve) => {
+            this.releaseWrite = resolve;
+        });
+        this.markStarted = started;
+    }
+
+    private readonly markStarted: () => void;
+
+    override async write(id: string, blob: Blob): Promise<void> {
+        this.markStarted();
+        await this.writeGate;
+        await super.write(id, blob);
+    }
+
+    override delete(id: string): Promise<void> {
+        this.deleteCalls++;
+        return super.delete(id);
+    }
+
+    release(): void {
+        this.releaseWrite();
+    }
+}
+
 async function runExternalAttachments(database: SQLiteDatabase): Promise<void> {
     const bytes = new ConformanceBlobBytesStore();
     const storage = {
@@ -992,6 +1074,64 @@ async function runExternalAttachments(database: SQLiteDatabase): Promise<void> {
         );
     } finally {
         await ontology.cleanup();
+    }
+
+    const delayedBytes = new DelayedBlobBytesStore();
+    const delayedNamespace = "delayed_upload";
+    const delayedOntology = await createLiveOntology({
+        ir: conformanceIR,
+        backend: () =>
+            createSQLiteOntologyBackendAdapter({
+                ir: conformanceIR,
+                database,
+                name: "delayed-upload",
+                sqlNamespace: delayedNamespace,
+                attachmentStorage: {
+                    external: {
+                        bytes: delayedBytes,
+                    },
+                },
+            }),
+    });
+    try {
+        const created = await delayedOntology.attachments.create(
+            new Blob(["delayed"], {
+                type: "text/plain",
+            }),
+            {
+                target: {
+                    kind: "objectProperty",
+                    objectType: "Asset",
+                    property: "attachment",
+                },
+            }
+        );
+        const action = delayedOntology.actions.createAsset!({
+            id: "delayed-asset",
+            attachment: created.attachment,
+        });
+        void action.catch(() => undefined);
+        await delayedBytes.writeStarted;
+        assertEqual(
+            await collectSQLiteAttachmentOrphans({
+                database,
+                bytes: delayedBytes,
+                ontology: delayedNamespace,
+            }),
+            0,
+            "Orphan collection claimed an active attachment upload."
+        );
+        assertEqual(delayedBytes.deleteCalls, 0, "Orphan collection deleted an active attachment upload.");
+        delayedBytes.release();
+        await action;
+        assertEqual(
+            await (await delayedOntology.attachments.blob(created.attachment)).text(),
+            "delayed",
+            "Delayed external upload did not commit after collector overlap."
+        );
+    } finally {
+        delayedBytes.release();
+        await delayedOntology.cleanup();
     }
 
     const failureNamespace = "external_failure";

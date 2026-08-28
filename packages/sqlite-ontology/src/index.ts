@@ -24,6 +24,7 @@ import type {
 import {
     ensureSQLiteAttachmentSchema,
     getSQLiteAttachment,
+    markSQLiteAttachmentUploadsComplete,
     prepareSQLiteAttachments,
     persistSQLiteAttachmentRows,
     readSQLiteAttachmentBlob,
@@ -711,6 +712,16 @@ export function createSQLiteOntologyBackendAdapter(
                         for (const row of externalRows) {
                             await bytes.write(row.storageKey!, row.blob);
                         }
+                        // No await occurs between publishing completion and
+                        // the final metadata/object transaction, so a
+                        // collector cannot interleave once this becomes
+                        // collectable.
+                        opts.database.transaction(() =>
+                            markSQLiteAttachmentUploadsComplete({
+                                database: opts.database,
+                                rows: externalRows,
+                            })
+                        )();
                     }
                     opts.database.transaction(() => {
                         for (const [objectTypeName, collection] of Object.entries(collections)) {

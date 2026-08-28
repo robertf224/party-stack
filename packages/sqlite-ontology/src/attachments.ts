@@ -463,10 +463,10 @@ export function recordSQLiteAttachmentOrphans(options: {
         INSERT INTO party_stack_attachment_orphans (
             storage_key, ontology, attachment_id, created_at, state,
             intent_token
-        ) VALUES (?, ?, ?, ?, 'pending', ?)
+        ) VALUES (?, ?, ?, ?, 'uploading', ?)
         ON CONFLICT(storage_key) DO UPDATE SET
             created_at = excluded.created_at,
-            state = 'pending',
+            state = 'uploading',
             intent_token = excluded.intent_token,
             claim_token = NULL,
             claimed_at = NULL
@@ -487,6 +487,39 @@ export function recordSQLiteAttachmentOrphans(options: {
                 throw new Error(`Attachment "${row.id}" is being garbage-collected; retry the action.`);
             }
             insert.run(row.storageKey, options.ontology, row.id, Date.now(), row.intentToken);
+        }
+    }
+}
+
+export function markSQLiteAttachmentUploadsComplete(options: {
+    database: SQLiteDatabase;
+    rows: readonly SQLitePreparedAttachment[];
+}): void {
+    const update = options.database.prepare(`
+        UPDATE party_stack_attachment_orphans
+        SET state = 'pending'
+        WHERE storage_key = ?
+          AND intent_token = ?
+          AND state = 'uploading'
+    `);
+    const read = options.database.prepare(`
+        SELECT state, intent_token
+        FROM party_stack_attachment_orphans
+        WHERE storage_key = ?
+    `);
+    for (const row of options.rows) {
+        if (!row.storageKey || !row.intentToken) continue;
+        update.run(row.storageKey, row.intentToken);
+        const current = read.get(row.storageKey) as
+            | {
+                  state: string;
+                  intent_token: string | null;
+              }
+            | undefined;
+        if (current?.state !== "pending" || current.intent_token !== row.intentToken) {
+            throw new Error(
+                `Attachment "${row.id}" upload intent changed before completion; retry the action.`
+            );
         }
     }
 }
@@ -624,7 +657,8 @@ export async function collectSQLiteAttachmentOrphans(options: {
 }
 
 /**
- * Recovers abandoned collector claims after an isolate/process failure.
+ * Recovers abandoned uploads and collector claims after an isolate/process
+ * failure.
  *
  * Call during exclusive initialization (for example under
  * blockConcurrencyWhile), never while an orphan collector is still running.
@@ -640,10 +674,13 @@ export function recoverSQLiteAttachmentOrphanClaims(options: {
                  SET state = 'pending',
                      claim_token = NULL,
                      claimed_at = NULL
-                 WHERE state = 'collecting' AND (
-                    claimed_at IS NULL OR claimed_at <= ?
+                 WHERE (
+                    state = 'collecting' AND
+                    (claimed_at IS NULL OR claimed_at <= ?)
+                 ) OR (
+                    state = 'uploading' AND created_at <= ?
                  )`
             )
-            .run(options.claimedBefore);
+            .run(options.claimedBefore, options.claimedBefore);
     })();
 }

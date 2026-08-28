@@ -144,7 +144,15 @@ export async function createCloudflareSQLiteBackendInstallation<AuthenticationCl
             runtimeHost,
             cleanup,
             destroyInstallation() {
-                destroyPromise ??= cleanup().then(() => runtimeHost.destroyInstallation());
+                if (!destroyPromise) {
+                    const attempt = cleanup().then(() => runtimeHost.destroyInstallation());
+                    destroyPromise = attempt;
+                    void attempt.catch(() => {
+                        if (destroyPromise === attempt) {
+                            destroyPromise = undefined;
+                        }
+                    });
+                }
                 return destroyPromise;
             },
         };

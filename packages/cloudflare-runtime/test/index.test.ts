@@ -125,6 +125,13 @@ describe("Cloudflare Durable Object runtime", () => {
         });
     });
 
+    it("retries whole-installation destruction after a transient R2 failure", async () => {
+        await expect(createStub().runDestroyRetry()).resolves.toEqual({
+            firstFailed: true,
+            secondSucceeded: true,
+        });
+    });
+
     it("integrates the real Better Auth connection adapter with owned SQLite", async () => {
         const result = await createStub().runBetterAuthIntegration();
         expect(result).toEqual({

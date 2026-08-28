@@ -17,6 +17,7 @@ import {
     createCloudflareSQLiteOntologyRoute,
     R2BlobBytesStore,
     type CloudflareRuntimeHost,
+    type R2BucketLike,
 } from "../src/index.js";
 import { createDurableObjectSQLiteDatabase } from "@party-stack/cloudflare-sqlite-ontology";
 
@@ -487,6 +488,58 @@ export class RuntimeTestDurableObject extends DurableObject<TestEnvironment> {
         } finally {
             await installation.cleanup();
         }
+    }
+
+    async runDestroyRetry(): Promise<{
+        firstFailed: boolean;
+        secondSucceeded: boolean;
+    }> {
+        let failList = true;
+        const bucket: R2BucketLike = {
+            put: (key, value, options) => this.env.BLOBS.put(key, value, options),
+            get: (key) => this.env.BLOBS.get(key),
+            delete: (keys) => this.env.BLOBS.delete(keys as string | string[]),
+            list: (options) => {
+                if (failList) {
+                    failList = false;
+                    return Promise.reject(new Error("transient R2 list failure"));
+                }
+                return this.env.BLOBS.list(options);
+            },
+        };
+        const installation = await createCloudflareSQLiteBackendInstallation({
+            installationId: "destroy-retry",
+            storage: this.ctx.storage,
+            bucket,
+            connections: () => ({
+                name: "destroy-retry",
+                createAuthenticationClient: () => ({}),
+                restoreConnections: () => Promise.resolve([]),
+            }),
+            routes: [
+                createCloudflareSQLiteOntologyRoute({
+                    ontologyId: "primary",
+                    ir: sqliteOntologyConformanceIR,
+                }),
+            ],
+        });
+        let firstFailed = false;
+        try {
+            await installation.destroyInstallation();
+        } catch (error) {
+            firstFailed = error instanceof Error && error.message.includes("transient R2 list failure");
+        }
+        let secondSucceeded = false;
+        try {
+            await installation.destroyInstallation();
+            secondSucceeded = true;
+        } catch {
+            secondSucceeded = false;
+        }
+        return {
+            firstFailed,
+            secondSucceeded,
+        };
     }
 
     async runBetterAuthIntegration(): Promise<{
