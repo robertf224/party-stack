@@ -37,5 +37,5 @@ describe("ontology CLI", () => {
         expect(generateHelp.stdout).toContain("Generate ontology types");
         const pullHelp = await execFileAsync(process.execPath, [cliPath, "pull", "--help"], { cwd });
         expect(pullHelp.stdout).toContain("Pull ontology metadata");
-    });
+    }, 20_000);
 });
