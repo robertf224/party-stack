@@ -44,10 +44,10 @@ describe("NodeSecretStore", () => {
 
     it("namespaces and hashes keychain accounts", async () => {
         const backend = memoryBackend();
+        keychain.getAllBackends.mockResolvedValue([backend]);
         const setPassword = vi.spyOn(backend, "setPassword");
         const store = new NodeSecretStore({
             service: "party-stack:test:secrets",
-            backend,
         });
 
         await store.set("tokens/client:id", "secret");
@@ -69,5 +69,16 @@ describe("NodeSecretStore", () => {
         });
 
         await expect(store.get("token")).rejects.toThrow("No OS keychain is available");
+    });
+
+    it("selects the Linux Secret Service lazily", async () => {
+        keychain.getAllBackends.mockResolvedValue([memoryBackend("secret-service")]);
+        const store = new NodeSecretStore({
+            service: "party-stack:test:secrets",
+        });
+
+        expect(keychain.getAllBackends).not.toHaveBeenCalled();
+        await expect(store.get("token")).resolves.toBeUndefined();
+        expect(keychain.getAllBackends).toHaveBeenCalledOnce();
     });
 });

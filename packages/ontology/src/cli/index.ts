@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { createNodeRuntime } from "@party-stack/node-runtime";
 import { pascalCase } from "change-case";
 import { Command } from "commander";
 import { generateFiles } from "./generate.js";
@@ -66,11 +65,12 @@ async function main(): Promise<void> {
 
     const configPath = discoverOntologyPullConfigPath(cwd);
     if (configPath) {
-        const config = await loadOntologyPullConfig(configPath);
         program
             .command("pull")
             .description(`Pull ontology metadata using ${ONTOLOGY_PULL_CONFIG_PATH}`)
             .action(async () => {
+                const config = await loadOntologyPullConfig(configPath);
+                const { createNodeRuntime } = await import("@party-stack/node-runtime");
                 await writePulledOntology(config, ontologyPath, {
                     runtime: createNodeRuntime,
                 });
