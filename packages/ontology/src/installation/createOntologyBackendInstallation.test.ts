@@ -241,6 +241,45 @@ describe("createOntologyBackendInstallation", () => {
         await installation.cleanup();
     });
 
+    it("destroys cached metadata when forgetting a user", async () => {
+        const adapter = createTestConnectionAdapter();
+        const cleanupMeta = vi.fn();
+        const installation = await createOntologyBackendInstallation({
+            installationId: "forget-meta",
+            connections: () => adapter,
+            runtime: createDefaultRuntime,
+            routes: [
+                {
+                    matches: (ontologyId) => ontologyId === "ontology",
+                    configureMeta: () => ({
+                        ir,
+                        backend: () => ({
+                            ...createTestBackend(),
+                            cleanup: cleanupMeta,
+                        }),
+                    }),
+                },
+            ],
+        });
+        const connection = await installation.authentication.signIn();
+        await installation.openMetaOntology({
+            userId: connection.userId,
+            ontologyId: "ontology",
+        });
+
+        await installation.forget(connection.userId);
+
+        expect(cleanupMeta).toHaveBeenCalledOnce();
+        expect(installation.connections.get(connection.userId)).toBeUndefined();
+        await expect(
+            installation.openMetaOntology({
+                userId: connection.userId,
+                ontologyId: "ontology",
+            })
+        ).rejects.toThrow(`User "${connection.userId}" is not connected`);
+        await installation.cleanup();
+    });
+
     it("rejects ambiguous dynamic routes", async () => {
         const adapter = createTestConnectionAdapter();
         const installation = await createOntologyBackendInstallation({

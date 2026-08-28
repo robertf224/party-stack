@@ -16,6 +16,7 @@ interface LocalOntologyPartition {
     id: string;
     userId: string;
     ontologyId: string;
+    meta?: true;
 }
 
 function scope(value: string): string {
@@ -131,10 +132,11 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
         if (ontology) {
             await ontology.destroy();
         } else {
-            const runtime = await options.runtime(
-                partition.userId,
-                liveOntologyNamespace(options.installationId, partition.ontologyId)
-            );
+            const namespace = `${liveOntologyNamespace(
+                options.installationId,
+                partition.ontologyId
+            )}${partition.meta ? ":meta" : ""}`;
+            const runtime = await options.runtime(partition.userId, namespace);
             if (runtime.destroy) {
                 await runtime.destroy();
             } else {
@@ -168,6 +170,16 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
         if (disposed) {
             throw new Error(`Backend installation "${options.installationId}" is closed.`);
         }
+        const current = connectionManager.connections.get(userId);
+        if (!isActiveConnection(current)) {
+            throw new Error(
+                `User "${userId}" is not connected to backend installation "${options.installationId}".`
+            );
+        }
+        const egress = connectionManager.egress(userId);
+        if (!egress) {
+            throw new Error(`Connection egress for user "${userId}" is unavailable.`);
+        }
         const key = meta ? metaOntologyKey(userId, ontologyId) : ontologyKey(userId, ontologyId);
         const existing = live.get(key);
         if (existing) {
@@ -178,16 +190,6 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
             return pending as unknown as Promise<LiveOntology<Ontology>>;
         }
         const open = (async () => {
-            const current = connectionManager.connections.get(userId);
-            if (!isActiveConnection(current)) {
-                throw new Error(
-                    `User "${userId}" is not connected to backend installation "${options.installationId}".`
-                );
-            }
-            const egress = connectionManager.egress(userId);
-            if (!egress) {
-                throw new Error(`Connection egress for user "${userId}" is unavailable.`);
-            }
             const route = routeFor(options.routes, ontologyId);
             const configureOptions = {
                 connection: current,
@@ -222,13 +224,12 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
             const runtimeNamespace = `${liveOntologyNamespace(options.installationId, ontologyId)}${
                 meta ? ":meta" : ""
             }`;
-            if (!meta) {
-                await recordPartition({
-                    id: key,
-                    userId,
-                    ontologyId,
-                });
-            }
+            await recordPartition({
+                id: key,
+                userId,
+                ontologyId,
+                meta: meta ? true : undefined,
+            });
             const ontology = await createLiveOntology({
                 id: runtimeNamespace,
                 ir: configured.ir,
