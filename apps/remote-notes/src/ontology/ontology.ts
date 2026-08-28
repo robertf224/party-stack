@@ -50,7 +50,7 @@ export const notesOntology = {
                     name: "ownerEmail",
                     displayName: "Owner Email",
                     type: o.string({}),
-                    defaultValue: o.Expression.contextReference({ path: ["user", "email"] }),
+                    defaultValue: o.Expression.contextReference({ path: ["user"] }),
                 },
             ],
             logic: [
@@ -124,7 +124,7 @@ export const notesOntology = {
                     name: "ownerEmail",
                     displayName: "Owner Email",
                     type: o.string({}),
-                    defaultValue: o.Expression.contextReference({ path: ["user", "email"] }),
+                    defaultValue: o.Expression.contextReference({ path: ["user"] }),
                 },
                 { name: "attachment", displayName: "Attachment", type: o.attachment({}) },
             ],

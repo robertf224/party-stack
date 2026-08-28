@@ -10,7 +10,7 @@ import type { ValueSignal } from "@effectionx/signals";
  */
 export function useObjectSetWatcherSession(
     baseUrl: string,
-    tokenProvider: () => Operation<string>,
+    createWebSocket: (url: string) => Promise<WebSocket>,
     ontologyRid: string,
     desiredSubscriptions: ValueSignal<ObjectSetSubscription[]>
 ): Operation<Stream<ObjectSetSubscriptionsMessage, void>> {
@@ -26,7 +26,7 @@ export function useObjectSetWatcherSession(
                     yield* scoped(function* () {
                         const connection = yield* useObjectSetWatcherConnection(
                             baseUrl,
-                            yield* tokenProvider(),
+                            createWebSocket,
                             ontologyRid,
                             desiredSubscriptions
                         );

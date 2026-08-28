@@ -1,24 +1,46 @@
 import { invariant } from "@bobbyfidz/panic";
-import { createSharedClientContext } from "@osdk/shared.client.impl";
+import { createFetchOrThrow } from "@osdk/shared.net.fetch";
+import { createFoundryFetch, createFoundryWebSocket } from "./network.js";
 import type { SharedClient, SharedClientContext } from "@osdk/shared.client2";
 
 type Optional<T, K extends keyof T> = Pick<Partial<T>, K> & Omit<T, K>;
 
-export type Client = SharedClientContext;
+export interface Client extends SharedClientContext {
+    createWebSocket?: (url: string | URL, protocols?: string | string[]) => Promise<WebSocket>;
+}
 
 export interface OntologyClient extends Client {
     ontologyRid: string;
 }
 
-export const createClient = (context: Optional<Client, "fetch">): Client => {
-    // TODO: remove this dep and implement our own network setup here.
-    return createSharedClientContext(
-        context.baseUrl,
-        context.tokenProvider,
-        "foundry-ontology",
-        context.fetch
-    );
-};
+function normalizeBaseUrl(baseUrl: string): string {
+    const normalized = new URL(baseUrl);
+    if (!normalized.pathname.endsWith("/")) {
+        normalized.pathname += "/";
+    }
+    return normalized.toString();
+}
+
+export function createClient(context: Optional<Client, "fetch">): Client {
+    const baseUrl = normalizeBaseUrl(context.baseUrl);
+    const fetchImpl =
+        context.fetch ??
+        createFoundryFetch({
+            baseUrl,
+            tokenProvider: context.tokenProvider,
+        });
+    return {
+        baseUrl,
+        fetch: createFetchOrThrow(fetchImpl),
+        tokenProvider: context.tokenProvider,
+        createWebSocket:
+            context.createWebSocket ??
+            createFoundryWebSocket({
+                baseUrl,
+                tokenProvider: context.tokenProvider,
+            }),
+    };
+}
 
 export function createOntologyClient(context: Optional<OntologyClient, "fetch">): OntologyClient {
     return {
@@ -29,7 +51,11 @@ export function createOntologyClient(context: Optional<OntologyClient, "fetch">)
 
 export function fromOsdkClient(client: SharedClient): OntologyClient {
     const context = client.__osdkClientContext;
-    const ontologyRid = (context as unknown as { ontologyRid: string }).ontologyRid;
+    const ontologyRid = (
+        context as unknown as {
+            ontologyRid: string;
+        }
+    ).ontologyRid;
     invariant(ontologyRid, "Ontology rid not found on OSDK client, this should never happen.");
     return {
         ...context,

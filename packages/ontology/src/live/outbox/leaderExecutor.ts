@@ -1,4 +1,8 @@
 import {
+    type ConnectionMonitor,
+} from "@party-stack/connections";
+import { isUnauthenticatedError } from "@party-stack/errors";
+import {
     CoordinationTaskRejectedError,
     type CoordinationServiceClient,
     type RuntimeAdapter,
@@ -24,6 +28,7 @@ export interface OutboxLeaderOptions {
     maxRetries: number;
     retryDelayMs: number;
     execute(entry: OntologyOutboxEntry): Promise<unknown>;
+    connection?: ConnectionMonitor;
 }
 
 function normalizeError(error: unknown): Error {
@@ -53,6 +58,20 @@ function isConnected(
     );
 }
 
+function isConnectionReady(
+    connection: OutboxLeaderOptions["connection"]
+): boolean {
+    return (
+        !connection ||
+        connection.state.status === "active"
+    );
+}
+
+function canExecute(options: OutboxLeaderOptions): boolean {
+    return isConnected(options.runtime) &&
+        isConnectionReady(options.connection);
+}
+
 export function useOutboxLeader(options: OutboxLeaderOptions): Operation<void> {
     return (function* () {
         const signal = yield* useAbortSignal();
@@ -67,9 +86,9 @@ export function useOutboxLeader(options: OutboxLeaderOptions): Operation<void> {
         const wakes = yield* options.wake;
 
         while (true) {
-            if (isConnected(options.runtime)) {
+            if (canExecute(options)) {
                 while (true) {
-                    if (!isConnected(options.runtime)) {
+                    if (!canExecute(options)) {
                         break;
                     }
                     const entry = yield* until(options.service.methods.claim({}));
@@ -102,6 +121,27 @@ export function useOutboxLeader(options: OutboxLeaderOptions): Operation<void> {
                     } catch (error) {
                         if (signal.aborted) throw error;
                         const normalized = normalizeError(error);
+                        if (
+                            isUnauthenticatedError(error) &&
+                            options.connection
+                        ) {
+                            // Connection egress currently reports authentication
+                            // failures. A future LiveOntology backend supervisor
+                            // should own reporting for every adapter operation.
+                            yield* until(
+                                options.service.methods.fail({
+                                    id: entry.id,
+                                    executionId,
+                                    retryable: true,
+                                    retryAt: Date.now(),
+                                    error: {
+                                        name: normalized.name,
+                                        message: normalized.message,
+                                    },
+                                })
+                            );
+                            break;
+                        }
                         const retryable = !(normalized instanceof NonRetryableError);
                         const retryScheduled =
                             retryable &&

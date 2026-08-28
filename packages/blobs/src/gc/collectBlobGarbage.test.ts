@@ -1,14 +1,7 @@
-import {
-    MemoryBlobBytesStore,
-    SingleProcessCoordination,
-} from "@party-stack/runtime";
+import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
 import { describe, expect, it, vi } from "vitest";
 import { createBlobStore } from "../store/createBlobStore.js";
-import {
-    BLOB_GC_BATCH_SIZE,
-    BLOB_GC_SIZE_UNIT_BYTES,
-    collectBlobGarbage,
-} from "./collectBlobGarbage.js";
+import { BLOB_GC_BATCH_SIZE, BLOB_GC_SIZE_UNIT_BYTES, collectBlobGarbage } from "./collectBlobGarbage.js";
 import type { BlobMetadataRecord, BlobRef } from "../types.js";
 
 type TestBlobRecord = BlobMetadataRecord & BlobRef;
@@ -26,14 +19,7 @@ function ref(id: string, overrides: Partial<TestBlobRecord> = {}): TestBlobRecor
 }
 
 function setup(refs: TestBlobRecord[]) {
-    const blobBytes = new MemoryBlobBytesStore(
-        new Map(
-            refs.map(({ id }) => [
-                id,
-                new Blob([id]),
-            ])
-        )
-    );
+    const blobBytes = new MemoryBlobBytesStore(new Map(refs.map(({ id }) => [id, new Blob([id])])));
     const coordination = new SingleProcessCoordination({
         scope: `blob-gc-${crypto.randomUUID()}`,
     });
@@ -48,10 +34,7 @@ function setup(refs: TestBlobRecord[]) {
     return { blobBytes, coordination, store };
 }
 
-async function insertRefs(
-    store: ReturnType<typeof createBlobStore>,
-    refs: TestBlobRecord[]
-): Promise<void> {
+async function insertRefs(store: ReturnType<typeof createBlobStore>, refs: TestBlobRecord[]): Promise<void> {
     for (const value of refs) {
         await store.collection.insert(value, {
             optimistic: false,
@@ -83,8 +66,7 @@ describe("collectBlobGarbage", () => {
                 },
             }),
         ];
-        const { blobBytes, coordination, store } =
-            setup(refs);
+        const { blobBytes, coordination, store } = setup(refs);
         try {
             await insertRefs(store, refs);
             await collectBlobGarbage(store, {
@@ -92,26 +74,12 @@ describe("collectBlobGarbage", () => {
                 now: 200,
             });
 
-            await expect(
-                store.find("expired")
-            ).resolves.toBeUndefined();
-            await expect(
-                store.find("persisted")
-            ).resolves.toBeUndefined();
-            await expect(
-                blobBytes.read("expired")
-            ).rejects.toThrow("not found");
-            await expect(
-                blobBytes.read("persisted")
-            ).rejects.toThrow("not found");
-            for (const id of [
-                "recent",
-                "staged",
-                "failed",
-            ]) {
-                await expect(
-                    store.find(id)
-                ).resolves.toBeDefined();
+            await expect(store.find("expired")).resolves.toBeUndefined();
+            await expect(store.find("persisted")).resolves.toBeUndefined();
+            await expect(blobBytes.read("expired")).rejects.toThrow("not found");
+            await expect(blobBytes.read("persisted")).rejects.toThrow("not found");
+            for (const id of ["recent", "staged", "failed"]) {
+                await expect(store.find(id)).resolves.toBeDefined();
             }
         } finally {
             await store.cleanup();
@@ -123,15 +91,11 @@ describe("collectBlobGarbage", () => {
         const day = 24 * 60 * 60 * 1_000;
         const now = 2 * day;
         const refs = [
-            ...Array.from(
-                { length: BLOB_GC_BATCH_SIZE - 1 },
-                (_, index) =>
-                    ref(`filler-${index}`, {
-                        size:
-                            100 *
-                            BLOB_GC_SIZE_UNIT_BYTES,
-                        updatedAt: 0,
-                    })
+            ...Array.from({ length: BLOB_GC_BATCH_SIZE - 1 }, (_, index) =>
+                ref(`filler-${index}`, {
+                    size: 100 * BLOB_GC_SIZE_UNIT_BYTES,
+                    updatedAt: 0,
+                })
             ),
             ref("large-day-old", {
                 size: 10 * BLOB_GC_SIZE_UNIT_BYTES,
@@ -147,32 +111,20 @@ describe("collectBlobGarbage", () => {
             await insertRefs(store, refs);
             const purged: string[] = [];
             const purge = store.purge.bind(store);
-            vi.spyOn(store, "purge").mockImplementation(
-                async (id, options) => {
-                    purged.push(id);
-                    await purge(id, options);
-                }
-            );
+            vi.spyOn(store, "purge").mockImplementation(async (id, options) => {
+                purged.push(id);
+                await purge(id, options);
+            });
             await collectBlobGarbage(store, {
                 cutoff: now,
                 now,
             });
 
-            expect(
-                purged.slice(0, BLOB_GC_BATCH_SIZE)
-            ).toContain("large-day-old");
-            expect(
-                purged.slice(0, BLOB_GC_BATCH_SIZE)
-            ).not.toContain("tiny-two-days-old");
-            expect(purged).toHaveLength(
-                BLOB_GC_BATCH_SIZE + 1
-            );
-            await expect(
-                store.find("large-day-old")
-            ).resolves.toBeUndefined();
-            await expect(
-                store.find("tiny-two-days-old")
-            ).resolves.toBeUndefined();
+            expect(purged.slice(0, BLOB_GC_BATCH_SIZE)).toContain("large-day-old");
+            expect(purged.slice(0, BLOB_GC_BATCH_SIZE)).not.toContain("tiny-two-days-old");
+            expect(purged).toHaveLength(BLOB_GC_BATCH_SIZE + 1);
+            await expect(store.find("large-day-old")).resolves.toBeUndefined();
+            await expect(store.find("tiny-two-days-old")).resolves.toBeUndefined();
         } finally {
             await store.cleanup();
             await coordination.close();

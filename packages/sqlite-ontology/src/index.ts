@@ -1,4 +1,7 @@
-import { runOptimisticAction } from "@party-stack/ontology";
+import {
+    createReadTx,
+    runOptimisticAction,
+} from "@party-stack/ontology";
 import { decode, encode } from "@party-stack/ontology/json";
 import { resolveType } from "@party-stack/ontology/utils";
 import { createTransaction, eq, queryOnce } from "@tanstack/db";
@@ -9,7 +12,9 @@ import type {
     OntologyAttachmentsAdapter,
     OntologyCollectionOptions,
     OntologyIR,
+    OntologyMutatorRegistry,
     OntologyObject,
+    OntologyQueryFunctionRegistry,
     ObjectTypeDef,
 } from "@party-stack/ontology";
 import type { attachment } from "@party-stack/ontology/values";
@@ -49,6 +54,8 @@ export interface CreateSQLiteOntologyBackendAdapterOptions {
     ir: OntologyIR;
     database: BetterSqlite3Database;
     name?: string;
+    mutators?: OntologyMutatorRegistry;
+    queryFunctions?: OntologyQueryFunctionRegistry;
 }
 
 function getObjectType(opts: { ir: OntologyIR; objectTypeName: string }): ObjectTypeDef {
@@ -372,7 +379,7 @@ function createCollectionOptions(opts: {
     });
 
     const sync: SyncConfig<OntologyObject, string | number> = {
-        sync: ({ begin, collection, commit, markReady, write }) => {
+        sync: ({ begin, collection, commit, markError, markReady, write }) => {
             const load = () => {
                 const rows = opts.database
                     .prepare(
@@ -403,17 +410,18 @@ function createCollectionOptions(opts: {
                         write({ type: "delete", key });
                     }
                 }
-                commit();
+                return commit();
             };
 
-            load();
-            markReady();
+            const initialLoad = load();
+            if (initialLoad === true) {
+                markReady();
+            } else {
+                void initialLoad.then(markReady, markError);
+            }
 
             return {
-                loadSubset: () => {
-                    load();
-                    return true;
-                },
+                loadSubset: load,
                 cleanup: () => {},
             };
         },
@@ -490,6 +498,28 @@ export function createSQLiteOntologyBackendAdapter(
                 objectTypeName,
             }),
         applyAction: async (actionTypeName, parameters, live) => {
+            const actionType =
+                opts.ir.actionTypes.find(
+                    (candidate) =>
+                        candidate.name ===
+                        actionTypeName
+                );
+            if (!actionType) {
+                throw new Error(
+                    `Unknown action type "${actionTypeName}".`
+                );
+            }
+            if (
+                actionType.logic.length ===
+                    0 &&
+                !opts.mutators?.[
+                    actionTypeName
+                ]
+            ) {
+                throw new Error(
+                    `SQLite ontology adapter cannot apply non-declarative action type "${actionTypeName}" without a registered mutator.`
+                );
+            }
             const collections = live.objects as Record<string, OntologyCollection>;
             await loadActionReferenceObjects({
                 ir: opts.ir,
@@ -528,11 +558,34 @@ export function createSQLiteOntologyBackendAdapter(
                 parameters,
                 context: live.context ?? {},
                 objects: collections,
+                mutators: opts.mutators,
             });
             await transaction.commit();
         },
-        runQueryFunction: (name) =>
-            Promise.reject(new Error(`SQLite ontology adapter cannot run query function type "${name}".`)),
+        runQueryFunction: async (
+            name,
+            parameters,
+            live
+        ) => {
+            const handler =
+                opts.queryFunctions?.[name];
+            if (!handler) {
+                throw new Error(
+                    `SQLite ontology adapter cannot run query function type "${name}" without a registered handler.`
+                );
+            }
+            return await handler({
+                tx: createReadTx(
+                    live.objects as Record<
+                        string,
+                        OntologyCollection
+                    >
+                ),
+                args: parameters,
+                context:
+                    live.context ?? {},
+            });
+        },
         attachments: createAttachmentsAdapter(opts.database),
     };
 }
@@ -541,6 +594,8 @@ export type CreateSQLiteOntologyBackendOptions<
     Context extends Record<string, unknown> = Record<string, unknown>,
 > = {
     name?: string;
+    mutators?: OntologyMutatorRegistry;
+    queryFunctions?: OntologyQueryFunctionRegistry;
 } & (
     | {
           database: BetterSqlite3Database;
@@ -561,5 +616,8 @@ export function createSQLiteOntologyBackend<
             ir,
             database: "database" in opts ? opts.database : await opts.createDatabase(ir, context),
             name: opts.name,
+            mutators: opts.mutators,
+            queryFunctions:
+                opts.queryFunctions,
         });
 }

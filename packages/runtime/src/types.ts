@@ -12,6 +12,26 @@ export interface NetworkConnectivity {
     subscribe(callback: (isConnected: boolean) => void): () => void;
 }
 
+export interface SecretStore {
+    get(key: string): Promise<string | undefined>;
+    set(key: string, value: string): Promise<void>;
+    delete(key: string): Promise<void>;
+}
+
+export type BrowserAuthenticationPresentation = "popup" | "redirect";
+
+export interface BrowserAuthenticationSession {
+    open(authorizationUrl: string): Promise<{ callbackUrl: string }>;
+    close(): void | Promise<void>;
+}
+
+export interface BrowserAuthentication {
+    start(options: {
+        redirectUrl: string;
+        presentation?: BrowserAuthenticationPresentation;
+    }): BrowserAuthenticationSession;
+}
+
 export type { PersistenceAdapter } from "@tanstack/db-sqlite-persistence-core";
 
 export interface RuntimeAdapter {
@@ -20,8 +40,11 @@ export interface RuntimeAdapter {
     blobBytes: BlobBytesStore;
     coordination: Coordination;
     connectivity?: NetworkConnectivity;
+    browserAuthentication?: BrowserAuthentication;
+    secrets?: SecretStore;
     persistence?: PersistenceAdapter;
     cleanup?: () => void | Promise<void>;
+    destroy?: () => void | Promise<void>;
 }
 
 export type RuntimeAdapterProvider = (

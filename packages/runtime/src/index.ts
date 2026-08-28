@@ -1,9 +1,9 @@
-export {
-    createPersistedCollectionCoordinator,
-} from "./coordinator/index.js";
+export { createPersistedCollectionCoordinator } from "./coordinator/index.js";
 export { createDefaultRuntime } from "./utils/createDefaultRuntime.js";
+export { defineRuntime } from "./utils/defineRuntime.js";
 export { createLocalCollection } from "./utils/createLocalCollection.js";
 export { MemoryBlobBytesStore } from "./memory/MemoryBlobBytesStore.js";
+export { BrowserAuthenticationCancelledError } from "./utils/BrowserAuthenticationCancelledError.js";
 export {
     CoordinationClosedError,
     CoordinationError,
@@ -17,6 +17,10 @@ export {
 } from "@party-stack/coordination";
 export type {
     BlobBytesStore,
+    BrowserAuthentication,
+    BrowserAuthenticationPresentation,
+    BrowserAuthenticationSession,
+    SecretStore,
     NetworkConnectivity,
     PersistenceAdapter,
     RuntimeAdapter,

@@ -1,6 +1,15 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { TaskList } from "../app/TaskList";
+import {
+    createFileRoute,
+    lazyRouteComponent,
+} from "@tanstack/react-router";
 
 export const Route = createFileRoute("/")({
-    component: TaskList,
+    ssr: false,
+    component: lazyRouteComponent(
+        () =>
+            import(
+                "../app/IssueTracker"
+            ),
+        "IssueTracker"
+    ),
 });

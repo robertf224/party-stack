@@ -1,5 +1,49 @@
 # @party-stack/sqlite-ontology
 
+## 0.4.2
+
+### Patch Changes
+
+- 45bcf88: upgrade tanstack db deps
+- Updated dependencies [45bcf88]
+    - @party-stack/ontology@0.12.1
+
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [b8fb08e]
+    - @party-stack/ontology@0.12.0
+
+## 0.4.0
+
+### Minor Changes
+
+- 33f6858: auth + connections
+
+### Patch Changes
+
+- Updated dependencies [33f6858]
+    - @party-stack/ontology@0.11.0
+
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [46268bc]
+    - @party-stack/ontology@0.10.0
+
+## 0.3.0
+
+### Minor Changes
+
+- 515f8dc: OSDK-free LiveOntology Gateway MVP: collection readiness and race-safe cleanup, non-blocking action refresh, structured remote errors, policy-aware describe projection, precise invalidation, attachments, and public Foundry action metadata. No generic link traversal, object-query helpers, or OMS/prefill metadata.
+
+### Patch Changes
+
+- Updated dependencies [515f8dc]
+    - @party-stack/ontology@0.9.0
+
 ## 0.2.0
 
 ### Minor Changes

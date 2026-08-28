@@ -3,6 +3,14 @@ import { Menu } from "@base-ui/react/menu";
 import { Tabs } from "@base-ui/react/tabs";
 import { Tooltip } from "@base-ui/react/tooltip";
 import {
+    Graph,
+    layout as layoutGraph,
+    type EdgeLabel,
+    type GraphLabel,
+    type NodeLabel,
+    type Point,
+} from "@dagrejs/dagre";
+import {
     ArrowPathIcon,
     Bars2Icon,
     CalendarDaysIcon,
@@ -1312,7 +1320,7 @@ function ObjectTable({
                                     className="ps:rounded-md ps:border ps:border-zinc-600 ps:bg-zinc-900 ps:px-3 ps:py-1.5 ps:text-xs ps:text-zinc-200 ps:hover:border-rose-400 ps:hover:text-rose-300 ps:disabled:opacity-50"
                                     disabled={isFetchingNextPage}
                                     type="button"
-                                    onClick={fetchNextPage}
+                                    onClick={() => void fetchNextPage()}
                                 >
                                     {isFetchingNextPage ? "Loading…" : "Load 50 more"}
                                 </button>
@@ -1391,32 +1399,143 @@ interface SchemaNode {
     y: number;
 }
 
-export function layoutSchema(ir: OntologyIR): {
-    nodes: SchemaNode[];
+interface SchemaEdge {
+    id: string;
+    label: string;
+    labelWidth: number;
+    labelX: number;
+    labelY: number;
+    points: Point[];
+}
+
+interface SchemaGraphEdgeLabel extends EdgeLabel {
+    label: string;
+}
+
+const SCHEMA_CARD_WIDTH = 230;
+const SCHEMA_CARD_HEIGHT = 176;
+
+function schemaEdgeLabel(link: OntologyIR["linkTypes"][number]): {
+    label: string;
     width: number;
-    height: number;
 } {
-    const cardWidth = 230;
-    const cardHeight = 176;
-    const gapX = 110;
-    const gapY = 90;
-    const columns = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(ir.objectTypes.length))));
-    const rows = Math.max(1, Math.ceil(ir.objectTypes.length / columns));
-    const nodes = ir.objectTypes.map((objectType, index) => ({
-        objectType,
-        x: 40 + (index % columns) * (cardWidth + gapX),
-        y: 40 + Math.floor(index / columns) * (cardHeight + gapY),
-    }));
+    const label = `${link.source.displayName} · ${link.cardinality}`;
     return {
-        nodes,
-        width: 80 + columns * cardWidth + (columns - 1) * gapX,
-        height: 80 + rows * cardHeight + (rows - 1) * gapY,
+        label,
+        width: Math.min(180, Math.max(72, label.length * 6 + 16)),
     };
 }
 
+export function layoutSchema(ir: OntologyIR): {
+    nodes: SchemaNode[];
+    edges: SchemaEdge[];
+    width: number;
+    height: number;
+} {
+    const graph = new Graph<GraphLabel, NodeLabel, SchemaGraphEdgeLabel>({ multigraph: true })
+        .setGraph({
+            marginx: 40,
+            marginy: 40,
+            nodesep: 72,
+            rankdir: "LR",
+            ranksep: 120,
+        })
+        .setDefaultEdgeLabel(() => ({ label: "" }));
+
+    for (const objectType of ir.objectTypes) {
+        graph.setNode(objectType.name, {
+            height: SCHEMA_CARD_HEIGHT,
+            width: SCHEMA_CARD_WIDTH,
+        });
+    }
+    for (const link of ir.linkTypes) {
+        const edgeLabel = schemaEdgeLabel(link);
+        graph.setEdge(
+            link.source.objectType,
+            link.target.objectType,
+            {
+                height: 24,
+                label: edgeLabel.label,
+                width: edgeLabel.width,
+            },
+            link.id
+        );
+    }
+
+    layoutGraph(graph);
+
+    const objectTypeByName = new Map(
+        ir.objectTypes.map((objectType) => [objectType.name, objectType])
+    );
+    const nodes = graph
+        .nodes()
+        .map((name) => {
+            const objectType = objectTypeByName.get(name);
+            const node = graph.node(name);
+            if (!objectType || !node) return undefined;
+            return {
+                objectType,
+                x: (node.x ?? 0) - SCHEMA_CARD_WIDTH / 2,
+                y: (node.y ?? 0) - SCHEMA_CARD_HEIGHT / 2,
+            };
+        })
+        .filter((node): node is SchemaNode => node !== undefined);
+    const edges = graph.edges().map((edge) => {
+        const value = graph.edge(edge);
+        return {
+            id: edge.name ?? `${edge.v}-${edge.w}`,
+            label: value.label ?? "",
+            labelWidth: value.width ?? 72,
+            labelX: value.x ?? (value.points?.[0]?.x ?? 0),
+            labelY: value.y ?? (value.points?.[0]?.y ?? 0),
+            points: value.points ?? [],
+        };
+    });
+    const graphSize = graph.graph();
+
+    return {
+        nodes,
+        edges,
+        width: Math.max(310, graphSize.width ?? 0),
+        height: Math.max(256, graphSize.height ?? 0),
+    };
+}
+
+export function schemaEdgePath(points: Point[], cornerRadius = 12): string {
+    if (points.length === 0) return "";
+    const first = points[0]!;
+    if (points.length === 1) return `M ${first.x} ${first.y}`;
+
+    const path = [`M ${first.x} ${first.y}`];
+    for (let index = 1; index < points.length - 1; index += 1) {
+        const previous = points[index - 1]!;
+        const current = points[index]!;
+        const next = points[index + 1]!;
+        const incoming = Math.hypot(current.x - previous.x, current.y - previous.y);
+        const outgoing = Math.hypot(next.x - current.x, next.y - current.y);
+        if (incoming === 0 || outgoing === 0) {
+            path.push(`L ${current.x} ${current.y}`);
+            continue;
+        }
+        const radius = Math.min(cornerRadius, incoming / 2, outgoing / 2);
+        const before = {
+            x: current.x + ((previous.x - current.x) / incoming) * radius,
+            y: current.y + ((previous.y - current.y) / incoming) * radius,
+        };
+        const after = {
+            x: current.x + ((next.x - current.x) / outgoing) * radius,
+            y: current.y + ((next.y - current.y) / outgoing) * radius,
+        };
+        path.push(`L ${before.x} ${before.y}`, `Q ${current.x} ${current.y} ${after.x} ${after.y}`);
+    }
+    const end = points.at(-1);
+    if (end) path.push(`L ${end.x} ${end.y}`);
+    return path.join(" ");
+}
+
 function SchemaView({ ir }: { ir: OntologyIR }) {
-    const layout = layoutSchema(ir);
-    const nodeByName = new Map(layout.nodes.map((node) => [node.objectType.name, node]));
+    const schemaLayout = useMemo(() => layoutSchema(ir), [ir]);
+    const markerId = `ps-schema-arrow-${useId().replaceAll(":", "")}`;
 
     if (ir.objectTypes.length === 0) {
         return (
@@ -1430,60 +1549,57 @@ function SchemaView({ ir }: { ir: OntologyIR }) {
         <div className="ps:h-full ps:overflow-auto ps:p-5">
             <div
                 className="ps:relative ps:rounded-2xl ps:border ps:border-zinc-500/20 ps:bg-zinc-950/25 ps:in-[.ps-theme-light]:bg-white/45"
-                style={{ height: layout.height, minWidth: layout.width }}
+                style={{ height: schemaLayout.height, width: schemaLayout.width }}
             >
                 <svg
                     aria-label="Ontology relations"
                     className="ps:absolute ps:inset-0 ps:size-full ps:overflow-visible"
                     role="img"
-                    viewBox={`0 0 ${layout.width} ${layout.height}`}
+                    viewBox={`0 0 ${schemaLayout.width} ${schemaLayout.height}`}
                 >
                     <defs>
                         <marker
-                            id="ps-schema-arrow"
-                            markerHeight="7"
-                            markerWidth="7"
-                            orient="auto-start-reverse"
-                            refX="6"
-                            refY="3.5"
+                            id={markerId}
+                            markerHeight="8"
+                            markerWidth="8"
+                            orient="auto"
+                            refX="7"
+                            refY="4"
                         >
-                            <path className="ps:fill-rose-400" d="M0,0 L7,3.5 L0,7 Z" />
+                            <path className="ps:fill-rose-400" d="M0,0 L8,4 L0,8 Z" />
                         </marker>
                     </defs>
-                    {ir.linkTypes.map((link) => {
-                        const source = nodeByName.get(link.source.objectType);
-                        const target = nodeByName.get(link.target.objectType);
-                        if (!source || !target) return null;
-                        const sourceX = source.x + 115;
-                        const sourceY = source.y + 88;
-                        const targetX = target.x + 115;
-                        const targetY = target.y + 88;
-                        const labelX = (sourceX + targetX) / 2;
-                        const labelY = (sourceY + targetY) / 2;
-                        return (
-                            <g key={link.id}>
-                                <line
-                                    className="ps:stroke-rose-400/70"
-                                    markerEnd="url(#ps-schema-arrow)"
-                                    strokeWidth="1.5"
-                                    x1={sourceX}
-                                    x2={targetX}
-                                    y1={sourceY}
-                                    y2={targetY}
-                                />
-                                <text
-                                    className="ps:fill-zinc-400 ps:text-[10px]"
-                                    textAnchor="middle"
-                                    x={labelX}
-                                    y={labelY - 6}
-                                >
-                                    {link.source.displayName} · {link.cardinality}
-                                </text>
-                            </g>
-                        );
-                    })}
+                    {schemaLayout.edges.map((edge) => (
+                        <g key={edge.id}>
+                            <path
+                                className="ps:fill-none ps:stroke-rose-400/80"
+                                d={schemaEdgePath(edge.points)}
+                                markerEnd={`url(#${markerId})`}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth="2"
+                            />
+                            <rect
+                                className="ps:fill-zinc-900 ps:stroke-zinc-700 ps:in-[.ps-theme-light]:fill-white ps:in-[.ps-theme-light]:stroke-stone-300"
+                                height="22"
+                                rx="7"
+                                width={edge.labelWidth}
+                                x={edge.labelX - edge.labelWidth / 2}
+                                y={edge.labelY - 11}
+                            />
+                            <text
+                                className="ps:fill-zinc-300 ps:text-[10px] ps:font-medium ps:in-[.ps-theme-light]:fill-stone-600"
+                                dominantBaseline="middle"
+                                textAnchor="middle"
+                                x={edge.labelX}
+                                y={edge.labelY}
+                            >
+                                {edge.label}
+                            </text>
+                        </g>
+                    ))}
                 </svg>
-                {layout.nodes.map(({ objectType, x, y }) => (
+                {schemaLayout.nodes.map(({ objectType, x, y }) => (
                     <article
                         className="ps:absolute ps:h-44 ps:w-[230px] ps:overflow-hidden ps:rounded-xl ps:border ps:border-zinc-500/30 ps:bg-zinc-900/95 ps:shadow-xl ps:in-[.ps-theme-light]:bg-white/95"
                         key={objectType.name}

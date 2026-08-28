@@ -1,5 +1,57 @@
 # @party-stack/ontology-explorer
 
+## 0.1.2
+
+### Patch Changes
+
+- 45bcf88: upgrade tanstack db deps
+- Updated dependencies [45bcf88]
+    - @party-stack/foundry-ontology@0.11.1
+    - @party-stack/ontology@0.12.1
+
+## 0.1.1
+
+### Patch Changes
+
+- Updated dependencies [b8fb08e]
+    - @party-stack/foundry-ontology@0.11.0
+    - @party-stack/ontology@0.12.0
+
+## 0.1.0
+
+### Minor Changes
+
+- 33f6858: auth + connections
+
+### Patch Changes
+
+- Updated dependencies [33f6858]
+    - @party-stack/foundry-ontology@0.10.0
+    - @party-stack/ontology@0.11.0
+
+## 0.0.13
+
+### Patch Changes
+
+- Updated dependencies [46268bc]
+    - @party-stack/ontology@0.10.0
+    - @party-stack/foundry-ontology@0.9.0
+
+## 0.0.12
+
+### Patch Changes
+
+- Updated dependencies [bc97879]
+    - @party-stack/foundry-ontology@0.8.1
+
+## 0.0.11
+
+### Patch Changes
+
+- Updated dependencies [515f8dc]
+    - @party-stack/ontology@0.9.0
+    - @party-stack/foundry-ontology@0.8.0
+
 ## 0.0.10
 
 ### Patch Changes

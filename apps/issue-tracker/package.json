@@ -1,6 +1,6 @@
 {
     "name": "@party-stack/issue-tracker",
-    "version": "0.0.12",
+    "version": "0.1.2",
     "private": true,
     "type": "module",
     "scripts": {
@@ -12,24 +12,34 @@
         "ontology:pull": "ontology pull"
     },
     "dependencies": {
+        "@base-ui/react": "^1.3.0",
+        "@dnd-kit/core": "^6.3.1",
+        "@party-stack/better-auth": "workspace:^",
+        "@party-stack/connections": "workspace:*",
         "@party-stack/foundry-ontology": "workspace:*",
         "@party-stack/ontology": "workspace:*",
         "@party-stack/ontology-devtools": "workspace:*",
+        "@party-stack/remote-ontology": "workspace:^",
+        "@party-stack/sqlite-ontology": "workspace:^",
         "@party-stack/web-runtime": "workspace:*",
-        "@tanstack/db": "^0.6.14",
-        "@tanstack/react-db": "^0.1.92",
+        "@tanstack/db": "^0.8.6",
+        "@tanstack/react-db": "^0.3.6",
         "@tanstack/react-devtools": "^0.10.9",
         "@tanstack/react-router": "^1.168.7",
         "@tanstack/react-start": "^1.167.12",
         "@tanstack/react-table": "^8.21.3",
+        "better-auth": "^1.7.1",
+        "better-sqlite3": "^12.4.6",
         "motion": "^12.43.0",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
-        "zod": "^4.1.13"
+        "temporal-polyfill": "^0.3.0",
+        "zod": "^4.4.3"
     },
     "devDependencies": {
         "@tailwindcss/vite": "^4",
         "@tanstack/devtools-vite": "^0.6.0",
+        "@types/better-sqlite3": "^7.6.13",
         "@types/node": "^24.10.1",
         "@types/react": "^19.2.6",
         "@types/react-dom": "^19.2.3",

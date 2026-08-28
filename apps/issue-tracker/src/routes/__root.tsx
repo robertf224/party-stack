@@ -6,8 +6,6 @@ import {
     Scripts,
 } from "@tanstack/react-router";
 import {
-    useEffect,
-    useState,
     type ReactNode,
 } from "react";
 import "../app/globals.css";
@@ -18,45 +16,22 @@ export const Route = createRootRoute({
             { charSet: "utf-8" },
             {
                 name: "viewport",
-                content:
-                    "width=device-width, initial-scale=1",
+                content: "width=device-width, initial-scale=1",
             },
-            { title: "Issue Tracker" },
+            { title: "Issue tracker" },
             {
                 name: "description",
-                content:
-                    "Party Stack ontology issue tracker",
+                content: "Live issue and project tracking",
             },
         ],
     }),
     component: RootComponent,
 });
 
-function ClientGate({
-    children,
-}: {
-    children: ReactNode;
-}) {
-    const [ready, setReady] = useState(false);
-    useEffect(() => setReady(true), []);
-
-    if (!ready) {
-        return (
-            <main className="flex min-h-screen items-center justify-center">
-                Loading issue tracker...
-            </main>
-        );
-    }
-
-    return <>{children}</>;
-}
-
 function RootComponent() {
     return (
         <RootDocument>
-            <ClientGate>
-                <Outlet />
-            </ClientGate>
+            <Outlet />
         </RootDocument>
     );
 }

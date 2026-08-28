@@ -1,6 +1,6 @@
 {
     "name": "@party-stack/foundry-client",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "type": "module",
     "exports": {
         ".": {
@@ -18,8 +18,9 @@
     },
     "dependencies": {
         "@bobbyfidz/panic": "^0.1.0",
-        "@osdk/shared.client.impl": "^1.5.0",
-        "@osdk/shared.client2": "^1.0.0"
+        "@osdk/shared.client2": "^1.0.0",
+        "@osdk/shared.net.fetch": "^1.12.0",
+        "jose": "^6.2.10"
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",

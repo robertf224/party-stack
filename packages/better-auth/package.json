@@ -1,0 +1,35 @@
+{
+    "name": "@party-stack/better-auth",
+    "version": "0.2.1",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@party-stack/connections": "workspace:*",
+        "@party-stack/errors": "workspace:*"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@tanstack/db": "^0.8.6",
+        "better-auth": "^1.7.1",
+        "eslint": "^9.25.0",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    },
+    "peerDependencies": {
+        "@tanstack/db": "^0.8.6",
+        "better-auth": "^1.7.1"
+    }
+}

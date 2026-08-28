@@ -7,6 +7,8 @@ export const ImageMediaTypeOptions = [
     { value: "image/jp2", label: "JPEG 2000" },
     { value: "image/jpeg", label: "JPEG" },
     { value: "image/png", label: "PNG" },
+    { value: "image/gif", label: "GIF" },
+    { value: "image/svg+xml", label: "SVG" },
     { value: "image/webp", label: "WebP" },
 ] as const;
 

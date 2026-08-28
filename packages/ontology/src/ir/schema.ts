@@ -351,6 +351,8 @@ export default {
                         { value: "image/jp2", label: "JPEG 2000" },
                         { value: "image/jpeg", label: "JPEG" },
                         { value: "image/png", label: "PNG" },
+                        { value: "image/gif", label: "GIF" },
+                        { value: "image/svg+xml", label: "SVG" },
                         { value: "image/webp", label: "WebP" },
                     ],
                 }),
@@ -1016,6 +1018,60 @@ export default {
             }),
         },
         {
+            name: "MoveLensOp",
+            description: "Moves a property from one path to another.",
+            type: o.struct({
+                fields: [
+                    {
+                        name: "from",
+                        displayName: "From",
+                        type: o.list({ elementType: o.string({}) }),
+                    },
+                    {
+                        name: "to",
+                        displayName: "To",
+                        type: o.list({ elementType: o.string({}) }),
+                    },
+                ],
+            }),
+        },
+        {
+            name: "SelectLensOp",
+            description: "Retains only the selected top-level properties.",
+            type: o.struct({
+                fields: [
+                    {
+                        name: "properties",
+                        displayName: "Properties",
+                        type: o.list({ elementType: o.string({}) }),
+                    },
+                ],
+            }),
+        },
+        {
+            name: "LensOp",
+            description: "One schema and value transformation operation.",
+            type: o.union({
+                variants: [
+                    { name: "move", type: o.ref({ name: "MoveLensOp" }) },
+                    { name: "select", type: o.ref({ name: "SelectLensOp" }) },
+                ],
+            }),
+        },
+        {
+            name: "Lens",
+            description: "An ordered sequence of source-to-target transformation operations.",
+            type: o.struct({
+                fields: [
+                    {
+                        name: "operations",
+                        displayName: "Operations",
+                        type: o.list({ elementType: o.ref({ name: "LensOp" }) }),
+                    },
+                ],
+            }),
+        },
+        {
             name: "OntologyIR",
             description: "The root ontology definition containing all type definitions.",
             type: o.struct({
@@ -1049,6 +1105,12 @@ export default {
                         displayName: "Query function types",
                         type: o.list({ elementType: o.ref({ name: "QueryFunctionTypeDef" }) }),
                         description: "Query function type definitions.",
+                    },
+                    {
+                        name: "contextType",
+                        displayName: "Context type",
+                        type: o.optional({ type: o.ref({ name: "TypeDef" }) }),
+                        description: "Optional typed execution context available to ontology expressions.",
                     },
                 ],
             }),

@@ -13,12 +13,14 @@ import {
     type OntologyAttachmentIdMapping,
     type OntologyBackendAdapter,
     type OntologyBackendAdapterProvider,
+    type OntologyCollectionOptions,
     type OntologyAttachmentsAdapter,
     type OntologyIR,
 } from "@party-stack/ontology";
 import { Collection } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
 import type { OntologyClient } from "@party-stack/foundry-client";
+import type { attachment } from "@party-stack/ontology/values";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import { createFoundryCodec } from "./foundryCodec.js";
@@ -34,6 +36,17 @@ export function isFoundryNotFoundError(error: unknown): boolean {
         errorCode?: unknown;
     };
     return foundryError.statusCode === 404 || foundryError.errorCode === "NOT_FOUND";
+}
+
+export interface FoundryUsersIntegration {
+    objectType: string;
+    getCollectionOptions(client: OntologyClient): OntologyCollectionOptions;
+    getAttachmentContent?(client: OntologyClient, attachment: attachment): Promise<Blob | undefined>;
+    getAttachmentMetadata?(
+        client: OntologyClient,
+        attachment: attachment,
+        selection: readonly (keyof PartialAttachmentMetadata)[]
+    ): Promise<PartialAttachmentMetadata | undefined>;
 }
 
 type FoundryObject = Record<string, unknown>;
@@ -104,6 +117,7 @@ function getEditedObjectTypes(
 export function createFoundryOntologyBackendAdapter(opts: {
     client: OntologyClient;
     ir: OntologyIR;
+    users?: FoundryUsersIntegration;
 }): OntologyBackendAdapter {
     const codec = createFoundryCodec(opts.ir);
     const attachments: OntologyAttachmentsAdapter = {
@@ -140,6 +154,8 @@ export function createFoundryOntologyBackendAdapter(opts: {
             });
         },
         getAttachmentContent: async (attachment) => {
+            const userContent = await opts.users?.getAttachmentContent?.(opts.client, attachment);
+            if (userContent) return userContent;
             const media = decodeFoundryMediaId(attachment.id);
             if (media) {
                 const source = attachment.source;
@@ -161,6 +177,12 @@ export function createFoundryOntologyBackendAdapter(opts: {
             return contents.blob();
         },
         getAttachmentMetadata: async (attachment, selection) => {
+            const userMetadata = await opts.users?.getAttachmentMetadata?.(
+                opts.client,
+                attachment,
+                selection
+            );
+            if (userMetadata) return userMetadata;
             const media = decodeFoundryMediaId(attachment.id);
             if (media) {
                 const result: PartialAttachmentMetadata = {};
@@ -182,12 +204,8 @@ export function createFoundryOntologyBackendAdapter(opts: {
                         };
                     }
                 }
-                const missingMetadata = selection.filter(
-                    (field) => result[field] === undefined
-                );
-                const needsBasicMetadata = missingMetadata.some(
-                    (field) => field !== "dimensions"
-                );
+                const missingMetadata = selection.filter((field) => result[field] === undefined);
+                const needsBasicMetadata = missingMetadata.some((field) => field !== "dimensions");
                 if (!needsBasicMetadata) return result;
 
                 const source = attachment.source;
@@ -223,6 +241,9 @@ export function createFoundryOntologyBackendAdapter(opts: {
     return {
         name: "foundry",
         getCollectionOptions: (objectType: string) => {
+            if (opts.users?.objectType === objectType) {
+                return opts.users.getCollectionOptions(opts.client);
+            }
             const objectTypeDef = opts.ir.objectTypes.find((ot) => ot.name === objectType)!;
             return objectCollectionOptions({
                 client: opts.client,
@@ -328,7 +349,8 @@ export function createFoundryOntologyBackendAdapter(opts: {
             }
             if (context) {
                 const operationId = getApplyActionOperationId(result);
-                const targetCollections = Array.from(getEditedObjectTypes(result.edits))
+                const editedObjectTypes = Array.from(getEditedObjectTypes(result.edits));
+                const targetCollections = editedObjectTypes
                     .map((objectType) => context.objects[objectType] as CollectionWithUtils | undefined)
                     .filter((collection): collection is CollectionWithUtils =>
                         Boolean(collection?.utils?.awaitOperationId)
@@ -338,7 +360,12 @@ export function createFoundryOntologyBackendAdapter(opts: {
                     targetCollections.map((collection) => collection.utils.awaitOperationId(operationId))
                 );
             }
-            return attachmentIdMappings.length > 0 ? { attachmentIdMappings } : undefined;
+            if (attachmentIdMappings.length === 0) {
+                return undefined;
+            }
+            return {
+                attachmentIdMappings,
+            };
         },
         runQueryFunction: async (name, parameters) => {
             const queryFunctionType = opts.ir.queryFunctionTypes.find((candidate) => candidate.name === name);
@@ -370,13 +397,16 @@ export function createFoundryOntologyBackendAdapter(opts: {
 
 export type CreateFoundryOntologyBackendOptions<
     Context extends Record<string, unknown> = Record<string, unknown>,
-> =
+> = (
     | {
           client: OntologyClient;
       }
     | {
           createClient: (ir: OntologyIR, context: Context) => OntologyClient | Promise<OntologyClient>;
-      };
+      }
+) & {
+    users?: FoundryUsersIntegration;
+};
 
 export function createFoundryOntologyBackend<
     Context extends Record<string, unknown> = Record<string, unknown>,
@@ -385,5 +415,6 @@ export function createFoundryOntologyBackend<
         createFoundryOntologyBackendAdapter({
             ir,
             client: "client" in opts ? opts.client : await opts.createClient(ir, context),
+            users: opts.users,
         });
 }

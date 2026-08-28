@@ -41,6 +41,7 @@ import { objectCollectionOptions } from "./objectCollectionOptions.js";
 function createSyncHarness(
     initialObjects: Array<Record<string, unknown>> = [],
     opts: {
+        commitReceipt?: () => true | Promise<void>;
         decodeObject?: (object: Record<string, unknown>) => Record<string, unknown>;
         collectionMetadata?: Map<string, unknown>;
     } = {}
@@ -74,6 +75,7 @@ function createSyncHarness(
         }
         transactions.push(pendingTransaction);
         pendingTransaction = undefined;
+        return opts.commitReceipt?.() ?? true;
     });
     const truncate = vi.fn(() => {
         if (!pendingTransaction) {
@@ -115,6 +117,7 @@ function createSyncHarness(
             syncedData,
         } as never,
         commit,
+        markError: vi.fn(),
         markReady: vi.fn(),
         metadata: {
             collection: {
@@ -1018,7 +1021,13 @@ describe("objectCollectionOptions", () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         mockState.getEditsHistory.mockRejectedValue(new Error("Edit history is not enabled"));
 
-        const harness = createSyncHarness();
+        let resolveCommit!: () => void;
+        const commitApplied = new Promise<void>((resolve) => {
+            resolveCommit = resolve;
+        });
+        const harness = createSyncHarness([], {
+            commitReceipt: () => commitApplied,
+        });
         const operationPromise = harness.utils.awaitOperationId("op-12");
 
         await vi.waitFor(() => {
@@ -1043,6 +1052,8 @@ describe("objectCollectionOptions", () => {
         });
         expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
 
+        resolveCommit();
+        await commitApplied;
         harness.cleanup();
         warnSpy.mockRestore();
     });
@@ -1068,7 +1079,13 @@ describe("objectCollectionOptions", () => {
             nextPageToken: undefined,
         });
 
-        const harness = createSyncHarness();
+        let resolveCommit!: () => void;
+        const commitApplied = new Promise<void>((resolve) => {
+            resolveCommit = resolve;
+        });
+        const harness = createSyncHarness([], {
+            commitReceipt: () => commitApplied,
+        });
 
         await expect(harness.utils.awaitOperationId("op-11")).resolves.toBe(true);
 
@@ -1078,6 +1095,8 @@ describe("objectCollectionOptions", () => {
             name: "Operation Eleven",
         });
 
+        resolveCommit();
+        await commitApplied;
         harness.cleanup();
     });
 
