@@ -1,5 +1,16 @@
 # @party-stack/foundry-ontology
 
+## 0.11.0
+
+### Minor Changes
+
+- b8fb08e: node runtime + add meta ontology to installations
+
+### Patch Changes
+
+- Updated dependencies [b8fb08e]
+    - @party-stack/ontology@0.12.0
+
 ## 0.10.0
 
 ### Minor Changes
