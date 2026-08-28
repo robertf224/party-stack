@@ -1,5 +1,20 @@
 # @party-stack/issue-tracker
 
+## 0.1.2
+
+### Patch Changes
+
+- 45bcf88: upgrade tanstack db deps
+- Updated dependencies [45bcf88]
+    - @party-stack/ontology-devtools@0.4.2
+    - @party-stack/foundry-ontology@0.11.1
+    - @party-stack/remote-ontology@0.5.2
+    - @party-stack/sqlite-ontology@0.4.2
+    - @party-stack/better-auth@0.2.1
+    - @party-stack/connections@0.2.1
+    - @party-stack/ontology@0.12.1
+    - @party-stack/web-runtime@0.3.1
+
 ## 0.1.1
 
 ### Patch Changes

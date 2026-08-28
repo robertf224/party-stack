@@ -1,5 +1,13 @@
 # @party-stack/blobs
 
+## 0.5.1
+
+### Patch Changes
+
+- 45bcf88: upgrade tanstack db deps
+- Updated dependencies [45bcf88]
+    - @party-stack/runtime@0.3.1
+
 ## 0.5.0
 
 ### Minor Changes
