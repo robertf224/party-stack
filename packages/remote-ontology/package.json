@@ -31,20 +31,20 @@
     "dependencies": {
         "@party-stack/ontology": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "@tanstack/query-core": "^5.101.2",
-        "@tanstack/query-db-collection": "^1.0.47",
+        "@tanstack/query-core": "^5.102.8",
+        "@tanstack/query-db-collection": "^1.2.11",
         "temporal-polyfill": "^0.3.0",
         "zod": "^4.4.3"
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",
-        "@tanstack/db": "^0.6.14",
+        "@tanstack/db": "^0.8.6",
         "@types/node": "^24.10.1",
         "eslint": "^9.25.0",
         "typescript": "~5.8.3",
         "vitest": "^3.1.1"
     },
     "peerDependencies": {
-        "@tanstack/db": "^0.6.14"
+        "@tanstack/db": "^0.8.6"
     }
 }

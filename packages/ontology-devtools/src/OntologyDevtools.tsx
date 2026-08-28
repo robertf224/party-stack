@@ -1320,7 +1320,7 @@ function ObjectTable({
                                     className="ps:rounded-md ps:border ps:border-zinc-600 ps:bg-zinc-900 ps:px-3 ps:py-1.5 ps:text-xs ps:text-zinc-200 ps:hover:border-rose-400 ps:hover:text-rose-300 ps:disabled:opacity-50"
                                     disabled={isFetchingNextPage}
                                     type="button"
-                                    onClick={fetchNextPage}
+                                    onClick={() => void fetchNextPage()}
                                 >
                                     {isFetchingNextPage ? "Loading…" : "Load 50 more"}
                                 </button>

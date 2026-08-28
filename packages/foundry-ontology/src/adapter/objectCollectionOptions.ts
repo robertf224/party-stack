@@ -384,6 +384,7 @@ function createSyncConfig(
                 begin,
                 write,
                 commit,
+                markError,
                 markReady,
                 truncate,
             } = params;
@@ -396,6 +397,7 @@ function createSyncConfig(
                 collectionMetadata?.get(EDIT_HISTORY_CURSOR_METADATA_KEY)
             );
             let editHistoryCursor = restoredEditHistoryCursor ?? createEditHistoryCursor();
+            let initialCommit: ReturnType<typeof commit> = true;
             if (!restoredEditHistoryCursor) {
                 if (collectionMetadata) {
                     begin();
@@ -403,7 +405,7 @@ function createSyncConfig(
                         EDIT_HISTORY_CURSOR_METADATA_KEY,
                         serializeEditHistoryCursor(editHistoryCursor)
                     );
-                    commit();
+                    initialCommit = commit();
                 }
             }
             let catchUpRequested = false;
@@ -478,7 +480,7 @@ function createSyncConfig(
                     [primaryKeyProperty]: primaryKey,
                 });
 
-            const applyDirectWatcherUpdates = (updates: ObjectSetUpdate[]): void => {
+            const applyDirectWatcherUpdates = async (updates: ObjectSetUpdate[]): Promise<void> => {
                 const pendingMutations = new Map<
                     string | number,
                     { type: "upsert"; object: FoundryObject } | { type: "delete" }
@@ -519,15 +521,15 @@ function createSyncConfig(
                     }
                 }
 
-                if (transactionStarted) {
-                    commit();
-                }
+                const receipt = transactionStarted ? commit() : true;
 
                 if (observedObjectUpdate) {
                     directWebsocketSyncVersion.setState(
                         (version) => version + 1
                     );
                 }
+
+                if (receipt !== true) await receipt;
             };
 
             const switchToDirectWebsocketMode = (error: unknown): void => {
@@ -547,7 +549,12 @@ function createSyncConfig(
                     const updates =
                         pendingDirectWatcherUpdates;
                     pendingDirectWatcherUpdates = [];
-                    applyDirectWatcherUpdates(updates);
+                    void applyDirectWatcherUpdates(updates).catch((applyError: unknown) => {
+                        console.warn(
+                            `Failed to apply direct Foundry updates for ${objectType}.`,
+                            applyError
+                        );
+                    });
                 }
                 requestFullRefresh?.();
             };
@@ -624,9 +631,7 @@ function createSyncConfig(
                     );
                 }
 
-                if (transactionStarted) {
-                    commit();
-                }
+                const receipt = transactionStarted ? commit() : true;
 
                 if (checkpointChanged) {
                     editHistoryCursor = nextEditHistoryCursor;
@@ -643,6 +648,8 @@ function createSyncConfig(
                 }
 
                 pendingDirectWatcherUpdates = [];
+
+                if (receipt !== true) await receipt;
             };
 
             const refreshAllFromSource = async (): Promise<void> => {
@@ -663,16 +670,18 @@ function createSyncConfig(
                         value: object,
                     });
                 }
-                commit();
+                const receipt = commit();
 
                 if (pendingDirectWatcherUpdates.length > 0) {
                     const updates = pendingDirectWatcherUpdates;
                     pendingDirectWatcherUpdates = [];
-                    applyDirectWatcherUpdates(updates);
+                    await applyDirectWatcherUpdates(updates);
                 }
                 directWebsocketSyncVersion.setState(
                     (version) => version + 1
                 );
+
+                if (receipt !== true) await receipt;
             };
 
             requestFullRefresh = () => {
@@ -734,7 +743,8 @@ function createSyncConfig(
                     for (const object of objects) {
                         upsertObject(object);
                     }
-                    commit();
+                    const receipt = commit();
+                    if (receipt !== true) await receipt;
                 }
             };
 
@@ -749,7 +759,15 @@ function createSyncConfig(
                             if (fullRefreshTask) {
                                 pendingDirectWatcherUpdates.push(...message.updates);
                             } else {
-                                applyDirectWatcherUpdates(message.updates);
+                                void applyDirectWatcherUpdates(message.updates).catch(
+                                    (error: unknown) => {
+                                        console.warn(
+                                            `Failed to apply direct Foundry updates for ${objectType}.`,
+                                            error
+                                        );
+                                        requestFullRefresh?.();
+                                    }
+                                );
                             }
                         } else {
                             pendingDirectWatcherUpdates.push(...message.updates);
@@ -787,7 +805,11 @@ function createSyncConfig(
             // - spawn object set subscription, which sends messages to catch up
             // - actions sends messages to catch up
 
-            markReady();
+            if (initialCommit === true) {
+                markReady();
+            } else {
+                void initialCommit.then(markReady, markError);
+            }
 
             return {
                 loadSubset: loadSubsetDedupe.loadSubset,

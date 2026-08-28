@@ -379,7 +379,7 @@ function createCollectionOptions(opts: {
     });
 
     const sync: SyncConfig<OntologyObject, string | number> = {
-        sync: ({ begin, collection, commit, markReady, write }) => {
+        sync: ({ begin, collection, commit, markError, markReady, write }) => {
             const load = () => {
                 const rows = opts.database
                     .prepare(
@@ -410,17 +410,18 @@ function createCollectionOptions(opts: {
                         write({ type: "delete", key });
                     }
                 }
-                commit();
+                return commit();
             };
 
-            load();
-            markReady();
+            const initialLoad = load();
+            if (initialLoad === true) {
+                markReady();
+            } else {
+                void initialLoad.then(markReady, markError);
+            }
 
             return {
-                loadSubset: () => {
-                    load();
-                    return true;
-                },
+                loadSubset: load,
                 cleanup: () => {},
             };
         },
