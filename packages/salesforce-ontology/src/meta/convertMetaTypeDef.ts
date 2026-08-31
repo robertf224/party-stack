@@ -123,13 +123,13 @@ function convertSalesforceSoapType(field: SalesforceFieldDescribe): TypeDef {
 }
 
 export function convertSalesforceInvocableParameterType(parameter: {
-    type: string;
+    type?: string | null;
     sobjectType?: string | null;
     required?: boolean;
 }): TypeDef {
     const required = parameter.required === true;
     let baseType: TypeDef;
-    const typeName = parameter.type.toLowerCase();
+    const typeName = parameter.type?.toLowerCase() ?? "unknown";
     if (parameter.sobjectType && (typeName === "id" || typeName === "reference" || typeName === "sobject")) {
         baseType = {
             kind: "objectReference",

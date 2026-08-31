@@ -303,6 +303,43 @@ importers:
         specifier: ^7.2.4
         version: 7.2.4(@types/node@24.10.1)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.0)
 
+  apps/salesforce-task-manager:
+    dependencies:
+      '@party-stack/node-runtime':
+        specifier: workspace:^
+        version: link:../../packages/node-runtime
+      '@party-stack/ontology':
+        specifier: workspace:*
+        version: link:../../packages/ontology
+      '@party-stack/salesforce-ontology':
+        specifier: workspace:*
+        version: link:../../packages/salesforce-ontology
+      '@tanstack/db':
+        specifier: ^0.8.6
+        version: 0.8.6(typescript@5.8.3)
+      temporal-polyfill:
+        specifier: ^0.3.0
+        version: 0.3.0
+    devDependencies:
+      '@bobbyfidz/universal-build-config':
+        specifier: ^0.1.1
+        version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.1
+      eslint:
+        specifier: ^9.25.0
+        version: 9.28.0(jiti@2.7.0)
+      tsx:
+        specifier: ^4.20.6
+        version: 4.20.6
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+      vitest:
+        specifier: ^3.1.1
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.1)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.0)
+
   old/apollo:
     dependencies:
       '@bobbyfidz/binaries':
@@ -1294,9 +1331,18 @@ importers:
       '@bobbyfidz/universal-build-config':
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
+      '@party-stack/node-runtime':
+        specifier: workspace:^
+        version: link:../node-runtime
+      '@party-stack/oauth':
+        specifier: workspace:^
+        version: link:../oauth
       eslint:
         specifier: ^9.25.0
         version: 9.28.0(jiti@2.7.0)
+      open:
+        specifier: ^11.0.1
+        version: 11.0.1
       typescript:
         specifier: ~5.8.3
         version: 5.8.3
@@ -1309,9 +1355,21 @@ importers:
       '@bobbyfidz/panic':
         specifier: ^0.1.0
         version: 0.1.0
+      '@party-stack/connections':
+        specifier: workspace:^
+        version: link:../connections
+      '@party-stack/errors':
+        specifier: workspace:^
+        version: link:../errors
+      '@party-stack/oauth':
+        specifier: workspace:^
+        version: link:../oauth
       '@party-stack/ontology':
         specifier: workspace:*
         version: link:../ontology
+      '@party-stack/runtime':
+        specifier: workspace:^
+        version: link:../runtime
       '@party-stack/salesforce-client':
         specifier: workspace:*
         version: link:../salesforce-client
@@ -1323,13 +1381,13 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: ^0.6.14
-        version: 0.6.17(typescript@5.8.3)
+        specifier: ^0.8.6
+        version: 0.8.6(typescript@5.8.3)
       '@tanstack/query-core':
-        specifier: ^5.101.2
+        specifier: ^5.102.8
         version: 5.102.8
       '@tanstack/query-db-collection':
-        specifier: ^1.0.47
+        specifier: ^1.2.11
         version: 1.2.11(@tanstack/query-core@5.102.8)(typescript@5.8.3)
       eslint:
         specifier: ^9.25.0
@@ -3568,11 +3626,6 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7
 
-  '@tanstack/db-ivm@0.1.18':
-    resolution: {integrity: sha512-+pZJiRKdoKRM5Epq9T7otD9ZJl82pRFauo7LKuJGrarjVKQ7r+QQlPe3kGdN9LEKSnuNGIWjX9OOY4M8kH4eLw==}
-    peerDependencies:
-      typescript: '>=4.7'
-
   '@tanstack/db-ivm@0.1.19':
     resolution: {integrity: sha512-3VGvgNXAPSVqny/pL8Y6n/txnaZzV49WmgSQ9N5eyCQNgMtuOEOJHKDatqqCy3gDxVu6pkhSHDKxcNFOtxMouw==}
     peerDependencies:
@@ -3580,11 +3633,6 @@ packages:
 
   '@tanstack/db-sqlite-persistence-core@0.2.19':
     resolution: {integrity: sha512-uTMoM8h/npMseiCV+dihTrT/J+IZ6bRxc6ZE5a4ZnozQvMslK2twjXMsZq6QZDePMBXvI/QiMlShMfYJpXnYFg==}
-    peerDependencies:
-      typescript: '>=4.7'
-
-  '@tanstack/db@0.6.17':
-    resolution: {integrity: sha512-/i6+dedEkOCVQbTQtCjQHx3Nqlkqe6zvi+9/JPnSgm47o+akoaPqcSwxTmesDZxc/efHokUtzeD2ocow257RdQ==}
     peerDependencies:
       typescript: '>=4.7'
 
@@ -11365,12 +11413,6 @@ snapshots:
       tailwindcss: 4.1.17
       vite: 7.2.4(@types/node@26.4.0)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.0)
 
-  '@tanstack/db-ivm@0.1.18(typescript@5.8.3)':
-    dependencies:
-      fractional-indexing: 3.4.0
-      sorted-btree: 1.8.1
-      typescript: 5.8.3
-
   '@tanstack/db-ivm@0.1.19(typescript@5.8.3)':
     dependencies:
       fractional-indexing: 3.4.0
@@ -11381,13 +11423,6 @@ snapshots:
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@tanstack/db': 0.8.6(typescript@5.8.3)
-      typescript: 5.8.3
-
-  '@tanstack/db@0.6.17(typescript@5.8.3)':
-    dependencies:
-      '@standard-schema/spec': 1.1.0
-      '@tanstack/db-ivm': 0.1.18(typescript@5.8.3)
-      '@tanstack/pacer-lite': 0.2.2
       typescript: 5.8.3
 
   '@tanstack/db@0.8.6(typescript@5.8.3)':
@@ -12067,7 +12102,7 @@ snapshots:
       magic-string: 0.30.21
       sirv: 3.0.2
       tinyrainbow: 2.0.0
-      vitest: 3.2.4(@types/debug@4.1.12)(@types/node@26.4.0)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.0)
+      vitest: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.1)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.0)
       ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil

@@ -26,6 +26,10 @@ export interface ObjectCollectionUtils extends UtilsRecord {
      * Reset load-subset deduplication so subsequent reads refetch after writes.
      */
     invalidate: () => void;
+    /** Apply a confirmed backend deletion to the local collection. */
+    deleteByKey: (
+        key: string | number
+    ) => Promise<void>;
 }
 
 async function fetchSalesforceObjects(
@@ -110,10 +114,23 @@ function createSyncConfig(
     decodeObject: (object: SalesforceObject) => SalesforceObject = (object) => object
 ): { sync: SyncConfig<Record<string, unknown>, string | number>; utils: ObjectCollectionUtils } {
     let loadSubsetDedupe: DeduplicatedLoadSubset | undefined;
+    let deleteByKey:
+        | ((
+              key: string | number
+          ) => Promise<void>)
+        | undefined;
 
     const utils: ObjectCollectionUtils = {
         invalidate: () => {
             loadSubsetDedupe?.reset();
+        },
+        deleteByKey: (key) => {
+            if (!deleteByKey) {
+                throw new Error(
+                    `Salesforce ${objectType} collection is not ready.`
+                );
+            }
+            return deleteByKey(key);
         },
     };
 
@@ -149,11 +166,20 @@ function createSyncConfig(
                     for (const object of objects) {
                         upsertObject(object);
                     }
-                    commit();
+                    await commit();
                 }
             };
 
             loadSubsetDedupe = new DeduplicatedLoadSubset({ loadSubset });
+            deleteByKey = async (key) => {
+                begin();
+                write({
+                    type: "delete",
+                    key,
+                });
+                await commit();
+                loadSubsetDedupe?.reset();
+            };
             markReady();
 
             return {
@@ -161,6 +187,7 @@ function createSyncConfig(
                 cleanup: () => {
                     loadSubsetDedupe?.reset();
                     loadSubsetDedupe = undefined;
+                    deleteByKey = undefined;
                 },
             };
         },

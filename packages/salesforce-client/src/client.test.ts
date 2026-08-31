@@ -25,6 +25,32 @@ describe("createSalesforceClient", () => {
         expect(client.apiVersion).toBe("61.0");
     });
 
+    it("supports installation-provided authenticated fetch", async () => {
+        const fetchMock = vi.fn(() =>
+            Promise.resolve(
+                Response.json({
+                    encoding: "UTF-8",
+                    maxBatchSize: 200,
+                    sobjects: [],
+                })
+            )
+        );
+        const client = createSalesforceClient({
+            instanceUrl:
+                "https://example.my.salesforce.com",
+            apiVersion: "61.0",
+            authenticatedFetch: true,
+            fetch: fetchMock as typeof fetch,
+        });
+
+        await expect(
+            client.describeGlobal()
+        ).resolves.toMatchObject({
+            sobjects: [],
+        });
+        expect(fetchMock).toHaveBeenCalledOnce();
+    });
+
     it("attaches bearer auth and queries SOQL", async () => {
         const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
             const url = urlString(input);
@@ -119,6 +145,117 @@ describe("createSalesforceClient", () => {
             })
         );
         expect(SalesforceApiError).toBeDefined();
+    });
+
+    it("creates, updates, and deletes Salesforce records", async () => {
+        const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+            const headers = new Headers(init?.headers);
+            expect(headers.get("Authorization")).toBe("Bearer token");
+            expect(headers.has("Content-Length")).toBe(false);
+            const url = urlString(input);
+            if (init?.method === "POST") {
+                expect(url).toBe(
+                    "https://example.my.salesforce.com/services/data/v61.0/sobjects/Task"
+                );
+                const body = typeof init.body === "string" ? init.body : "";
+                expect(JSON.parse(body)).toEqual({
+                    Subject: "Party Stack demo",
+                    Status: "Not Started",
+                });
+                return Promise.resolve(
+                    new Response(
+                        JSON.stringify({
+                            id: "00TPW0000012345YAA",
+                            success: true,
+                            errors: [],
+                        }),
+                        { status: 201, headers: { "Content-Type": "application/json" } }
+                    )
+                );
+            }
+            if (init?.method === "PATCH") {
+                expect(url).toBe(
+                    "https://example.my.salesforce.com/services/data/v61.0/sobjects/Task/00TPW0000012345YAA"
+                );
+                const body = typeof init.body === "string" ? init.body : "";
+                expect(JSON.parse(body)).toEqual({
+                    Subject: "Updated demo",
+                });
+                return Promise.resolve(new Response(null, { status: 204 }));
+            }
+            if (init?.method === "DELETE") {
+                expect(url).toBe(
+                    "https://example.my.salesforce.com/services/data/v61.0/sobjects/Task/00TPW0000012345YAA"
+                );
+                return Promise.resolve(new Response(null, { status: 204 }));
+            }
+            return Promise.reject(new Error(`Unexpected method ${init?.method}`));
+        });
+
+        const client = createSalesforceClient({
+            instanceUrl: "https://example.my.salesforce.com",
+            apiVersion: "61.0",
+            tokenProvider: () => "token",
+            fetch: fetchMock as typeof fetch,
+        });
+
+        await expect(
+            client.createRecord("Task", {
+                Subject: "Party Stack demo",
+                Status: "Not Started",
+            })
+        ).resolves.toMatchObject({ id: "00TPW0000012345YAA", success: true });
+        await expect(
+            client.updateRecord("Task", "00TPW0000012345YAA", {
+                Subject: "Updated demo",
+            })
+        ).resolves.toMatchObject({ id: "00TPW0000012345YAA", success: true });
+        await expect(
+            client.deleteRecord("Task", "00TPW0000012345YAA")
+        ).resolves.toMatchObject({ id: "00TPW0000012345YAA", success: true });
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("subscribes to Salesforce Change Data Capture channels", async () => {
+        const client = createSalesforceClient({
+            instanceUrl: "https://example.my.salesforce.com",
+            apiVersion: "61.0",
+            tokenProvider: () => "stream-token",
+            fetch: vi.fn(),
+        });
+        const cancel = vi.fn();
+        let receive: ((event: unknown) => void) | undefined;
+        const subscribe = vi
+            .spyOn(client.connection.streaming, "subscribe")
+            .mockImplementation((channel, listener) => {
+                expect(channel).toBe("/data/TaskChangeEvent");
+                receive = listener as (event: unknown) => void;
+                return Object.assign(Promise.resolve(), {
+                    cancel,
+                    unsubscribe: cancel,
+                    withChannel: vi.fn(),
+                }) as never;
+            });
+        const listener = vi.fn();
+
+        const subscription = await client.subscribeToChangeEvents("Task", listener);
+        const event = {
+            payload: {
+                ChangeEventHeader: {
+                    entityName: "Task",
+                    changeType: "UPDATE",
+                    recordIds: ["00TPW0000012345YAA"],
+                },
+            },
+        };
+        receive?.(event);
+        subscription.unsubscribe();
+
+        expect(client.connection.accessToken).toBe("stream-token");
+        expect(subscribe).toHaveBeenCalledOnce();
+        expect(listener).toHaveBeenCalledWith(event);
+        expect(subscription.channel).toBe("/data/TaskChangeEvent");
+        expect(cancel).toHaveBeenCalledOnce();
     });
 
     it("invokes Flow actions with an inputs payload", async () => {

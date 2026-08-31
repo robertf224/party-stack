@@ -17,6 +17,8 @@ export interface CreateSalesforceMetaOntologyBackendAdapterOpts {
      * Useful for scoped form pulls without describing the entire org.
      */
     objectTypeNames?: string[];
+    /** Optional allowlist of autolaunched Flow API names. */
+    actionTypeNames?: string[];
 }
 
 export function createSalesforceMetaOntologyBackendAdapter(
@@ -38,7 +40,11 @@ export function createSalesforceMetaOntologyBackendAdapter(
                 case "LinkType":
                     return linkTypeCollectionOptions(metadata);
                 case "ActionType":
-                    return actionTypeCollectionOptions({ client: opts.client });
+                    return actionTypeCollectionOptions({
+                        client: opts.client,
+                        actionTypeNames:
+                            opts.actionTypeNames,
+                    });
                 case "QueryFunctionType":
                     return queryFunctionTypeCollectionOptions();
                 default:

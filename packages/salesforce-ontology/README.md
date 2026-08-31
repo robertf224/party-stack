@@ -1,5 +1,74 @@
 # salesforce-ontology
 
+Salesforce connection, installation, metadata, and runtime ontology adapters.
+
+## Installation
+
+```ts
+import {
+    createSalesforceBackendInstallation,
+    createSalesforceOntologyRoute,
+} from "@party-stack/salesforce-ontology";
+
+const installation =
+    await createSalesforceBackendInstallation({
+        instanceUrl:
+            "https://example.my.salesforce.com",
+        apiVersion: "65.0",
+        runtime,
+        connections: {
+            oauth: {
+                clientId,
+                redirectUrl:
+                    "http://localhost:1717/oauth/callback",
+            },
+        },
+        routes: [
+            createSalesforceOntologyRoute({
+                ontologyId:
+                    "salesforce:task-manager",
+                ir: generatedOntology,
+            }),
+        ],
+    });
+```
+
+The connection adapter uses `@party-stack/oauth`, persists refresh tokens
+through the selected runtime, and applies authentication through
+`ConnectionEgress`. The Salesforce client and ontology backends remain
+token-provider/egress agnostic.
+
+## Pull configuration
+
+Consumer projects can export a standard Party Stack pull configuration:
+
+```ts
+import {
+    createSalesforceOntologyPullConfig,
+} from "@party-stack/salesforce-ontology/config";
+
+export default createSalesforceOntologyPullConfig({
+    instanceUrl,
+    apiVersion: "65.0",
+    ontologyId: "salesforce:task-manager",
+    objectTypeNames: ["Task", "User"],
+    actionTypeNames: [],
+    connection: {
+        oauth: {
+            clientId,
+            redirectUrl,
+        },
+    },
+});
+```
+
+Running `ontology pull` opens the Salesforce metadata ontology and emits the
+normal `src/ontology/ontology.ts` consumed by
+`createSalesforceOntologyRoute({ ir })`.
+
+See `apps/salesforce-task-manager` for a real-org example.
+# salesforce-ontology
+
 Salesforce backend adapters for Party Stack LiveOntology.
 
 ## Runtime adapter

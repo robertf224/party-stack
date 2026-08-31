@@ -54,4 +54,26 @@ describe("convertSalesforceMetaActionType", () => {
             logic: [],
         });
     });
+
+    it("treats provider parameters with null types as unknown", () => {
+        const action = convertSalesforceMetaActionType({
+            name: "Provider_Flow",
+            inputs: [
+                {
+                    name: "providerValue",
+                    type: null,
+                },
+            ],
+        });
+
+        expect(action.parameters[0]?.type).toEqual({
+            kind: "optional",
+            value: {
+                type: {
+                    kind: "unknown",
+                    value: {},
+                },
+            },
+        });
+    });
 });

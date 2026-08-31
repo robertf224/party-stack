@@ -48,7 +48,7 @@ export interface SalesforceInvocableActionSummary {
 export interface SalesforceInvocableActionParameter {
     name: string;
     label?: string;
-    type: string;
+    type?: string | null;
     description?: string;
     required?: boolean;
     apexClass?: string | null;
@@ -81,6 +81,34 @@ export interface SalesforceInvocableActionResult {
         fields?: string[];
     }>;
     outputValues?: Record<string, unknown> | null;
+}
+
+export interface SalesforceChangeEventHeader {
+    entityName: string;
+    changeType: "CREATE" | "UPDATE" | "DELETE" | "UNDELETE" | "GAP_OVERFLOW";
+    changedFields?: string[];
+    recordIds: string[];
+    commitTimestamp?: number;
+    commitUser?: string;
+    sequenceNumber?: number;
+    transactionKey?: string;
+}
+
+export interface SalesforceChangeEvent<
+    Payload extends Record<string, unknown> = Record<string, unknown>,
+> {
+    event?: {
+        replayId?: number;
+    };
+    schema?: string;
+    payload: Payload & {
+        ChangeEventHeader: SalesforceChangeEventHeader;
+    };
+}
+
+export interface SalesforceChangeEventSubscription {
+    channel: string;
+    unsubscribe: () => void;
 }
 
 export type SalesforceFetch = typeof fetch;

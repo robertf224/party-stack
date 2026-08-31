@@ -11,6 +11,7 @@ import { convertSalesforceMetaActionType } from "./convertMetaActionType.js";
 
 export interface ActionTypeCollectionOpts {
     client: SalesforceClient;
+    actionTypeNames?: string[];
     queryClient?: QueryClient;
 }
 
@@ -48,10 +49,20 @@ export function actionTypeCollectionOptions(opts: ActionTypeCollectionOpts): Ont
     return queryCollectionOptions<MetaActionType>({
         queryClient: opts.queryClient ?? new QueryClient(),
         getKey: (row) => row.name,
-        queryKey: ["salesforce", "ontology", "actionTypes"],
+        queryKey: [
+            "salesforce",
+            "ontology",
+            "actionTypes",
+            opts.actionTypeNames ?? "all",
+        ],
         syncMode: "on-demand",
         queryFn: async () => {
-            const names = await listFlowActionNames(opts.client);
+            const names =
+                opts.actionTypeNames ??
+                (await listFlowActionNames(opts.client));
+            if (names.length === 0) {
+                return [];
+            }
             const describes = await Promise.all(
                 names.map((name) => loadFlowActionDescribe(opts.client, name))
             );

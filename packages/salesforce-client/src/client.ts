@@ -7,9 +7,12 @@ import {
     type HttpRequest,
     type QueryResult,
     type Record as SalesforceRecord,
+    type SaveResult,
 } from "@jsforce/jsforce-node";
 import { SalesforceApiError } from "./errors.js";
 import type {
+    SalesforceChangeEvent,
+    SalesforceChangeEventSubscription,
     SalesforceFetch,
     SalesforceInvocableActionDescribe,
     SalesforceInvocableActionListResponse,
@@ -19,7 +22,7 @@ import type {
 export interface SalesforceClient {
     instanceUrl: string;
     apiVersion: string;
-    tokenProvider: () => Promise<string> | string;
+    tokenProvider?: () => Promise<string> | string;
     fetch: SalesforceFetch;
     /** Underlying jsforce connection. Prefer the typed helpers when possible. */
     connection: Connection;
@@ -38,6 +41,20 @@ export interface SalesforceClient {
     queryMore: <T extends SalesforceRecord = SalesforceRecord>(
         nextRecordsUrl: string
     ) => Promise<QueryResult<T>>;
+    createRecord: (
+        sObjectName: string,
+        record: Record<string, unknown>
+    ) => Promise<SaveResult>;
+    updateRecord: (
+        sObjectName: string,
+        id: string,
+        record: Record<string, unknown>
+    ) => Promise<SaveResult>;
+    deleteRecord: (sObjectName: string, id: string) => Promise<SaveResult>;
+    subscribeToChangeEvents: (
+        sObjectName: string,
+        listener: (event: SalesforceChangeEvent) => void
+    ) => Promise<SalesforceChangeEventSubscription>;
     listFlowActions: () => Promise<SalesforceInvocableActionListResponse>;
     describeFlowAction: (apiName: string) => Promise<SalesforceInvocableActionDescribe>;
     invokeFlowAction: (
@@ -46,12 +63,28 @@ export interface SalesforceClient {
     ) => Promise<SalesforceInvocableActionResult[]>;
 }
 
-export interface CreateSalesforceClientOptions {
+interface CreateSalesforceClientBaseOptions {
     instanceUrl: string;
     apiVersion: string;
-    tokenProvider: () => Promise<string> | string;
-    fetch?: SalesforceFetch;
 }
+
+export type CreateSalesforceClientOptions = CreateSalesforceClientBaseOptions &
+    (
+        | {
+              tokenProvider: () => Promise<string> | string;
+              fetch?: SalesforceFetch;
+              authenticatedFetch?: false;
+          }
+        | {
+              /**
+               * The supplied fetch implementation is responsible for adding
+               * Salesforce authentication, typically through ConnectionEgress.
+               */
+              authenticatedFetch: true;
+              fetch: SalesforceFetch;
+              tokenProvider?: undefined;
+          }
+    );
 
 function normalizeInstanceUrl(instanceUrl: string): string {
     return instanceUrl.replace(/\/+$/, "");
@@ -80,6 +113,16 @@ function resolveUrl(instanceUrl: string, path: string): URL {
 function dataApiPath(apiVersion: string, path: string): string {
     const suffix = path.startsWith("/") ? path : `/${path}`;
     return `/services/data/v${apiVersion}${suffix}`;
+}
+
+function changeEventChannel(sObjectName: string): string {
+    if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(sObjectName)) {
+        throw new Error(`Invalid Salesforce sObject name "${sObjectName}".`);
+    }
+    const changeEventName = sObjectName.endsWith("__c")
+        ? `${sObjectName.slice(0, -3)}__ChangeEvent`
+        : `${sObjectName}ChangeEvent`;
+    return `/data/${changeEventName}`;
 }
 
 type JsforceApiError = Error & {
@@ -135,16 +178,25 @@ function serializeFetchBody(body: HttpRequest["body"]): string {
 function installFetchTransport(connection: Connection, fetchImpl: SalesforceFetch): void {
     connection._transport.httpRequest = ((req: HttpRequest) => {
         const stream = new PassThrough();
+        // The returned promise is the authoritative error channel. Avoid an
+        // unhandled stream error when a fetch fails before jsforce consumes it.
+        stream.on("error", () => undefined);
         const promise = (async () => {
             const method = req.method ?? "GET";
             const body =
                 req.body === undefined || req.body === null || method === "GET" || method === "HEAD"
                     ? undefined
                     : serializeFetchBody(req.body);
+            const requestHeaders = new Headers(
+                req.headers
+            );
+            // jsforce calculates this for its native transport. The fetch
+            // bridge reconstructs the body, so undici must calculate it again.
+            requestHeaders.delete("content-length");
 
             const response = await fetchImpl(req.url, {
                 method,
-                headers: req.headers,
+                headers: requestHeaders,
                 body,
             });
             const responseBody = await response.text();
@@ -178,27 +230,36 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
     const instanceUrl = normalizeInstanceUrl(options.instanceUrl);
     const apiVersion = normalizeApiVersion(options.apiVersion);
     const fetchImpl = options.fetch ?? fetch;
+    const tokenProvider = options.tokenProvider;
 
     invariant(instanceUrl.length > 0, "Salesforce instanceUrl is required.");
-    invariant(typeof options.tokenProvider === "function", "Salesforce tokenProvider is required.");
+    invariant(
+        typeof tokenProvider === "function" ||
+            (options.authenticatedFetch === true && options.fetch !== undefined),
+        "Salesforce tokenProvider or authenticated fetch is required."
+    );
 
     const connection = new Connection({
         instanceUrl,
         version: apiVersion,
-        refreshFn: (_conn, callback) => {
-            void Promise.resolve()
-                .then(() => options.tokenProvider())
-                .then((token) => {
-                    invariant(
-                        typeof token === "string" && token.length > 0,
-                        "Salesforce tokenProvider returned an empty token."
-                    );
-                    callback(null, token);
-                })
-                .catch((error: unknown) => {
-                    callback(error instanceof Error ? error : new Error(String(error)));
-                });
-        },
+        ...(tokenProvider
+            ? {
+                  refreshFn: (_conn, callback) => {
+                      void Promise.resolve()
+                          .then(() => tokenProvider())
+                          .then((token) => {
+                              invariant(
+                                  typeof token === "string" && token.length > 0,
+                                  "Salesforce tokenProvider returned an empty token."
+                              );
+                              callback(null, token);
+                          })
+                          .catch((error: unknown) => {
+                              callback(error instanceof Error ? error : new Error(String(error)));
+                          });
+                  },
+              }
+            : {}),
     });
 
     if (options.fetch) {
@@ -206,9 +267,14 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
     }
 
     const withAuth = async <T>(run: () => Promise<T>): Promise<T> => {
-        const token = await options.tokenProvider();
-        invariant(typeof token === "string" && token.length > 0, "Salesforce tokenProvider returned an empty token.");
-        connection.accessToken = token;
+        if (tokenProvider) {
+            const token = await tokenProvider();
+            invariant(
+                typeof token === "string" && token.length > 0,
+                "Salesforce tokenProvider returned an empty token."
+            );
+            connection.accessToken = token;
+        }
         try {
             return await run();
         } catch (error) {
@@ -254,7 +320,7 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
     return {
         instanceUrl,
         apiVersion,
-        tokenProvider: options.tokenProvider,
+        tokenProvider,
         fetch: fetchImpl,
         connection,
         request,
@@ -264,6 +330,30 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
             withAuth(async () => await connection.query<T>(soql)),
         queryMore: <T extends SalesforceRecord = SalesforceRecord>(nextRecordsUrl: string) =>
             withAuth(async () => await connection.queryMore<T>(nextRecordsUrl)),
+        createRecord: (sObjectName, record) =>
+            withAuth(() => connection.create(sObjectName, record)),
+        updateRecord: (sObjectName, id, record) =>
+            withAuth(() => connection.update(sObjectName, { ...record, Id: id })),
+        deleteRecord: (sObjectName, id) =>
+            withAuth(() => connection.destroy(sObjectName, id)),
+        subscribeToChangeEvents: (sObjectName, listener) =>
+            withAuth(async () => {
+                if (!connection.accessToken) {
+                    throw new Error(
+                        "Salesforce Change Data Capture requires a tokenProvider because jsforce streaming bypasses fetch egress."
+                    );
+                }
+                const channel = changeEventChannel(sObjectName);
+                const subscription = connection.streaming.subscribe(
+                    channel,
+                    (event: SalesforceChangeEvent) => listener(event)
+                );
+                await subscription;
+                return {
+                    channel,
+                    unsubscribe: () => subscription.cancel(),
+                };
+            }),
         listFlowActions: () =>
             request<SalesforceInvocableActionListResponse>(dataApiPath(apiVersion, "/actions/custom/flow")),
         describeFlowAction: (apiName) =>

@@ -13,7 +13,9 @@
     ],
     "scripts": {
         "build": "tsc",
+        "demo": "pnpm --filter @party-stack/salesforce-task-manager demo",
         "lint": "eslint",
+        "smoke": "pnpm turbo run build --filter @party-stack/salesforce-client && node --env-file-if-exists=.env scripts/smoke.mjs",
         "test": "vitest run --pass-with-no-tests"
     },
     "dependencies": {
@@ -22,7 +24,10 @@
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@party-stack/node-runtime": "workspace:^",
+        "@party-stack/oauth": "workspace:^",
         "eslint": "^9.25.0",
+        "open": "^11.0.1",
         "typescript": "~5.8.3",
         "vitest": "^3.1.1"
     }
