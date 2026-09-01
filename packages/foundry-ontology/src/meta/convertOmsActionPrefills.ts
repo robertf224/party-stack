@@ -3,6 +3,7 @@ import type {
     ActionParameterDef,
     Expression,
     StringConstraint,
+    StringSuggestion,
 } from "@party-stack/ontology";
 
 type UnknownRecord = Record<string, unknown>;
@@ -152,48 +153,72 @@ function getParameterValidations(actionType: unknown): UnknownRecord | undefined
     return asRecord(asRecord(actionTypeLogic?.validation)?.parameterValidations);
 }
 
-export function convertOmsActionParameterStringConstraint(
+function getOmsActionParameterAllowedValues(
     actionType: unknown,
     parameterName: string
-): StringConstraint | undefined {
+): UnknownRecord | undefined {
     const parameterValidation = asRecord(
         getParameterValidations(actionType)?.[parameterName]
     );
     const defaultValidation = asRecord(
         parameterValidation?.defaultValidation
     );
-    const validation = asRecord(defaultValidation?.validation);
-    const allowedValues = asRecord(validation?.allowedValues);
+    return asRecord(
+        asRecord(defaultValidation?.validation)?.allowedValues
+    );
+}
+
+function getOmsOneOf(
+    allowedValues: UnknownRecord | undefined
+): {
+    options: StringSuggestion[];
+    otherValuesAllowed: boolean;
+} | undefined {
+    if (allowedValues?.type !== "oneOf") return undefined;
+    const oneOfOrEmpty = asRecord(allowedValues.oneOf);
+    if (oneOfOrEmpty?.type !== "oneOf") return undefined;
+    const oneOf = asRecord(oneOfOrEmpty.oneOf);
+    if (!Array.isArray(oneOf?.labelledValues)) return undefined;
+
+    const options = oneOf.labelledValues.flatMap((entry) => {
+        const labelledValue = asRecord(entry);
+        const value = unwrapFoundryStaticValue(labelledValue?.value);
+        return typeof value === "string"
+            ? [
+                  {
+                      value,
+                      label:
+                          typeof labelledValue?.label === "string"
+                              ? labelledValue.label
+                              : undefined,
+                  },
+              ]
+            : [];
+    });
+    return options.length > 0
+        ? {
+              options,
+              otherValuesAllowed:
+                  asRecord(oneOf.otherValueAllowed)?.allowed === true,
+          }
+        : undefined;
+}
+
+export function convertOmsActionParameterStringConstraint(
+    actionType: unknown,
+    parameterName: string
+): StringConstraint | undefined {
+    const allowedValues = getOmsActionParameterAllowedValues(
+        actionType,
+        parameterName
+    );
 
     if (allowedValues?.type === "oneOf") {
-        const oneOfOrEmpty = asRecord(allowedValues.oneOf);
-        if (oneOfOrEmpty?.type !== "oneOf") return undefined;
-        const oneOf = asRecord(oneOfOrEmpty.oneOf);
-        if (
-            asRecord(oneOf?.otherValueAllowed)?.allowed === true ||
-            !Array.isArray(oneOf?.labelledValues)
-        ) {
-            return undefined;
-        }
-        const options = oneOf.labelledValues.flatMap((entry) => {
-            const labelledValue = asRecord(entry);
-            const value = unwrapFoundryStaticValue(labelledValue?.value);
-            return typeof value === "string"
-                ? [
-                      {
-                          value,
-                          label:
-                              typeof labelledValue?.label === "string"
-                                  ? labelledValue.label
-                                  : undefined,
-                      },
-                  ]
-                : [];
-        });
-        return options.length > 0
+        const oneOf = getOmsOneOf(allowedValues);
+        return oneOf && !oneOf.otherValuesAllowed
             ? {
                   kind: "enum",
-                  value: { options },
+                  value: { options: oneOf.options },
               }
             : undefined;
     }
@@ -216,6 +241,21 @@ export function convertOmsActionParameterStringConstraint(
     }
 
     return undefined;
+}
+
+export function convertOmsActionParameterStringSuggestions(
+    actionType: unknown,
+    parameterName: string
+): StringSuggestion[] | undefined {
+    const oneOf = getOmsOneOf(
+        getOmsActionParameterAllowedValues(
+            actionType,
+            parameterName
+        )
+    );
+    return oneOf?.otherValuesAllowed
+        ? oneOf.options
+        : undefined;
 }
 
 function getMetadataParameter(actionType: unknown, parameterName: string): UnknownRecord | undefined {

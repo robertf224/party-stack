@@ -127,7 +127,7 @@ describe("convertFoundryMetaActionType parameter validation", () => {
         });
     });
 
-    it("does not constrain one-of validation that permits other values", () => {
+    it("preserves one-of suggestions that permit other values", () => {
         const result = convertFoundryMetaActionType(
             actionType({
                 status: {
@@ -150,7 +150,14 @@ describe("convertFoundryMetaActionType parameter validation", () => {
 
         expect(result.parameters[0]?.type).toEqual({
             kind: "string",
-            value: {},
+            value: {
+                suggestions: [
+                    {
+                        value: "open",
+                        label: "Open",
+                    },
+                ],
+            },
         });
     });
 
@@ -307,6 +314,78 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
         expect(result.parameters[0]?.defaultValue).toEqual({
             kind: "literal",
             value: { value: "US" },
+        });
+    });
+
+    it("preserves open OMS one-of values as optional string suggestions", () => {
+        const result = convertFoundryMetaActionType(
+            actionType({
+                country: {
+                    displayName: "Country",
+                    dataType: { type: "string" },
+                    required: false,
+                    typeClasses: [],
+                },
+                claim: {
+                    displayName: "Claim",
+                    dataType: {
+                        type: "object",
+                        objectTypeApiName: "Claim",
+                        objectApiName: "claim",
+                    },
+                    required: true,
+                    typeClasses: [],
+                },
+            }),
+            omsActionMetadata(
+                "country",
+                omsOneOf(
+                    [
+                        { label: "United States", value: "US" },
+                        { label: "Mexico", value: "MX" },
+                        { label: "Canada", value: "CA" },
+                    ],
+                    true
+                ),
+                {
+                    type: "objectParameterPropertyValue",
+                    objectParameterPropertyValue: {
+                        parameterId: "claim",
+                        propertyTypeId: "country",
+                    },
+                }
+            )
+        );
+
+        expect(result.parameters[0]?.type).toEqual({
+            kind: "optional",
+            value: {
+                type: {
+                    kind: "string",
+                    value: {
+                        suggestions: [
+                            {
+                                value: "US",
+                                label: "United States",
+                            },
+                            {
+                                value: "MX",
+                                label: "Mexico",
+                            },
+                            {
+                                value: "CA",
+                                label: "Canada",
+                            },
+                        ],
+                    },
+                },
+            },
+        });
+        expect(result.parameters[0]?.defaultValue).toEqual({
+            kind: "valueReference",
+            value: {
+                path: ["claim", "country"],
+            },
         });
     });
 

@@ -5,8 +5,13 @@ import type { OntologyClient } from "@party-stack/foundry-client";
 import { createFoundryMetaOntologyBackendAdapter } from "./createFoundryMetaOntologyBackendAdapter.js";
 
 const mocks = vi.hoisted(() => ({
+    bulkLoadOntologyEntities: vi.fn(),
     getFullMetadata: vi.fn(),
     searchActionTypes: vi.fn(),
+}));
+
+vi.mock("@osdk/client.unstable", () => ({
+    bulkLoadOntologyEntities: mocks.bulkLoadOntologyEntities,
 }));
 
 vi.mock("@osdk/foundry.ontologies", async (importOriginal) => {
@@ -32,11 +37,15 @@ const client: OntologyClient = {
 };
 
 beforeEach(() => {
+    mocks.bulkLoadOntologyEntities.mockReset();
     mocks.getFullMetadata.mockReset();
     mocks.searchActionTypes.mockReset();
     mocks.getFullMetadata.mockResolvedValue({
         objectTypes: {},
         valueTypes: {},
+    });
+    mocks.bulkLoadOntologyEntities.mockResolvedValue({
+        actionTypes: [],
     });
 });
 

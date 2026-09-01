@@ -29,9 +29,9 @@
         "test": "vitest run --pass-with-no-tests"
     },
     "dependencies": {
-        "@bobbyfidz/oms": "^0.0.0",
         "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/urls": "^0.2.1",
+        "@osdk/client.unstable": "^2.63.0",
         "@osdk/foundry.admin": "^2.71.0",
         "@osdk/foundry.core": "^2.71.0",
         "@osdk/foundry.mediasets": "^2.71.0",
@@ -46,7 +46,6 @@
         "@party-stack/runtime": "workspace:*",
         "@tanstack/store": "^0.11.0",
         "change-case": "^5.4.4",
-        "conjure-client": "^2.20.0",
         "effection": "^4.0.2",
         "temporal-polyfill": "^0.3.0",
         "zod": "^4.4.3"

@@ -16,6 +16,24 @@ export default {
             }),
         },
         {
+            name: "StringSuggestion",
+            description: "A suggested value for a string.",
+            type: o.struct({
+                fields: [
+                    {
+                        name: "value",
+                        displayName: "Value",
+                        type: o.string({}),
+                    },
+                    {
+                        name: "label",
+                        displayName: "Label",
+                        type: o.optional({ type: o.string({}) }),
+                    },
+                ],
+            }),
+        },
+        {
             name: "StringEnumConstraint",
             description: "Constrains a string to a set of allowed values.",
             type: o.struct({
@@ -24,16 +42,7 @@ export default {
                         name: "options",
                         displayName: "Options",
                         type: o.list({
-                            elementType: o.struct({
-                                fields: [
-                                    { name: "value", displayName: "Value", type: o.string({}) },
-                                    {
-                                        name: "label",
-                                        displayName: "Label",
-                                        type: o.optional({ type: o.string({}) }),
-                                    },
-                                ],
-                            }),
+                            elementType: o.ref({ name: "StringSuggestion" }),
                         }),
                     },
                 ],
@@ -71,6 +80,15 @@ export default {
                         name: "constraint",
                         displayName: "Constraint",
                         type: o.optional({ type: o.ref({ name: "StringConstraint" }) }),
+                    },
+                    {
+                        name: "suggestions",
+                        displayName: "Suggestions",
+                        type: o.optional({
+                            type: o.list({
+                                elementType: o.ref({ name: "StringSuggestion" }),
+                            }),
+                        }),
                     },
                 ],
             }),
