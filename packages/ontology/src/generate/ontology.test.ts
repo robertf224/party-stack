@@ -65,7 +65,7 @@ describe("generateOntology", () => {
         expect(output).toContain('objectType: "Membership"');
     });
 
-    it("preserves action parameter prefills", () => {
+    it("preserves provider-neutral action parameter defaults", () => {
         const ontology: OntologyIR = {
             types: [],
             objectTypes: [
@@ -90,42 +90,21 @@ describe("generateOntology", () => {
                             name: "employee",
                             displayName: "Employee",
                             type: o.objectReference({ objectType: "Employee" }),
-                            prefills: [
-                                o.ActionParameterPrefill.foundryObjectQuery({
-                                    fieldPath: [],
-                                    objectType: "Employee",
-                                    objectSet: { objectSet: { transforms: [] } },
+                            defaultValue: o.Expression.objectQuery({
+                                objectType: "Employee",
+                                where: o.ObjectQueryPredicate.eq({
+                                    property: ["name"],
+                                    value: "Ada",
                                 }),
-                            ],
+                            }),
                         },
                         {
                             name: "name",
                             displayName: "Name",
-                            type: o.struct({
-                                fields: [
-                                    {
-                                        name: "default",
-                                        displayName: "Default",
-                                        type: o.string({}),
-                                    },
-                                    {
-                                        name: "nested",
-                                        displayName: "Nested",
-                                        type: o.string({}),
-                                    },
-                                ],
+                            type: o.string({}),
+                            defaultValue: o.Expression.valueReference({
+                                path: ["employee", "name"],
                             }),
-                            prefills: [
-                                o.ActionParameterPrefill.literal({
-                                    fieldPath: ["default"],
-                                    value: "Default",
-                                }),
-                                o.ActionParameterPrefill.objectProperty({
-                                    fieldPath: ["nested"],
-                                    parameter: "employee",
-                                    property: ["name"],
-                                }),
-                            ],
                         },
                     ],
                     logic: [],
@@ -135,9 +114,9 @@ describe("generateOntology", () => {
         };
 
         const output = generateOntology(ontology);
-        expect(output).toContain("o.ActionParameterPrefill.literal");
-        expect(output).toContain("o.ActionParameterPrefill.objectProperty");
-        expect(output).toContain("o.ActionParameterPrefill.foundryObjectQuery");
+        expect(output).toContain("o.Expression.objectQuery");
+        expect(output).toContain('kind: "eq"');
+        expect(output).toContain("o.Expression.valueReference");
         expect(output).toContain('objectType: "Employee"');
     });
 });

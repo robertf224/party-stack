@@ -221,41 +221,6 @@ export type LinkTypeSideDef = {
 /** The cardinality of a link from the source's perspective. */
 export type LinkCardinality = "one" | "many";
 
-/** Suggests a static value for an action parameter field. */
-export type LiteralActionParameterPrefill = {
-    /** The path relative to the action parameter. An empty path targets the parameter. */
-    fieldPath: Array<string>;
-    /** The suggested value. */
-    value: unknown;
-};
-
-/** Suggests a value read from an object-reference action parameter. */
-export type ObjectPropertyActionParameterPrefill = {
-    /** The path relative to the action parameter. An empty path targets the parameter. */
-    fieldPath: Array<string>;
-    /** The source object-reference action parameter. */
-    parameter: string;
-    /** The property path on the referenced object. */
-    property: Array<string>;
-};
-
-/** Suggests an object by evaluating a Foundry OMS Actions object set. */
-export type FoundryObjectQueryActionParameterPrefill = {
-    /** The path relative to the action parameter. An empty path targets the parameter. */
-    fieldPath: Array<string>;
-    /** The object type returned by the query. */
-    objectType: string;
-    /** The opaque Foundry OMS Actions object-set definition. */
-    objectSet: unknown;
-};
-
-/** A value suggested to users for an action parameter field. */
-export type ActionParameterPrefill = v.Union<{
-    literal: LiteralActionParameterPrefill;
-    objectProperty: ObjectPropertyActionParameterPrefill;
-    foundryObjectQuery: FoundryObjectQueryActionParameterPrefill;
-}>;
-
 /** A parameter of an Action type. */
 export type ActionParameterDef = {
     /** The parameter's name. */
@@ -269,8 +234,6 @@ export type ActionParameterDef = {
     deprecated?: Deprecation;
     /** The expression used when the caller does not provide a value. */
     defaultValue?: Expression;
-    /** Values suggested to users when editing this parameter. */
-    prefills?: Array<ActionParameterPrefill>;
 };
 
 /** Reads a value from scope by path. */
@@ -295,6 +258,53 @@ export type LiteralExpression = {
     value: unknown;
 };
 
+/** Matches an object property equal to a value. */
+export type ObjectQueryEqualsPredicate = {
+    property: Array<string>;
+    value: unknown;
+};
+
+/** Matches an object property equal to one of several values. */
+export type ObjectQueryInPredicate = {
+    property: Array<string>;
+    values: Array<unknown>;
+};
+
+/** Matches an object property within a range. */
+export type ObjectQueryRangePredicate = {
+    property: Array<string>;
+    lt?: unknown;
+    lte?: unknown;
+    gt?: unknown;
+    gte?: unknown;
+};
+
+/** Combines object-query predicates. */
+export type ObjectQueryLogicalPredicate = {
+    predicates: Array<ObjectQueryPredicate>;
+};
+
+/** Negates an object-query predicate. */
+export type ObjectQueryNotPredicate = {
+    predicate: ObjectQueryPredicate;
+};
+
+/** A provider-neutral predicate used to query ontology objects. */
+export type ObjectQueryPredicate = v.Union<{
+    eq: ObjectQueryEqualsPredicate;
+    in: ObjectQueryInPredicate;
+    range: ObjectQueryRangePredicate;
+    and: ObjectQueryLogicalPredicate;
+    or: ObjectQueryLogicalPredicate;
+    not: ObjectQueryNotPredicate;
+}>;
+
+/** Returns the primary key when exactly one object matches a predicate. */
+export type ObjectQueryExpression = {
+    objectType: string;
+    where?: ObjectQueryPredicate;
+};
+
 /** Calls a function within an expression. */
 export type FunctionCallExpression = v.Union<{
     uuid: UuidFunctionCall;
@@ -307,6 +317,7 @@ export type Expression = v.Union<{
     contextReference: ContextReferenceExpression;
     functionCall: FunctionCallExpression;
     literal: LiteralExpression;
+    objectQuery: ObjectQueryExpression;
 }>;
 
 /** Assigns an expression to a property path on an object written by an action. */

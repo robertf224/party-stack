@@ -572,7 +572,7 @@ describe("Ontology Validation", () => {
             expectOk(validate(ontology));
         });
 
-        it("should validate action parameter prefills", () => {
+        it("should validate action parameter defaults with object queries", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
                 objectTypes: [minimalObjectType()],
@@ -590,44 +590,21 @@ describe("Ontology Validation", () => {
                                 name: "name",
                                 displayName: "Name",
                                 type: o.string({}),
-                                prefills: [
-                                    o.ActionParameterPrefill.objectProperty({
-                                        fieldPath: [],
-                                        parameter: "employee",
-                                        property: ["name"],
-                                    }),
-                                ],
-                            },
-                            {
-                                name: "notes",
-                                displayName: "Notes",
-                                type: o.struct({
-                                    fields: [
-                                        {
-                                            name: "summary",
-                                            displayName: "Summary",
-                                            type: o.string({}),
-                                        },
-                                    ],
+                                defaultValue: o.Expression.valueReference({
+                                    path: ["employee", "name"],
                                 }),
-                                prefills: [
-                                    o.ActionParameterPrefill.literal({
-                                        fieldPath: ["summary"],
-                                        value: "From Foundry",
-                                    }),
-                                ],
                             },
                             {
                                 name: "assignee",
                                 displayName: "Assignee",
                                 type: o.objectReference({ objectType: "Employee" }),
-                                prefills: [
-                                    o.ActionParameterPrefill.foundryObjectQuery({
-                                        fieldPath: [],
-                                        objectType: "Employee",
-                                        objectSet: { objectSet: { transforms: [] } },
+                                defaultValue: o.Expression.objectQuery({
+                                    objectType: "Employee",
+                                    where: o.ObjectQueryPredicate.eq({
+                                        property: ["name"],
+                                        value: "Ada",
                                     }),
-                                ],
+                                }),
                             },
                         ],
                         logic: [],
@@ -638,34 +615,58 @@ describe("Ontology Validation", () => {
             expectOk(validate(ontology));
         });
 
-        it("should detect invalid and duplicate action parameter prefills", () => {
+        it("should detect invalid object-query defaults", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
-                objectTypes: [minimalObjectType()],
+                objectTypes: [
+                    minimalObjectType({
+                        properties: [
+                            ...minimalObjectType().properties,
+                            {
+                                name: "manager",
+                                displayName: "Manager",
+                                type: o.objectReference({
+                                    objectType: "Employee",
+                                }),
+                            },
+                        ],
+                    }),
+                ],
                 actionTypes: [
                     {
                         name: "updateEmployee",
                         displayName: "Update Employee",
                         parameters: [
                             {
-                                name: "name",
-                                displayName: "Name",
+                                name: "query",
+                                displayName: "Query",
                                 type: o.string({}),
-                                prefills: [
-                                    o.ActionParameterPrefill.objectProperty({
-                                        fieldPath: [],
-                                        parameter: "missing",
+                                defaultValue: o.Expression.objectQuery({
+                                    objectType: "Employee",
+                                    where: o.ObjectQueryPredicate.eq({
+                                        property: ["missing"],
+                                        value: "Ada",
+                                    }),
+                                }),
+                            },
+                            {
+                                name: "assignee",
+                                displayName: "Assignee",
+                                type: o.objectReference({ objectType: "Employee" }),
+                                defaultValue: o.Expression.objectQuery({
+                                    objectType: "Employee",
+                                    where: o.ObjectQueryPredicate.range({
                                         property: ["name"],
                                     }),
-                                    o.ActionParameterPrefill.literal({
-                                        fieldPath: [],
-                                        value: "duplicate",
-                                    }),
-                                    o.ActionParameterPrefill.literal({
-                                        fieldPath: ["missing"],
-                                        value: "invalid",
-                                    }),
-                                ],
+                                }),
+                            },
+                            {
+                                name: "missingType",
+                                displayName: "Missing type",
+                                type: o.string({}),
+                                defaultValue: o.Expression.objectQuery({
+                                    objectType: "Missing",
+                                }),
                             },
                             {
                                 name: "employee",
@@ -676,25 +677,33 @@ describe("Ontology Validation", () => {
                                 name: "count",
                                 displayName: "Count",
                                 type: o.integer({}),
-                                prefills: [
-                                    o.ActionParameterPrefill.objectProperty({
-                                        fieldPath: [],
-                                        parameter: "employee",
-                                        property: ["name"],
-                                    }),
-                                ],
+                                defaultValue: o.Expression.valueReference({
+                                    path: ["employee", "name"],
+                                }),
                             },
                             {
-                                name: "query",
-                                displayName: "Query",
-                                type: o.string({}),
-                                prefills: [
-                                    o.ActionParameterPrefill.foundryObjectQuery({
-                                        fieldPath: [],
+                                name: "employees",
+                                displayName: "Employees",
+                                type: o.list({
+                                    elementType: o.objectReference({
                                         objectType: "Employee",
-                                        objectSet: {},
                                     }),
-                                ],
+                                }),
+                                defaultValue: o.Expression.objectQuery({
+                                    objectType: "Employee",
+                                }),
+                            },
+                            {
+                                name: "managerQuery",
+                                displayName: "Manager query",
+                                type: o.objectReference({ objectType: "Employee" }),
+                                defaultValue: o.Expression.objectQuery({
+                                    objectType: "Employee",
+                                    where: o.ObjectQueryPredicate.eq({
+                                        property: ["manager", "name"],
+                                        value: "Ada",
+                                    }),
+                                }),
                             },
                         ],
                         logic: [],
@@ -703,14 +712,26 @@ describe("Ontology Validation", () => {
             };
 
             const errors = getErrors(validate(ontology));
-            expect(errors).toContain('Unknown action parameter: "missing".');
-            expect(errors).toContain('Duplicate prefill field path on "name".');
-            expect(errors).toContain('Invalid prefill field path on "name".');
             expect(errors).toContain(
-                'Prefill property on "employee" is incompatible with "count".'
+                'Object-query default is incompatible with "query".'
             );
             expect(errors).toContain(
-                'Foundry object-query prefill is incompatible with "query".'
+                'Invalid object-query property path on "Employee".'
+            );
+            expect(errors).toContain(
+                "Object-query range predicates must include a bound."
+            );
+            expect(errors).toContain(
+                'Unknown object-query object type: "Missing".'
+            );
+            expect(errors).toContain(
+                'Object-query default is incompatible with "missingType".'
+            );
+            expect(errors).toContain(
+                'Default value for "count" has an incompatible type.'
+            );
+            expect(errors).toContain(
+                'Object-query default is incompatible with "employees".'
             );
         });
 

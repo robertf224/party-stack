@@ -16,8 +16,10 @@ Uses public Foundry APIs (`ActionTypesV2` / `ActionTypesFullMetadata`) for:
 - Synthetic UUID / current-time default parameters from public logic metadata
 
 Foundry UI prefills are loaded from the private OMS bulk metadata endpoint when
-available. Static values and object-parameter property references are converted
-to portable action-parameter prefills. OMS object-query prefills are preserved
-as an explicitly Foundry-specific metadata variant for compatible consumers.
-Failures from the private endpoint do not prevent public action metadata from
+available. Static values and object-parameter property references become action
+parameter defaults. Supported OMS object-query filters are translated to
+provider-neutral object-query predicates. Closed string one-of constraints and
+text regex constraints are used when public metadata does not provide them.
+Unsupported query operations and struct-field prefills are omitted, and
+failures from the private endpoint do not prevent public action metadata from
 loading.

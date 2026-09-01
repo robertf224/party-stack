@@ -2,9 +2,9 @@ import { unwrapType } from "../utils/types.js";
 import { ImageMediaTypeOptions } from "./generated/constants.js";
 import type {
     ActionParameterDef,
-    ActionParameterPrefill,
     ActionTypeDef,
     Expression,
+    ObjectQueryPredicate,
     ObjectTypeDef,
     OntologyIR,
     PropertyAssignment,
@@ -359,10 +359,175 @@ function validateExpression(
                           path: [...path, "path"],
                       },
                   ];
+        case "objectQuery": {
+            const objectType = objectTypes.get(expression.value.objectType);
+            if (!objectType) {
+                return [
+                    {
+                        message: `Unknown object-query object type: "${expression.value.objectType}".`,
+                        path: [...path, "objectType"],
+                    },
+                ];
+            }
+            return expression.value.where
+                ? validateObjectQueryPredicate(
+                      expression.value.where,
+                      objectType,
+                      [...path, "where"],
+                      valueTypes
+                  )
+                : [];
+        }
         case "functionCall":
         case "literal":
             return [];
     }
+}
+
+function resolveNestedObjectQueryPropertyType(
+    type: TypeDef,
+    path: string[],
+    valueTypes: ReadonlyMap<string, TypeDef>
+): TypeDef | undefined {
+    const resolved = resolveType(type, valueTypes);
+    if (!resolved) return undefined;
+    if (resolved.kind === "optional") {
+        return resolveNestedObjectQueryPropertyType(
+            resolved.value.type,
+            path,
+            valueTypes
+        );
+    }
+    if (path.length === 0) return resolved;
+    if (resolved.kind !== "struct") return undefined;
+
+    const [fieldName, ...rest] = path;
+    const field = resolved.value.fields.find(
+        (candidate) => candidate.name === fieldName
+    );
+    return field
+        ? resolveNestedObjectQueryPropertyType(
+              field.type,
+              rest,
+              valueTypes
+          )
+        : undefined;
+}
+
+function resolveObjectQueryPropertyType(
+    objectType: ObjectTypeDef,
+    path: string[],
+    valueTypes: ReadonlyMap<string, TypeDef>
+): TypeDef | undefined {
+    const [propertyName, ...rest] = path;
+    const property = objectType.properties.find(
+        (candidate) => candidate.name === propertyName
+    );
+    return property
+        ? resolveNestedObjectQueryPropertyType(
+              property.type,
+              rest,
+              valueTypes
+          )
+        : undefined;
+}
+
+function validateObjectQueryPredicate(
+    predicate: ObjectQueryPredicate,
+    objectType: ObjectTypeDef,
+    path: ValidationPathElement[],
+    valueTypes: ReadonlyMap<string, TypeDef>
+): ValidationError[] {
+    switch (predicate.kind) {
+        case "eq":
+        case "in":
+        case "range": {
+            const propertyPath = predicate.value.property;
+            if (propertyPath.length === 0) {
+                return [
+                    {
+                        message: "Object-query predicates must include a property path.",
+                        path: [...path, "value", "property"],
+                    },
+                ];
+            }
+            const propertyType = resolveObjectQueryPropertyType(
+                objectType,
+                propertyPath,
+                valueTypes
+            );
+            const errors: ValidationError[] = propertyType
+                ? []
+                : [
+                      {
+                          message: `Invalid object-query property path on "${objectType.name}".`,
+                          path: [...path, "value", "property"],
+                      },
+                  ];
+            if (predicate.kind === "in" && predicate.value.values.length === 0) {
+                errors.push({
+                    message: "Object-query in predicates must include values.",
+                    path: [...path, "value", "values"],
+                });
+            }
+            if (
+                predicate.kind === "range" &&
+                ["lt", "lte", "gt", "gte"].every(
+                    (operator) =>
+                        predicate.value[
+                            operator as keyof typeof predicate.value
+                        ] === undefined
+                )
+            ) {
+                errors.push({
+                    message: "Object-query range predicates must include a bound.",
+                    path: [...path, "value"],
+                });
+            }
+            return errors;
+        }
+        case "and":
+        case "or": {
+            if (predicate.value.predicates.length === 0) {
+                return [
+                    {
+                        message: `Object-query ${predicate.kind} predicates must not be empty.`,
+                        path: [...path, "value", "predicates"],
+                    },
+                ];
+            }
+            return predicate.value.predicates.flatMap((child, index) =>
+                validateObjectQueryPredicate(
+                    child,
+                    objectType,
+                    [...path, "value", "predicates", index],
+                    valueTypes
+                )
+            );
+        }
+        case "not":
+            return validateObjectQueryPredicate(
+                predicate.value.predicate,
+                objectType,
+                [...path, "value", "predicate"],
+                valueTypes
+            );
+    }
+}
+
+function getObjectReferenceTypeName(
+    type: TypeDef,
+    valueTypes: ReadonlyMap<string, TypeDef>
+): string | undefined {
+    const resolved = resolveType(type, valueTypes);
+    if (!resolved) return undefined;
+    if (resolved.kind === "objectReference") {
+        return resolved.value.objectType;
+    }
+    if (resolved.kind === "optional") {
+        return getObjectReferenceTypeName(resolved.value.type, valueTypes);
+    }
+    return undefined;
 }
 
 function unwrapOptionalType(
@@ -375,7 +540,7 @@ function unwrapOptionalType(
         : resolved;
 }
 
-function arePrefillTypesCompatible(
+function areDefaultTypesCompatible(
     target: TypeDef,
     source: TypeDef,
     valueTypes: ReadonlyMap<string, TypeDef>
@@ -385,121 +550,17 @@ function arePrefillTypesCompatible(
     if (!targetType || !sourceType) return false;
     if (targetType.kind === "unknown" || sourceType.kind === "unknown") return true;
     if (targetType.kind !== sourceType.kind) return false;
-
     if (targetType.kind === "objectReference" && sourceType.kind === "objectReference") {
         return targetType.value.objectType === sourceType.value.objectType;
     }
     if (targetType.kind === "list" && sourceType.kind === "list") {
-        return arePrefillTypesCompatible(
+        return areDefaultTypesCompatible(
             targetType.value.elementType,
             sourceType.value.elementType,
             valueTypes
         );
     }
     return true;
-}
-
-function validateActionParameterPrefill(
-    prefill: ActionParameterPrefill,
-    parameter: ActionParameterDef,
-    parameters: ReadonlyMap<string, ActionParameterDef>,
-    path: ValidationPathElement[],
-    valueTypes: ReadonlyMap<string, TypeDef>,
-    objectTypes: ReadonlyMap<string, ObjectTypeDef>
-): ValidationError[] {
-    const fieldPath = prefill.value.fieldPath;
-    const errors: ValidationError[] = [];
-    const targetType = resolveParameterReferenceType(
-        parameter.type,
-        fieldPath,
-        valueTypes,
-        objectTypes
-    );
-
-    if (!targetType) {
-        errors.push({
-            message: `Invalid prefill field path on "${parameter.name}".`,
-            path: [...path, "value", "fieldPath"],
-        });
-    }
-
-    switch (prefill.kind) {
-        case "literal":
-            break;
-        case "objectProperty": {
-            const sourceParameter = parameters.get(prefill.value.parameter);
-            if (!sourceParameter) {
-                errors.push({
-                    message: `Unknown action parameter: "${prefill.value.parameter}".`,
-                    path: [...path, "value", "parameter"],
-                });
-                break;
-            }
-
-            const sourceType = unwrapOptionalType(sourceParameter.type, valueTypes);
-            if (sourceType?.kind !== "objectReference") {
-                errors.push({
-                    message: `Prefill source parameter "${sourceParameter.name}" must be an object reference.`,
-                    path: [...path, "value", "parameter"],
-                });
-            }
-            if (prefill.value.property.length === 0) {
-                errors.push({
-                    message: "Object-property prefills must include a property path.",
-                    path: [...path, "value", "property"],
-                });
-            } else {
-                const sourcePropertyType = resolveParameterReferenceType(
-                    sourceParameter.type,
-                    prefill.value.property,
-                    valueTypes,
-                    objectTypes
-                );
-                if (!sourcePropertyType) {
-                    errors.push({
-                        message: `Invalid prefill property path on "${sourceParameter.name}".`,
-                        path: [...path, "value", "property"],
-                    });
-                } else if (
-                    targetType &&
-                    !arePrefillTypesCompatible(targetType, sourcePropertyType, valueTypes)
-                ) {
-                    errors.push({
-                        message: `Prefill property on "${sourceParameter.name}" is incompatible with "${parameter.name}".`,
-                        path: [...path, "value", "property"],
-                    });
-                }
-            }
-            break;
-        }
-        case "foundryObjectQuery": {
-            if (!objectTypes.has(prefill.value.objectType)) {
-                errors.push({
-                    message: `Unknown prefill object type: "${prefill.value.objectType}".`,
-                    path: [...path, "value", "objectType"],
-                });
-            }
-            const unwrappedTargetType = targetType
-                ? unwrapOptionalType(targetType, valueTypes)
-                : undefined;
-            const targetObjectType =
-                unwrappedTargetType?.kind === "list"
-                    ? unwrapOptionalType(unwrappedTargetType.value.elementType, valueTypes)
-                    : unwrappedTargetType;
-            if (
-                targetObjectType?.kind !== "objectReference" ||
-                targetObjectType.value.objectType !== prefill.value.objectType
-            ) {
-                errors.push({
-                    message: `Foundry object-query prefill is incompatible with "${parameter.name}".`,
-                    path: [...path, "value", "objectType"],
-                });
-            }
-            break;
-        }
-    }
-
-    return errors;
 }
 
 function validateActionObjectReference(
@@ -646,30 +707,42 @@ function validateAction(
                     contextType
                 )
             );
-        }
-
-        const seenPrefillPaths = new Set<string>();
-        for (let prefillIndex = 0; prefillIndex < (parameter.prefills?.length ?? 0); prefillIndex++) {
-            const prefill = parameter.prefills![prefillIndex]!;
-            const prefillPath = [...parameterPath, "prefills", prefillIndex];
-            const fieldPathKey = JSON.stringify(prefill.value.fieldPath);
-            if (seenPrefillPaths.has(fieldPathKey)) {
+            if (
+                parameter.defaultValue.kind === "objectQuery" &&
+                getObjectReferenceTypeName(parameter.type, valueTypes) !==
+                    parameter.defaultValue.value.objectType
+            ) {
                 errors.push({
-                    message: `Duplicate prefill field path on "${parameter.name}".`,
-                    path: [...prefillPath, "value", "fieldPath"],
+                    message: `Object-query default is incompatible with "${parameter.name}".`,
+                    path: [...parameterPath, "defaultValue", "objectType"],
                 });
             }
-            seenPrefillPaths.add(fieldPathKey);
-            errors.push(
-                ...validateActionParameterPrefill(
-                    prefill,
-                    parameter,
-                    parameters,
-                    prefillPath,
-                    valueTypes,
-                    objectTypes
-                )
-            );
+            if (parameter.defaultValue.kind === "valueReference") {
+                const [sourceParameterName, ...sourcePath] =
+                    parameter.defaultValue.value.path;
+                const sourceParameter = parameters.get(sourceParameterName!);
+                const sourceType = sourceParameter
+                    ? resolveParameterReferenceType(
+                          sourceParameter.type,
+                          sourcePath,
+                          valueTypes,
+                          objectTypes
+                      )
+                    : undefined;
+                if (
+                    sourceType &&
+                    !areDefaultTypesCompatible(
+                        parameter.type,
+                        sourceType,
+                        valueTypes
+                    )
+                ) {
+                    errors.push({
+                        message: `Default value for "${parameter.name}" has an incompatible type.`,
+                        path: [...parameterPath, "defaultValue"],
+                    });
+                }
+            }
         }
     }
 

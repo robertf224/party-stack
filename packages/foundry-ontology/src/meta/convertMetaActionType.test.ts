@@ -17,6 +17,68 @@ function actionType(parameters: Record<string, ActionParameterV2>): ActionTypeFu
     };
 }
 
+function omsActionMetadata(
+    parameterName: string,
+    allowedValues: Record<string, unknown>,
+    prefill?: Record<string, unknown>
+): never {
+    return {
+        actionTypeLogic: {
+            validation: {
+                parameterValidations: {
+                    [parameterName]: {
+                        defaultValidation: {
+                            display: {
+                                prefill,
+                            },
+                            validation: {
+                                allowedValues,
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    } as never;
+}
+
+function omsOneOf(
+    values: Array<{ label: string; value: string }>,
+    allowed = false
+): Record<string, unknown> {
+    return {
+        type: "oneOf",
+        oneOf: {
+            type: "oneOf",
+            oneOf: {
+                labelledValues: values.map(({ label, value }) => ({
+                    label,
+                    value: {
+                        type: "string",
+                        string: value,
+                    },
+                })),
+                otherValueAllowed: { allowed },
+            },
+        },
+    };
+}
+
+function omsTextRegex(regex: string): Record<string, unknown> {
+    return {
+        type: "text",
+        text: {
+            type: "text",
+            text: {
+                regex: {
+                    regex,
+                    failureMessage: "Invalid value.",
+                },
+            },
+        },
+    };
+}
+
 describe("convertFoundryMetaActionType parameter validation", () => {
     it("maps the Foundry action type RID to the runtime metadata ID", () => {
         expect(convertFoundryMetaActionType(actionType({}))).toMatchObject({
@@ -201,8 +263,204 @@ describe("convertFoundryMetaActionType parameter validation", () => {
     });
 });
 
-describe("convertFoundryMetaActionType OMS prefills", () => {
-    it("converts static and object-property prefills without changing action defaults", () => {
+describe("convertFoundryMetaActionType OMS string constraints", () => {
+    it("uses a closed OMS one-of and preserves its prefill", () => {
+        const result = convertFoundryMetaActionType(
+            actionType({
+                country: {
+                    displayName: "Country",
+                    dataType: { type: "string" },
+                    required: true,
+                    typeClasses: [],
+                },
+            }),
+            omsActionMetadata(
+                "country",
+                omsOneOf([
+                    { label: "United States", value: "US" },
+                    { label: "Canada", value: "CA" },
+                ]),
+                {
+                    type: "staticValue",
+                    staticValue: {
+                        type: "string",
+                        string: "US",
+                    },
+                }
+            )
+        );
+
+        expect(result.parameters[0]?.type).toEqual({
+            kind: "string",
+            value: {
+                constraint: {
+                    kind: "enum",
+                    value: {
+                        options: [
+                            { value: "US", label: "United States" },
+                            { value: "CA", label: "Canada" },
+                        ],
+                    },
+                },
+            },
+        });
+        expect(result.parameters[0]?.defaultValue).toEqual({
+            kind: "literal",
+            value: { value: "US" },
+        });
+    });
+
+    it("applies an OMS enum inside optional strings", () => {
+        const result = convertFoundryMetaActionType(
+            actionType({
+                country: {
+                    displayName: "Country",
+                    dataType: { type: "string" },
+                    required: false,
+                    typeClasses: [],
+                },
+            }),
+            omsActionMetadata(
+                "country",
+                omsOneOf([{ label: "United States", value: "US" }])
+            )
+        );
+
+        expect(result.parameters[0]?.type).toEqual({
+            kind: "optional",
+            value: {
+                type: {
+                    kind: "string",
+                    value: {
+                        constraint: {
+                            kind: "enum",
+                            value: {
+                                options: [
+                                    {
+                                        value: "US",
+                                        label: "United States",
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                },
+            },
+        });
+    });
+
+    it("applies OMS constraints to string list element types", () => {
+        const result = convertFoundryMetaActionType(
+            actionType({
+                countries: {
+                    displayName: "Countries",
+                    dataType: {
+                        type: "array",
+                        subType: { type: "string" },
+                    },
+                    required: true,
+                    typeClasses: [],
+                },
+            }),
+            omsActionMetadata(
+                "countries",
+                omsOneOf([{ label: "United States", value: "US" }])
+            )
+        );
+
+        expect(result.parameters[0]?.type).toMatchObject({
+            kind: "list",
+            value: {
+                elementType: {
+                    kind: "string",
+                    value: {
+                        constraint: {
+                            kind: "enum",
+                        },
+                    },
+                },
+            },
+        });
+    });
+
+    it("uses an OMS text regex when public metadata has none", () => {
+        const result = convertFoundryMetaActionType(
+            actionType({
+                postalCode: {
+                    displayName: "Postal code",
+                    dataType: { type: "string" },
+                    required: true,
+                    typeClasses: [],
+                },
+            }),
+            omsActionMetadata(
+                "postalCode",
+                omsTextRegex("^\\d{5}$")
+            )
+        );
+
+        expect(result.parameters[0]?.type).toEqual({
+            kind: "string",
+            value: {
+                constraint: {
+                    kind: "regex",
+                    value: { regex: "^\\d{5}$" },
+                },
+            },
+        });
+    });
+
+    it("keeps public string constraints when OMS also supplies one", () => {
+        const result = convertFoundryMetaActionType(
+            actionType({
+                country: {
+                    displayName: "Country",
+                    dataType: { type: "string" },
+                    required: true,
+                    typeClasses: [],
+                    validation: {
+                        defaultValidation: {
+                            allowedValues: {
+                                type: "oneOf",
+                                options: [
+                                    {
+                                        displayName: "Public option",
+                                        value: "public",
+                                    },
+                                ],
+                                otherValuesAllowed: false,
+                            },
+                        },
+                    },
+                },
+            }),
+            omsActionMetadata(
+                "country",
+                omsOneOf([{ label: "OMS option", value: "oms" }])
+            )
+        );
+
+        expect(result.parameters[0]?.type).toMatchObject({
+            kind: "string",
+            value: {
+                constraint: {
+                    kind: "enum",
+                    value: {
+                        options: [
+                            {
+                                value: "public",
+                                label: "Public option",
+                            },
+                        ],
+                    },
+                },
+            },
+        });
+    });
+});
+
+describe("convertFoundryMetaActionType OMS defaults", () => {
+    it("converts static and object-property prefills to parameter defaults", () => {
         const result = convertFoundryMetaActionType(
             actionType({
                 assignee: {
@@ -270,43 +528,78 @@ describe("convertFoundryMetaActionType OMS prefills", () => {
             },
             {
                 name: "assigneeName",
-                prefills: [
-                    {
-                        kind: "objectProperty",
-                        value: {
-                            fieldPath: [],
-                            parameter: "assignee",
-                            property: ["name"],
-                        },
+                defaultValue: {
+                    kind: "valueReference",
+                    value: {
+                        path: ["assignee", "name"],
                     },
-                ],
+                },
             },
             {
                 name: "notes",
-                prefills: [
-                    {
-                        kind: "literal",
-                        value: {
-                            fieldPath: [],
-                            value: "from-foundry",
-                        },
+                defaultValue: {
+                    kind: "literal",
+                    value: {
+                        value: "from-foundry",
                     },
-                ],
+                },
             },
         ]);
-        expect(result.parameters[2]?.defaultValue).toBeUndefined();
     });
 
-    it("preserves Foundry object-query prefills for live consumers", () => {
+    it("converts object-query prefills to provider-neutral predicates", () => {
         const objectSet = {
             objectSet: {
                 startingObjectSet: {
                     type: "base",
-                    base: { objectTypeId: "User" },
+                    base: { objectTypeId: "jfubb6is.user" },
                 },
-                transforms: [],
+                transforms: [
+                    {
+                        type: "propertyFilter",
+                        propertyFilter: {
+                            type: "exactMatch",
+                            exactMatch: {
+                                propertyId: "email",
+                                terms: [
+                                    {
+                                        type: "string",
+                                        string: "owner@example.com",
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                    {
+                        type: "propertyFilter",
+                        propertyFilter: {
+                            type: "parameterizedExactMatch",
+                            parameterizedExactMatch: {
+                                propertyId: "department",
+                                terms: [
+                                    {
+                                        type: "unresolved",
+                                        unresolved: {
+                                            parameterId: "departments",
+                                        },
+                                    },
+                                ],
+                            },
+                        },
+                    },
+                ],
             },
-            conditionValues: {},
+            conditionValues: {
+                departments: {
+                    type: "staticValue",
+                    staticValue: {
+                        type: "stringList",
+                        stringList: {
+                            strings: ["Engineering", "Operations"],
+                        },
+                    },
+                },
+            },
         };
         const result = convertFoundryMetaActionType(
             actionType({
@@ -315,7 +608,7 @@ describe("convertFoundryMetaActionType OMS prefills", () => {
                     dataType: {
                         type: "object",
                         objectTypeApiName: "User",
-                        objectApiName: "User",
+                        objectApiName: "jfubb6is.user",
                     },
                     required: false,
                     typeClasses: [],
@@ -341,16 +634,83 @@ describe("convertFoundryMetaActionType OMS prefills", () => {
             } as never
         );
 
-        expect(result.parameters[0]?.prefills).toEqual([
-            {
-                kind: "foundryObjectQuery",
-                value: {
-                    fieldPath: [],
-                    objectType: "User",
-                    objectSet,
+        expect(result.parameters[0]?.defaultValue).toEqual({
+            kind: "objectQuery",
+            value: {
+                objectType: "User",
+                where: {
+                    kind: "and",
+                    value: {
+                        predicates: [
+                            {
+                                kind: "eq",
+                                value: {
+                                    property: ["email"],
+                                    value: "owner@example.com",
+                                },
+                            },
+                            {
+                                kind: "in",
+                                value: {
+                                    property: ["department"],
+                                    values: ["Engineering", "Operations"],
+                                },
+                            },
+                        ],
+                    },
                 },
             },
-        ]);
+        });
+    });
+
+    it("omits object-query prefills for a different starting object type", () => {
+        const result = convertFoundryMetaActionType(
+            actionType({
+                assignee: {
+                    displayName: "Assignee",
+                    dataType: {
+                        type: "object",
+                        objectTypeApiName: "User",
+                        objectApiName: "User",
+                    },
+                    required: false,
+                    typeClasses: [],
+                },
+            }),
+            {
+                actionTypeLogic: {
+                    validation: {
+                        parameterValidations: {
+                            assignee: {
+                                defaultValidation: {
+                                    display: {
+                                        prefill: {
+                                            type: "objectQueryPrefill",
+                                            objectQueryPrefill: {
+                                                objectSet: {
+                                                    objectSet: {
+                                                        startingObjectSet: {
+                                                            type: "base",
+                                                            base: {
+                                                                objectTypeId: "Employee",
+                                                            },
+                                                        },
+                                                        transforms: [],
+                                                    },
+                                                    conditionValues: {},
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            } as never
+        );
+
+        expect(result.parameters[0]?.defaultValue).toBeUndefined();
     });
 
     it("normalizes typed OMS date and list values", () => {
@@ -410,17 +770,17 @@ describe("convertFoundryMetaActionType OMS prefills", () => {
             } as never
         );
 
-        const dueDatePrefill = result.parameters[0]?.prefills?.[0];
-        const tagsPrefill = result.parameters[1]?.prefills?.[0];
-        expect(dueDatePrefill?.kind).toBe("literal");
-        expect(tagsPrefill?.kind).toBe("literal");
-        if (dueDatePrefill?.kind !== "literal" || tagsPrefill?.kind !== "literal") {
-            throw new Error("Expected literal prefills.");
+        const dueDateDefault = result.parameters[0]?.defaultValue;
+        const tagsDefault = result.parameters[1]?.defaultValue;
+        expect(dueDateDefault?.kind).toBe("literal");
+        expect(tagsDefault?.kind).toBe("literal");
+        if (dueDateDefault?.kind !== "literal" || tagsDefault?.kind !== "literal") {
+            throw new Error("Expected literal defaults.");
         }
-        const date = dueDatePrefill.value.value;
+        const date = dueDateDefault.value.value;
         expect(date).toBeInstanceOf(Temporal.PlainDate);
         expect((date as Temporal.PlainDate).toString()).toBe("2026-08-31");
-        expect(tagsPrefill.value.value).toEqual([
+        expect(tagsDefault.value.value).toEqual([
             "priority",
             "customer",
         ]);

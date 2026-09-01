@@ -9,7 +9,10 @@ import type {
     TypeDef,
 } from "@party-stack/ontology";
 import { toOntologyActionTypeName } from "../utils/actionTypeName.js";
-import { convertOmsActionParameterPrefills } from "./convertOmsActionPrefills.js";
+import {
+    convertOmsActionParameterDefaults,
+    convertOmsActionParameterStringConstraint,
+} from "./convertOmsActionPrefills.js";
 import type { ActionTypeOmsMetadata } from "./loadActionTypeOmsMetadata.js";
 import type {
     ActionLogicRule,
@@ -31,6 +34,47 @@ function maybeOptional(type: TypeDef, required: boolean): TypeDef {
 
 function stringType(constraint?: StringConstraint): TypeDef {
     return { kind: "string", value: { constraint } };
+}
+
+function applyStringConstraintFallback(
+    type: TypeDef,
+    constraint: StringConstraint | undefined
+): TypeDef {
+    if (!constraint) return type;
+    switch (type.kind) {
+        case "string":
+            return type.value.constraint
+                ? type
+                : {
+                      ...type,
+                      value: {
+                          ...type.value,
+                          constraint,
+                      },
+                  };
+        case "optional":
+            return {
+                ...type,
+                value: {
+                    type: applyStringConstraintFallback(
+                        type.value.type,
+                        constraint
+                    ),
+                },
+            };
+        case "list":
+            return {
+                ...type,
+                value: {
+                    elementType: applyStringConstraintFallback(
+                        type.value.elementType,
+                        constraint
+                    ),
+                },
+            };
+        default:
+            return type;
+    }
 }
 
 function booleanType(): TypeDef {
@@ -491,20 +535,38 @@ export function convertFoundryMetaActionType(
         .map((rule) => convertLogicStep(rule, syntheticParameters))
         .filter((rule): rule is NonNullable<typeof rule> => rule !== null);
     const parameters = Object.entries(actionType.actionType.parameters).map(
-        ([name, parameter]): ActionParameterDef => ({
-            name,
-            displayName: parameter.displayName ?? name,
-            type: convertActionParameterType(
+        ([name, parameter]): ActionParameterDef => {
+            const type = convertActionParameterType(
                 parameter.dataType,
                 parameter.required,
                 parameter.validation
-            ),
-            description: parameter.description,
-        })
+            );
+            return {
+                name,
+                displayName: parameter.displayName ?? name,
+                type: applyStringConstraintFallback(
+                    type,
+                    convertOmsActionParameterStringConstraint(
+                        omsMetadata,
+                        name
+                    )
+                ),
+                description: parameter.description,
+            };
+        }
     );
-    const prefillsByParameter = convertOmsActionParameterPrefills(
+    const objectTypeIdsByParameter = new Map(
+        Object.entries(actionType.actionType.parameters).flatMap(
+            ([name, parameter]) =>
+                parameter.dataType.type === "object"
+                    ? [[name, parameter.dataType.objectApiName] as const]
+                    : []
+        )
+    );
+    const defaultsByParameter = convertOmsActionParameterDefaults(
         omsMetadata,
-        parameters
+        parameters,
+        objectTypeIdsByParameter
     );
 
     return {
@@ -517,7 +579,7 @@ export function convertFoundryMetaActionType(
         parameters: [
             ...parameters.map((parameter) => ({
                 ...parameter,
-                prefills: prefillsByParameter.get(parameter.name),
+                defaultValue: defaultsByParameter.get(parameter.name),
             })),
             ...syntheticParameters.parameters,
         ],

@@ -4,4 +4,4 @@
 "@party-stack/remote-ontology": patch
 ---
 
-Expose Foundry OMS action-parameter prefills through Live Ontology metadata.
+Convert Foundry OMS parameter prefills into provider-neutral action defaults and preserve string constraints.

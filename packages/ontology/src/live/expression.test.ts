@@ -1,4 +1,5 @@
 import {
+    BasicIndex,
     createCollection,
     localOnlyCollectionOptions,
 } from "@tanstack/db";
@@ -59,6 +60,7 @@ describe("evaluateExpression", () => {
                 string | number
             >({
                 id: "expression-users",
+                defaultIndexType: BasicIndex,
                 getKey: (user) =>
                     user.id as string | number,
                 initialData: [
@@ -66,9 +68,14 @@ describe("evaluateExpression", () => {
                         id: "user-1",
                         name: "Ada",
                     },
+                    {
+                        id: "user-2",
+                        name: "Grace",
+                    },
                 ],
             })
         );
+        users.createIndex((user) => user.id);
         await users.preload();
 
         await expect(
@@ -87,6 +94,38 @@ describe("evaluateExpression", () => {
                 tx: createReadTx({ User: users }),
             })
         ).resolves.toBe("Ada");
+
+        await expect(
+            evaluateExpression({
+                ir,
+                actionTypeName: "assign",
+                expression: o.Expression.objectQuery({
+                    objectType: "User",
+                    where: o.ObjectQueryPredicate.eq({
+                        property: ["name"],
+                        value: "Ada",
+                    }),
+                }),
+                resolveParameter: () =>
+                    Promise.resolve(undefined),
+                context: {},
+                tx: createReadTx({ User: users }),
+            })
+        ).resolves.toBe("user-1");
+
+        await expect(
+            evaluateExpression({
+                ir,
+                actionTypeName: "assign",
+                expression: o.Expression.objectQuery({
+                    objectType: "User",
+                }),
+                resolveParameter: () =>
+                    Promise.resolve(undefined),
+                context: {},
+                tx: createReadTx({ User: users }),
+            })
+        ).resolves.toBeUndefined();
         await users.cleanup();
     });
 });

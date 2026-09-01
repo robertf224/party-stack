@@ -1,11 +1,10 @@
 import { Temporal } from "temporal-polyfill";
 import type {
     ActionLogicStep,
-    ActionParameterDef,
-    ActionParameterPrefill,
     ActionTypeDef,
     Expression,
     ObjectTypeDef,
+    ObjectQueryPredicate,
     OntologyDefinition,
     OntologyIR,
     PropertyAssignment,
@@ -52,12 +51,6 @@ function hasPath(value: unknown, path: string[]): boolean {
         current = (current as Record<string, unknown>)[segment];
     }
     return true;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-        ? (value as Record<string, unknown>)
-        : undefined;
 }
 
 function literal(value: unknown): Expression {
@@ -115,6 +108,8 @@ function evaluateExpression<Context>(opts: {
             return getPath(opts.ctx, opts.expression.value.path);
         case "literal":
             return opts.expression.value.value;
+        case "objectQuery":
+            return undefined;
         case "functionCall":
             switch (opts.expression.value.kind) {
                 case "uuid":
@@ -154,9 +149,11 @@ function projectExpression<Context>(opts: {
     serverContext: Context;
     clientContext: Record<string, unknown> | undefined;
     clientContextMode: ClientContextProjectionMode;
+    ir: OntologyIR;
     actionName: string;
     visibleParameters: Set<string>;
     fixedActionParameterValues: FixedActionParameterValues | undefined;
+    allowedObjectTypeProperties: Record<string, readonly string[]>;
 }): Expression | undefined {
     switch (opts.expression.kind) {
         case "contextReference":
@@ -166,10 +163,57 @@ function projectExpression<Context>(opts: {
         case "literal":
         case "functionCall":
             return opts.expression;
+        case "objectQuery": {
+            const allowedProperties =
+                opts.allowedObjectTypeProperties[opts.expression.value.objectType] ?? [];
+            if (allowedProperties.length === 0) return undefined;
+            if (!opts.expression.value.where) {
+                return opts.expression;
+            }
+            const where = projectObjectQueryPredicate(
+                opts.expression.value.where,
+                allowedProperties
+            );
+            return where
+                ? {
+                      ...opts.expression,
+                      value: {
+                          ...opts.expression.value,
+                          where,
+                      },
+                  }
+                : undefined;
+        }
         case "valueReference": {
             const [parameterName, ...path] = opts.expression.value.path;
             if (!parameterName) return undefined;
-            if (opts.visibleParameters.has(parameterName)) return opts.expression;
+            if (opts.visibleParameters.has(parameterName)) {
+                const parameter = getActionType(
+                    opts.ir,
+                    opts.actionName
+                ).parameters.find(
+                    (candidate) =>
+                        candidate.name === parameterName
+                );
+                let type = parameter
+                    ? resolveType(opts.ir, parameter.type)
+                    : undefined;
+                while (type?.kind === "optional") {
+                    type = resolveType(opts.ir, type.value.type);
+                }
+                if (
+                    path.length > 0 &&
+                    type?.kind === "objectReference" &&
+                    !(
+                        opts.allowedObjectTypeProperties[
+                            type.value.objectType
+                        ] ?? []
+                    ).includes(path[0]!)
+                ) {
+                    return undefined;
+                }
+                return opts.expression;
+            }
             const fixedValue = getFixedActionParameterValues(
                 opts.fixedActionParameterValues,
                 opts.actionName
@@ -204,190 +248,44 @@ function projectExpression<Context>(opts: {
     }
 }
 
-function projectFoundryObjectSetFilter(
-    filter: unknown,
+function projectObjectQueryPredicate(
+    predicate: ObjectQueryPredicate,
     allowedProperties: readonly string[]
-): Record<string, unknown> | undefined {
-    const value = asRecord(filter);
-    if (!value) return undefined;
-
-    switch (value.type) {
-        case "exactMatch": {
-            const definition = asRecord(value[value.type]);
-            if (
-                typeof definition?.propertyId !== "string" ||
-                !allowedProperties.includes(definition.propertyId) ||
-                !Array.isArray(definition.terms)
-            ) {
-                return undefined;
-            }
-            return {
-                type: "exactMatch",
-                exactMatch: {
-                    propertyId: definition.propertyId,
-                    terms: definition.terms,
-                },
-            };
-        }
-        case "terms": {
-            const definition = asRecord(value.terms);
-            if (
-                typeof definition?.propertyId !== "string" ||
-                !allowedProperties.includes(definition.propertyId) ||
-                !Array.isArray(definition.terms)
-            ) {
-                return undefined;
-            }
-            return {
-                type: "terms",
-                terms: {
-                    propertyId: definition.propertyId,
-                    terms: definition.terms,
-                },
-            };
-        }
-        case "range": {
-            const definition = asRecord(value.range);
-            if (
-                typeof definition?.propertyId !== "string" ||
-                !allowedProperties.includes(definition.propertyId)
-            ) {
-                return undefined;
-            }
-            return {
-                type: "range",
-                range: {
-                    propertyId: definition.propertyId,
-                    ...Object.fromEntries(
-                        ["lt", "lte", "gt", "gte"]
-                            .filter((operator) => definition[operator] !== undefined)
-                            .map((operator) => [operator, definition[operator]])
-                    ),
-                },
-            };
-        }
+): ObjectQueryPredicate | undefined {
+    switch (predicate.kind) {
+        case "eq":
+        case "in":
+        case "range":
+            return allowedProperties.includes(predicate.value.property[0] ?? "")
+                ? predicate
+                : undefined;
         case "and":
         case "or": {
-            const filters = asRecord(value[value.type])?.filters;
-            if (!Array.isArray(filters)) return undefined;
-            const projected = filters.map((child) =>
-                projectFoundryObjectSetFilter(child, allowedProperties)
+            const predicates = predicate.value.predicates.map((child) =>
+                projectObjectQueryPredicate(child, allowedProperties)
             );
-            if (projected.some((child) => child === undefined)) return undefined;
-            return {
-                type: value.type,
-                [value.type]: { filters: projected },
-            };
+            return predicates.some((child) => child === undefined)
+                ? undefined
+                : {
+                      ...predicate,
+                      value: {
+                          predicates: predicates as ObjectQueryPredicate[],
+                      },
+                  };
         }
         case "not": {
-            const projected = projectFoundryObjectSetFilter(
-                asRecord(value.not)?.filter,
+            const projected = projectObjectQueryPredicate(
+                predicate.value.predicate,
                 allowedProperties
             );
             return projected
                 ? {
-                      type: "not",
-                      not: { filter: projected },
+                      ...predicate,
+                      value: { predicate: projected },
                   }
                 : undefined;
         }
-        default:
-            return undefined;
     }
-}
-
-function projectFoundryObjectSet(
-    objectSet: unknown,
-    allowedProperties: readonly string[]
-): Record<string, unknown> | undefined {
-    const transforms = asRecord(asRecord(objectSet)?.objectSet)?.transforms;
-    if (!Array.isArray(transforms)) return undefined;
-
-    const projectedTransforms: Record<string, unknown>[] = [];
-    for (const transform of transforms) {
-        const value = asRecord(transform);
-        if (value?.type !== "propertyFilter") return undefined;
-        const propertyFilter = projectFoundryObjectSetFilter(
-            value.propertyFilter,
-            allowedProperties
-        );
-        if (!propertyFilter) return undefined;
-        projectedTransforms.push({
-            type: "propertyFilter",
-            propertyFilter,
-        });
-    }
-    return {
-        objectSet: { transforms: projectedTransforms },
-        conditionValues: {},
-    };
-}
-
-function projectActionParameterPrefills(opts: {
-    parameter: ActionParameterDef;
-    actionType: ActionTypeDef;
-    ir: OntologyIR;
-    visibleParameters: Set<string>;
-    allowedObjectTypeProperties: Record<string, readonly string[]>;
-    filterSchemaByAuthorization: boolean;
-}): ActionParameterPrefill[] | undefined {
-    const prefills = opts.parameter.prefills?.flatMap(
-        (prefill): ActionParameterPrefill[] => {
-            switch (prefill.kind) {
-                case "literal":
-                    return [prefill];
-                case "objectProperty": {
-                    if (!opts.visibleParameters.has(prefill.value.parameter)) {
-                        return [];
-                    }
-                    const sourceParameter = opts.actionType.parameters.find(
-                        (parameter) => parameter.name === prefill.value.parameter
-                    );
-                    if (!sourceParameter) return [];
-                    let sourceType = resolveType(opts.ir, sourceParameter.type);
-                    while (sourceType.kind === "optional") {
-                        sourceType = resolveType(opts.ir, sourceType.value.type);
-                    }
-                    if (sourceType.kind !== "objectReference") {
-                        return [];
-                    }
-                    const property = prefill.value.property[0];
-                    return (
-                        property !== undefined &&
-                        (
-                            opts.allowedObjectTypeProperties[
-                                sourceType.value.objectType
-                            ] ?? []
-                        ).includes(property)
-                    )
-                        ? [prefill]
-                        : [];
-                }
-                case "foundryObjectQuery": {
-                    const allowedProperties =
-                        opts.allowedObjectTypeProperties[prefill.value.objectType] ?? [];
-                    if (allowedProperties.length === 0) return [];
-                    if (!opts.filterSchemaByAuthorization) return [prefill];
-                    const objectSet = projectFoundryObjectSet(
-                        prefill.value.objectSet,
-                        allowedProperties
-                    );
-                    return objectSet
-                        ? [
-                              {
-                                  ...prefill,
-                                  value: {
-                                      ...prefill.value,
-                                      objectSet,
-                                  },
-                              },
-                          ]
-                        : [];
-                }
-            }
-        }
-    );
-    return prefills && prefills.length > 0 ? prefills : undefined;
 }
 
 function projectAssignments<Context>(opts: {
@@ -411,9 +309,11 @@ function projectAssignments<Context>(opts: {
             serverContext: opts.serverContext,
             clientContext: opts.clientContext,
             clientContextMode: opts.clientContextMode,
+            ir: opts.ir,
             actionName: opts.actionName,
             visibleParameters: opts.visibleParameters,
             fixedActionParameterValues: opts.fixedActionParameterValues,
+            allowedObjectTypeProperties: opts.allowedObjectTypeProperties,
         });
         return projectedValue ? [{ ...assignment, value: projectedValue }] : [];
     });
@@ -669,14 +569,19 @@ export function projectRemoteOntologyIR<
                     .filter((parameter) => visibleParameters.has(parameter.name))
                     .map((parameter) => ({
                         ...parameter,
-                        prefills: projectActionParameterPrefills({
-                            parameter,
-                            actionType,
-                            ir: opts.ir,
-                            visibleParameters,
-                            allowedObjectTypeProperties: opts.allowedObjectTypeProperties,
-                            filterSchemaByAuthorization,
-                        }),
+                        defaultValue: parameter.defaultValue
+                            ? projectExpression({
+                                  expression: parameter.defaultValue,
+                                  serverContext: opts.serverContext,
+                                  clientContext: opts.clientContext,
+                                  clientContextMode: opts.clientContextMode ?? "none",
+                                  ir: opts.ir,
+                                  actionName: actionType.name,
+                                  visibleParameters,
+                                  fixedActionParameterValues: opts.fixedActionParameterValues,
+                                  allowedObjectTypeProperties: opts.allowedObjectTypeProperties,
+                              })
+                            : undefined,
                     })),
                 logic: actionType.logic.flatMap((step) => {
                     if (
