@@ -905,6 +905,9 @@ importers:
 
   packages/foundry-ontology:
     dependencies:
+      '@bobbyfidz/oms':
+        specifier: ^0.0.0
+        version: 0.0.0
       '@bobbyfidz/panic':
         specifier: ^0.1.0
         version: 0.1.0
@@ -956,6 +959,9 @@ importers:
       change-case:
         specifier: ^5.4.4
         version: 5.4.4
+      conjure-client:
+        specifier: ^2.20.0
+        version: 2.20.0
       effection:
         specifier: ^4.0.2
         version: 4.0.2
@@ -1951,6 +1957,9 @@ packages:
 
   '@bobbyfidz/local-oauth-flow@0.1.0':
     resolution: {integrity: sha512-LG8vKgA33XtLkRQkKatuYbaq2eC4MQqQsQ0+R1SVL1kiJs+M8zN9hrnVAiDdfwfeHmJsuMs6H2jbvWdIYfjs2A==}
+
+  '@bobbyfidz/oms@0.0.0':
+    resolution: {integrity: sha512-dVcrQY4ThtUi9jldtmiaE1/EyLc1f+70KfaUTrRP7iiau3N4hz+HABmrOba4DPLaeAKquwseM7DJrd4vsu7HTw==}
 
   '@bobbyfidz/panic@0.1.0':
     resolution: {integrity: sha512-RBsePvsVvd8LCZfyuIpH/2BCpxfjwBtlaVB4gXIZ/A19Z7kbscpTZrAEhfpSfcXCamzgU1vZtqjRj9v8ZjMIng==}
@@ -4631,6 +4640,9 @@ packages:
 
   concat-map@0.0.1:
     resolution: {integrity: sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==}
+
+  conjure-client@2.20.0:
+    resolution: {integrity: sha512-RALjipUkMldhIPKJYpD4zHTZwckyPI7uyHQVscwx41j/9xwM3fisPa4nTnez35qie450EXqhavmnSMIefWxpjg==}
 
   conjure-lite@0.4.4:
     resolution: {integrity: sha512-WHmOLegM2L7WOxsDaNfobjLdKc0uzYWXvDTRZrnqkK58W/A+m4kkH/QVsyUdHhLA7ayRhAcoovuKJNfS/SKmqQ==}
@@ -8355,6 +8367,10 @@ packages:
   wcwidth@1.0.1:
     resolution: {integrity: sha512-XHPEwS0q6TaxcvG85+8EYkbiCux2XtWG2mkc47Ng2A77BQu9+DqIOJldST4HgPkuea7dvKSj5VgX3P1d4rW8Tg==}
 
+  web-streams-polyfill@3.3.3:
+    resolution: {integrity: sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw==}
+    engines: {node: '>= 8'}
+
   webidl-conversions@3.0.1:
     resolution: {integrity: sha512-2JAn3z8AR6rjK8Sm8orRC0h/bcl/DqL7tRPdGZ4I1CjdF+EaMLmYxBHyXuKL849eucPFhvBoxMsflfOb8kxaeQ==}
 
@@ -9322,6 +9338,10 @@ snapshots:
       hono: 4.10.6
       oauth4webapi: 3.8.7
       open: 10.2.0
+
+  '@bobbyfidz/oms@0.0.0':
+    dependencies:
+      conjure-client: 2.20.0
 
   '@bobbyfidz/panic@0.1.0': {}
 
@@ -11896,7 +11916,7 @@ snapshots:
       magic-string: 0.30.21
       sirv: 3.0.2
       tinyrainbow: 2.0.0
-      vitest: 3.2.4(@types/debug@4.1.12)(@types/node@26.4.0)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.0)
+      vitest: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.1)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.0)
       ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil
@@ -12642,6 +12662,10 @@ snapshots:
       - supports-color
 
   concat-map@0.0.1: {}
+
+  conjure-client@2.20.0:
+    dependencies:
+      web-streams-polyfill: 3.3.3
 
   conjure-lite@0.4.4: {}
 
@@ -17179,6 +17203,8 @@ snapshots:
   wcwidth@1.0.1:
     dependencies:
       defaults: 1.0.4
+
+  web-streams-polyfill@3.3.3: {}
 
   webidl-conversions@3.0.1: {}
 

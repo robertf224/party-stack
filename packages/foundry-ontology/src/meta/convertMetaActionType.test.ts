@@ -1,3 +1,4 @@
+import { Temporal } from "temporal-polyfill";
 import { describe, expect, it } from "vitest";
 import { convertFoundryMetaActionType } from "./convertMetaActionType.js";
 import type { ActionParameterV2, ActionTypeFullMetadata } from "@osdk/foundry.ontologies";
@@ -198,4 +199,231 @@ describe("convertFoundryMetaActionType parameter validation", () => {
             },
         ]);
     });
+});
+
+describe("convertFoundryMetaActionType OMS prefills", () => {
+    it("converts static and object-property prefills without changing action defaults", () => {
+        const result = convertFoundryMetaActionType(
+            actionType({
+                assignee: {
+                    displayName: "Assignee",
+                    dataType: {
+                        type: "object",
+                        objectTypeApiName: "User",
+                        objectApiName: "User",
+                    },
+                    required: true,
+                    typeClasses: [],
+                },
+                assigneeName: {
+                    displayName: "Assignee name",
+                    dataType: { type: "string" },
+                    required: false,
+                    typeClasses: [],
+                },
+                notes: {
+                    displayName: "Notes",
+                    dataType: { type: "string" },
+                    required: false,
+                    typeClasses: [],
+                },
+            }),
+            {
+                actionTypeLogic: {
+                    validation: {
+                        parameterValidations: {
+                            assigneeName: {
+                                defaultValidation: {
+                                    display: {
+                                        prefill: {
+                                            type: "objectParameterPropertyValue",
+                                            objectParameterPropertyValue: {
+                                                parameterId: "assignee",
+                                                propertyTypeId: "name",
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                            notes: {
+                                defaultValidation: {
+                                    display: {
+                                        prefill: {
+                                            type: "staticValue",
+                                            staticValue: {
+                                                type: "string",
+                                                string: "from-foundry",
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            } as never
+        );
+
+        expect(result.parameters).toMatchObject([
+            {
+                name: "assignee",
+            },
+            {
+                name: "assigneeName",
+                prefills: [
+                    {
+                        kind: "objectProperty",
+                        value: {
+                            fieldPath: [],
+                            parameter: "assignee",
+                            property: ["name"],
+                        },
+                    },
+                ],
+            },
+            {
+                name: "notes",
+                prefills: [
+                    {
+                        kind: "literal",
+                        value: {
+                            fieldPath: [],
+                            value: "from-foundry",
+                        },
+                    },
+                ],
+            },
+        ]);
+        expect(result.parameters[2]?.defaultValue).toBeUndefined();
+    });
+
+    it("preserves Foundry object-query prefills for live consumers", () => {
+        const objectSet = {
+            objectSet: {
+                startingObjectSet: {
+                    type: "base",
+                    base: { objectTypeId: "User" },
+                },
+                transforms: [],
+            },
+            conditionValues: {},
+        };
+        const result = convertFoundryMetaActionType(
+            actionType({
+                assignee: {
+                    displayName: "Assignee",
+                    dataType: {
+                        type: "object",
+                        objectTypeApiName: "User",
+                        objectApiName: "User",
+                    },
+                    required: false,
+                    typeClasses: [],
+                },
+            }),
+            {
+                actionTypeLogic: {
+                    validation: {
+                        parameterValidations: {
+                            assignee: {
+                                defaultValidation: {
+                                    display: {
+                                        prefill: {
+                                            type: "objectQueryPrefill",
+                                            objectQueryPrefill: { objectSet },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            } as never
+        );
+
+        expect(result.parameters[0]?.prefills).toEqual([
+            {
+                kind: "foundryObjectQuery",
+                value: {
+                    fieldPath: [],
+                    objectType: "User",
+                    objectSet,
+                },
+            },
+        ]);
+    });
+
+    it("normalizes typed OMS date and list values", () => {
+        const result = convertFoundryMetaActionType(
+            actionType({
+                dueDate: {
+                    displayName: "Due date",
+                    dataType: { type: "date" },
+                    required: false,
+                    typeClasses: [],
+                },
+                tags: {
+                    displayName: "Tags",
+                    dataType: {
+                        type: "array",
+                        subType: { type: "string" },
+                    },
+                    required: false,
+                    typeClasses: [],
+                },
+            }),
+            {
+                actionTypeLogic: {
+                    validation: {
+                        parameterValidations: {
+                            dueDate: {
+                                defaultValidation: {
+                                    display: {
+                                        prefill: {
+                                            type: "staticValue",
+                                            staticValue: {
+                                                type: "date",
+                                                date: { dateValue: "2026-08-31" },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                            tags: {
+                                defaultValidation: {
+                                    display: {
+                                        prefill: {
+                                            type: "staticValue",
+                                            staticValue: {
+                                                type: "stringList",
+                                                stringList: {
+                                                    strings: ["priority", "customer"],
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            } as never
+        );
+
+        const dueDatePrefill = result.parameters[0]?.prefills?.[0];
+        const tagsPrefill = result.parameters[1]?.prefills?.[0];
+        expect(dueDatePrefill?.kind).toBe("literal");
+        expect(tagsPrefill?.kind).toBe("literal");
+        if (dueDatePrefill?.kind !== "literal" || tagsPrefill?.kind !== "literal") {
+            throw new Error("Expected literal prefills.");
+        }
+        const date = dueDatePrefill.value.value;
+        expect(date).toBeInstanceOf(Temporal.PlainDate);
+        expect((date as Temporal.PlainDate).toString()).toBe("2026-08-31");
+        expect(tagsPrefill.value.value).toEqual([
+            "priority",
+            "customer",
+        ]);
+    });
+
 });

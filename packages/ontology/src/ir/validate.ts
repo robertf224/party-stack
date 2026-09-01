@@ -2,6 +2,7 @@ import { unwrapType } from "../utils/types.js";
 import { ImageMediaTypeOptions } from "./generated/constants.js";
 import type {
     ActionParameterDef,
+    ActionParameterPrefill,
     ActionTypeDef,
     Expression,
     ObjectTypeDef,
@@ -364,6 +365,143 @@ function validateExpression(
     }
 }
 
+function unwrapOptionalType(
+    type: TypeDef,
+    valueTypes: ReadonlyMap<string, TypeDef>
+): TypeDef | undefined {
+    const resolved = resolveType(type, valueTypes);
+    return resolved?.kind === "optional"
+        ? unwrapOptionalType(resolved.value.type, valueTypes)
+        : resolved;
+}
+
+function arePrefillTypesCompatible(
+    target: TypeDef,
+    source: TypeDef,
+    valueTypes: ReadonlyMap<string, TypeDef>
+): boolean {
+    const targetType = unwrapOptionalType(target, valueTypes);
+    const sourceType = unwrapOptionalType(source, valueTypes);
+    if (!targetType || !sourceType) return false;
+    if (targetType.kind === "unknown" || sourceType.kind === "unknown") return true;
+    if (targetType.kind !== sourceType.kind) return false;
+
+    if (targetType.kind === "objectReference" && sourceType.kind === "objectReference") {
+        return targetType.value.objectType === sourceType.value.objectType;
+    }
+    if (targetType.kind === "list" && sourceType.kind === "list") {
+        return arePrefillTypesCompatible(
+            targetType.value.elementType,
+            sourceType.value.elementType,
+            valueTypes
+        );
+    }
+    return true;
+}
+
+function validateActionParameterPrefill(
+    prefill: ActionParameterPrefill,
+    parameter: ActionParameterDef,
+    parameters: ReadonlyMap<string, ActionParameterDef>,
+    path: ValidationPathElement[],
+    valueTypes: ReadonlyMap<string, TypeDef>,
+    objectTypes: ReadonlyMap<string, ObjectTypeDef>
+): ValidationError[] {
+    const fieldPath = prefill.value.fieldPath;
+    const errors: ValidationError[] = [];
+    const targetType = resolveParameterReferenceType(
+        parameter.type,
+        fieldPath,
+        valueTypes,
+        objectTypes
+    );
+
+    if (!targetType) {
+        errors.push({
+            message: `Invalid prefill field path on "${parameter.name}".`,
+            path: [...path, "value", "fieldPath"],
+        });
+    }
+
+    switch (prefill.kind) {
+        case "literal":
+            break;
+        case "objectProperty": {
+            const sourceParameter = parameters.get(prefill.value.parameter);
+            if (!sourceParameter) {
+                errors.push({
+                    message: `Unknown action parameter: "${prefill.value.parameter}".`,
+                    path: [...path, "value", "parameter"],
+                });
+                break;
+            }
+
+            const sourceType = unwrapOptionalType(sourceParameter.type, valueTypes);
+            if (sourceType?.kind !== "objectReference") {
+                errors.push({
+                    message: `Prefill source parameter "${sourceParameter.name}" must be an object reference.`,
+                    path: [...path, "value", "parameter"],
+                });
+            }
+            if (prefill.value.property.length === 0) {
+                errors.push({
+                    message: "Object-property prefills must include a property path.",
+                    path: [...path, "value", "property"],
+                });
+            } else {
+                const sourcePropertyType = resolveParameterReferenceType(
+                    sourceParameter.type,
+                    prefill.value.property,
+                    valueTypes,
+                    objectTypes
+                );
+                if (!sourcePropertyType) {
+                    errors.push({
+                        message: `Invalid prefill property path on "${sourceParameter.name}".`,
+                        path: [...path, "value", "property"],
+                    });
+                } else if (
+                    targetType &&
+                    !arePrefillTypesCompatible(targetType, sourcePropertyType, valueTypes)
+                ) {
+                    errors.push({
+                        message: `Prefill property on "${sourceParameter.name}" is incompatible with "${parameter.name}".`,
+                        path: [...path, "value", "property"],
+                    });
+                }
+            }
+            break;
+        }
+        case "foundryObjectQuery": {
+            if (!objectTypes.has(prefill.value.objectType)) {
+                errors.push({
+                    message: `Unknown prefill object type: "${prefill.value.objectType}".`,
+                    path: [...path, "value", "objectType"],
+                });
+            }
+            const unwrappedTargetType = targetType
+                ? unwrapOptionalType(targetType, valueTypes)
+                : undefined;
+            const targetObjectType =
+                unwrappedTargetType?.kind === "list"
+                    ? unwrapOptionalType(unwrappedTargetType.value.elementType, valueTypes)
+                    : unwrappedTargetType;
+            if (
+                targetObjectType?.kind !== "objectReference" ||
+                targetObjectType.value.objectType !== prefill.value.objectType
+            ) {
+                errors.push({
+                    message: `Foundry object-query prefill is incompatible with "${parameter.name}".`,
+                    path: [...path, "value", "objectType"],
+                });
+            }
+            break;
+        }
+    }
+
+    return errors;
+}
+
 function validateActionObjectReference(
     reference: ValueReferenceExpression,
     parameters: ReadonlyMap<string, ActionParameterDef>,
@@ -506,6 +644,30 @@ function validateAction(
                     valueTypes,
                     objectTypes,
                     contextType
+                )
+            );
+        }
+
+        const seenPrefillPaths = new Set<string>();
+        for (let prefillIndex = 0; prefillIndex < (parameter.prefills?.length ?? 0); prefillIndex++) {
+            const prefill = parameter.prefills![prefillIndex]!;
+            const prefillPath = [...parameterPath, "prefills", prefillIndex];
+            const fieldPathKey = JSON.stringify(prefill.value.fieldPath);
+            if (seenPrefillPaths.has(fieldPathKey)) {
+                errors.push({
+                    message: `Duplicate prefill field path on "${parameter.name}".`,
+                    path: [...prefillPath, "value", "fieldPath"],
+                });
+            }
+            seenPrefillPaths.add(fieldPathKey);
+            errors.push(
+                ...validateActionParameterPrefill(
+                    prefill,
+                    parameter,
+                    parameters,
+                    prefillPath,
+                    valueTypes,
+                    objectTypes
                 )
             );
         }

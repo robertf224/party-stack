@@ -1,6 +1,7 @@
 import { Temporal } from "temporal-polyfill";
 import { CodeBlockWriter, Project, type WriterFunction } from "ts-morph";
 import type {
+    ActionParameterPrefill,
     ActionTypeDef,
     Deprecation,
     Expression,
@@ -308,6 +309,13 @@ function renderExpression(expression: Expression, ctx?: RenderContext): string {
     return `o.Expression.${expression.kind}(${renderPlainValue(expression.value, ctx)})`;
 }
 
+function renderActionParameterPrefill(
+    prefill: ActionParameterPrefill,
+    ctx?: RenderContext
+): string {
+    return `o.ActionParameterPrefill.${prefill.kind}(${renderPlainValue(prefill.value, ctx)})`;
+}
+
 function renderActionPropertyAssignment(assignment: PropertyAssignment, ctx?: RenderContext): string {
     return renderObject([
         { name: "property", value: renderPlainValue(assignment.property) },
@@ -338,6 +346,19 @@ function renderActionType(actionType: ActionTypeDef, ctx?: RenderContext): strin
                                 name: "defaultValue",
                                 value: parameter.defaultValue
                                     ? renderExpression(parameter.defaultValue, ctx)
+                                    : undefined,
+                            },
+                            {
+                                name: "prefills",
+                                value: parameter.prefills
+                                    ? withWriter((prefillWriter) =>
+                                          writeArray(
+                                              prefillWriter,
+                                              parameter.prefills!.map((prefill) =>
+                                                  renderActionParameterPrefill(prefill, ctx)
+                                              )
+                                          )
+                                      )
                                     : undefined,
                             },
                         ])

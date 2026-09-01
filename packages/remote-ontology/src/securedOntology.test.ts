@@ -119,6 +119,180 @@ describe("secured ontology projection", () => {
         ]);
     });
 
+    it("projects action prefills through object and property authorization", () => {
+        const projected = projectRemoteOntologyIR({
+            ir: {
+                ...ir,
+                objectTypes: [
+                    ...ir.objectTypes,
+                    {
+                        name: "Employee",
+                        displayName: "Employee",
+                        pluralDisplayName: "Employees",
+                        primaryKey: "id",
+                        properties: [
+                            { name: "id", displayName: "ID", type: o.string({}) },
+                            { name: "name", displayName: "Name", type: o.string({}) },
+                        ],
+                    },
+                ],
+                actionTypes: [
+                    {
+                        name: "updateEmployee",
+                        displayName: "Update employee",
+                        parameters: [
+                            {
+                                name: "employee",
+                                displayName: "Employee",
+                                type: o.objectReference({ objectType: "Employee" }),
+                            },
+                            {
+                                name: "name",
+                                displayName: "Name",
+                                type: o.string({}),
+                                prefills: [
+                                    o.ActionParameterPrefill.objectProperty({
+                                        fieldPath: [],
+                                        parameter: "employee",
+                                        property: ["name"],
+                                    }),
+                                ],
+                            },
+                            {
+                                name: "notes",
+                                displayName: "Notes",
+                                type: o.string({}),
+                                prefills: [
+                                    o.ActionParameterPrefill.literal({
+                                        fieldPath: [],
+                                        value: "Default",
+                                    }),
+                                ],
+                            },
+                            {
+                                name: "assignee",
+                                displayName: "Assignee",
+                                type: o.objectReference({ objectType: "Employee" }),
+                                prefills: [
+                                    o.ActionParameterPrefill.foundryObjectQuery({
+                                        fieldPath: [],
+                                        objectType: "Employee",
+                                        objectSet: {
+                                            objectSet: {
+                                                transforms: [
+                                                    {
+                                                        type: "propertyFilter",
+                                                        propertyFilter: {
+                                                            type: "exactMatch",
+                                                            exactMatch: {
+                                                                propertyId: "id",
+                                                                terms: [
+                                                                    {
+                                                                        type: "string",
+                                                                        string: "employee-1",
+                                                                    },
+                                                                ],
+                                                            },
+                                                        },
+                                                    },
+                                                ],
+                                            },
+                                        },
+                                    }),
+                                ],
+                            },
+                            {
+                                name: "manager",
+                                displayName: "Manager",
+                                type: o.objectReference({ objectType: "Employee" }),
+                                prefills: [
+                                    o.ActionParameterPrefill.foundryObjectQuery({
+                                        fieldPath: [],
+                                        objectType: "Employee",
+                                        objectSet: {
+                                            objectSet: {
+                                                transforms: [
+                                                    {
+                                                        type: "propertyFilter",
+                                                        propertyFilter: {
+                                                            type: "parameterizedExactMatch",
+                                                            parameterizedExactMatch: {
+                                                                propertyId: "id",
+                                                                terms: [
+                                                                    {
+                                                                        type: "unresolved",
+                                                                        unresolved: {
+                                                                            parameterId: "hidden",
+                                                                        },
+                                                                    },
+                                                                ],
+                                                            },
+                                                        },
+                                                    },
+                                                ],
+                                            },
+                                            conditionValues: {
+                                                hidden: {
+                                                    type: "resolved",
+                                                    resolved: {
+                                                        value: "employee-2",
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    }),
+                                ],
+                            },
+                        ],
+                        logic: [],
+                    },
+                ],
+            },
+            serverContext: {},
+            allowedObjectTypeProperties: {
+                Employee: ["id"],
+            },
+            filterSchemaByAuthorization: true,
+        });
+
+        expect(projected.actionTypes[0]?.parameters[1]?.prefills).toBeUndefined();
+        expect(projected.actionTypes[0]?.parameters[2]?.prefills).toEqual([
+            o.ActionParameterPrefill.literal({
+                fieldPath: [],
+                value: "Default",
+            }),
+        ]);
+        expect(projected.actionTypes[0]?.parameters[3]?.prefills).toEqual([
+            o.ActionParameterPrefill.foundryObjectQuery({
+                fieldPath: [],
+                objectType: "Employee",
+                objectSet: {
+                    objectSet: {
+                        transforms: [
+                            {
+                                type: "propertyFilter",
+                                propertyFilter: {
+                                    type: "exactMatch",
+                                    exactMatch: {
+                                        propertyId: "id",
+                                        terms: [
+                                            {
+                                                type: "string",
+                                                string: "employee-1",
+                                            },
+                                        ],
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                    conditionValues: {},
+                },
+            }),
+        ]);
+        expect(projected.actionTypes[0]?.parameters[4]?.prefills).toBeUndefined();
+    });
+
     it("projects authorized object/property/link visibility and prunes unreachable types", () => {
         const projected = projectRemoteOntologyIR({
             ir: {

@@ -97,6 +97,22 @@ export const AttachmentContentConstraint = {
     ) => ({ kind: "image" as const, value }),
 };
 
+export const ActionParameterPrefill = {
+    literal: <const Value extends Extract<t.ActionParameterPrefill, { kind: "literal" }>["value"]>(
+        value: Value
+    ) => ({ kind: "literal" as const, value }),
+    objectProperty: <
+        const Value extends Extract<t.ActionParameterPrefill, { kind: "objectProperty" }>["value"],
+    >(
+        value: Value
+    ) => ({ kind: "objectProperty" as const, value }),
+    foundryObjectQuery: <
+        const Value extends Extract<t.ActionParameterPrefill, { kind: "foundryObjectQuery" }>["value"],
+    >(
+        value: Value
+    ) => ({ kind: "foundryObjectQuery" as const, value }),
+};
+
 export const FunctionCallExpression = {
     uuid: <const Value extends Extract<t.FunctionCallExpression, { kind: "uuid" }>["value"]>(
         value: Value
@@ -167,6 +183,7 @@ export const o = {
     unknown,
     StringConstraint,
     AttachmentContentConstraint,
+    ActionParameterPrefill,
     FunctionCallExpression,
     Expression,
     ActionLogicStep,

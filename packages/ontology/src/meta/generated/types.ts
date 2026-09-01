@@ -221,6 +221,41 @@ export type LinkTypeSideDef = {
 /** The cardinality of a link from the source's perspective. */
 export type LinkCardinality = "one" | "many";
 
+/** Suggests a static value for an action parameter field. */
+export type LiteralActionParameterPrefill = {
+    /** The path relative to the action parameter. An empty path targets the parameter. */
+    fieldPath: Array<string>;
+    /** The suggested value. */
+    value: unknown;
+};
+
+/** Suggests a value read from an object-reference action parameter. */
+export type ObjectPropertyActionParameterPrefill = {
+    /** The path relative to the action parameter. An empty path targets the parameter. */
+    fieldPath: Array<string>;
+    /** The source object-reference action parameter. */
+    parameter: string;
+    /** The property path on the referenced object. */
+    property: Array<string>;
+};
+
+/** Suggests an object by evaluating a Foundry OMS Actions object set. */
+export type FoundryObjectQueryActionParameterPrefill = {
+    /** The path relative to the action parameter. An empty path targets the parameter. */
+    fieldPath: Array<string>;
+    /** The object type returned by the query. */
+    objectType: string;
+    /** The opaque Foundry OMS Actions object-set definition. */
+    objectSet: unknown;
+};
+
+/** A value suggested to users for an action parameter field. */
+export type ActionParameterPrefill = v.Union<{
+    literal: LiteralActionParameterPrefill;
+    objectProperty: ObjectPropertyActionParameterPrefill;
+    foundryObjectQuery: FoundryObjectQueryActionParameterPrefill;
+}>;
+
 /** A parameter of an Action type. */
 export type ActionParameterDef = {
     /** The parameter's name. */
@@ -234,6 +269,8 @@ export type ActionParameterDef = {
     deprecated?: Deprecation;
     /** The expression used when the caller does not provide a value. */
     defaultValue?: Expression;
+    /** Values suggested to users when editing this parameter. */
+    prefills?: Array<ActionParameterPrefill>;
 };
 
 /** Reads a value from scope by path. */

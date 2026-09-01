@@ -678,6 +678,98 @@ export default {
             }),
         },
         {
+            name: "LiteralActionParameterPrefill",
+            description: "Suggests a static value for an action parameter field.",
+            type: o.struct({
+                fields: [
+                    {
+                        name: "fieldPath",
+                        displayName: "Field path",
+                        type: o.list({ elementType: o.string({}) }),
+                        description: "The path relative to the action parameter. An empty path targets the parameter.",
+                    },
+                    {
+                        name: "value",
+                        displayName: "Value",
+                        type: o.unknown({}),
+                        description: "The suggested value.",
+                    },
+                ],
+            }),
+        },
+        {
+            name: "ObjectPropertyActionParameterPrefill",
+            description: "Suggests a value read from an object-reference action parameter.",
+            type: o.struct({
+                fields: [
+                    {
+                        name: "fieldPath",
+                        displayName: "Field path",
+                        type: o.list({ elementType: o.string({}) }),
+                        description: "The path relative to the action parameter. An empty path targets the parameter.",
+                    },
+                    {
+                        name: "parameter",
+                        displayName: "Parameter",
+                        type: o.string({}),
+                        description: "The source object-reference action parameter.",
+                    },
+                    {
+                        name: "property",
+                        displayName: "Property",
+                        type: o.list({ elementType: o.string({}) }),
+                        description: "The property path on the referenced object.",
+                    },
+                ],
+            }),
+        },
+        {
+            name: "FoundryObjectQueryActionParameterPrefill",
+            description: "Suggests an object by evaluating a Foundry OMS Actions object set.",
+            type: o.struct({
+                fields: [
+                    {
+                        name: "fieldPath",
+                        displayName: "Field path",
+                        type: o.list({ elementType: o.string({}) }),
+                        description: "The path relative to the action parameter. An empty path targets the parameter.",
+                    },
+                    {
+                        name: "objectType",
+                        displayName: "Object type",
+                        type: o.string({}),
+                        description: "The object type returned by the query.",
+                    },
+                    {
+                        name: "objectSet",
+                        displayName: "Object set",
+                        type: o.unknown({}),
+                        description: "The opaque Foundry OMS Actions object-set definition.",
+                    },
+                ],
+            }),
+        },
+        {
+            name: "ActionParameterPrefill",
+            description: "A value suggested to users for an action parameter field.",
+            type: o.union({
+                variants: [
+                    {
+                        name: "literal",
+                        type: o.ref({ name: "LiteralActionParameterPrefill" }),
+                    },
+                    {
+                        name: "objectProperty",
+                        type: o.ref({ name: "ObjectPropertyActionParameterPrefill" }),
+                    },
+                    {
+                        name: "foundryObjectQuery",
+                        type: o.ref({ name: "FoundryObjectQueryActionParameterPrefill" }),
+                    },
+                ],
+            }),
+        },
+        {
             name: "ActionParameterDef",
             description: "A parameter of an Action type.",
             type: o.struct({
@@ -716,6 +808,16 @@ export default {
                         displayName: "Default value",
                         type: o.optional({ type: o.ref({ name: "Expression" }) }),
                         description: "The expression used when the caller does not provide a value.",
+                    },
+                    {
+                        name: "prefills",
+                        displayName: "Prefills",
+                        type: o.optional({
+                            type: o.list({
+                                elementType: o.ref({ name: "ActionParameterPrefill" }),
+                            }),
+                        }),
+                        description: "Values suggested to users when editing this parameter.",
                     },
                 ],
             }),

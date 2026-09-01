@@ -9,6 +9,8 @@ import type {
     TypeDef,
 } from "@party-stack/ontology";
 import { toOntologyActionTypeName } from "../utils/actionTypeName.js";
+import { convertOmsActionParameterPrefills } from "./convertOmsActionPrefills.js";
+import type { ActionTypeOmsMetadata } from "./loadActionTypeOmsMetadata.js";
 import type {
     ActionLogicRule,
     ActionParameterValidation,
@@ -480,11 +482,30 @@ function convertLogicStep(
     }
 }
 
-export function convertFoundryMetaActionType(actionType: ActionTypeFullMetadata): MetaActionType {
+export function convertFoundryMetaActionType(
+    actionType: ActionTypeFullMetadata,
+    omsMetadata?: ActionTypeOmsMetadata
+): MetaActionType {
     const syntheticParameters = createSyntheticParameters(actionType);
     const fullLogicRules = actionType.fullLogicRules
         .map((rule) => convertLogicStep(rule, syntheticParameters))
         .filter((rule): rule is NonNullable<typeof rule> => rule !== null);
+    const parameters = Object.entries(actionType.actionType.parameters).map(
+        ([name, parameter]): ActionParameterDef => ({
+            name,
+            displayName: parameter.displayName ?? name,
+            type: convertActionParameterType(
+                parameter.dataType,
+                parameter.required,
+                parameter.validation
+            ),
+            description: parameter.description,
+        })
+    );
+    const prefillsByParameter = convertOmsActionParameterPrefills(
+        omsMetadata,
+        parameters
+    );
 
     return {
         id: actionType.actionType.rid,
@@ -494,18 +515,10 @@ export function convertFoundryMetaActionType(actionType: ActionTypeFullMetadata)
         deprecated:
             actionType.actionType.status === "DEPRECATED" ? { message: "Deprecated in Foundry." } : undefined,
         parameters: [
-            ...Object.entries(actionType.actionType.parameters).map(
-                ([name, parameter]): ActionParameterDef => ({
-                    name,
-                    displayName: parameter.displayName ?? name,
-                    type: convertActionParameterType(
-                        parameter.dataType,
-                        parameter.required,
-                        parameter.validation
-                    ),
-                    description: parameter.description,
-                })
-            ),
+            ...parameters.map((parameter) => ({
+                ...parameter,
+                prefills: prefillsByParameter.get(parameter.name),
+            })),
             ...syntheticParameters.parameters,
         ],
         logic: fullLogicRules,

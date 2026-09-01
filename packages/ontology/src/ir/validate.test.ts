@@ -572,6 +572,148 @@ describe("Ontology Validation", () => {
             expectOk(validate(ontology));
         });
 
+        it("should validate action parameter prefills", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType()],
+                actionTypes: [
+                    {
+                        name: "updateEmployee",
+                        displayName: "Update Employee",
+                        parameters: [
+                            {
+                                name: "employee",
+                                displayName: "Employee",
+                                type: o.objectReference({ objectType: "Employee" }),
+                            },
+                            {
+                                name: "name",
+                                displayName: "Name",
+                                type: o.string({}),
+                                prefills: [
+                                    o.ActionParameterPrefill.objectProperty({
+                                        fieldPath: [],
+                                        parameter: "employee",
+                                        property: ["name"],
+                                    }),
+                                ],
+                            },
+                            {
+                                name: "notes",
+                                displayName: "Notes",
+                                type: o.struct({
+                                    fields: [
+                                        {
+                                            name: "summary",
+                                            displayName: "Summary",
+                                            type: o.string({}),
+                                        },
+                                    ],
+                                }),
+                                prefills: [
+                                    o.ActionParameterPrefill.literal({
+                                        fieldPath: ["summary"],
+                                        value: "From Foundry",
+                                    }),
+                                ],
+                            },
+                            {
+                                name: "assignee",
+                                displayName: "Assignee",
+                                type: o.objectReference({ objectType: "Employee" }),
+                                prefills: [
+                                    o.ActionParameterPrefill.foundryObjectQuery({
+                                        fieldPath: [],
+                                        objectType: "Employee",
+                                        objectSet: { objectSet: { transforms: [] } },
+                                    }),
+                                ],
+                            },
+                        ],
+                        logic: [],
+                    },
+                ],
+            };
+
+            expectOk(validate(ontology));
+        });
+
+        it("should detect invalid and duplicate action parameter prefills", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType()],
+                actionTypes: [
+                    {
+                        name: "updateEmployee",
+                        displayName: "Update Employee",
+                        parameters: [
+                            {
+                                name: "name",
+                                displayName: "Name",
+                                type: o.string({}),
+                                prefills: [
+                                    o.ActionParameterPrefill.objectProperty({
+                                        fieldPath: [],
+                                        parameter: "missing",
+                                        property: ["name"],
+                                    }),
+                                    o.ActionParameterPrefill.literal({
+                                        fieldPath: [],
+                                        value: "duplicate",
+                                    }),
+                                    o.ActionParameterPrefill.literal({
+                                        fieldPath: ["missing"],
+                                        value: "invalid",
+                                    }),
+                                ],
+                            },
+                            {
+                                name: "employee",
+                                displayName: "Employee",
+                                type: o.objectReference({ objectType: "Employee" }),
+                            },
+                            {
+                                name: "count",
+                                displayName: "Count",
+                                type: o.integer({}),
+                                prefills: [
+                                    o.ActionParameterPrefill.objectProperty({
+                                        fieldPath: [],
+                                        parameter: "employee",
+                                        property: ["name"],
+                                    }),
+                                ],
+                            },
+                            {
+                                name: "query",
+                                displayName: "Query",
+                                type: o.string({}),
+                                prefills: [
+                                    o.ActionParameterPrefill.foundryObjectQuery({
+                                        fieldPath: [],
+                                        objectType: "Employee",
+                                        objectSet: {},
+                                    }),
+                                ],
+                            },
+                        ],
+                        logic: [],
+                    },
+                ],
+            };
+
+            const errors = getErrors(validate(ontology));
+            expect(errors).toContain('Unknown action parameter: "missing".');
+            expect(errors).toContain('Duplicate prefill field path on "name".');
+            expect(errors).toContain('Invalid prefill field path on "name".');
+            expect(errors).toContain(
+                'Prefill property on "employee" is incompatible with "count".'
+            );
+            expect(errors).toContain(
+                'Foundry object-query prefill is incompatible with "query".'
+            );
+        });
+
         it("should detect invalid action parameter references", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
