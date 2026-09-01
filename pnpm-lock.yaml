@@ -911,6 +911,9 @@ importers:
       '@bobbyfidz/urls':
         specifier: ^0.2.1
         version: 0.2.1
+      '@osdk/client.unstable':
+        specifier: ^2.63.0
+        version: 2.63.0
       '@osdk/foundry.admin':
         specifier: ^2.71.0
         version: 2.71.0
@@ -2883,6 +2886,9 @@ packages:
 
   '@osdk/client.unstable@2.5.2':
     resolution: {integrity: sha512-m0x6AGQ3kfVmpXM864LG7YFSFd2xJZsX3qDrhCL0HbAnfaYtlv/pEBkJFbH3Q/x9mGGocyt685nZK85XU7WgNA==}
+
+  '@osdk/client.unstable@2.63.0':
+    resolution: {integrity: sha512-O7jGPVVBRWrW4lUttfapLISuTZNdgelJZZiQL5C6LyC7fX3bmL0NdiOeiQL9qDDAYoAtJkzKUHRlBvHQYZkeeA==}
 
   '@osdk/client@2.5.2':
     resolution: {integrity: sha512-Vh6vsJCTQVBfJgi2zB+1lMvqktekxa11Olvd3nryF259nnIE5/tdzhgS97ZlJa/canW/Uqq2Acp1RxdKvN0g5g==}
@@ -10485,6 +10491,10 @@ snapshots:
     dependencies:
       conjure-lite: 0.4.4
 
+  '@osdk/client.unstable@2.63.0':
+    dependencies:
+      conjure-lite: 0.4.4
+
   '@osdk/client@2.5.2':
     dependencies:
       '@osdk/api': 2.5.2
@@ -11896,7 +11906,7 @@ snapshots:
       magic-string: 0.30.21
       sirv: 3.0.2
       tinyrainbow: 2.0.0
-      vitest: 3.2.4(@types/debug@4.1.12)(@types/node@26.4.0)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.0)
+      vitest: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.1)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.0)
       ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil

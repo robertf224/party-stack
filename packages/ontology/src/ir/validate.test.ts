@@ -572,6 +572,70 @@ describe("Ontology Validation", () => {
             expectOk(validate(ontology));
         });
 
+        it("should validate value-reference action parameter defaults", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType()],
+                actionTypes: [
+                    {
+                        name: "updateEmployee",
+                        displayName: "Update Employee",
+                        parameters: [
+                            {
+                                name: "employee",
+                                displayName: "Employee",
+                                type: o.objectReference({ objectType: "Employee" }),
+                            },
+                            {
+                                name: "name",
+                                displayName: "Name",
+                                type: o.string({}),
+                                defaultValue: o.Expression.valueReference({
+                                    path: ["employee", "name"],
+                                }),
+                            },
+                        ],
+                        logic: [],
+                    },
+                ],
+            };
+
+            expectOk(validate(ontology));
+        });
+
+        it("should detect incompatible value-reference defaults", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType()],
+                actionTypes: [
+                    {
+                        name: "updateEmployee",
+                        displayName: "Update Employee",
+                        parameters: [
+                            {
+                                name: "employee",
+                                displayName: "Employee",
+                                type: o.objectReference({ objectType: "Employee" }),
+                            },
+                            {
+                                name: "count",
+                                displayName: "Count",
+                                type: o.integer({}),
+                                defaultValue: o.Expression.valueReference({
+                                    path: ["employee", "name"],
+                                }),
+                            },
+                        ],
+                        logic: [],
+                    },
+                ],
+            };
+
+            expect(getErrors(validate(ontology))).toContain(
+                'Default value for "count" has an incompatible type.'
+            );
+        });
+
         it("should detect invalid action parameter references", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,

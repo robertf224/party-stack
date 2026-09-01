@@ -146,9 +146,11 @@ function projectExpression<Context>(opts: {
     serverContext: Context;
     clientContext: Record<string, unknown> | undefined;
     clientContextMode: ClientContextProjectionMode;
+    ir: OntologyIR;
     actionName: string;
     visibleParameters: Set<string>;
     fixedActionParameterValues: FixedActionParameterValues | undefined;
+    allowedObjectTypeProperties: Record<string, readonly string[]>;
 }): Expression | undefined {
     switch (opts.expression.kind) {
         case "contextReference":
@@ -161,7 +163,33 @@ function projectExpression<Context>(opts: {
         case "valueReference": {
             const [parameterName, ...path] = opts.expression.value.path;
             if (!parameterName) return undefined;
-            if (opts.visibleParameters.has(parameterName)) return opts.expression;
+            if (opts.visibleParameters.has(parameterName)) {
+                const parameter = getActionType(
+                    opts.ir,
+                    opts.actionName
+                ).parameters.find(
+                    (candidate) =>
+                        candidate.name === parameterName
+                );
+                let type = parameter
+                    ? resolveType(opts.ir, parameter.type)
+                    : undefined;
+                while (type?.kind === "optional") {
+                    type = resolveType(opts.ir, type.value.type);
+                }
+                if (
+                    path.length > 0 &&
+                    type?.kind === "objectReference" &&
+                    !(
+                        opts.allowedObjectTypeProperties[
+                            type.value.objectType
+                        ] ?? []
+                    ).includes(path[0]!)
+                ) {
+                    return undefined;
+                }
+                return opts.expression;
+            }
             const fixedValue = getFixedActionParameterValues(
                 opts.fixedActionParameterValues,
                 opts.actionName
@@ -217,9 +245,11 @@ function projectAssignments<Context>(opts: {
             serverContext: opts.serverContext,
             clientContext: opts.clientContext,
             clientContextMode: opts.clientContextMode,
+            ir: opts.ir,
             actionName: opts.actionName,
             visibleParameters: opts.visibleParameters,
             fixedActionParameterValues: opts.fixedActionParameterValues,
+            allowedObjectTypeProperties: opts.allowedObjectTypeProperties,
         });
         return projectedValue ? [{ ...assignment, value: projectedValue }] : [];
     });
@@ -471,7 +501,24 @@ export function projectRemoteOntologyIR<
             );
             return {
                 ...actionType,
-                parameters: actionType.parameters.filter((parameter) => visibleParameters.has(parameter.name)),
+                parameters: actionType.parameters
+                    .filter((parameter) => visibleParameters.has(parameter.name))
+                    .map((parameter) => ({
+                        ...parameter,
+                        defaultValue: parameter.defaultValue
+                            ? projectExpression({
+                                  expression: parameter.defaultValue,
+                                  serverContext: opts.serverContext,
+                                  clientContext: opts.clientContext,
+                                  clientContextMode: opts.clientContextMode ?? "none",
+                                  ir: opts.ir,
+                                  actionName: actionType.name,
+                                  visibleParameters,
+                                  fixedActionParameterValues: opts.fixedActionParameterValues,
+                                  allowedObjectTypeProperties: opts.allowedObjectTypeProperties,
+                              })
+                            : undefined,
+                    })),
                 logic: actionType.logic.flatMap((step) => {
                     if (
                         filterSchemaByAuthorization &&

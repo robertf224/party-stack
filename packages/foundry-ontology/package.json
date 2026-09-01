@@ -31,6 +31,7 @@
     "dependencies": {
         "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/urls": "^0.2.1",
+        "@osdk/client.unstable": "^2.63.0",
         "@osdk/foundry.admin": "^2.71.0",
         "@osdk/foundry.core": "^2.71.0",
         "@osdk/foundry.mediasets": "^2.71.0",

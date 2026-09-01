@@ -364,6 +364,39 @@ function validateExpression(
     }
 }
 
+function unwrapOptionalType(
+    type: TypeDef,
+    valueTypes: ReadonlyMap<string, TypeDef>
+): TypeDef | undefined {
+    const resolved = resolveType(type, valueTypes);
+    return resolved?.kind === "optional"
+        ? unwrapOptionalType(resolved.value.type, valueTypes)
+        : resolved;
+}
+
+function areDefaultTypesCompatible(
+    target: TypeDef,
+    source: TypeDef,
+    valueTypes: ReadonlyMap<string, TypeDef>
+): boolean {
+    const targetType = unwrapOptionalType(target, valueTypes);
+    const sourceType = unwrapOptionalType(source, valueTypes);
+    if (!targetType || !sourceType) return false;
+    if (targetType.kind === "unknown" || sourceType.kind === "unknown") return true;
+    if (targetType.kind !== sourceType.kind) return false;
+    if (targetType.kind === "objectReference" && sourceType.kind === "objectReference") {
+        return targetType.value.objectType === sourceType.value.objectType;
+    }
+    if (targetType.kind === "list" && sourceType.kind === "list") {
+        return areDefaultTypesCompatible(
+            targetType.value.elementType,
+            sourceType.value.elementType,
+            valueTypes
+        );
+    }
+    return true;
+}
+
 function validateActionObjectReference(
     reference: ValueReferenceExpression,
     parameters: ReadonlyMap<string, ActionParameterDef>,
@@ -508,6 +541,32 @@ function validateAction(
                     contextType
                 )
             );
+            if (parameter.defaultValue.kind === "valueReference") {
+                const [sourceParameterName, ...sourcePath] =
+                    parameter.defaultValue.value.path;
+                const sourceParameter = parameters.get(sourceParameterName!);
+                const sourceType = sourceParameter
+                    ? resolveParameterReferenceType(
+                          sourceParameter.type,
+                          sourcePath,
+                          valueTypes,
+                          objectTypes
+                      )
+                    : undefined;
+                if (
+                    sourceType &&
+                    !areDefaultTypesCompatible(
+                        parameter.type,
+                        sourceType,
+                        valueTypes
+                    )
+                ) {
+                    errors.push({
+                        message: `Default value for "${parameter.name}" has an incompatible type.`,
+                        path: [...parameterPath, "defaultValue"],
+                    });
+                }
+            }
         }
     }
 
