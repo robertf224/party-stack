@@ -1,6 +1,6 @@
 {
     "name": "@party-stack/sqlite-ontology",
-    "version": "0.4.2",
+    "version": "0.4.3",
     "type": "module",
     "exports": {
         ".": {

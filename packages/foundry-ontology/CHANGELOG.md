@@ -1,5 +1,16 @@
 # @party-stack/foundry-ontology
 
+## 0.12.0
+
+### Minor Changes
+
+- 07fbbce: Convert Foundry OMS parameter prefills into provider-neutral action defaults and preserve string constraints and suggestions.
+
+### Patch Changes
+
+- Updated dependencies [07fbbce]
+    - @party-stack/ontology@0.13.0
+
 ## 0.11.1
 
 ### Patch Changes
