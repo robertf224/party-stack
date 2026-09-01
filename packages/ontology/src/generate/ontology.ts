@@ -156,6 +156,12 @@ function renderType(type: TypeDef): string {
                     name: "constraint",
                     value: type.value.constraint ? renderStringConstraint(type.value.constraint) : undefined,
                 },
+                {
+                    name: "suggestions",
+                    value: type.value.suggestions
+                        ? renderPlainValue(type.value.suggestions)
+                        : undefined,
+                },
             ])})`;
         case "boolean":
             return `o.boolean(${renderPlainValue(type.value)})`;

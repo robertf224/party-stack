@@ -1003,6 +1003,9 @@ importers:
       '@bobbyfidz/urls':
         specifier: ^0.2.1
         version: 0.2.1
+      '@osdk/client.unstable':
+        specifier: ^2.63.0
+        version: 2.63.0
       '@osdk/foundry.admin':
         specifier: ^2.71.0
         version: 2.71.0
@@ -3322,6 +3325,9 @@ packages:
 
   '@osdk/client.unstable@2.5.2':
     resolution: {integrity: sha512-m0x6AGQ3kfVmpXM864LG7YFSFd2xJZsX3qDrhCL0HbAnfaYtlv/pEBkJFbH3Q/x9mGGocyt685nZK85XU7WgNA==}
+
+  '@osdk/client.unstable@2.63.0':
+    resolution: {integrity: sha512-O7jGPVVBRWrW4lUttfapLISuTZNdgelJZZiQL5C6LyC7fX3bmL0NdiOeiQL9qDDAYoAtJkzKUHRlBvHQYZkeeA==}
 
   '@osdk/client@2.5.2':
     resolution: {integrity: sha512-Vh6vsJCTQVBfJgi2zB+1lMvqktekxa11Olvd3nryF259nnIE5/tdzhgS97ZlJa/canW/Uqq2Acp1RxdKvN0g5g==}
@@ -11263,6 +11269,10 @@ snapshots:
       type-fest: 4.41.0
 
   '@osdk/client.unstable@2.5.2':
+    dependencies:
+      conjure-lite: 0.4.4
+
+  '@osdk/client.unstable@2.63.0':
     dependencies:
       conjure-lite: 0.4.4
 

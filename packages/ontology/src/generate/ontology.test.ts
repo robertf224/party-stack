@@ -4,7 +4,7 @@ import { generateOntology } from "./ontology.js";
 import type { OntologyIR } from "../ir/index.js";
 
 describe("generateOntology", () => {
-    it("preserves object title property metadata", () => {
+    it("preserves object title and string suggestion metadata", () => {
         const ontology: OntologyIR = {
             types: [],
             objectTypes: [
@@ -16,7 +16,18 @@ describe("generateOntology", () => {
                     title: "name",
                     properties: [
                         { name: "id", displayName: "ID", type: o.string({}) },
-                        { name: "name", displayName: "Name", type: o.string({}) },
+                        {
+                            name: "name",
+                            displayName: "Name",
+                            type: o.string({
+                                suggestions: [
+                                    {
+                                        value: "Ada",
+                                        label: "Ada Lovelace",
+                                    },
+                                ],
+                            }),
+                        },
                     ],
                 },
             ],
@@ -25,7 +36,10 @@ describe("generateOntology", () => {
             queryFunctionTypes: [],
         };
 
-        expect(generateOntology(ontology)).toContain('title: "name"');
+        const output = generateOntology(ontology);
+        expect(output).toContain('title: "name"');
+        expect(output).toContain('suggestions: [');
+        expect(output).toContain('label: "Ada Lovelace"');
     });
 
     it("preserves the ontology context type", () => {
@@ -63,5 +77,51 @@ describe("generateOntology", () => {
         const output = generateOntology(ontology);
         expect(output).toContain("contextType: o.struct");
         expect(output).toContain('objectType: "Membership"');
+    });
+
+    it("preserves value-reference action parameter defaults", () => {
+        const ontology: OntologyIR = {
+            types: [],
+            objectTypes: [
+                {
+                    name: "Employee",
+                    displayName: "Employee",
+                    pluralDisplayName: "Employees",
+                    primaryKey: "id",
+                    properties: [
+                        { name: "id", displayName: "ID", type: o.string({}) },
+                        { name: "name", displayName: "Name", type: o.string({}) },
+                    ],
+                },
+            ],
+            linkTypes: [],
+            actionTypes: [
+                {
+                    name: "updateEmployee",
+                    displayName: "Update employee",
+                    parameters: [
+                        {
+                            name: "employee",
+                            displayName: "Employee",
+                            type: o.objectReference({ objectType: "Employee" }),
+                        },
+                        {
+                            name: "name",
+                            displayName: "Name",
+                            type: o.string({}),
+                            defaultValue: o.Expression.valueReference({
+                                path: ["employee", "name"],
+                            }),
+                        },
+                    ],
+                    logic: [],
+                },
+            ],
+            queryFunctionTypes: [],
+        };
+
+        const output = generateOntology(ontology);
+        expect(output).toContain("o.Expression.valueReference");
+        expect(output).toContain('objectType: "Employee"');
     });
 });

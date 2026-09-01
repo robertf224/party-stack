@@ -6,9 +6,16 @@ import type {
     MetaActionType,
     PropertyAssignment,
     StringConstraint,
+    StringSuggestion,
     TypeDef,
 } from "@party-stack/ontology";
 import { toOntologyActionTypeName } from "../utils/actionTypeName.js";
+import {
+    convertOmsActionParameterDefaults,
+    convertOmsActionParameterStringConstraint,
+    convertOmsActionParameterStringSuggestions,
+} from "./convertOmsActionPrefills.js";
+import type { ActionTypeOmsMetadata } from "./loadActionTypeOmsMetadata.js";
 import type {
     ActionLogicRule,
     ActionParameterValidation,
@@ -27,8 +34,99 @@ function maybeOptional(type: TypeDef, required: boolean): TypeDef {
     return required ? type : { kind: "optional", value: { type } };
 }
 
-function stringType(constraint?: StringConstraint): TypeDef {
-    return { kind: "string", value: { constraint } };
+function stringType(
+    constraint?: StringConstraint,
+    suggestions?: StringSuggestion[]
+): TypeDef {
+    return {
+        kind: "string",
+        value: {
+            constraint,
+            suggestions,
+        },
+    };
+}
+
+function applyStringConstraintFallback(
+    type: TypeDef,
+    constraint: StringConstraint | undefined
+): TypeDef {
+    if (!constraint) return type;
+    switch (type.kind) {
+        case "string":
+            return type.value.constraint
+                ? type
+                : {
+                      ...type,
+                      value: {
+                          ...type.value,
+                          constraint,
+                      },
+                  };
+        case "optional":
+            return {
+                ...type,
+                value: {
+                    type: applyStringConstraintFallback(
+                        type.value.type,
+                        constraint
+                    ),
+                },
+            };
+        case "list":
+            return {
+                ...type,
+                value: {
+                    elementType: applyStringConstraintFallback(
+                        type.value.elementType,
+                        constraint
+                    ),
+                },
+            };
+        default:
+            return type;
+    }
+}
+
+function applyStringSuggestionsFallback(
+    type: TypeDef,
+    suggestions: StringSuggestion[] | undefined
+): TypeDef {
+    if (!suggestions) return type;
+    switch (type.kind) {
+        case "string":
+            return type.value.suggestions
+                ? type
+                : {
+                      ...type,
+                      value: {
+                          ...type.value,
+                          suggestions,
+                      },
+                  };
+        case "optional":
+            return {
+                ...type,
+                value: {
+                    type: applyStringSuggestionsFallback(
+                        type.value.type,
+                        suggestions
+                    ),
+                },
+            };
+        case "list":
+            return {
+                ...type,
+                value: {
+                    elementType: applyStringSuggestionsFallback(
+                        type.value.elementType,
+                        suggestions
+                    ),
+                },
+            };
+        default:
+            return type;
+    }
 }
 
 function booleanType(): TypeDef {
@@ -100,7 +198,10 @@ function convertActionParameterType(
                 // reference once Ontologies V2 exposes that setting in action
                 // metadata. It currently returns an unconstrained string.
                 // https://valinor-enterprises.slack.com/archives/C08549X3VDM/p1787718253341589
-                return stringType(convertActionParameterStringConstraint(validation));
+                return stringType(
+                    convertActionParameterStringConstraint(validation),
+                    convertActionParameterStringSuggestions(validation)
+                );
             case "boolean":
                 return booleanType();
             case "integer":
@@ -183,6 +284,32 @@ function convertActionParameterStringConstraint(
         };
     }
     return undefined;
+}
+
+function convertActionParameterStringSuggestions(
+    validation?: ActionParameterValidation
+): StringSuggestion[] | undefined {
+    const allowedValues = validation?.defaultValidation.allowedValues;
+    if (
+        allowedValues?.type !== "oneOf" ||
+        !allowedValues.otherValuesAllowed
+    ) {
+        return undefined;
+    }
+    const suggestions = allowedValues.options.flatMap((option) => {
+        const value: unknown = option.value;
+        return typeof value === "string"
+            ? [
+                  {
+                      value,
+                      label: option.displayName,
+                  },
+              ]
+            : [];
+    });
+    return suggestions.length > 0
+        ? suggestions
+        : undefined;
 }
 
 function convertOntologyDataType(type: OntologyDataType, required = true): TypeDef {
@@ -480,11 +607,45 @@ function convertLogicStep(
     }
 }
 
-export function convertFoundryMetaActionType(actionType: ActionTypeFullMetadata): MetaActionType {
+export function convertFoundryMetaActionType(
+    actionType: ActionTypeFullMetadata,
+    omsMetadata?: ActionTypeOmsMetadata
+): MetaActionType {
     const syntheticParameters = createSyntheticParameters(actionType);
     const fullLogicRules = actionType.fullLogicRules
         .map((rule) => convertLogicStep(rule, syntheticParameters))
         .filter((rule): rule is NonNullable<typeof rule> => rule !== null);
+    const parameters = Object.entries(actionType.actionType.parameters).map(
+        ([name, parameter]): ActionParameterDef => {
+            const type = convertActionParameterType(
+                parameter.dataType,
+                parameter.required,
+                parameter.validation
+            );
+            return {
+                name,
+                displayName: parameter.displayName ?? name,
+                type: applyStringSuggestionsFallback(
+                    applyStringConstraintFallback(
+                        type,
+                        convertOmsActionParameterStringConstraint(
+                            omsMetadata,
+                            name
+                        )
+                    ),
+                    convertOmsActionParameterStringSuggestions(
+                        omsMetadata,
+                        name
+                    )
+                ),
+                description: parameter.description,
+            };
+        }
+    );
+    const defaultsByParameter = convertOmsActionParameterDefaults(
+        omsMetadata,
+        parameters
+    );
 
     return {
         id: actionType.actionType.rid,
@@ -494,18 +655,10 @@ export function convertFoundryMetaActionType(actionType: ActionTypeFullMetadata)
         deprecated:
             actionType.actionType.status === "DEPRECATED" ? { message: "Deprecated in Foundry." } : undefined,
         parameters: [
-            ...Object.entries(actionType.actionType.parameters).map(
-                ([name, parameter]): ActionParameterDef => ({
-                    name,
-                    displayName: parameter.displayName ?? name,
-                    type: convertActionParameterType(
-                        parameter.dataType,
-                        parameter.required,
-                        parameter.validation
-                    ),
-                    description: parameter.description,
-                })
-            ),
+            ...parameters.map((parameter) => ({
+                ...parameter,
+                defaultValue: defaultsByParameter.get(parameter.name),
+            })),
             ...syntheticParameters.parameters,
         ],
         logic: fullLogicRules,

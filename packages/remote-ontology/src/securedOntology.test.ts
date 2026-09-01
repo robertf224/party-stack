@@ -119,6 +119,68 @@ describe("secured ontology projection", () => {
         ]);
     });
 
+    it("projects action defaults through object and property authorization", () => {
+        const projected = projectRemoteOntologyIR({
+            ir: {
+                ...ir,
+                objectTypes: [
+                    ...ir.objectTypes,
+                    {
+                        name: "Employee",
+                        displayName: "Employee",
+                        pluralDisplayName: "Employees",
+                        primaryKey: "id",
+                        properties: [
+                            { name: "id", displayName: "ID", type: o.string({}) },
+                            { name: "name", displayName: "Name", type: o.string({}) },
+                        ],
+                    },
+                ],
+                actionTypes: [
+                    {
+                        name: "updateEmployee",
+                        displayName: "Update employee",
+                        parameters: [
+                            {
+                                name: "employee",
+                                displayName: "Employee",
+                                type: o.objectReference({ objectType: "Employee" }),
+                            },
+                            {
+                                name: "name",
+                                displayName: "Name",
+                                type: o.string({}),
+                                defaultValue: o.Expression.valueReference({
+                                    path: ["employee", "name"],
+                                }),
+                            },
+                            {
+                                name: "notes",
+                                displayName: "Notes",
+                                type: o.string({}),
+                                defaultValue: o.Expression.literal({
+                                    value: "Default",
+                                }),
+                            },
+                        ],
+                        logic: [],
+                    },
+                ],
+            },
+            serverContext: {},
+            allowedObjectTypeProperties: {
+                Employee: ["id"],
+            },
+        });
+
+        expect(projected.actionTypes[0]?.parameters[1]?.defaultValue).toBeUndefined();
+        expect(projected.actionTypes[0]?.parameters[2]?.defaultValue).toEqual(
+            o.Expression.literal({
+                value: "Default",
+            })
+        );
+    });
+
     it("projects authorized object/property/link visibility and prunes unreachable types", () => {
         const projected = projectRemoteOntologyIR({
             ir: {

@@ -6,12 +6,15 @@ export type Deprecation = {
     message: string;
 };
 
+/** A suggested value for a string. */
+export type StringSuggestion = {
+    value: string;
+    label?: string;
+};
+
 /** Constrains a string to a set of allowed values. */
 export type StringEnumConstraint = {
-    options: Array<{
-        value: string;
-        label?: string;
-    }>;
+    options: Array<StringSuggestion>;
 };
 
 /** Constrains a string to a regex. */
@@ -28,6 +31,7 @@ export type StringConstraint = v.Union<{
 /** A string type with optional constraints. */
 export type StringTypeDef = {
     constraint?: StringConstraint;
+    suggestions?: Array<StringSuggestion>;
 };
 
 /** A boolean type. */

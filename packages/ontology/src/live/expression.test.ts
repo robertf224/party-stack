@@ -87,6 +87,7 @@ describe("evaluateExpression", () => {
                 tx: createReadTx({ User: users }),
             })
         ).resolves.toBe("Ada");
+
         await users.cleanup();
     });
 });

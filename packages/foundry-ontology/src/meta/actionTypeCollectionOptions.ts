@@ -14,6 +14,7 @@ import {
     convertActionTypeLoadSubsetOrderBy,
 } from "./convertActionTypeLoadSubsetOptions.js";
 import { convertFoundryMetaActionType } from "./convertMetaActionType.js";
+import { loadActionTypeOmsMetadata } from "./loadActionTypeOmsMetadata.js";
 import type { LoadSubsetOptions } from "@tanstack/db";
 
 export interface ActionTypeCollectionOpts {
@@ -83,10 +84,23 @@ export function actionTypeCollectionOptions(opts: ActionTypeCollectionOpts): Ont
         syncMode: "on-demand",
         queryFn: async (ctx) => {
             const actionTypes = await searchActionTypes(opts.client, ctx.meta?.loadSubsetOptions);
-            const actionTypeMetadata = await Promise.all(
-                actionTypes.map((actionType) => loadActionTypeFullMetadata(opts.client, actionType))
+            const [actionTypeMetadata, omsMetadata] = await Promise.all([
+                Promise.all(
+                    actionTypes.map((actionType) =>
+                        loadActionTypeFullMetadata(opts.client, actionType)
+                    )
+                ),
+                loadActionTypeOmsMetadata(
+                    opts.client,
+                    actionTypes.map((actionType) => actionType.rid)
+                ),
+            ]);
+            return actionTypeMetadata.map((metadata) =>
+                convertFoundryMetaActionType(
+                    metadata,
+                    omsMetadata.get(metadata.actionType.rid)
+                )
             );
-            return actionTypeMetadata.map(convertFoundryMetaActionType);
         },
     }) as unknown as OntologyCollectionOptions;
 }
