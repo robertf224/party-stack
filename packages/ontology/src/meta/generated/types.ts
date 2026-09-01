@@ -258,53 +258,6 @@ export type LiteralExpression = {
     value: unknown;
 };
 
-/** Matches an object property equal to a value. */
-export type ObjectQueryEqualsPredicate = {
-    property: Array<string>;
-    value: unknown;
-};
-
-/** Matches an object property equal to one of several values. */
-export type ObjectQueryInPredicate = {
-    property: Array<string>;
-    values: Array<unknown>;
-};
-
-/** Matches an object property within a range. */
-export type ObjectQueryRangePredicate = {
-    property: Array<string>;
-    lt?: unknown;
-    lte?: unknown;
-    gt?: unknown;
-    gte?: unknown;
-};
-
-/** Combines object-query predicates. */
-export type ObjectQueryLogicalPredicate = {
-    predicates: Array<ObjectQueryPredicate>;
-};
-
-/** Negates an object-query predicate. */
-export type ObjectQueryNotPredicate = {
-    predicate: ObjectQueryPredicate;
-};
-
-/** A provider-neutral predicate used to query ontology objects. */
-export type ObjectQueryPredicate = v.Union<{
-    eq: ObjectQueryEqualsPredicate;
-    in: ObjectQueryInPredicate;
-    range: ObjectQueryRangePredicate;
-    and: ObjectQueryLogicalPredicate;
-    or: ObjectQueryLogicalPredicate;
-    not: ObjectQueryNotPredicate;
-}>;
-
-/** Returns the primary key when exactly one object matches a predicate. */
-export type ObjectQueryExpression = {
-    objectType: string;
-    where?: ObjectQueryPredicate;
-};
-
 /** Calls a function within an expression. */
 export type FunctionCallExpression = v.Union<{
     uuid: UuidFunctionCall;
@@ -317,7 +270,6 @@ export type Expression = v.Union<{
     contextReference: ContextReferenceExpression;
     functionCall: FunctionCallExpression;
     literal: LiteralExpression;
-    objectQuery: ObjectQueryExpression;
 }>;
 
 /** Assigns an expression to a property path on an object written by an action. */

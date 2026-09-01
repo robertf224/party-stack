@@ -162,30 +162,6 @@ describe("secured ontology projection", () => {
                                     value: "Default",
                                 }),
                             },
-                            {
-                                name: "assignee",
-                                displayName: "Assignee",
-                                type: o.objectReference({ objectType: "Employee" }),
-                                defaultValue: o.Expression.objectQuery({
-                                    objectType: "Employee",
-                                    where: o.ObjectQueryPredicate.eq({
-                                        property: ["id"],
-                                        value: "employee-1",
-                                    }),
-                                }),
-                            },
-                            {
-                                name: "manager",
-                                displayName: "Manager",
-                                type: o.objectReference({ objectType: "Employee" }),
-                                defaultValue: o.Expression.objectQuery({
-                                    objectType: "Employee",
-                                    where: o.ObjectQueryPredicate.eq({
-                                        property: ["name"],
-                                        value: "Hidden",
-                                    }),
-                                }),
-                            },
                         ],
                         logic: [],
                     },
@@ -203,16 +179,6 @@ describe("secured ontology projection", () => {
                 value: "Default",
             })
         );
-        expect(projected.actionTypes[0]?.parameters[3]?.defaultValue).toEqual(
-            o.Expression.objectQuery({
-                objectType: "Employee",
-                where: o.ObjectQueryPredicate.eq({
-                    property: ["id"],
-                    value: "employee-1",
-                }),
-            })
-        );
-        expect(projected.actionTypes[0]?.parameters[4]?.defaultValue).toBeUndefined();
     });
 
     it("projects authorized object/property/link visibility and prunes unreachable types", () => {

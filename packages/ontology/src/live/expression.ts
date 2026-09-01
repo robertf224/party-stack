@@ -1,15 +1,4 @@
-import {
-    and,
-    eq,
-    gt,
-    gte,
-    inArray,
-    IR,
-    lt,
-    lte,
-    not,
-    or,
-} from "@tanstack/db";
+import { eq } from "@tanstack/db";
 import { get } from "lodash-es";
 import { Temporal } from "temporal-polyfill";
 import { resolveType, unwrapType } from "../utils/types.js";
@@ -18,7 +7,6 @@ import type { OntologyObject } from "./objects/OntologyObject.js";
 import type {
     Expression,
     ObjectTypeDef,
-    ObjectQueryPredicate,
     OntologyIR,
     TypeDef,
     ValueReferenceExpression,
@@ -31,86 +19,6 @@ function getActionType(
     return ir.actionTypes.find(
         (actionType) => actionType.name === actionTypeName
     )!;
-}
-
-function getQueryProperty(reference: unknown, path: string[]): unknown {
-    return path.reduce(
-        (value, segment) =>
-            (value as Record<string, unknown>)[segment],
-        reference
-    );
-}
-
-function combineQueryExpressions(
-    kind: "and" | "or",
-    expressions: IR.BasicExpression<boolean>[]
-): IR.BasicExpression<boolean> {
-    const [first, second, ...rest] = expressions;
-    if (!first) {
-        throw new Error(`Object-query ${kind} predicate is empty.`);
-    }
-    if (!second) return first;
-    return kind === "and"
-        ? and(first, second, ...rest)
-        : or(first, second, ...rest);
-}
-
-function compileObjectQueryPredicate(
-    predicate: ObjectQueryPredicate,
-    object: unknown
-): IR.BasicExpression<boolean> {
-    switch (predicate.kind) {
-        case "eq":
-            return eq(
-                getQueryProperty(object, predicate.value.property) as never,
-                predicate.value.value as never
-            );
-        case "in":
-            return inArray(
-                getQueryProperty(object, predicate.value.property) as never,
-                predicate.value.values as never
-            );
-        case "range": {
-            const property = getQueryProperty(
-                object,
-                predicate.value.property
-            ) as never;
-            const bounds: IR.BasicExpression<boolean>[] = [
-                predicate.value.lt !== undefined
-                    ? lt(property, predicate.value.lt as never)
-                    : undefined,
-                predicate.value.lte !== undefined
-                    ? lte(property, predicate.value.lte as never)
-                    : undefined,
-                predicate.value.gt !== undefined
-                    ? gt(property, predicate.value.gt as never)
-                    : undefined,
-                predicate.value.gte !== undefined
-                    ? gte(property, predicate.value.gte as never)
-                    : undefined,
-            ].filter((bound): bound is NonNullable<typeof bound> => bound !== undefined);
-            return combineQueryExpressions("and", bounds);
-        }
-        case "and": {
-            const predicates = predicate.value.predicates.map((child) =>
-                compileObjectQueryPredicate(child, object)
-            );
-            return combineQueryExpressions("and", predicates);
-        }
-        case "or": {
-            const predicates = predicate.value.predicates.map((child) =>
-                compileObjectQueryPredicate(child, object)
-            );
-            return combineQueryExpressions("or", predicates);
-        }
-        case "not":
-            return not(
-                compileObjectQueryPredicate(
-                    predicate.value.predicate,
-                    object
-                ) as never
-            );
-    }
 }
 
 export async function evaluateExpression(options: {
@@ -189,51 +97,6 @@ export async function evaluateExpression(options: {
             return get(context, expression.value.path);
         case "literal":
             return expression.value.value;
-        case "objectQuery": {
-            const objectType = ir.objectTypes.find(
-                (candidate) =>
-                    candidate.name === expression.value.objectType
-            );
-            if (!objectType) {
-                throw new Error(
-                    `Unknown object type "${expression.value.objectType}" in object-query expression.`
-                );
-            }
-            const rows = await tx.query<Array<{ primaryKey: unknown }>>(
-                (query, objects) => {
-                    let objectQuery = query.from({
-                        object: objects[objectType.name]!,
-                    });
-                    if (expression.value.where) {
-                        objectQuery = objectQuery.where(
-                            ({ object }) =>
-                                compileObjectQueryPredicate(
-                                    expression.value.where!,
-                                    object
-                                ) as never
-                        );
-                    }
-                    return objectQuery
-                        .orderBy(
-                            ({ object }) =>
-                                object[
-                                    objectType.primaryKey
-                                ],
-                            "asc"
-                        )
-                        .limit(2)
-                        .select(({ object }) => ({
-                            primaryKey:
-                                object[
-                                    objectType.primaryKey
-                                ],
-                        }));
-                }
-            );
-            return rows.length === 1
-                ? rows[0]?.primaryKey
-                : undefined;
-        }
         case "functionCall":
             return expression.value.kind === "uuid"
                 ? globalThis.crypto.randomUUID()

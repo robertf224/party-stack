@@ -97,32 +97,6 @@ export const AttachmentContentConstraint = {
     ) => ({ kind: "image" as const, value }),
 };
 
-export const ObjectQueryPredicate = {
-    eq: <const Value extends Extract<t.ObjectQueryPredicate, { kind: "eq" }>["value"]>(value: Value) => ({
-        kind: "eq" as const,
-        value,
-    }),
-    in: <const Value extends Extract<t.ObjectQueryPredicate, { kind: "in" }>["value"]>(value: Value) => ({
-        kind: "in" as const,
-        value,
-    }),
-    range: <const Value extends Extract<t.ObjectQueryPredicate, { kind: "range" }>["value"]>(
-        value: Value
-    ) => ({ kind: "range" as const, value }),
-    and: <const Value extends Extract<t.ObjectQueryPredicate, { kind: "and" }>["value"]>(value: Value) => ({
-        kind: "and" as const,
-        value,
-    }),
-    or: <const Value extends Extract<t.ObjectQueryPredicate, { kind: "or" }>["value"]>(value: Value) => ({
-        kind: "or" as const,
-        value,
-    }),
-    not: <const Value extends Extract<t.ObjectQueryPredicate, { kind: "not" }>["value"]>(value: Value) => ({
-        kind: "not" as const,
-        value,
-    }),
-};
-
 export const FunctionCallExpression = {
     uuid: <const Value extends Extract<t.FunctionCallExpression, { kind: "uuid" }>["value"]>(
         value: Value
@@ -147,9 +121,6 @@ export const Expression = {
         kind: "literal" as const,
         value,
     }),
-    objectQuery: <const Value extends Extract<t.Expression, { kind: "objectQuery" }>["value"]>(
-        value: Value
-    ) => ({ kind: "objectQuery" as const, value }),
 };
 
 export const ActionLogicStep = {
@@ -196,7 +167,6 @@ export const o = {
     unknown,
     StringConstraint,
     AttachmentContentConstraint,
-    ObjectQueryPredicate,
     FunctionCallExpression,
     Expression,
     ActionLogicStep,

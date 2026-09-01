@@ -4,7 +4,6 @@ import type {
     ActionTypeDef,
     Expression,
     ObjectTypeDef,
-    ObjectQueryPredicate,
     OntologyDefinition,
     OntologyIR,
     PropertyAssignment,
@@ -108,8 +107,6 @@ function evaluateExpression<Context>(opts: {
             return getPath(opts.ctx, opts.expression.value.path);
         case "literal":
             return opts.expression.value.value;
-        case "objectQuery":
-            return undefined;
         case "functionCall":
             switch (opts.expression.value.kind) {
                 case "uuid":
@@ -163,27 +160,6 @@ function projectExpression<Context>(opts: {
         case "literal":
         case "functionCall":
             return opts.expression;
-        case "objectQuery": {
-            const allowedProperties =
-                opts.allowedObjectTypeProperties[opts.expression.value.objectType] ?? [];
-            if (allowedProperties.length === 0) return undefined;
-            if (!opts.expression.value.where) {
-                return opts.expression;
-            }
-            const where = projectObjectQueryPredicate(
-                opts.expression.value.where,
-                allowedProperties
-            );
-            return where
-                ? {
-                      ...opts.expression,
-                      value: {
-                          ...opts.expression.value,
-                          where,
-                      },
-                  }
-                : undefined;
-        }
         case "valueReference": {
             const [parameterName, ...path] = opts.expression.value.path;
             if (!parameterName) return undefined;
@@ -244,46 +220,6 @@ function projectExpression<Context>(opts: {
                     : undefined;
             }
             return fixedValue;
-        }
-    }
-}
-
-function projectObjectQueryPredicate(
-    predicate: ObjectQueryPredicate,
-    allowedProperties: readonly string[]
-): ObjectQueryPredicate | undefined {
-    switch (predicate.kind) {
-        case "eq":
-        case "in":
-        case "range":
-            return allowedProperties.includes(predicate.value.property[0] ?? "")
-                ? predicate
-                : undefined;
-        case "and":
-        case "or": {
-            const predicates = predicate.value.predicates.map((child) =>
-                projectObjectQueryPredicate(child, allowedProperties)
-            );
-            return predicates.some((child) => child === undefined)
-                ? undefined
-                : {
-                      ...predicate,
-                      value: {
-                          predicates: predicates as ObjectQueryPredicate[],
-                      },
-                  };
-        }
-        case "not": {
-            const projected = projectObjectQueryPredicate(
-                predicate.value.predicate,
-                allowedProperties
-            );
-            return projected
-                ? {
-                      ...predicate,
-                      value: { predicate: projected },
-                  }
-                : undefined;
         }
     }
 }

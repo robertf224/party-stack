@@ -547,7 +547,7 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
         ]);
     });
 
-    it("converts object-query prefills to provider-neutral predicates", () => {
+    it("omits object-query prefills", () => {
         const objectSet = {
             objectSet: {
                 startingObjectSet: {
@@ -624,82 +624,6 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                                         prefill: {
                                             type: "objectQueryPrefill",
                                             objectQueryPrefill: { objectSet },
-                                        },
-                                    },
-                                },
-                            },
-                        },
-                    },
-                },
-            } as never
-        );
-
-        expect(result.parameters[0]?.defaultValue).toEqual({
-            kind: "objectQuery",
-            value: {
-                objectType: "User",
-                where: {
-                    kind: "and",
-                    value: {
-                        predicates: [
-                            {
-                                kind: "eq",
-                                value: {
-                                    property: ["email"],
-                                    value: "owner@example.com",
-                                },
-                            },
-                            {
-                                kind: "in",
-                                value: {
-                                    property: ["department"],
-                                    values: ["Engineering", "Operations"],
-                                },
-                            },
-                        ],
-                    },
-                },
-            },
-        });
-    });
-
-    it("omits object-query prefills for a different starting object type", () => {
-        const result = convertFoundryMetaActionType(
-            actionType({
-                assignee: {
-                    displayName: "Assignee",
-                    dataType: {
-                        type: "object",
-                        objectTypeApiName: "User",
-                        objectApiName: "User",
-                    },
-                    required: false,
-                    typeClasses: [],
-                },
-            }),
-            {
-                actionTypeLogic: {
-                    validation: {
-                        parameterValidations: {
-                            assignee: {
-                                defaultValidation: {
-                                    display: {
-                                        prefill: {
-                                            type: "objectQueryPrefill",
-                                            objectQueryPrefill: {
-                                                objectSet: {
-                                                    objectSet: {
-                                                        startingObjectSet: {
-                                                            type: "base",
-                                                            base: {
-                                                                objectTypeId: "Employee",
-                                                            },
-                                                        },
-                                                        transforms: [],
-                                                    },
-                                                    conditionValues: {},
-                                                },
-                                            },
                                         },
                                     },
                                 },

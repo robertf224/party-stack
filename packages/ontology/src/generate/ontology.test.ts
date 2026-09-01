@@ -65,7 +65,7 @@ describe("generateOntology", () => {
         expect(output).toContain('objectType: "Membership"');
     });
 
-    it("preserves provider-neutral action parameter defaults", () => {
+    it("preserves value-reference action parameter defaults", () => {
         const ontology: OntologyIR = {
             types: [],
             objectTypes: [
@@ -90,13 +90,6 @@ describe("generateOntology", () => {
                             name: "employee",
                             displayName: "Employee",
                             type: o.objectReference({ objectType: "Employee" }),
-                            defaultValue: o.Expression.objectQuery({
-                                objectType: "Employee",
-                                where: o.ObjectQueryPredicate.eq({
-                                    property: ["name"],
-                                    value: "Ada",
-                                }),
-                            }),
                         },
                         {
                             name: "name",
@@ -114,8 +107,6 @@ describe("generateOntology", () => {
         };
 
         const output = generateOntology(ontology);
-        expect(output).toContain("o.Expression.objectQuery");
-        expect(output).toContain('kind: "eq"');
         expect(output).toContain("o.Expression.valueReference");
         expect(output).toContain('objectType: "Employee"');
     });

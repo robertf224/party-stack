@@ -17,9 +17,8 @@ Uses public Foundry APIs (`ActionTypesV2` / `ActionTypesFullMetadata`) for:
 
 Foundry UI prefills are loaded from the private OMS bulk metadata endpoint when
 available. Static values and object-parameter property references become action
-parameter defaults. Supported OMS object-query filters are translated to
-provider-neutral object-query predicates. Closed string one-of constraints and
-text regex constraints are used when public metadata does not provide them.
-Unsupported query operations and struct-field prefills are omitted, and
+parameter defaults. Closed string one-of constraints and text regex constraints
+are used when public metadata does not provide them. Object-query and
+struct-field prefills are omitted until the expression model supports them, and
 failures from the private endpoint do not prevent public action metadata from
 loading.

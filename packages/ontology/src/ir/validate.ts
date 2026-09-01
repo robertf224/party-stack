@@ -4,7 +4,6 @@ import type {
     ActionParameterDef,
     ActionTypeDef,
     Expression,
-    ObjectQueryPredicate,
     ObjectTypeDef,
     OntologyIR,
     PropertyAssignment,
@@ -359,175 +358,10 @@ function validateExpression(
                           path: [...path, "path"],
                       },
                   ];
-        case "objectQuery": {
-            const objectType = objectTypes.get(expression.value.objectType);
-            if (!objectType) {
-                return [
-                    {
-                        message: `Unknown object-query object type: "${expression.value.objectType}".`,
-                        path: [...path, "objectType"],
-                    },
-                ];
-            }
-            return expression.value.where
-                ? validateObjectQueryPredicate(
-                      expression.value.where,
-                      objectType,
-                      [...path, "where"],
-                      valueTypes
-                  )
-                : [];
-        }
         case "functionCall":
         case "literal":
             return [];
     }
-}
-
-function resolveNestedObjectQueryPropertyType(
-    type: TypeDef,
-    path: string[],
-    valueTypes: ReadonlyMap<string, TypeDef>
-): TypeDef | undefined {
-    const resolved = resolveType(type, valueTypes);
-    if (!resolved) return undefined;
-    if (resolved.kind === "optional") {
-        return resolveNestedObjectQueryPropertyType(
-            resolved.value.type,
-            path,
-            valueTypes
-        );
-    }
-    if (path.length === 0) return resolved;
-    if (resolved.kind !== "struct") return undefined;
-
-    const [fieldName, ...rest] = path;
-    const field = resolved.value.fields.find(
-        (candidate) => candidate.name === fieldName
-    );
-    return field
-        ? resolveNestedObjectQueryPropertyType(
-              field.type,
-              rest,
-              valueTypes
-          )
-        : undefined;
-}
-
-function resolveObjectQueryPropertyType(
-    objectType: ObjectTypeDef,
-    path: string[],
-    valueTypes: ReadonlyMap<string, TypeDef>
-): TypeDef | undefined {
-    const [propertyName, ...rest] = path;
-    const property = objectType.properties.find(
-        (candidate) => candidate.name === propertyName
-    );
-    return property
-        ? resolveNestedObjectQueryPropertyType(
-              property.type,
-              rest,
-              valueTypes
-          )
-        : undefined;
-}
-
-function validateObjectQueryPredicate(
-    predicate: ObjectQueryPredicate,
-    objectType: ObjectTypeDef,
-    path: ValidationPathElement[],
-    valueTypes: ReadonlyMap<string, TypeDef>
-): ValidationError[] {
-    switch (predicate.kind) {
-        case "eq":
-        case "in":
-        case "range": {
-            const propertyPath = predicate.value.property;
-            if (propertyPath.length === 0) {
-                return [
-                    {
-                        message: "Object-query predicates must include a property path.",
-                        path: [...path, "value", "property"],
-                    },
-                ];
-            }
-            const propertyType = resolveObjectQueryPropertyType(
-                objectType,
-                propertyPath,
-                valueTypes
-            );
-            const errors: ValidationError[] = propertyType
-                ? []
-                : [
-                      {
-                          message: `Invalid object-query property path on "${objectType.name}".`,
-                          path: [...path, "value", "property"],
-                      },
-                  ];
-            if (predicate.kind === "in" && predicate.value.values.length === 0) {
-                errors.push({
-                    message: "Object-query in predicates must include values.",
-                    path: [...path, "value", "values"],
-                });
-            }
-            if (
-                predicate.kind === "range" &&
-                ["lt", "lte", "gt", "gte"].every(
-                    (operator) =>
-                        predicate.value[
-                            operator as keyof typeof predicate.value
-                        ] === undefined
-                )
-            ) {
-                errors.push({
-                    message: "Object-query range predicates must include a bound.",
-                    path: [...path, "value"],
-                });
-            }
-            return errors;
-        }
-        case "and":
-        case "or": {
-            if (predicate.value.predicates.length === 0) {
-                return [
-                    {
-                        message: `Object-query ${predicate.kind} predicates must not be empty.`,
-                        path: [...path, "value", "predicates"],
-                    },
-                ];
-            }
-            return predicate.value.predicates.flatMap((child, index) =>
-                validateObjectQueryPredicate(
-                    child,
-                    objectType,
-                    [...path, "value", "predicates", index],
-                    valueTypes
-                )
-            );
-        }
-        case "not":
-            return validateObjectQueryPredicate(
-                predicate.value.predicate,
-                objectType,
-                [...path, "value", "predicate"],
-                valueTypes
-            );
-    }
-}
-
-function getObjectReferenceTypeName(
-    type: TypeDef,
-    valueTypes: ReadonlyMap<string, TypeDef>
-): string | undefined {
-    const resolved = resolveType(type, valueTypes);
-    if (!resolved) return undefined;
-    if (resolved.kind === "objectReference") {
-        return resolved.value.objectType;
-    }
-    if (resolved.kind === "optional") {
-        return getObjectReferenceTypeName(resolved.value.type, valueTypes);
-    }
-    return undefined;
 }
 
 function unwrapOptionalType(
@@ -707,16 +541,6 @@ function validateAction(
                     contextType
                 )
             );
-            if (
-                parameter.defaultValue.kind === "objectQuery" &&
-                getObjectReferenceTypeName(parameter.type, valueTypes) !==
-                    parameter.defaultValue.value.objectType
-            ) {
-                errors.push({
-                    message: `Object-query default is incompatible with "${parameter.name}".`,
-                    path: [...parameterPath, "defaultValue", "objectType"],
-                });
-            }
             if (parameter.defaultValue.kind === "valueReference") {
                 const [sourceParameterName, ...sourcePath] =
                     parameter.defaultValue.value.path;

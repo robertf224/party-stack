@@ -555,18 +555,9 @@ export function convertFoundryMetaActionType(
             };
         }
     );
-    const objectTypeIdsByParameter = new Map(
-        Object.entries(actionType.actionType.parameters).flatMap(
-            ([name, parameter]) =>
-                parameter.dataType.type === "object"
-                    ? [[name, parameter.dataType.objectApiName] as const]
-                    : []
-        )
-    );
     const defaultsByParameter = convertOmsActionParameterDefaults(
         omsMetadata,
-        parameters,
-        objectTypeIdsByParameter
+        parameters
     );
 
     return {

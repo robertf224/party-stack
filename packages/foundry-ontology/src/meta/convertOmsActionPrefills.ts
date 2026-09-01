@@ -2,9 +2,7 @@ import { Temporal } from "temporal-polyfill";
 import type {
     ActionParameterDef,
     Expression,
-    ObjectQueryPredicate,
     StringConstraint,
-    TypeDef,
 } from "@party-stack/ontology";
 
 type UnknownRecord = Record<string, unknown>;
@@ -109,206 +107,8 @@ function getValidationPrefill(node: unknown): UnknownRecord | undefined {
     return asRecord(asRecord(validation.validation)?.defaultValue);
 }
 
-function unwrapOptional(type: TypeDef): TypeDef {
-    return type.kind === "optional" ? unwrapOptional(type.value.type) : type;
-}
-
-function getObjectReferenceType(type: TypeDef): string | undefined {
-    const unwrapped = unwrapOptional(type);
-    if (unwrapped.kind === "objectReference") {
-        return unwrapped.value.objectType;
-    }
-    return undefined;
-}
-
-function conditionValueToValue(
-    value: unknown,
-    conditionValues: UnknownRecord | undefined
-): unknown {
-    const conditionValue = asRecord(value);
-    if (!conditionValue) return undefined;
-    if (conditionValue.type === "staticValue") {
-        return unwrapFoundryStaticValue(conditionValue.staticValue);
-    }
-    if (conditionValue.type === "resolved") {
-        return asRecord(conditionValue.resolved)?.value;
-    }
-    if (conditionValue.type === "unresolved") {
-        const unresolved = asRecord(conditionValue.unresolved);
-        const parameterId = unresolved?.parameterId;
-        const resolved =
-            typeof parameterId === "string"
-                ? conditionValueToValue(
-                      conditionValues?.[parameterId],
-                      conditionValues
-                  )
-                : undefined;
-        return resolved ??
-            unwrapFoundryStaticValue(unresolved?.defaultValue) ??
-            unresolved?.defaultValue;
-    }
-    return undefined;
-}
-
-function parameterizedValues(
-    values: unknown,
-    conditionValues: UnknownRecord | undefined
-): unknown[] | undefined {
-    if (!Array.isArray(values)) return undefined;
-    const resolved = values.map((value) =>
-        conditionValueToValue(value, conditionValues)
-    );
-    if (resolved.some((value) => value === undefined)) return undefined;
-    const converted = resolved.flatMap((value) =>
-        Array.isArray(value)
-            ? (value as unknown[])
-            : [value]
-    );
-    return converted.length > 0 ? converted : undefined;
-}
-
-function equalsPredicate(property: string, values: unknown[]): ObjectQueryPredicate | null {
-    if (values.length === 0) return null;
-    return values.length === 1
-        ? {
-              kind: "eq",
-              value: {
-                  property: [property],
-                  value: values[0],
-              },
-          }
-        : {
-              kind: "in",
-              value: {
-                  property: [property],
-                  values,
-              },
-          };
-}
-
-function convertObjectSetFilter(
-    filter: unknown,
-    conditionValues: UnknownRecord | undefined
-): ObjectQueryPredicate | null {
-    const value = asRecord(filter);
-    if (!value) return null;
-
-    switch (value.type) {
-        case "exactMatch": {
-            const exactMatch = asRecord(value.exactMatch);
-            if (
-                typeof exactMatch?.propertyId !== "string" ||
-                !Array.isArray(exactMatch.terms)
-            ) {
-                return null;
-            }
-            const terms = exactMatch.terms.map(unwrapFoundryStaticValue);
-            return terms.some((term) => term === undefined)
-                ? null
-                : equalsPredicate(exactMatch.propertyId, terms);
-        }
-        case "parameterizedExactMatch": {
-            const exactMatch = asRecord(value.parameterizedExactMatch);
-            if (typeof exactMatch?.propertyId !== "string") return null;
-            const values = parameterizedValues(exactMatch.terms, conditionValues);
-            return values
-                ? equalsPredicate(exactMatch.propertyId, values)
-                : null;
-        }
-        case "range": {
-            const range = asRecord(value.range);
-            if (typeof range?.propertyId !== "string") return null;
-            const bounds = Object.fromEntries(
-                (["lt", "lte", "gt", "gte"] as const).flatMap((operator) => {
-                    const bound = unwrapFoundryStaticValue(range[operator]);
-                    return bound === undefined ? [] : [[operator, bound]];
-                })
-            );
-            return Object.keys(bounds).length > 0
-                ? {
-                      kind: "range",
-                      value: {
-                          property: [range.propertyId],
-                          ...bounds,
-                      },
-                  }
-                : null;
-        }
-        case "and":
-        case "or": {
-            const filters = asRecord(value[value.type])?.filters;
-            if (!Array.isArray(filters)) return null;
-            const predicates = filters.map((child) =>
-                convertObjectSetFilter(child, conditionValues)
-            );
-            return predicates.some((predicate) => predicate === null)
-                ? null
-                : {
-                      kind: value.type,
-                      value: {
-                          predicates: predicates as ObjectQueryPredicate[],
-                      },
-                  };
-        }
-        case "not": {
-            const predicate = convertObjectSetFilter(
-                asRecord(value.not)?.filter,
-                conditionValues
-            );
-            return predicate
-                ? {
-                      kind: "not",
-                      value: { predicate },
-                  }
-                : null;
-        }
-        default:
-            return null;
-    }
-}
-
-function convertObjectSet(
-    objectSet: UnknownRecord,
-    expectedObjectTypeId: string
-): ObjectQueryPredicate | null | undefined {
-    const dynamicObjectSet = asRecord(objectSet.objectSet);
-    const startingObjectSet = asRecord(dynamicObjectSet?.startingObjectSet);
-    const base = asRecord(startingObjectSet?.base);
-    if (
-        startingObjectSet?.type !== "base" ||
-        typeof base?.objectTypeId !== "string" ||
-        base.objectTypeId !== expectedObjectTypeId
-    ) {
-        return null;
-    }
-    const transforms = dynamicObjectSet?.transforms;
-    const conditionValues = asRecord(objectSet.conditionValues);
-    if (!Array.isArray(transforms)) return null;
-    if (transforms.length === 0) return undefined;
-
-    const predicates: ObjectQueryPredicate[] = [];
-    for (const transform of transforms) {
-        const value = asRecord(transform);
-        if (value?.type !== "propertyFilter") return null;
-        const predicate = convertObjectSetFilter(
-            value.propertyFilter,
-            conditionValues
-        );
-        if (!predicate) return null;
-        predicates.push(predicate);
-    }
-    return predicates.length === 1
-        ? predicates[0]
-        : {
-              kind: "and",
-              value: { predicates },
-          };
-}
-
 function convertPrefill(
-    prefill: UnknownRecord | undefined,
-    parameter: ActionParameterDef,
-    objectTypeId: string | undefined
+    prefill: UnknownRecord | undefined
 ): Expression | undefined {
     if (!prefill) return undefined;
 
@@ -336,22 +136,6 @@ function convertPrefill(
                   },
               }
             : undefined;
-    }
-
-    if (prefill.type === "objectQueryPrefill") {
-        const objectSet = asRecord(asRecord(prefill.objectQueryPrefill)?.objectSet);
-        const objectType = getObjectReferenceType(parameter.type);
-        if (!objectSet || !objectType || !objectTypeId) return undefined;
-        const where = convertObjectSet(objectSet, objectTypeId);
-        return where === null
-            ? undefined
-            : {
-                  kind: "objectQuery",
-                  value: {
-                      objectType,
-                      ...(where ? { where } : {}),
-                  },
-              };
     }
 
     const literalValue = unwrapFoundryStaticValue(prefill);
@@ -441,8 +225,7 @@ function getMetadataParameter(actionType: unknown, parameterName: string): Unkno
 
 export function convertOmsActionParameterDefaults(
     actionType: unknown,
-    parameters: ActionParameterDef[],
-    objectTypeIdsByParameter: ReadonlyMap<string, string>
+    parameters: ActionParameterDef[]
 ): Map<string, Expression> {
     const parameterValidations = getParameterValidations(actionType);
     const result = new Map<string, Expression>();
@@ -452,12 +235,9 @@ export function convertOmsActionParameterDefaults(
         const metadataDefault = getValidationPrefill(
             getMetadataParameter(actionType, parameter.name)
         );
-        const parameterDefault =
-            convertPrefill(
-                metadataDefault ?? getValidationPrefill(validation),
-                parameter,
-                objectTypeIdsByParameter.get(parameter.name)
-            );
+        const parameterDefault = convertPrefill(
+            metadataDefault ?? getValidationPrefill(validation)
+        );
         if (parameterDefault) {
             result.set(parameter.name, parameterDefault);
         }

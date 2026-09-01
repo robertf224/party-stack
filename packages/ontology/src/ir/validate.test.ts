@@ -572,7 +572,7 @@ describe("Ontology Validation", () => {
             expectOk(validate(ontology));
         });
 
-        it("should validate action parameter defaults with object queries", () => {
+        it("should validate value-reference action parameter defaults", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
                 objectTypes: [minimalObjectType()],
@@ -594,18 +594,6 @@ describe("Ontology Validation", () => {
                                     path: ["employee", "name"],
                                 }),
                             },
-                            {
-                                name: "assignee",
-                                displayName: "Assignee",
-                                type: o.objectReference({ objectType: "Employee" }),
-                                defaultValue: o.Expression.objectQuery({
-                                    objectType: "Employee",
-                                    where: o.ObjectQueryPredicate.eq({
-                                        property: ["name"],
-                                        value: "Ada",
-                                    }),
-                                }),
-                            },
                         ],
                         logic: [],
                     },
@@ -615,59 +603,15 @@ describe("Ontology Validation", () => {
             expectOk(validate(ontology));
         });
 
-        it("should detect invalid object-query defaults", () => {
+        it("should detect incompatible value-reference defaults", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
-                objectTypes: [
-                    minimalObjectType({
-                        properties: [
-                            ...minimalObjectType().properties,
-                            {
-                                name: "manager",
-                                displayName: "Manager",
-                                type: o.objectReference({
-                                    objectType: "Employee",
-                                }),
-                            },
-                        ],
-                    }),
-                ],
+                objectTypes: [minimalObjectType()],
                 actionTypes: [
                     {
                         name: "updateEmployee",
                         displayName: "Update Employee",
                         parameters: [
-                            {
-                                name: "query",
-                                displayName: "Query",
-                                type: o.string({}),
-                                defaultValue: o.Expression.objectQuery({
-                                    objectType: "Employee",
-                                    where: o.ObjectQueryPredicate.eq({
-                                        property: ["missing"],
-                                        value: "Ada",
-                                    }),
-                                }),
-                            },
-                            {
-                                name: "assignee",
-                                displayName: "Assignee",
-                                type: o.objectReference({ objectType: "Employee" }),
-                                defaultValue: o.Expression.objectQuery({
-                                    objectType: "Employee",
-                                    where: o.ObjectQueryPredicate.range({
-                                        property: ["name"],
-                                    }),
-                                }),
-                            },
-                            {
-                                name: "missingType",
-                                displayName: "Missing type",
-                                type: o.string({}),
-                                defaultValue: o.Expression.objectQuery({
-                                    objectType: "Missing",
-                                }),
-                            },
                             {
                                 name: "employee",
                                 displayName: "Employee",
@@ -681,57 +625,14 @@ describe("Ontology Validation", () => {
                                     path: ["employee", "name"],
                                 }),
                             },
-                            {
-                                name: "employees",
-                                displayName: "Employees",
-                                type: o.list({
-                                    elementType: o.objectReference({
-                                        objectType: "Employee",
-                                    }),
-                                }),
-                                defaultValue: o.Expression.objectQuery({
-                                    objectType: "Employee",
-                                }),
-                            },
-                            {
-                                name: "managerQuery",
-                                displayName: "Manager query",
-                                type: o.objectReference({ objectType: "Employee" }),
-                                defaultValue: o.Expression.objectQuery({
-                                    objectType: "Employee",
-                                    where: o.ObjectQueryPredicate.eq({
-                                        property: ["manager", "name"],
-                                        value: "Ada",
-                                    }),
-                                }),
-                            },
                         ],
                         logic: [],
                     },
                 ],
             };
 
-            const errors = getErrors(validate(ontology));
-            expect(errors).toContain(
-                'Object-query default is incompatible with "query".'
-            );
-            expect(errors).toContain(
-                'Invalid object-query property path on "Employee".'
-            );
-            expect(errors).toContain(
-                "Object-query range predicates must include a bound."
-            );
-            expect(errors).toContain(
-                'Unknown object-query object type: "Missing".'
-            );
-            expect(errors).toContain(
-                'Object-query default is incompatible with "missingType".'
-            );
-            expect(errors).toContain(
+            expect(getErrors(validate(ontology))).toContain(
                 'Default value for "count" has an incompatible type.'
-            );
-            expect(errors).toContain(
-                'Object-query default is incompatible with "employees".'
             );
         });
 
