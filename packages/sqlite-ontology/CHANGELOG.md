@@ -1,5 +1,12 @@
 # @party-stack/sqlite-ontology
 
+## 0.4.3
+
+### Patch Changes
+
+- Updated dependencies [07fbbce]
+    - @party-stack/ontology@0.13.0
+
 ## 0.4.2
 
 ### Patch Changes
