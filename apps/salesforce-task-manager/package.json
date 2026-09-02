@@ -1,0 +1,30 @@
+{
+    "name": "@party-stack/salesforce-task-manager",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "tsc",
+        "demo": "pnpm turbo run build --filter @party-stack/salesforce-task-manager && node --env-file-if-exists=../../packages/salesforce-client/.env --env-file-if-exists=.env ../../packages/salesforce-client/scripts/demo.mjs",
+        "lint": "eslint",
+        "ontology:generate": "ontology generate",
+        "ontology:pull": "ontology pull",
+        "runtime:smoke": "tsx src/runtime-smoke.ts",
+        "test": "vitest run --pass-with-no-tests"
+    },
+    "dependencies": {
+        "@party-stack/node-runtime": "workspace:^",
+        "@party-stack/ontology": "workspace:*",
+        "@party-stack/salesforce-ontology": "workspace:*",
+        "@tanstack/db": "^0.8.6",
+        "temporal-polyfill": "^0.3.0"
+    },
+    "devDependencies": {
+        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@types/node": "^24.10.1",
+        "eslint": "^9.25.0",
+        "tsx": "^4.20.6",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    }
+}
