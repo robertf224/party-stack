@@ -400,9 +400,12 @@ function useTransitionedEntries(entries: OntologyOutboxEntry[]): OntologyOutboxE
                         setVisibleEntries(entries);
                     });
                 });
-                void transition.finished.finally(() => {
+                const cleanup = () => {
                     delete document.documentElement.dataset.psOutboxTransition;
-                });
+                };
+                void transition.ready.catch(() => undefined);
+                void transition.updateCallbackDone.catch(() => undefined);
+                void transition.finished.then(cleanup, cleanup);
             } catch {
                 delete document.documentElement.dataset.psOutboxTransition;
                 setVisibleEntries(entries);

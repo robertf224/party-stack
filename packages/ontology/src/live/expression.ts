@@ -70,6 +70,14 @@ export async function evaluateExpression(options: {
                     candidate.name ===
                     parameterType.value.objectType
             )!;
+            // Object-reference values are represented by their primary key.
+            // Avoid an on-demand subset load just to read that same key.
+            if (
+                path.length === 1 &&
+                path[0] === referencedType.primaryKey
+            ) {
+                return parameterValue;
+            }
             const referencedObject = await tx.query<
                 OntologyObject | undefined
             >((query, objects) =>
