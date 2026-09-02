@@ -319,6 +319,7 @@ class CoordinationPersistenceShim
     ): Promise<void> {
         const serializableOptions = { ...options };
         delete serializableOptions.subscription;
+        delete serializableOptions.signal;
         return this.service.methods.ensureRemoteSubset({
             collectionId,
             options: serializableOptions,
