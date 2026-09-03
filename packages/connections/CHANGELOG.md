@@ -1,5 +1,12 @@
 # @party-stack/connections
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [52d8adc]
+    - @party-stack/runtime@0.3.2
+
 ## 0.2.1
 
 ### Patch Changes

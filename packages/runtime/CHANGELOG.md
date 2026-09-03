@@ -1,5 +1,11 @@
 # @party-stack/runtime
 
+## 0.3.2
+
+### Patch Changes
+
+- 52d8adc: fix remote workflows
+
 ## 0.3.1
 
 ### Patch Changes
