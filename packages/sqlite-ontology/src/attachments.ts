@@ -1,10 +1,32 @@
-import type { BlobBytesStore } from "@party-stack/runtime";
-import { ensureSQLiteMigrationTable, getSQLiteMigrationVersion } from "./migrations.js";
 import { encodeLegacySQLiteIdentifierPart, SQLiteNamespaceCollisionError } from "./namespace.js";
 import type { SQLiteDatabase } from "./database.js";
 
 const ATTACHMENT_MIGRATION_NAMESPACE = "__party_stack_attachments__";
 const ATTACHMENT_SCHEMA_VERSION = 1;
+
+function ensureInternalMigrationTable(database: SQLiteDatabase): void {
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS party_stack_migrations (
+            namespace TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            applied_at INTEGER NOT NULL,
+            PRIMARY KEY (namespace, version)
+        )
+    `);
+}
+
+function getAttachmentMigrationVersion(database: SQLiteDatabase): number {
+    ensureInternalMigrationTable(database);
+    const row = database
+        .prepare(
+            `SELECT COALESCE(MAX(version), 0) AS version
+             FROM party_stack_migrations
+             WHERE namespace = ?`
+        )
+        .get(ATTACHMENT_MIGRATION_NAMESPACE) as { version?: number } | undefined;
+    return Number(row?.version ?? 0);
+}
 
 export class LegacySQLiteAttachmentMigrationRequiredError extends Error {
     constructor(readonly rowCount: number) {
@@ -26,8 +48,14 @@ export class SQLiteAttachmentNotFoundError extends Error {
     }
 }
 
+export interface SQLiteAttachmentBytesStore {
+    write(id: string, blob: Blob): Promise<void>;
+    read(id: string): Promise<Blob>;
+    delete(id: string): Promise<void>;
+}
+
 export interface SQLiteExternalAttachmentStorage {
-    bytes: BlobBytesStore;
+    bytes: SQLiteAttachmentBytesStore;
     keyPrefix?: string;
 }
 
@@ -224,8 +252,8 @@ export function ensureSQLiteAttachmentSchema(options: {
     database: SQLiteDatabase;
     legacyAttachmentSqlNamespace?: string;
 }): void {
-    ensureSQLiteMigrationTable(options.database);
-    const version = getSQLiteMigrationVersion(options.database, ATTACHMENT_MIGRATION_NAMESPACE);
+    ensureInternalMigrationTable(options.database);
+    const version = getAttachmentMigrationVersion(options.database);
     if (version > ATTACHMENT_SCHEMA_VERSION) {
         throw new Error(
             `SQLite attachment schema version ${version} is newer than supported version ${ATTACHMENT_SCHEMA_VERSION}.`
@@ -557,7 +585,7 @@ export async function readSQLiteAttachmentBlob(options: {
 
 export async function collectSQLiteAttachmentOrphans(options: {
     database: SQLiteDatabase;
-    bytes: BlobBytesStore;
+    bytes: SQLiteAttachmentBytesStore;
     ontology: string;
     olderThan?: number;
 }): Promise<number> {

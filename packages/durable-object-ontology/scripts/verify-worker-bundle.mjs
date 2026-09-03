@@ -23,9 +23,7 @@ const forbiddenInputs = Object.keys(result.metafile.inputs).filter(
     (input) => input.includes("better-sqlite3") || input.startsWith("node:")
 );
 const output = result.outputFiles.map((file) => file.text).join("\n");
-
 if (forbiddenInputs.length > 0 || output.includes("better-sqlite3") || /["']node:[^"']+["']/.test(output)) {
     throw new Error(`Worker bundle contains Node-only inputs: ${forbiddenInputs.join(", ")}`);
 }
-
-console.log("Complete Cloudflare runtime bundle is Worker-safe.");
+console.log("Durable Object ontology bundle is Worker-safe.");

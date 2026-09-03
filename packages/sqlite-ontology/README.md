@@ -2,64 +2,43 @@
 
 Provider-neutral authoritative SQLite backend for Party Stack ontologies.
 
-## Installations and namespaces
+The package owns:
 
-`createSQLiteBackendInstallation` composes the generic
-`createOntologyBackendInstallation` contract with one or more
-`createSQLiteOntologyRoute` definitions. Route-generated SQL namespaces use an
-injective UTF-8 encoding, so IDs such as `a-b` and `a_x2d_b` cannot share
-tables. A manually supplied safe adapter `name` keeps its legacy table
-namespace; the database namespace registry rejects conflicting claims.
+- The minimal synchronous `SQLiteDatabase` contract.
+- Object tables, queries, declarative actions, registered mutators, and query
+  functions.
+- Atomic cross-collection action persistence.
+- Collision-safe SQL namespaces.
+- Inline or injectable authoritative attachment bytes.
+- Internal table scaffolding and attachment-schema compatibility.
 
-## Storage migrations
+It does not own Cloudflare bindings, authentication installations, runtime
+persistence, or application-defined schema migrations.
 
-Routes accept ordered `migrations` and a target `storageVersion`:
+Object-schema signatures remain fail-closed: changing an existing object IR is
+rejected until the caller migrates or recreates that database. A general
+application migration API is intentionally deferred from this package scope.
 
-```ts
-createSQLiteOntologyRoute({
-    ontologyId: "host",
-    ir: hostIR,
-    storageVersion: 2,
-    migrations: [
-        { version: 1, name: "initial", up() {} },
-        {
-            version: 2,
-            name: "normalize-records",
-            up({ database, objectTableName }) {
-                database
-                    .prepare(`UPDATE "${objectTableName("Record")}" SET data = ? WHERE id = ?`)
-                    .run(nextData, id);
-            },
-        },
-    ],
-});
-```
+## Database portability
 
-Applied versions are stored in `party_stack_migrations` by SQL namespace. The
-migration, schema signature update, and ledger row are committed atomically.
-Failures roll back and remain retryable. `PRAGMA user_version` is not used.
-Changing an object schema without a newly applied migration is rejected.
+An existing better-sqlite3 database structurally satisfies `SQLiteDatabase`.
+Other SQLite runtimes can provide the same `exec`, prepared statement, and
+synchronous transaction subset without importing platform types here.
 
 ## Attachments
 
-Inline SQLite BLOBs are the default. To use an external authoritative store,
-pass `attachmentStorage.external.bytes`, which implements the provider-neutral
-`BlobBytesStore` contract. Bytes upload before the SQL transaction. A failed SQL
-commit leaves an entry in `party_stack_attachment_orphans`; call
-`collectSQLiteAttachmentOrphans` to remove unreferenced external bytes.
-Collectors use exclusive claim tokens. After an isolate failure, call
-`recoverSQLiteAttachmentOrphanClaims` during exclusive initialization before
-resuming collection.
+Inline SQLite BLOBs are the default. Supply
+`attachmentStorage.external.bytes` to store authoritative bytes elsewhere while
+retaining metadata and object references in SQLite.
 
-Attachment identity is `(ontology namespace, attachment ID)`, allowing the same
-ID in multiple logical ontologies. Legacy rows without an ontology require an
-explicit `legacyAttachmentSqlNamespace`; initialization never assigns them
-according to route startup order.
+External writes use generation-specific keys and an upload/orphan journal so a
+failed SQL commit never leaves an object reference without its required bytes.
+Use `collectSQLiteAttachmentOrphans` and
+`recoverSQLiteAttachmentOrphanClaims` for cleanup and crash recovery.
 
-## Lenses
+Attachment identity is `(SQL namespace, attachment ID)`, allowing separate
+logical ontologies to reuse an attachment ID safely.
 
-`lensBindings` expose source object tables through PR #106 lens projection.
-Schema and runtime values project to the target model while source rows remain
-unchanged. Target query paths can be mapped with
-`mapTargetPathToSourceWithLens`. Reverse writes are rejected explicitly until a
-write-capable inverse lens contract exists.
+Legacy attachment rows are upgraded only as internal package scaffolding. Rows
+without an ontology require an explicit `legacyAttachmentSqlNamespace`; they
+are never assigned according to startup order.

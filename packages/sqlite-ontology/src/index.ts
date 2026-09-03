@@ -1,9 +1,4 @@
-import {
-    applyLensToObject,
-    applyLensToObjectType,
-    createReadTx,
-    runOptimisticAction,
-} from "@party-stack/ontology";
+import { createReadTx, runOptimisticAction } from "@party-stack/ontology";
 import { decode, encode } from "@party-stack/ontology/json";
 import { resolveType } from "@party-stack/ontology/utils";
 import { createTransaction, eq, queryOnce } from "@tanstack/db";
@@ -17,9 +12,7 @@ import type {
     OntologyMutatorRegistry,
     OntologyObject,
     OntologyQueryFunctionRegistry,
-    Lens,
     ObjectTypeDef,
-    TypeDef,
 } from "@party-stack/ontology";
 import {
     ensureSQLiteAttachmentSchema,
@@ -31,7 +24,6 @@ import {
     recordSQLiteAttachmentOrphans,
     type SQLiteAttachmentStorageOptions,
 } from "./attachments.js";
-import { runSQLiteOntologyMigrationsInTransaction, type SQLiteOntologyMigration } from "./migrations.js";
 import { encodeLegacySQLiteIdentifierPart, resolveSQLiteNamespace } from "./namespace.js";
 import type { SQLiteDatabase } from "./database.js";
 import type { Collection, PendingMutation, SyncConfig } from "@tanstack/db";
@@ -52,28 +44,9 @@ export interface CreateSQLiteOntologyBackendAdapterOptions {
     database: SQLiteDatabase;
     name?: string;
     sqlNamespace?: string;
-    storageVersion?: number;
-    migrations?: readonly SQLiteOntologyMigration[];
     attachmentStorage?: SQLiteAttachmentStorageOptions;
-    lensBindings?: readonly SQLiteObjectTypeLensBinding[];
     mutators?: OntologyMutatorRegistry;
     queryFunctions?: OntologyQueryFunctionRegistry;
-}
-
-export interface SQLiteObjectTypeLensBinding {
-    targetObjectType: string;
-    sourceIR: OntologyIR;
-    sourceObjectType: string;
-    lens: Lens;
-}
-
-export class UnsupportedSQLiteLensWriteError extends Error {
-    constructor(readonly objectType: string) {
-        super(
-            `SQLite lens-bound object type "${objectType}" is read-only because reverse lens writes are unsupported.`
-        );
-        this.name = "UnsupportedSQLiteLensWriteError";
-    }
 }
 
 function getObjectType(opts: { ir: OntologyIR; objectTypeName: string }): ObjectTypeDef {
@@ -109,99 +82,6 @@ function getObjectTypeSchemaSignature(objectType: ObjectTypeDef): string {
     });
 }
 
-function resolveTypeForSignature(ir: OntologyIR, type: TypeDef, resolving = new Set<string>()): unknown {
-    if (type.kind === "ref") {
-        const name = type.value.name;
-        if (resolving.has(name)) {
-            return {
-                kind: "recursive-ref",
-                name,
-            };
-        }
-        const named = ir.types.find((candidate) => candidate.name === name);
-        if (!named) {
-            throw new Error(`Unknown type reference "${name}".`);
-        }
-        const next = new Set(resolving);
-        next.add(name);
-        return {
-            kind: "resolved-ref",
-            name,
-            type: resolveTypeForSignature(ir, named.type, next),
-        };
-    }
-    switch (type.kind) {
-        case "list":
-            return {
-                ...type,
-                value: {
-                    ...type.value,
-                    elementType: resolveTypeForSignature(ir, type.value.elementType, resolving),
-                },
-            };
-        case "map":
-            return {
-                ...type,
-                value: {
-                    ...type.value,
-                    keyType: resolveTypeForSignature(ir, type.value.keyType, resolving),
-                    valueType: resolveTypeForSignature(ir, type.value.valueType, resolving),
-                },
-            };
-        case "struct":
-            return {
-                ...type,
-                value: {
-                    ...type.value,
-                    fields: type.value.fields.map((field) => ({
-                        ...field,
-                        type: resolveTypeForSignature(ir, field.type, resolving),
-                    })),
-                },
-            };
-        case "union":
-            return {
-                ...type,
-                value: {
-                    ...type.value,
-                    variants: type.value.variants.map((variant) => ({
-                        ...variant,
-                        type: resolveTypeForSignature(ir, variant.type, resolving),
-                    })),
-                },
-            };
-        case "optional":
-            return {
-                ...type,
-                value: {
-                    ...type.value,
-                    type: resolveTypeForSignature(ir, type.value.type, resolving),
-                },
-            };
-        case "result":
-            return {
-                ...type,
-                value: {
-                    ...type.value,
-                    okType: resolveTypeForSignature(ir, type.value.okType, resolving),
-                    errType: resolveTypeForSignature(ir, type.value.errType, resolving),
-                },
-            };
-        default:
-            return type;
-    }
-}
-
-function getResolvedObjectTypeSchemaSignature(ir: OntologyIR, objectType: ObjectTypeDef): string {
-    return JSON.stringify({
-        primaryKey: objectType.primaryKey,
-        properties: objectType.properties.map((property) => ({
-            name: property.name,
-            type: resolveTypeForSignature(ir, property.type),
-        })),
-    });
-}
-
 function ensureMetadataTable(database: SQLiteDatabase): void {
     database.exec(`
         CREATE TABLE IF NOT EXISTS ${sqlIdentifier("party_stack_schema")} (
@@ -216,8 +96,6 @@ function ensureObjectTable(opts: {
     adapterName: string;
     sqlNamespace: string;
     objectType: ObjectTypeDef;
-    allowSchemaUpgrade: boolean;
-    skipSchemaSignature?: boolean;
 }): void {
     const { database, adapterName, sqlNamespace, objectType } = opts;
     const tableName = getObjectTableName({
@@ -234,10 +112,6 @@ function ensureObjectTable(opts: {
             data TEXT NOT NULL
         );
     `);
-    if (opts.skipSchemaSignature) {
-        return;
-    }
-
     const columns = database.prepare(`PRAGMA table_info(${sqlIdentifier(tableName)})`).all() as Array<{
         name: string;
         type: string;
@@ -259,7 +133,7 @@ function ensureObjectTable(opts: {
     const existing = database
         .prepare(`SELECT value FROM ${sqlIdentifier("party_stack_schema")} WHERE key = ?`)
         .get(schemaKey) as SchemaRow | undefined;
-    if (existing && existing.value !== signature && !opts.allowSchemaUpgrade) {
+    if (existing && existing.value !== signature) {
         throw new Error(
             `SQLite ontology schema for object type "${objectType.name}" does not match the current ontology.`
         );
@@ -268,14 +142,6 @@ function ensureObjectTable(opts: {
         database
             .prepare(`INSERT INTO ${sqlIdentifier("party_stack_schema")} (key, value) VALUES (?, ?)`)
             .run(schemaKey, signature);
-    } else if (existing.value !== signature) {
-        database
-            .prepare(
-                `UPDATE ${sqlIdentifier("party_stack_schema")}
-                 SET value = ?
-                 WHERE key = ?`
-            )
-            .run(signature, schemaKey);
     }
 }
 
@@ -284,10 +150,7 @@ function ensureSchema(opts: {
     adapterName: string;
     sqlNamespace?: string;
     ir: OntologyIR;
-    storageVersion?: number;
-    migrations?: readonly SQLiteOntologyMigration[];
     legacyAttachmentSqlNamespace?: string;
-    lensBindings?: readonly SQLiteObjectTypeLensBinding[];
 }): string {
     ensureMetadataTable(opts.database);
     const sqlNamespace = resolveSQLiteNamespace({
@@ -299,76 +162,12 @@ function ensureSchema(opts: {
         database: opts.database,
         legacyAttachmentSqlNamespace: opts.legacyAttachmentSqlNamespace,
     });
-    const bindings = new Map((opts.lensBindings ?? []).map((binding) => [binding.targetObjectType, binding]));
-    if (bindings.size !== (opts.lensBindings ?? []).length) {
-        throw new Error("SQLite lens bindings must have unique target object types.");
-    }
-    for (const binding of bindings.values()) {
-        if (!opts.ir.objectTypes.some((objectType) => objectType.name === binding.targetObjectType)) {
-            throw new Error(`SQLite lens binding targets unknown object type "${binding.targetObjectType}".`);
-        }
-    }
-    const storageObjectTypes = opts.ir.objectTypes.map((objectType) => {
-        const binding = bindings.get(objectType.name);
-        const storageObjectType = binding
-            ? getObjectType({
-                  ir: binding.sourceIR,
-                  objectTypeName: binding.sourceObjectType,
-              })
-            : objectType;
-        return {
+    for (const objectType of opts.ir.objectTypes) {
+        ensureObjectTable({
+            database: opts.database,
+            adapterName: opts.adapterName,
+            sqlNamespace,
             objectType,
-            binding,
-            storageObjectType,
-        };
-    });
-    // Historical migrations may access their object tables. Bootstrap the
-    // current physical shape first, without accepting or updating signatures.
-    for (const { storageObjectType } of storageObjectTypes) {
-        ensureObjectTable({
-            database: opts.database,
-            adapterName: opts.adapterName,
-            sqlNamespace,
-            objectType: storageObjectType,
-            allowSchemaUpgrade: false,
-            skipSchemaSignature: true,
-        });
-    }
-    const migration = runSQLiteOntologyMigrationsInTransaction({
-        database: opts.database,
-        adapterName: opts.adapterName,
-        sqlNamespace,
-        ir: opts.ir,
-        migrations: opts.migrations,
-        storageVersion: opts.storageVersion,
-        objectTableName: (objectTypeName) =>
-            getObjectTableName({
-                sqlNamespace,
-                objectTypeName,
-            }),
-    });
-    for (const { objectType, binding, storageObjectType } of storageObjectTypes) {
-        if (binding) {
-            const projected = applyLensToObjectType(storageObjectType, binding.lens, {
-                name: objectType.name,
-                displayName: objectType.displayName,
-                pluralDisplayName: objectType.pluralDisplayName,
-            });
-            if (
-                getResolvedObjectTypeSchemaSignature(binding.sourceIR, projected) !==
-                getResolvedObjectTypeSchemaSignature(opts.ir, objectType)
-            ) {
-                throw new Error(
-                    `SQLite lens binding for "${objectType.name}" does not project to the configured target schema.`
-                );
-            }
-        }
-        ensureObjectTable({
-            database: opts.database,
-            adapterName: opts.adapterName,
-            sqlNamespace,
-            objectType: storageObjectType,
-            allowSchemaUpgrade: migration.appliedVersions.length > 0,
         });
     }
     return sqlNamespace;
@@ -455,12 +254,8 @@ function persistObjectMutations(opts: {
     ir: OntologyIR;
     objectTypeName: string;
     mutations: Array<PendingMutation<OntologyObject>>;
-    lensBinding?: SQLiteObjectTypeLensBinding;
 }): void {
     if (opts.mutations.length === 0) return;
-    if (opts.lensBinding) {
-        throw new UnsupportedSQLiteLensWriteError(opts.objectTypeName);
-    }
 
     const objectType = getObjectType({
         ir: opts.ir,
@@ -508,22 +303,14 @@ function createCollectionOptions(opts: {
     sqlNamespace: string;
     ir: OntologyIR;
     objectTypeName: string;
-    lensBinding?: SQLiteObjectTypeLensBinding;
 }): OntologyCollectionOptions {
     const objectType = getObjectType({
         ir: opts.ir,
         objectTypeName: opts.objectTypeName,
     });
-    const storageIR = opts.lensBinding?.sourceIR ?? opts.ir;
-    const storageObjectType = opts.lensBinding
-        ? getObjectType({
-              ir: storageIR,
-              objectTypeName: opts.lensBinding.sourceObjectType,
-          })
-        : objectType;
     const tableName = getObjectTableName({
         sqlNamespace: opts.sqlNamespace,
-        objectTypeName: storageObjectType.name,
+        objectTypeName: objectType.name,
     });
 
     const sync: SyncConfig<OntologyObject, string | number> = {
@@ -531,7 +318,7 @@ function createCollectionOptions(opts: {
             const load = () => {
                 const rows = opts.database
                     .prepare(
-                        `SELECT ${sqlIdentifier(storageObjectType.primaryKey)} AS id, data FROM ${sqlIdentifier(tableName)}`
+                        `SELECT ${sqlIdentifier(objectType.primaryKey)} AS id, data FROM ${sqlIdentifier(tableName)}`
                     )
                     .all() as ObjectRow[];
                 const persistedKeys = new Set<string | number>();
@@ -541,24 +328,15 @@ function createCollectionOptions(opts: {
                 for (const row of rows) {
                     const parsedObject = JSON.parse(row.data) as OntologyObject;
                     const hydratedObject = decode({
-                        ir: storageIR,
-                        target: {
-                            kind: "object",
-                            name: storageObjectType.name,
-                        },
+                        ir: opts.ir,
+                        target: { kind: "object", name: opts.objectTypeName },
                         value: parsedObject,
                     }) as OntologyObject;
-                    const projectedObject = opts.lensBinding
-                        ? applyLensToObject<OntologyObject, OntologyObject>(
-                              hydratedObject,
-                              opts.lensBinding.lens
-                          )
-                        : hydratedObject;
-                    const key = projectedObject[objectType.primaryKey] as string | number;
+                    const key = hydratedObject[objectType.primaryKey] as string | number;
                     persistedKeys.add(key);
                     write({
                         type: currentKeys.has(key) ? "update" : "insert",
-                        value: projectedObject,
+                        value: hydratedObject,
                     });
                 }
 
@@ -640,9 +418,6 @@ export function createSQLiteOntologyBackendAdapter(
     opts: CreateSQLiteOntologyBackendAdapterOptions
 ): OntologyBackendAdapter {
     const adapterName = opts.name ?? "sqlite";
-    const lensBindings = new Map(
-        (opts.lensBindings ?? []).map((binding) => [binding.targetObjectType, binding])
-    );
     let sqlNamespace = "";
     opts.database.transaction(() => {
         sqlNamespace = ensureSchema({
@@ -650,9 +425,6 @@ export function createSQLiteOntologyBackendAdapter(
             adapterName,
             sqlNamespace: opts.sqlNamespace,
             ir: opts.ir,
-            storageVersion: opts.storageVersion,
-            migrations: opts.migrations,
-            lensBindings: opts.lensBindings,
             legacyAttachmentSqlNamespace: opts.attachmentStorage?.legacyAttachmentSqlNamespace,
         });
     })();
@@ -665,7 +437,6 @@ export function createSQLiteOntologyBackendAdapter(
                 sqlNamespace,
                 ir: opts.ir,
                 objectTypeName,
-                lensBinding: lensBindings.get(objectTypeName),
             }),
         applyAction: async (actionTypeName, parameters, live) => {
             const actionType = opts.ir.actionTypes.find((candidate) => candidate.name === actionTypeName);
@@ -730,7 +501,6 @@ export function createSQLiteOntologyBackendAdapter(
                                 sqlNamespace,
                                 ir: opts.ir,
                                 objectTypeName,
-                                lensBinding: lensBindings.get(objectTypeName),
                                 mutations: collectCollectionMutations({
                                     transaction,
                                     collection,
@@ -779,10 +549,7 @@ export type CreateSQLiteOntologyBackendOptions<
 > = {
     name?: string;
     sqlNamespace?: string;
-    storageVersion?: number;
-    migrations?: readonly SQLiteOntologyMigration[];
     attachmentStorage?: SQLiteAttachmentStorageOptions;
-    lensBindings?: readonly SQLiteObjectTypeLensBinding[];
     mutators?: OntologyMutatorRegistry;
     queryFunctions?: OntologyQueryFunctionRegistry;
 } & (
@@ -803,22 +570,12 @@ export function createSQLiteOntologyBackend<
             database: "database" in opts ? opts.database : await opts.createDatabase(ir, context),
             name: opts.name,
             sqlNamespace: opts.sqlNamespace,
-            storageVersion: opts.storageVersion,
-            migrations: opts.migrations,
             attachmentStorage: opts.attachmentStorage,
-            lensBindings: opts.lensBindings,
             mutators: opts.mutators,
             queryFunctions: opts.queryFunctions,
         });
 }
 
-export {
-    createSQLiteBackendInstallation,
-    createSQLiteOntologyRoute,
-    type CreateSQLiteBackendInstallationOptions,
-    type CreateSQLiteOntologyRouteOptions,
-    type SQLiteOntologyRoute,
-} from "./installation.js";
 export type { SQLiteDatabase, SQLiteDatabaseProvider, SQLiteStatement } from "./database.js";
 export {
     collectSQLiteAttachmentOrphans,
@@ -826,16 +583,10 @@ export {
     LegacySQLiteAttachmentMigrationRequiredError,
     recoverSQLiteAttachmentOrphanClaims,
     SQLiteAttachmentNotFoundError,
+    type SQLiteAttachmentBytesStore,
     type SQLiteAttachmentStorageOptions,
     type SQLiteExternalAttachmentStorage,
 } from "./attachments.js";
-export {
-    getSQLiteMigrationVersion,
-    runSQLiteOntologyMigrations,
-    type SQLiteMigrationResult,
-    type SQLiteOntologyMigration,
-    type SQLiteOntologyMigrationContext,
-} from "./migrations.js";
 export {
     encodeLegacySQLiteIdentifierPart,
     encodeSQLiteNamespace,

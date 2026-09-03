@@ -1,12 +1,9 @@
 ---
-"@party-stack/cloudflare-sqlite-ontology": minor
-"@party-stack/cloudflare-runtime": minor
+"@party-stack/durable-object-ontology": minor
 "@party-stack/ontology": patch
 "@party-stack/sqlite-ontology": minor
 ---
 
-Add production-capable owned SQLite installations for Cloudflare Durable
-Objects, including collision-safe namespaces, explicit storage migrations,
-injectable R2 attachment bytes, persistent runtime state, Better Auth
-integration, TanStack's Durable Object persistence adapter, and shared
+Add a portable authoritative SQLite ontology backend with injectable attachment
+bytes, plus a Durable Object wrapper that binds SQLite and R2 with shared
 better-sqlite3/workerd conformance coverage.

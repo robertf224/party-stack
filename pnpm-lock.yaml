@@ -687,98 +687,6 @@ importers:
         specifier: ^3.1.1
         version: 3.2.4(@types/debug@4.1.12)(@types/node@26.1.2)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.49.0)(tsx@4.20.6)(yaml@2.9.0)
 
-  packages/cloudflare-runtime:
-    dependencies:
-      '@party-stack/cloudflare-sqlite-ontology':
-        specifier: workspace:*
-        version: link:../cloudflare-sqlite-ontology
-      '@party-stack/connections':
-        specifier: workspace:*
-        version: link:../connections
-      '@party-stack/coordination':
-        specifier: workspace:*
-        version: link:../coordination
-      '@party-stack/ontology':
-        specifier: workspace:*
-        version: link:../ontology
-      '@party-stack/runtime':
-        specifier: workspace:*
-        version: link:../runtime
-      '@party-stack/sqlite-ontology':
-        specifier: workspace:*
-        version: link:../sqlite-ontology
-      '@tanstack/cloudflare-durable-objects-db-sqlite-persistence':
-        specifier: ^0.2.19
-        version: 0.2.19(typescript@5.8.3)
-      temporal-polyfill:
-        specifier: ^0.3.0
-        version: 0.3.0
-    devDependencies:
-      '@bobbyfidz/universal-build-config':
-        specifier: ^0.1.1
-        version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
-      '@cloudflare/vitest-plugin':
-        specifier: ^1.1.1
-        version: 1.1.1(@cloudflare/workers-types@5.20260827.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@26.1.2)(jsdom@27.2.0)(vite@7.2.4(@types/node@26.1.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.49.0)(tsx@4.20.6)(yaml@2.9.0)))
-      '@cloudflare/workers-types':
-        specifier: ^5.20260827.1
-        version: 5.20260827.1
-      '@party-stack/better-auth':
-        specifier: workspace:*
-        version: link:../better-auth
-      '@tanstack/db':
-        specifier: ^0.8.6
-        version: 0.8.6(typescript@5.8.3)
-      '@tanstack/db-sqlite-persistence-core':
-        specifier: ^0.2.19
-        version: 0.2.19(typescript@5.8.3)
-      esbuild:
-        specifier: ^0.28.1
-        version: 0.28.1
-      eslint:
-        specifier: ^9.25.0
-        version: 9.28.0(jiti@2.7.0)
-      typescript:
-        specifier: ~5.8.3
-        version: 5.8.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.1.2)(jsdom@27.2.0)(vite@7.2.4(@types/node@26.1.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.49.0)(tsx@4.20.6)(yaml@2.9.0))
-      wrangler:
-        specifier: ^4.127.0
-        version: 4.127.0(@cloudflare/workers-types@5.20260827.1)
-
-  packages/cloudflare-sqlite-ontology:
-    dependencies:
-      '@party-stack/sqlite-ontology':
-        specifier: workspace:*
-        version: link:../sqlite-ontology
-    devDependencies:
-      '@bobbyfidz/universal-build-config':
-        specifier: ^0.1.1
-        version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
-      '@cloudflare/vitest-plugin':
-        specifier: ^1.1.1
-        version: 1.1.1(@cloudflare/workers-types@5.20260827.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@26.1.2)(jsdom@27.2.0)(vite@7.2.4(@types/node@26.1.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.49.0)(tsx@4.20.6)(yaml@2.9.0)))
-      '@cloudflare/workers-types':
-        specifier: ^5.20260827.1
-        version: 5.20260827.1
-      '@tanstack/db':
-        specifier: ^0.8.6
-        version: 0.8.6(typescript@5.8.3)
-      esbuild:
-        specifier: ^0.28.1
-        version: 0.28.1
-      eslint:
-        specifier: ^9.25.0
-        version: 9.28.0(jiti@2.7.0)
-      typescript:
-        specifier: ~5.8.3
-        version: 5.8.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.1.2)(jsdom@27.2.0)(vite@7.2.4(@types/node@26.1.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.49.0)(tsx@4.20.6)(yaml@2.9.0))
-
   packages/connections:
     dependencies:
       '@party-stack/errors':
@@ -862,6 +770,43 @@ importers:
       vitest:
         specifier: ^3.1.1
         version: 3.2.4(@types/debug@4.1.12)(@types/node@26.1.2)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.49.0)(tsx@4.20.6)(yaml@2.9.0)
+
+  packages/durable-object-ontology:
+    dependencies:
+      '@party-stack/ontology':
+        specifier: workspace:*
+        version: link:../ontology
+      '@party-stack/sqlite-ontology':
+        specifier: workspace:*
+        version: link:../sqlite-ontology
+    devDependencies:
+      '@bobbyfidz/universal-build-config':
+        specifier: ^0.1.1
+        version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
+      '@cloudflare/vitest-plugin':
+        specifier: ^1.1.1
+        version: 1.1.1(@cloudflare/workers-types@5.20260827.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@26.1.2)(jsdom@27.2.0)(vite@7.2.4(@types/node@26.1.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.49.0)(tsx@4.20.6)(yaml@2.9.0)))
+      '@cloudflare/workers-types':
+        specifier: ^5.20260827.1
+        version: 5.20260827.1
+      '@tanstack/db':
+        specifier: ^0.8.6
+        version: 0.8.6(typescript@5.8.3)
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.1
+      eslint:
+        specifier: ^9.25.0
+        version: 9.28.0(jiti@2.7.0)
+      typescript:
+        specifier: ~5.8.3
+        version: 5.8.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@26.1.2)(jsdom@27.2.0)(vite@7.2.4(@types/node@26.1.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.49.0)(tsx@4.20.6)(yaml@2.9.0))
+      wrangler:
+        specifier: ^4.127.0
+        version: 4.127.0(@cloudflare/workers-types@5.20260827.1)
 
   packages/errors:
     devDependencies:
@@ -1379,15 +1324,9 @@ importers:
 
   packages/sqlite-ontology:
     dependencies:
-      '@party-stack/connections':
-        specifier: workspace:*
-        version: link:../connections
       '@party-stack/ontology':
         specifier: workspace:*
         version: link:../ontology
-      '@party-stack/runtime':
-        specifier: workspace:*
-        version: link:../runtime
       temporal-polyfill:
         specifier: ^0.3.0
         version: 0.3.0
@@ -3961,11 +3900,6 @@ packages:
     resolution: {integrity: sha512-4+9w8ZHOiGnpcGI6z1TVVfWaX/koK7fKeSYF3qlYg2xpBtbteP2ddBxiarL+HVgfSJGeK5RIxRQmKm4rTJJAwA==}
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7
-
-  '@tanstack/cloudflare-durable-objects-db-sqlite-persistence@0.2.19':
-    resolution: {integrity: sha512-G7U4ExoIJNfoAErjypIIEHSuCfv+BWrOaV5kFK35rF78ns1tDfKYfuFlJ5s9HFrOALcKzr4JkKmQ1YxhsNJEhw==}
-    peerDependencies:
-      typescript: '>=4.7'
 
   '@tanstack/db-ivm@0.1.19':
     resolution: {integrity: sha512-3VGvgNXAPSVqny/pL8Y6n/txnaZzV49WmgSQ9N5eyCQNgMtuOEOJHKDatqqCy3gDxVu6pkhSHDKxcNFOtxMouw==}
@@ -12013,11 +11947,6 @@ snapshots:
       '@tailwindcss/oxide': 4.1.17
       tailwindcss: 4.1.17
       vite: 7.2.4(@types/node@26.1.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.49.0)(tsx@4.20.6)(yaml@2.9.0)
-
-  '@tanstack/cloudflare-durable-objects-db-sqlite-persistence@0.2.19(typescript@5.8.3)':
-    dependencies:
-      '@tanstack/db-sqlite-persistence-core': 0.2.19(typescript@5.8.3)
-      typescript: 5.8.3
 
   '@tanstack/db-ivm@0.1.19(typescript@5.8.3)':
     dependencies:

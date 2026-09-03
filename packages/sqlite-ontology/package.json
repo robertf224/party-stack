@@ -21,9 +21,7 @@
         "test": "vitest run src --pass-with-no-tests"
     },
     "dependencies": {
-        "@party-stack/connections": "workspace:*",
         "@party-stack/ontology": "workspace:*",
-        "@party-stack/runtime": "workspace:*",
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {

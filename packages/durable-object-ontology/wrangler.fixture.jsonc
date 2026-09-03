@@ -1,26 +1,26 @@
 {
     "$schema": "node_modules/wrangler/config-schema.json",
-    "name": "party-stack-cloudflare-runtime-fixture",
+    "name": "party-stack-durable-object-ontology-fixture",
     "main": "fixtures/worker.ts",
     "compatibility_date": "2026-08-27",
     "durable_objects": {
         "bindings": [
             {
                 "name": "CELLS",
-                "class_name": "OntologyFixtureDurableObject",
+                "class_name": "OntologyFixture",
             },
         ],
     },
     "r2_buckets": [
         {
             "binding": "BLOBS",
-            "bucket_name": "party-stack-runtime-fixture",
+            "bucket_name": "party-stack-ontology-fixture",
         },
     ],
     "migrations": [
         {
             "tag": "v1",
-            "new_sqlite_classes": ["OntologyFixtureDurableObject"],
+            "new_sqlite_classes": ["OntologyFixture"],
         },
     ],
 }

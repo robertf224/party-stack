@@ -4,7 +4,7 @@ const config = {
     versionGroups: [
         {
             label: "Cloudflare Vitest integration requires Vitest 4",
-            packages: ["@party-stack/cloudflare-runtime", "@party-stack/cloudflare-sqlite-ontology"],
+            packages: ["@party-stack/durable-object-ontology"],
             dependencies: ["vitest"],
             isIgnored: true,
         },
