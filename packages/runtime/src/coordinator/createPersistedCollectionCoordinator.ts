@@ -317,8 +317,12 @@ class CoordinationPersistenceShim
         collectionId: string,
         options: LoadSubsetOptions
     ): Promise<void> {
+        // TODO(upstream): Move this normalization into
+        // @tanstack/db-sqlite-persistence-core so every cross-context
+        // coordinator receives transport-safe subset options.
         const serializableOptions = { ...options };
         delete serializableOptions.subscription;
+        delete serializableOptions.signal;
         return this.service.methods.ensureRemoteSubset({
             collectionId,
             options: serializableOptions,

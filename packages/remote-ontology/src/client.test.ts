@@ -128,15 +128,9 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
 
         expect(first.attachmentIdMappings).toEqual([{ localId: "local", remoteId: "remote" }]);
         expect(first.invalidatedObjectTypes).toEqual(["Note"]);
-        await expect(first.refresh!.completed).resolves.toEqual([
-            {
-                status: "aborted",
-                objectType: "Note",
-                error: { name: "AbortError", message: "The operation was aborted." },
-            },
-        ]);
+        expect(() => structuredClone(first)).not.toThrow();
 
-        const second = (await adapter.applyAction(
+        await adapter.applyAction(
             "createNote",
             { title: "two" },
             {
@@ -146,15 +140,52 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
                     } as never,
                 },
             }
-        )) as OntologyApplyActionClientResult;
+        );
 
-        await expect(second.refresh!.completed).resolves.toEqual([
-            {
-                status: "error",
-                objectType: "Note",
-                error: { name: "Error", message: "network failed" },
-            },
-        ]);
         expect(refetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not confirm an action before its collection refresh finishes", async () => {
+        let finishRefresh!: () => void;
+        const refreshFinished = new Promise<void>((resolve) => {
+            finishRefresh = resolve;
+        });
+        const refetch = vi.fn(async () => {
+            await refreshFinished;
+            return [];
+        });
+        const adapter = createRemoteOntologyBackendAdapter({
+            ir,
+            transport: {
+                describe: async () => ({ ir }),
+                loadSubset: async (request) => ({
+                    objectType: request.objectType,
+                    objects: [],
+                }),
+                applyAction: async () => ({ invalidatedObjectTypes: ["Note"] }),
+                runQueryFunction: async () => ({ value: undefined }),
+                getAttachmentMetadata: async () => ({}),
+                getAttachmentContent: async () => new Blob(),
+            },
+        });
+
+        let confirmed = false;
+        const confirmation = adapter
+            .applyAction("createNote", { title: "one" }, {
+                objects: {
+                    Note: {
+                        utils: { refetch },
+                    } as never,
+                },
+            })
+            .then(() => {
+                confirmed = true;
+            });
+
+        await vi.waitFor(() => expect(refetch).toHaveBeenCalledOnce());
+        expect(confirmed).toBe(false);
+        finishRefresh();
+        await confirmation;
+        expect(confirmed).toBe(true);
     });
 });
