@@ -1,5 +1,12 @@
 # @party-stack/web-runtime
 
+## 0.3.2
+
+### Patch Changes
+
+- Updated dependencies [52d8adc]
+    - @party-stack/runtime@0.3.2
+
 ## 0.3.1
 
 ### Patch Changes
