@@ -1,5 +1,12 @@
 # @party-stack/remote-ontology
 
+## 0.5.5
+
+### Patch Changes
+
+- Updated dependencies [8791727]
+    - @party-stack/ontology@0.13.2
+
 ## 0.5.4
 
 ### Patch Changes
