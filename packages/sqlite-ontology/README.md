@@ -1,6 +1,8 @@
 # @party-stack/sqlite-ontology
 
 Provider-neutral authoritative SQLite backend for Party Stack ontologies.
+Each SQLite database is owned by exactly one ontology; use a separate database
+for another ontology.
 
 The package owns:
 
@@ -8,7 +10,6 @@ The package owns:
 - Object tables, queries, declarative actions, registered mutators, and query
   functions.
 - Atomic cross-collection action persistence.
-- Collision-safe SQL namespaces.
 - Inline or injectable authoritative attachment bytes.
 - Internal table scaffolding and attachment-schema compatibility.
 
@@ -36,9 +37,6 @@ failed SQL commit never leaves an object reference without its required bytes.
 Use `collectSQLiteAttachmentOrphans` and
 `recoverSQLiteAttachmentOrphanClaims` for cleanup and crash recovery.
 
-Attachment identity is `(SQL namespace, attachment ID)`, allowing separate
-logical ontologies to reuse an attachment ID safely.
-
-Legacy attachment rows are upgraded only as internal package scaffolding. Rows
-without an ontology require an explicit `legacyAttachmentSqlNamespace`; they
-are never assigned according to startup order.
+Each SQLite database stores one ontology's attachment table, keyed by
+attachment ID. Legacy attachment rows are upgraded automatically as internal
+package scaffolding.

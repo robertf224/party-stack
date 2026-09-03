@@ -9,10 +9,6 @@ import { eq, queryOnce, type Collection } from "@tanstack/db";
 import {
     collectSQLiteAttachmentOrphans,
     createSQLiteOntologyBackendAdapter,
-    encodeLegacySQLiteIdentifierPart,
-    encodeSQLiteNamespace,
-    LegacySQLiteAttachmentMigrationRequiredError,
-    SQLiteNamespaceCollisionError,
     type SQLiteAttachmentBytesStore,
     type SQLiteAttachmentStorageOptions,
     type SQLiteDatabase,
@@ -240,12 +236,12 @@ function runSchemaCreation(database: SQLiteDatabase): void {
     createSQLiteOntologyBackendAdapter({
         ir: conformanceIR,
         database,
-        name: "schema",
+        name: "sqlite",
     });
     createSQLiteOntologyBackendAdapter({
         ir: conformanceIR,
         database,
-        name: "schema",
+        name: "sqlite",
     });
     assert(
         database
@@ -253,8 +249,31 @@ function runSchemaCreation(database: SQLiteDatabase): void {
                 `SELECT name FROM sqlite_master
                  WHERE type = 'table' AND name = ?`
             )
-            .get("party_stack_schema_Note"),
+            .get("party_stack_sqlite_Note"),
         "SQLite object table was not created."
+    );
+    assert(
+        !database
+            .prepare(
+                `SELECT name FROM sqlite_master
+                 WHERE type = 'table' AND name = ?`
+            )
+            .get("party_stack_namespaces"),
+        "SQLite backend unexpectedly created a logical namespace registry."
+    );
+    let secondOntologyRejected = false;
+    try {
+        createSQLiteOntologyBackendAdapter({
+            ir: conformanceIR,
+            database,
+            name: "other-ontology",
+        });
+    } catch {
+        secondOntologyRejected = true;
+    }
+    assert(
+        secondOntologyRejected,
+        "SQLite database accepted a second ontology."
     );
 }
 
@@ -265,7 +284,7 @@ async function runActionsAndContext(database: SQLiteDatabase): Promise<void> {
             createSQLiteOntologyBackendAdapter({
                 ir: conformanceIR,
                 database,
-                name: "actions",
+                name: "sqlite",
             }),
         context: { user: "alice" },
     });
@@ -296,7 +315,7 @@ async function runHandlers(database: SQLiteDatabase): Promise<void> {
             createSQLiteOntologyBackendAdapter({
                 ir: conformanceIR,
                 database,
-                name: "handlers",
+                name: "sqlite",
                 mutators,
                 queryFunctions,
             }),
@@ -333,7 +352,7 @@ async function runInlineAttachments(database: SQLiteDatabase): Promise<void> {
             createSQLiteOntologyBackendAdapter({
                 ir: conformanceIR,
                 database,
-                name: "inline-attachments",
+                name: "sqlite",
             }),
     });
     try {
@@ -375,141 +394,6 @@ function runTransactionRollback(database: SQLiteDatabase): void {
     );
 }
 
-async function runNamespaces(database: SQLiteDatabase): Promise<void> {
-    const firstId = "a-b";
-    const secondId = "a_x2d_b";
-    const first = await createLiveOntology({
-        ir: conformanceIR,
-        backend: () =>
-            createSQLiteOntologyBackendAdapter({
-                ir: conformanceIR,
-                database,
-                name: firstId,
-                sqlNamespace: encodeSQLiteNamespace(firstId),
-            }),
-        context: { user: "alice" },
-    });
-    const second = await createLiveOntology({
-        ir: conformanceIR,
-        backend: () =>
-            createSQLiteOntologyBackendAdapter({
-                ir: conformanceIR,
-                database,
-                name: secondId,
-                sqlNamespace: encodeSQLiteNamespace(secondId),
-            }),
-        context: { user: "bob" },
-    });
-    try {
-        await first.actions.createNote!({ id: "same", title: "first" });
-        await second.actions.createNote!({ id: "same", title: "second" });
-        assertEqual(
-            (await readObject(first.objects.Note!, "same"))?.title,
-            "first",
-            "Colliding logical IDs shared a table."
-        );
-        assertEqual(
-            (await readObject(second.objects.Note!, "same"))?.title,
-            "second",
-            "Colliding logical IDs shared a table."
-        );
-    } finally {
-        await first.cleanup();
-        await second.cleanup();
-    }
-
-    createSQLiteOntologyBackendAdapter({
-        ir: conformanceIR,
-        database,
-        name: "legacy-a-b",
-    });
-    let collisionDetected = false;
-    try {
-        createSQLiteOntologyBackendAdapter({
-            ir: conformanceIR,
-            database,
-            name: "legacy-a_x2d_b",
-        });
-    } catch (error) {
-        collisionDetected = error instanceof SQLiteNamespaceCollisionError;
-    }
-    assert(collisionDetected, "Unsafe legacy namespace collision was not rejected.");
-
-    const legacyName = "legacy-route";
-    createSQLiteOntologyBackendAdapter({
-        ir: conformanceIR,
-        database,
-        name: legacyName,
-    });
-    database.prepare(`DELETE FROM party_stack_namespaces WHERE adapter_name = ?`).run(legacyName);
-    const automatic = encodeSQLiteNamespace(legacyName);
-    createSQLiteOntologyBackendAdapter({
-        ir: conformanceIR,
-        database,
-        name: legacyName,
-        sqlNamespace: automatic,
-    });
-    createSQLiteOntologyBackendAdapter({
-        ir: conformanceIR,
-        database,
-        name: legacyName,
-        sqlNamespace: automatic,
-    });
-}
-
-async function runCompositeAttachmentIdentity(database: SQLiteDatabase): Promise<void> {
-    resetAttachmentMigration(database);
-    const alpha = encodeLegacySQLiteIdentifierPart("alpha-attachments");
-    const beta = encodeLegacySQLiteIdentifierPart("beta-attachments");
-    database.exec(`
-        CREATE TABLE party_stack_attachments (
-            id TEXT PRIMARY KEY,
-            ontology TEXT NOT NULL,
-            bytes BLOB NOT NULL,
-            type TEXT NOT NULL,
-            name TEXT,
-            size INTEGER NOT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
-        )
-    `);
-    database
-        .prepare(
-            `INSERT INTO party_stack_attachments (
-                ontology, id, bytes, type, name, size, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?)`
-        )
-        .run("alpha-attachments", "shared", new TextEncoder().encode("alpha"), "text/plain", 5, 1, 1);
-    const alphaAdapter = createSQLiteOntologyBackendAdapter({
-        ir: conformanceIR,
-        database,
-        name: "alpha-attachments",
-    });
-    const betaAdapter = createSQLiteOntologyBackendAdapter({
-        ir: conformanceIR,
-        database,
-        name: "beta-attachments",
-    });
-    database
-        .prepare(
-            `INSERT INTO party_stack_attachments (
-                ontology, id, bytes, storage_key, type, name, size, created_at, updated_at
-             ) VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?)`
-        )
-        .run(beta, "shared", new TextEncoder().encode("beta"), "text/plain", 4, 1, 1);
-    assertEqual(
-        await (await alphaAdapter.attachments!.getAttachmentContent({ id: "shared" })).text(),
-        "alpha",
-        "First duplicate attachment ID was lost."
-    );
-    assertEqual(
-        await (await betaAdapter.attachments!.getAttachmentContent({ id: "shared" })).text(),
-        "beta",
-        "Second duplicate attachment ID was lost."
-    );
-    assert(alpha !== beta, "Legacy attachment namespaces unexpectedly collided.");
-}
-
 async function runLegacyAttachmentMigration(database: SQLiteDatabase): Promise<void> {
     resetAttachmentMigration(database);
     database.exec(`
@@ -530,25 +414,25 @@ async function runLegacyAttachmentMigration(database: SQLiteDatabase): Promise<v
              ) VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
         .run("legacy", new TextEncoder().encode("legacy"), "text/plain", "legacy.txt", 6, 1, 1);
-    let mappingRequired = false;
-    try {
-        createSQLiteOntologyBackendAdapter({
-            ir: conformanceIR,
-            database,
-            name: "wrong-first",
-        });
-    } catch (error) {
-        mappingRequired = error instanceof LegacySQLiteAttachmentMigrationRequiredError;
-    }
-    assert(mappingRequired, "Legacy migration did not require explicit ownership.");
     const adapter = createSQLiteOntologyBackendAdapter({
         ir: conformanceIR,
         database,
-        name: "legacy",
-        attachmentStorage: {
-            legacyAttachmentSqlNamespace: "legacy",
-        },
+        name: "sqlite",
     });
+    const columns = database
+        .prepare(
+            `PRAGMA table_info("party_stack_attachments")`
+        )
+        .all() as Array<{ name: string; pk: number }>;
+    assert(
+        columns.find((column) => column.name === "id")
+            ?.pk === 1 &&
+            !columns.some(
+                (column) =>
+                    column.name === "ontology"
+            ),
+        "Attachment migration did not produce a single-ontology table."
+    );
     assertEqual(
         await (await adapter.attachments!.getAttachmentContent({ id: "legacy" })).text(),
         "legacy",
@@ -621,7 +505,7 @@ async function runExternalAttachments(database: SQLiteDatabase): Promise<void> {
             createSQLiteOntologyBackendAdapter({
                 ir: conformanceIR,
                 database,
-                name: "external",
+                name: "sqlite",
                 attachmentStorage: storage,
             }),
     });
@@ -647,15 +531,13 @@ async function runExternalAttachments(database: SQLiteDatabase): Promise<void> {
     }
 
     const delayedBytes = new DelayedAttachmentBytesStore();
-    const delayedNamespace = "delayed_upload";
     const delayed = await createLiveOntology({
         ir: conformanceIR,
         backend: () =>
             createSQLiteOntologyBackendAdapter({
                 ir: conformanceIR,
                 database,
-                name: "delayed",
-                sqlNamespace: delayedNamespace,
+                name: "sqlite",
                 attachmentStorage: {
                     external: { bytes: delayedBytes },
                 },
@@ -679,7 +561,6 @@ async function runExternalAttachments(database: SQLiteDatabase): Promise<void> {
             await collectSQLiteAttachmentOrphans({
                 database,
                 bytes: delayedBytes,
-                ontology: delayedNamespace,
             }),
             0,
             "Collector claimed an active upload."
@@ -716,18 +597,8 @@ export const sqliteOntologyConformanceCases = [
         run: runTransactionRollback,
     },
     {
-        id: "namespaces",
-        name: "isolates collision-safe SQL namespaces",
-        run: runNamespaces,
-    },
-    {
-        id: "attachment-identity",
-        name: "supports duplicate attachment IDs across ontologies",
-        run: runCompositeAttachmentIdentity,
-    },
-    {
         id: "legacy-attachments",
-        name: "migrates legacy attachment scaffolding explicitly",
+        name: "migrates legacy attachment scaffolding",
         run: runLegacyAttachmentMigration,
     },
     {

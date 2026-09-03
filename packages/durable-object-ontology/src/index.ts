@@ -1,6 +1,5 @@
 import {
     createSQLiteOntologyBackendAdapter,
-    encodeSQLiteNamespace,
     type SQLiteAttachmentStorageOptions,
     type SQLiteDatabase,
     type SQLiteStatement,
@@ -240,7 +239,6 @@ interface DurableObjectOntologyBackendCommonOptions {
     installationId: string;
     ontologyId: string;
     name?: string;
-    sqlNamespace?: string;
     mutators?: OntologyMutatorRegistry;
     queryFunctions?: OntologyQueryFunctionRegistry;
 }
@@ -299,8 +297,7 @@ export function createDurableObjectOntologyBackendAdapter(
     const adapter = createSQLiteOntologyBackendAdapter({
         ir: options.ir,
         database: createDurableObjectSQLiteDatabase(options.storage),
-        name: options.name ?? options.ontologyId,
-        sqlNamespace: options.sqlNamespace ?? encodeSQLiteNamespace(options.ontologyId),
+        name: options.name,
         attachmentStorage: attachmentStorage.storage,
         mutators: options.mutators,
         queryFunctions: options.queryFunctions,

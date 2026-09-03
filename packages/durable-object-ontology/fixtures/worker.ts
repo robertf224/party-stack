@@ -17,14 +17,9 @@ export class OntologyFixture extends DurableObject<FixtureEnvironment> {
     async fetch(request: Request): Promise<Response> {
         const url = new URL(request.url);
         const segments = url.pathname.split("/").filter(Boolean);
-        const ontologyId = segments[1];
-        if (segments[0] !== "ontologies" || (ontologyId !== "primary" && ontologyId !== "secondary")) {
-            return json(
-                {
-                    error: "Use /ontologies/{primary|secondary}/notes.",
-                },
-                404
-            );
+        const ontologyId = request.headers.get("x-party-stack-fixture-ontology");
+        if (ontologyId !== "primary" && ontologyId !== "secondary") {
+            return json({ error: "Missing ontology routing context." }, 400);
         }
         const ontology = await createLiveOntology({
             ir: sqliteOntologyConformanceIR,
@@ -41,7 +36,7 @@ export class OntologyFixture extends DurableObject<FixtureEnvironment> {
                 }),
         });
         try {
-            if (segments[2] === "notes" && request.method === "POST") {
+            if (segments[0] === "notes" && request.method === "POST") {
                 const body = (await request.json()) as {
                     id?: unknown;
                     title?: unknown;
@@ -59,7 +54,7 @@ export class OntologyFixture extends DurableObject<FixtureEnvironment> {
                     title: body.title,
                 });
             }
-            if (segments[2] === "notes" && (request.method === "GET" || request.method === "POST")) {
+            if (segments[0] === "notes" && (request.method === "GET" || request.method === "POST")) {
                 await queryOnce((query) =>
                     query
                         .from({
@@ -87,17 +82,27 @@ const worker: ExportedHandler<FixtureEnvironment> = {
     fetch(request, environment) {
         const url = new URL(request.url);
         const segments = url.pathname.split("/").filter(Boolean);
-        if (segments[0] !== "cells" || !segments[1]) {
+        const ontologyId = segments[3];
+        if (
+            segments[0] !== "cells" ||
+            !segments[1] ||
+            segments[2] !== "ontologies" ||
+            (ontologyId !== "primary" && ontologyId !== "secondary")
+        ) {
             return Promise.resolve(
                 json({
                     usage: "/cells/{cell}/ontologies/{primary|secondary}/notes",
                 })
             );
         }
-        const stub = environment.CELLS.get(environment.CELLS.idFromName(segments[1]));
+        const stub = environment.CELLS.get(
+            environment.CELLS.idFromName(JSON.stringify([segments[1], ontologyId]))
+        );
         const forwarded = new URL(request.url);
-        forwarded.pathname = `/${segments.slice(2).join("/")}`;
-        return stub.fetch(new Request(forwarded, request));
+        forwarded.pathname = `/${segments.slice(4).join("/")}`;
+        const forwardedRequest = new Request(forwarded, request);
+        forwardedRequest.headers.set("x-party-stack-fixture-ontology", ontologyId);
+        return stub.fetch(forwardedRequest);
     },
 };
 

@@ -29,15 +29,29 @@ describe("Durable Object ontology", () => {
                 .exec(
                     `SELECT name FROM sqlite_master
                          WHERE type = 'table' AND name = ?`,
-                    "party_stack_blocked_Note"
+                    "party_stack_sqlite_Note"
                 )
                 .toArray()
         );
         expect(rows).toEqual([
             {
-                name: "party_stack_blocked_Note",
+                name: "party_stack_sqlite_Note",
             },
         ]);
+    });
+
+    it("isolates ontologies by Durable Object", async () => {
+        const first = createStub();
+        const second = createStub();
+        await expect(
+            first.createAndListNote("same", "first")
+        ).resolves.toEqual(["first"]);
+        await expect(
+            second.createAndListNote("same", "second")
+        ).resolves.toEqual(["second"]);
+        await expect(
+            first.createAndListNote()
+        ).resolves.toEqual(["first"]);
     });
 
     it("defaults authoritative attachment bytes to R2", async () => {

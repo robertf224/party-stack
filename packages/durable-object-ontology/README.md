@@ -32,8 +32,9 @@ const ontology = await createLiveOntology({
 });
 ```
 
-The factory derives a collision-safe SQL namespace and injects an
-ontology-scoped `R2AttachmentBytesStore`.
+Each Durable Object SQLite database must host exactly one ontology. The factory
+injects an installation-and-ontology-scoped `R2AttachmentBytesStore`; SQL
+tables do not add a second logical-ontology namespace.
 
 For small/local installations that intentionally keep attachment bytes inside
 SQLite:
@@ -62,4 +63,5 @@ pnpm --filter @party-stack/durable-object-ontology dev:fixture
 ```
 
 The fixture runs locally through Wrangler/workerd and does not deploy anything
-to Cloudflare.
+to Cloudflare. Its `primary` and `secondary` routes resolve to separate Durable
+Objects, matching the one-ontology-per-Durable-Object deployment model.

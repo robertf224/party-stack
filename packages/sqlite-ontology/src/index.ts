@@ -21,10 +21,9 @@ import {
     prepareSQLiteAttachments,
     persistSQLiteAttachmentRows,
     readSQLiteAttachmentBlob,
-    recordSQLiteAttachmentOrphans,
+    recordSQLiteAttachmentUploads,
     type SQLiteAttachmentStorageOptions,
 } from "./attachments.js";
-import { encodeLegacySQLiteIdentifierPart, resolveSQLiteNamespace } from "./namespace.js";
 import type { SQLiteDatabase } from "./database.js";
 import type { Collection, PendingMutation, SyncConfig } from "@tanstack/db";
 
@@ -39,11 +38,13 @@ interface SchemaRow {
     value: string;
 }
 
+const DATABASE_ONTOLOGY_KEY =
+    "__party_stack_ontology__";
+
 export interface CreateSQLiteOntologyBackendAdapterOptions {
     ir: OntologyIR;
     database: SQLiteDatabase;
     name?: string;
-    sqlNamespace?: string;
     attachmentStorage?: SQLiteAttachmentStorageOptions;
     mutators?: OntologyMutatorRegistry;
     queryFunctions?: OntologyQueryFunctionRegistry;
@@ -57,6 +58,17 @@ function getObjectType(opts: { ir: OntologyIR; objectTypeName: string }): Object
     return objectType;
 }
 
+function encodeIdentifierPart(value: string): string {
+    const encoded = value.replace(
+        /[^A-Za-z0-9_]/g,
+        (character) =>
+            `_x${character.codePointAt(0)!.toString(16)}_`
+    );
+    return /^[A-Za-z_]/.test(encoded)
+        ? encoded
+        : `_${encoded}`;
+}
+
 function sqlIdentifier(name: string): string {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
         throw new Error(`Invalid SQLite identifier "${name}".`);
@@ -64,8 +76,11 @@ function sqlIdentifier(name: string): string {
     return `"${name}"`;
 }
 
-function getObjectTableName(opts: { sqlNamespace: string; objectTypeName: string }): string {
-    return `party_stack_${opts.sqlNamespace}_${encodeLegacySQLiteIdentifierPart(opts.objectTypeName)}`;
+function getObjectTableName(opts: {
+    adapterName: string;
+    objectTypeName: string;
+}): string {
+    return `party_stack_${encodeIdentifierPart(opts.adapterName)}_${encodeIdentifierPart(opts.objectTypeName)}`;
 }
 
 function getObjectTypeSchemaSignature(objectType: ObjectTypeDef): string {
@@ -91,15 +106,41 @@ function ensureMetadataTable(database: SQLiteDatabase): void {
     `);
 }
 
+function ensureDatabaseOntology(
+    database: SQLiteDatabase,
+    adapterName: string
+): void {
+    const existing = database
+        .prepare(
+            `SELECT value FROM ${sqlIdentifier("party_stack_schema")}
+             WHERE key = ?`
+        )
+        .get(DATABASE_ONTOLOGY_KEY) as
+        | SchemaRow
+        | undefined;
+    if (existing && existing.value !== adapterName) {
+        throw new Error(
+            `SQLite database already belongs to ontology "${existing.value}"; create a separate database for "${adapterName}".`
+        );
+    }
+    if (!existing) {
+        database
+            .prepare(
+                `INSERT INTO ${sqlIdentifier("party_stack_schema")}
+                 (key, value) VALUES (?, ?)`
+            )
+            .run(DATABASE_ONTOLOGY_KEY, adapterName);
+    }
+}
+
 function ensureObjectTable(opts: {
     database: SQLiteDatabase;
     adapterName: string;
-    sqlNamespace: string;
     objectType: ObjectTypeDef;
 }): void {
-    const { database, adapterName, sqlNamespace, objectType } = opts;
+    const { database, adapterName, objectType } = opts;
     const tableName = getObjectTableName({
-        sqlNamespace,
+        adapterName,
         objectTypeName: objectType.name,
     });
     if (objectType.primaryKey === "data") {
@@ -148,29 +189,21 @@ function ensureObjectTable(opts: {
 function ensureSchema(opts: {
     database: SQLiteDatabase;
     adapterName: string;
-    sqlNamespace?: string;
     ir: OntologyIR;
-    legacyAttachmentSqlNamespace?: string;
-}): string {
+}): void {
     ensureMetadataTable(opts.database);
-    const sqlNamespace = resolveSQLiteNamespace({
-        database: opts.database,
-        adapterName: opts.adapterName,
-        sqlNamespace: opts.sqlNamespace,
-    });
-    ensureSQLiteAttachmentSchema({
-        database: opts.database,
-        legacyAttachmentSqlNamespace: opts.legacyAttachmentSqlNamespace,
-    });
+    ensureDatabaseOntology(
+        opts.database,
+        opts.adapterName
+    );
+    ensureSQLiteAttachmentSchema(opts.database);
     for (const objectType of opts.ir.objectTypes) {
         ensureObjectTable({
             database: opts.database,
             adapterName: opts.adapterName,
-            sqlNamespace,
             objectType,
         });
     }
-    return sqlNamespace;
 }
 
 async function loadActionReferenceObjects(opts: {
@@ -250,7 +283,7 @@ function getPrimaryKeyValue(opts: {
 
 function persistObjectMutations(opts: {
     database: SQLiteDatabase;
-    sqlNamespace: string;
+    adapterName: string;
     ir: OntologyIR;
     objectTypeName: string;
     mutations: Array<PendingMutation<OntologyObject>>;
@@ -262,7 +295,7 @@ function persistObjectMutations(opts: {
         objectTypeName: opts.objectTypeName,
     });
     const tableName = getObjectTableName({
-        sqlNamespace: opts.sqlNamespace,
+        adapterName: opts.adapterName,
         objectTypeName: opts.objectTypeName,
     });
     const primaryKeyColumn = sqlIdentifier(objectType.primaryKey);
@@ -300,7 +333,7 @@ function persistObjectMutations(opts: {
 
 function createCollectionOptions(opts: {
     database: SQLiteDatabase;
-    sqlNamespace: string;
+    adapterName: string;
     ir: OntologyIR;
     objectTypeName: string;
 }): OntologyCollectionOptions {
@@ -309,7 +342,7 @@ function createCollectionOptions(opts: {
         objectTypeName: opts.objectTypeName,
     });
     const tableName = getObjectTableName({
-        sqlNamespace: opts.sqlNamespace,
+        adapterName: opts.adapterName,
         objectTypeName: objectType.name,
     });
 
@@ -381,10 +414,9 @@ function toAttachmentBlobPart(bytes: unknown): ArrayBuffer {
 
 function createAttachmentsAdapter(
     database: SQLiteDatabase,
-    sqlNamespace: string,
     storage?: SQLiteAttachmentStorageOptions
 ): OntologyAttachmentsAdapter {
-    const getAttachmentRow = (id: string) => getSQLiteAttachment(database, sqlNamespace, id);
+    const getAttachmentRow = (id: string) => getSQLiteAttachment(database, id);
 
     return {
         generateAttachmentId: () => crypto.randomUUID(),
@@ -418,14 +450,11 @@ export function createSQLiteOntologyBackendAdapter(
     opts: CreateSQLiteOntologyBackendAdapterOptions
 ): OntologyBackendAdapter {
     const adapterName = opts.name ?? "sqlite";
-    let sqlNamespace = "";
     opts.database.transaction(() => {
-        sqlNamespace = ensureSchema({
+        ensureSchema({
             database: opts.database,
             adapterName,
-            sqlNamespace: opts.sqlNamespace,
             ir: opts.ir,
-            legacyAttachmentSqlNamespace: opts.attachmentStorage?.legacyAttachmentSqlNamespace,
         });
     })();
 
@@ -434,7 +463,7 @@ export function createSQLiteOntologyBackendAdapter(
         getCollectionOptions: (objectTypeName) =>
             createCollectionOptions({
                 database: opts.database,
-                sqlNamespace,
+                adapterName,
                 ir: opts.ir,
                 objectTypeName,
             }),
@@ -460,7 +489,6 @@ export function createSQLiteOntologyBackendAdapter(
                 autoCommit: false,
                 mutationFn: async ({ transaction }) => {
                     const prepared = await prepareSQLiteAttachments({
-                        ontology: sqlNamespace,
                         uploads: live.attachmentUploads,
                         storage: opts.attachmentStorage,
                     });
@@ -470,11 +498,10 @@ export function createSQLiteOntologyBackendAdapter(
                         // any later failure therefore leaves a discoverable,
                         // safely collectable key.
                         opts.database.transaction(() =>
-                            recordSQLiteAttachmentOrphans({
-                                database: opts.database,
-                                ontology: sqlNamespace,
-                                rows: externalRows,
-                            })
+                            recordSQLiteAttachmentUploads(
+                                opts.database,
+                                externalRows
+                            )
                         )();
                         const bytes = opts.attachmentStorage?.external?.bytes;
                         if (!bytes) {
@@ -488,17 +515,17 @@ export function createSQLiteOntologyBackendAdapter(
                         // collector cannot interleave once this becomes
                         // collectable.
                         opts.database.transaction(() =>
-                            markSQLiteAttachmentUploadsComplete({
-                                database: opts.database,
-                                rows: externalRows,
-                            })
+                            markSQLiteAttachmentUploadsComplete(
+                                opts.database,
+                                externalRows
+                            )
                         )();
                     }
                     opts.database.transaction(() => {
                         for (const [objectTypeName, collection] of Object.entries(collections)) {
                             persistObjectMutations({
                                 database: opts.database,
-                                sqlNamespace,
+                                adapterName,
                                 ir: opts.ir,
                                 objectTypeName,
                                 mutations: collectCollectionMutations({
@@ -507,11 +534,10 @@ export function createSQLiteOntologyBackendAdapter(
                                 }),
                             });
                         }
-                        persistSQLiteAttachmentRows({
-                            database: opts.database,
-                            ontology: sqlNamespace,
-                            rows: prepared,
-                        });
+                        persistSQLiteAttachmentRows(
+                            opts.database,
+                            prepared
+                        );
                     })();
                 },
             });
@@ -540,7 +566,7 @@ export function createSQLiteOntologyBackendAdapter(
                 context: live.context ?? {},
             });
         },
-        attachments: createAttachmentsAdapter(opts.database, sqlNamespace, opts.attachmentStorage),
+        attachments: createAttachmentsAdapter(opts.database, opts.attachmentStorage),
     };
 }
 
@@ -548,7 +574,6 @@ export type CreateSQLiteOntologyBackendOptions<
     Context extends Record<string, unknown> = Record<string, unknown>,
 > = {
     name?: string;
-    sqlNamespace?: string;
     attachmentStorage?: SQLiteAttachmentStorageOptions;
     mutators?: OntologyMutatorRegistry;
     queryFunctions?: OntologyQueryFunctionRegistry;
@@ -569,7 +594,6 @@ export function createSQLiteOntologyBackend<
             ir,
             database: "database" in opts ? opts.database : await opts.createDatabase(ir, context),
             name: opts.name,
-            sqlNamespace: opts.sqlNamespace,
             attachmentStorage: opts.attachmentStorage,
             mutators: opts.mutators,
             queryFunctions: opts.queryFunctions,
@@ -580,15 +604,8 @@ export type { SQLiteDatabase, SQLiteDatabaseProvider, SQLiteStatement } from "./
 export {
     collectSQLiteAttachmentOrphans,
     createSQLiteAttachmentStorageKey,
-    LegacySQLiteAttachmentMigrationRequiredError,
     recoverSQLiteAttachmentOrphanClaims,
-    SQLiteAttachmentNotFoundError,
     type SQLiteAttachmentBytesStore,
     type SQLiteAttachmentStorageOptions,
     type SQLiteExternalAttachmentStorage,
 } from "./attachments.js";
-export {
-    encodeLegacySQLiteIdentifierPart,
-    encodeSQLiteNamespace,
-    SQLiteNamespaceCollisionError,
-} from "./namespace.js";

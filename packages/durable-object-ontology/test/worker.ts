@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { createLiveOntology } from "@party-stack/ontology";
 import { createSQLiteOntologyBackendAdapter } from "@party-stack/sqlite-ontology";
+import { queryOnce } from "@tanstack/db";
 import {
     runSQLiteOntologyConformanceCase,
     sqliteOntologyConformanceIR,
@@ -10,6 +11,7 @@ import {
     createDurableObjectOntologyBackendAdapter,
     createDurableObjectSQLiteDatabase,
     destroyDurableObjectOntologyStorage,
+    R2AttachmentBytesStore,
     type DurableObjectSQLiteDatabase,
 } from "../src/index.js";
 
@@ -28,7 +30,7 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
             createSQLiteOntologyBackendAdapter({
                 ir: sqliteOntologyConformanceIR,
                 database: this.database,
-                name: "blocked",
+                name: "sqlite",
             });
         });
     }
@@ -36,6 +38,44 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
     async runConformance(id: SQLiteOntologyConformanceCaseId): Promise<void> {
         await this.initialized;
         await runSQLiteOntologyConformanceCase(id, this.database);
+    }
+
+    async createAndListNote(
+        id?: string,
+        title?: string
+    ): Promise<string[]> {
+        const ontology = await createLiveOntology({
+            ir: sqliteOntologyConformanceIR,
+            backend: () =>
+                createDurableObjectOntologyBackendAdapter({
+                    ir: sqliteOntologyConformanceIR,
+                    storage: this.ctx.storage,
+                    installationId:
+                        this.ctx.id.toString(),
+                    ontologyId: "ontology",
+                    attachmentStorage: "sqlite",
+                }),
+        });
+        try {
+            if (id && title) {
+                await ontology.actions.createNote!({
+                    id,
+                    title,
+                });
+            }
+            await queryOnce((query) =>
+                query
+                    .from({
+                        note: ontology.objects.Note!,
+                    })
+                    .select(({ note }) => note)
+            );
+            return [...ontology.objects.Note!.values()].map(
+                (note) => String(note.title)
+            );
+        } finally {
+            await ontology.cleanup();
+        }
     }
 
     async runR2Backend(): Promise<{
@@ -50,8 +90,9 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
                     ir: sqliteOntologyConformanceIR,
                     storage: this.ctx.storage,
                     bucket: this.env.BLOBS,
-                    installationId: "r2-test",
-                    ontologyId: "primary",
+                    installationId:
+                        this.ctx.id.toString(),
+                    ontologyId: "ontology",
                 }),
         });
         try {
@@ -101,8 +142,9 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
                 createDurableObjectOntologyBackendAdapter({
                     ir: sqliteOntologyConformanceIR,
                     storage: this.ctx.storage,
-                    installationId: "inline-test",
-                    ontologyId: "inline",
+                    installationId:
+                        this.ctx.id.toString(),
+                    ontologyId: "ontology",
                     attachmentStorage: "sqlite",
                 }),
         });
@@ -147,16 +189,24 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
     }> {
         await this.runR2Backend();
         let quiesced = false;
+        const installationId = this.ctx.id.toString();
         await destroyDurableObjectOntologyStorage({
             storage: this.ctx.storage,
             bucket: this.env.BLOBS,
-            installationId: "r2-test",
+            installationId,
             quiesce: () => {
                 quiesced = true;
                 return Promise.resolve();
             },
         });
-        const listed = await this.env.BLOBS.list();
+        const scopedStore = new R2AttachmentBytesStore({
+            bucket: this.env.BLOBS,
+            installationId,
+            ontologyId: "ontology",
+        });
+        const listed = await this.env.BLOBS.list({
+            prefix: await scopedStore.prefix,
+        });
         return {
             quiesced,
             r2Empty: listed.objects.length === 0,
@@ -167,7 +217,7 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
         await destroyDurableObjectOntologyStorage({
             storage: this.ctx.storage,
             bucket: this.env.BLOBS,
-            installationId: "r2-test",
+            installationId: this.ctx.id.toString(),
             quiesce: () => Promise.resolve(),
         });
     }
