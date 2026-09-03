@@ -4,6 +4,7 @@ node_modules
 # Local env files
 .env
 .env*.local
+.dev.vars
 
 # Testing
 coverage
@@ -14,6 +15,9 @@ coverage
 
 # Vercel
 .vercel
+
+# Cloudflare
+.wrangler
 
 # Next.js
 .next

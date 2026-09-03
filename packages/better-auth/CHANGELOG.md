@@ -1,5 +1,11 @@
 # @party-stack/better-auth
 
+## 0.2.2
+
+### Patch Changes
+
+- @party-stack/connections@0.2.2
+
 ## 0.2.1
 
 ### Patch Changes

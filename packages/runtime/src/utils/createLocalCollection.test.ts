@@ -213,7 +213,7 @@ describe("createLocalCollection", () => {
         await coordination.close();
     });
 
-    it("removes non-cloneable subscription state from remote subset requests", async () => {
+    it("removes non-cloneable subscription and signal state from remote subset requests", async () => {
         const adapter = memoryAdapter();
         const coordination =
             new SingleProcessCoordination({
@@ -241,6 +241,7 @@ describe("createLocalCollection", () => {
             secondCoordinator.requestEnsureRemoteSubset?.(
                 "items",
                 {
+                    signal: new AbortController().signal,
                     subscription: {
                         callback: () => undefined,
                     } as never,

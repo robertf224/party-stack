@@ -1,5 +1,16 @@
 # @party-stack/ontology
 
+## 0.13.1
+
+### Patch Changes
+
+- 52d8adc: fix remote workflows
+- Updated dependencies [52d8adc]
+    - @party-stack/runtime@0.3.2
+    - @party-stack/blobs@0.5.2
+    - @party-stack/connections@0.2.2
+    - @party-stack/node-runtime@0.2.2
+
 ## 0.13.0
 
 ### Minor Changes

@@ -15,26 +15,8 @@ import type {
 } from "@party-stack/ontology";
 import { serializeLoadSubsetOptions, type RemoteOntologyTransport } from "./protocol.js";
 
-export interface OntologyActionRefreshResult {
-    status: "ok" | "error" | "aborted";
-    objectType: string;
-    error?: {
-        name: string;
-        message: string;
-    };
-}
-
-export interface OntologyActionRefreshDiagnostics {
-    /**
-     * Best-effort cache refresh after a confirmed remote write.
-     * Never rejects; failures are reported in the resolved results.
-     */
-    completed: Promise<OntologyActionRefreshResult[]>;
-}
-
 export interface OntologyApplyActionClientResult extends OntologyApplyActionResult {
     invalidatedObjectTypes?: string[];
-    refresh?: OntologyActionRefreshDiagnostics;
 }
 
 export interface CreateRemoteOntologyBackendAdapterOptions {
@@ -73,50 +55,23 @@ function getObjectTypePrimaryKey(ir: OntologyIR, objectType: string): string {
     return objectTypeDef.primaryKey;
 }
 
-function toRefreshError(error: unknown): OntologyActionRefreshResult["error"] {
-    if (error instanceof Error) {
-        return { name: error.name, message: error.message };
-    }
-    return { name: "Error", message: String(error) };
-}
-
-function isAbortError(error: unknown): boolean {
-    return (
-        (error instanceof Error && error.name === "AbortError") ||
-        (typeof DOMException !== "undefined" &&
-            error instanceof DOMException &&
-            error.name === "AbortError")
-    );
-}
-
 async function refreshInvalidatedCollections(opts: {
     objectTypes: string[];
     objects: Record<string, Collection<Record<string, unknown>>>;
-}): Promise<OntologyActionRefreshResult[]> {
-    return Promise.all(
-        opts.objectTypes.map(async (objectType): Promise<OntologyActionRefreshResult> => {
+}): Promise<void> {
+    await Promise.all(
+        opts.objectTypes.map(async (objectType) => {
             const collection = opts.objects[objectType] as
                 | Collection<Record<string, unknown>, string | number, QueryCollectionUtils<Record<string, unknown>>>
                 | undefined;
             if (!collection?.utils?.refetch) {
-                return { status: "ok", objectType };
+                return;
             }
             try {
                 await collection.utils.refetch({ throwOnError: true });
-                return { status: "ok", objectType };
-            } catch (error) {
-                if (isAbortError(error)) {
-                    return {
-                        status: "aborted",
-                        objectType,
-                        error: toRefreshError(error),
-                    };
-                }
-                return {
-                    status: "error",
-                    objectType,
-                    error: toRefreshError(error),
-                };
+            } catch {
+                // The remote action is already confirmed. Refresh remains
+                // best-effort and must not turn it into a failed write.
             }
         })
     );
@@ -168,21 +123,16 @@ export function createRemoteOntologyBackendAdapter(
                     ? response.invalidatedObjectTypes
                     : opts.ir.objectTypes.map((objectType) => objectType.name);
 
-            // Confirmed writes remain successful even when cache refresh fails
-            // or is aborted by navigation. Refresh is best-effort and observable.
-            const refreshCompleted = refreshInvalidatedCollections({
+            // A confirmed remote write remains successful even when its
+            // best-effort local cache refresh fails or is aborted.
+            await refreshInvalidatedCollections({
                 objectTypes: invalidatedObjectTypes,
                 objects: live.objects,
             });
-            // Prevent unhandled rejections if callers never await diagnostics.
-            void refreshCompleted.catch(() => undefined);
 
             const result: OntologyApplyActionClientResult = {
                 attachmentIdMappings: response.attachmentIdMappings,
                 invalidatedObjectTypes,
-                refresh: {
-                    completed: refreshCompleted,
-                },
             };
             return result;
         },

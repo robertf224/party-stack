@@ -1,5 +1,13 @@
 # @party-stack/ontology-devtools
 
+## 0.4.4
+
+### Patch Changes
+
+- 52d8adc: fix remote workflows
+- Updated dependencies [52d8adc]
+    - @party-stack/ontology@0.13.1
+
 ## 0.4.3
 
 ### Patch Changes

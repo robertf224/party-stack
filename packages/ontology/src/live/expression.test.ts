@@ -90,4 +90,27 @@ describe("evaluateExpression", () => {
 
         await users.cleanup();
     });
+
+    it("returns an object-reference primary key without querying its collection", async () => {
+        const query = () => {
+            throw new Error("The object collection should not be queried.");
+        };
+
+        await expect(
+            evaluateExpression({
+                ir,
+                actionTypeName: "assign",
+                expression: {
+                    kind: "valueReference",
+                    value: {
+                        path: ["user", "id"],
+                    },
+                } as Expression,
+                resolveParameter: () =>
+                    Promise.resolve("user-1"),
+                context: {},
+                tx: { query } as never,
+            })
+        ).resolves.toBe("user-1");
+    });
 });

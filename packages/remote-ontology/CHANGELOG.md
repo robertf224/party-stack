@@ -1,5 +1,14 @@
 # @party-stack/remote-ontology
 
+## 0.5.4
+
+### Patch Changes
+
+- 52d8adc: fix remote workflows
+- Updated dependencies [52d8adc]
+    - @party-stack/ontology@0.13.1
+    - @party-stack/runtime@0.3.2
+
 ## 0.5.3
 
 ### Patch Changes
