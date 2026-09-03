@@ -6,6 +6,10 @@
         ".": {
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
+        },
+        "./testing": {
+            "types": "./lib/testing/index.d.ts",
+            "default": "./lib/testing/index.js"
         }
     },
     "files": [
@@ -32,5 +36,10 @@
     "peerDependencies": {
         "@tanstack/db": "^0.8.6",
         "better-sqlite3": "^12.4.6"
+    },
+    "peerDependenciesMeta": {
+        "better-sqlite3": {
+            "optional": true
+        }
     }
 }
