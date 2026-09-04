@@ -1,6 +1,8 @@
 import { resolveActionParameters } from "../expression.js";
 import { createReadTx } from "../mutators/createMutatorTx.js";
 import type { OntologyIR } from "../../ir/index.js";
+import type { Uncertain } from "../../utils/uncertain.js";
+import type { Result } from "../../utils/values.js";
 import type {
     LiveOntologyWriteMode,
     LiveOntologyWriteVisibility,
@@ -21,10 +23,16 @@ export type LiveOntologyAction<
         string,
         unknown
     >,
-> = (
-    parameters: Parameters,
-    options?: LiveOntologyActionOptions
-) => Promise<OntologyApplyActionResult | void>;
+> = {
+    (
+        parameters: Parameters,
+        options?: LiveOntologyActionOptions
+    ): Promise<OntologyApplyActionResult | void>;
+    validate(parameters: Parameters): Promise<Uncertain<Result<void, string[]>>>;
+    validateDraft(
+        parameters: Partial<Parameters>
+    ): Promise<Uncertain<Result<void, string[]>>>;
+};
 
 export function createLiveOntologyAction(options: {
     ir: OntologyIR;
@@ -38,19 +46,30 @@ export function createLiveOntologyAction(options: {
         request: OntologyActionRequest,
         options?: LiveOntologyActionOptions
     ): Promise<OntologyApplyActionResult | void>;
+    validate(
+        actionTypeName: string,
+        parameters: Record<string, unknown>
+    ): Promise<Uncertain<Result<void, string[]>>>;
+    validateDraft(
+        actionTypeName: string,
+        parameters: Record<string, unknown>
+    ): Promise<Uncertain<Result<void, string[]>>>;
 }): LiveOntologyAction {
-    return async (
-        providedParameters,
-        executionOptions
-    ) => {
-        const context = options.context ?? {};
-        const parameters = await resolveActionParameters({
+    const resolveParameters = (
+        providedParameters: Record<string, unknown>
+    ) =>
+        resolveActionParameters({
             ir: options.ir,
             actionTypeName: options.action.name,
             initialParameters: providedParameters,
-            context,
+            context: options.context ?? {},
             tx: createReadTx(options.objects),
         });
+    const apply: LiveOntologyAction = async (
+        providedParameters,
+        executionOptions
+    ) => {
+        const parameters = await resolveParameters(providedParameters);
         const idempotencyKey =
             executionOptions?.idempotencyKey ??
             crypto.randomUUID();
@@ -63,4 +82,15 @@ export function createLiveOntologyAction(options: {
             executionOptions
         );
     };
+    apply.validate = async (providedParameters) =>
+        options.validate(
+            options.action.name,
+            await resolveParameters(providedParameters)
+        );
+    apply.validateDraft = async (providedParameters) =>
+        options.validateDraft(
+            options.action.name,
+            await resolveParameters(providedParameters)
+        );
+    return apply;
 }

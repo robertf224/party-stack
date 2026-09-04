@@ -5,17 +5,23 @@ import type {
     OntologyAttachmentUpload,
     OntologyIR,
     PartialAttachmentMetadata,
+    Uncertain,
 } from "@party-stack/ontology";
+import type { Result } from "@party-stack/ontology/values";
 import type { attachment } from "@party-stack/ontology/values";
 
 export interface RemoteOntologyDescription {
     ir: OntologyIR;
     context?: Record<string, unknown>;
+    capabilities?: {
+        actionValidation?: boolean;
+    };
 }
 
 export type RemoteOntologyEndpoint =
     | "describe"
     | "load-subset"
+    | "validate-action"
     | "apply-action"
     | "run-query-function"
     | "attachment-metadata"
@@ -44,6 +50,11 @@ export interface RemoteApplyActionRequest {
 export interface RemoteApplyActionResponse {
     invalidatedObjectTypes?: string[];
     attachmentIdMappings?: OntologyAttachmentIdMapping[];
+}
+
+export interface RemoteValidateActionRequest {
+    actionType: string;
+    parameters: Record<string, unknown>;
 }
 
 export interface RemoteRunQueryFunctionRequest {
@@ -78,6 +89,10 @@ export interface RemoteOntologyTransport {
         request: RemoteApplyActionRequest,
         options?: RemoteOntologyTransportOptions
     ) => Promise<RemoteApplyActionResponse>;
+    validateAction: (
+        request: RemoteValidateActionRequest,
+        options?: RemoteOntologyTransportOptions
+    ) => Promise<Uncertain<Result<null, string[]>>>;
     runQueryFunction: (
         request: RemoteRunQueryFunctionRequest,
         options?: RemoteOntologyTransportOptions
@@ -95,6 +110,7 @@ export interface RemoteOntologyTransport {
 export type RemoteOntologyRequestByEndpoint = {
     describe: RemoteDescribeRequest;
     "load-subset": RemoteLoadSubsetRequest;
+    "validate-action": RemoteValidateActionRequest;
     "apply-action": RemoteApplyActionRequest;
     "run-query-function": RemoteRunQueryFunctionRequest;
     "attachment-metadata": RemoteAttachmentMetadataRequest;
@@ -104,6 +120,7 @@ export type RemoteOntologyRequestByEndpoint = {
 export type RemoteOntologyResponseByEndpoint = {
     describe: RemoteOntologyDescription;
     "load-subset": RemoteLoadSubsetResponse;
+    "validate-action": Uncertain<Result<null, string[]>>;
     "apply-action": RemoteApplyActionResponse;
     "run-query-function": RemoteRunQueryFunctionResponse;
     "attachment-metadata": PartialAttachmentMetadata;
@@ -113,6 +130,7 @@ export type RemoteOntologyResponseByEndpoint = {
 export type RemoteOntologyRequestEnvelope =
     | { endpoint: "describe"; input: RemoteDescribeRequest }
     | { endpoint: "load-subset"; input: RemoteLoadSubsetRequest }
+    | { endpoint: "validate-action"; input: RemoteValidateActionRequest }
     | { endpoint: "apply-action"; input: RemoteApplyActionRequest }
     | { endpoint: "run-query-function"; input: RemoteRunQueryFunctionRequest }
     | { endpoint: "attachment-metadata"; input: RemoteAttachmentMetadataRequest }
@@ -131,6 +149,7 @@ export function parseRemoteOntologyJson(text: string): unknown {
 export const remoteOntologyEndpointSchema = z.enum([
     "describe",
     "load-subset",
+    "validate-action",
     "apply-action",
     "run-query-function",
     "attachment-metadata",
@@ -155,6 +174,13 @@ export const remoteApplyActionRequestSchema = z
         idempotencyKey: z.string().min(1).optional(),
     })
     .strict() satisfies z.ZodType<RemoteApplyActionRequest>;
+
+export const remoteValidateActionRequestSchema = z
+    .object({
+        actionType: z.string().min(1),
+        parameters: recordSchema,
+    })
+    .strict() satisfies z.ZodType<RemoteValidateActionRequest>;
 
 export const remoteRunQueryFunctionRequestSchema = z
     .object({
@@ -205,6 +231,10 @@ const remoteOntologyRpc = {
         endpoint: "apply-action",
         schema: remoteApplyActionRequestSchema,
     },
+    validateAction: {
+        endpoint: "validate-action",
+        schema: remoteValidateActionRequestSchema,
+    },
     runQueryFunction: {
         endpoint: "run-query-function",
         schema: remoteRunQueryFunctionRequestSchema,
@@ -228,6 +258,8 @@ export function parseRemoteOntologyRequest(
             return { endpoint, input: remoteOntologyRpc.describe.schema.parse(input) };
         case "load-subset":
             return { endpoint, input: remoteOntologyRpc.loadSubset.schema.parse(input) };
+        case "validate-action":
+            return { endpoint, input: remoteOntologyRpc.validateAction.schema.parse(input) };
         case "apply-action":
             return { endpoint, input: remoteOntologyRpc.applyAction.schema.parse(input) };
         case "run-query-function":

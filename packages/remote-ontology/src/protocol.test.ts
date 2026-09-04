@@ -36,10 +36,18 @@ describe("createHttpRemoteOntologyTransport", () => {
             queryFunctionTypes: [],
         };
         let applyActionBody: unknown;
+        let validateActionBody: unknown;
         const fetchImpl: typeof fetch = async (input, init) => {
             const endpoint = String(input).split("/").pop();
             if (endpoint === "describe") {
-                return new Response(JSON.stringify({ ir }));
+                return new Response(
+                    JSON.stringify({
+                        ir,
+                        capabilities: {
+                            actionValidation: true,
+                        },
+                    })
+                );
             }
             if (endpoint === "load-subset") {
                 return new Response(
@@ -52,6 +60,18 @@ describe("createHttpRemoteOntologyTransport", () => {
             if (endpoint === "apply-action") {
                 applyActionBody = JSON.parse(String(init?.body));
                 return new Response(JSON.stringify({}));
+            }
+            if (endpoint === "validate-action") {
+                validateActionBody = JSON.parse(String(init?.body));
+                return new Response(
+                    JSON.stringify({
+                        certain: true,
+                        value: {
+                            kind: "ok",
+                            value: null,
+                        },
+                    })
+                );
             }
             return new Response("Not found", { status: 404 });
         };
@@ -69,6 +89,21 @@ describe("createHttpRemoteOntologyTransport", () => {
                 dueDate: Temporal.PlainDate.from("2026-05-30"),
             },
         });
+        await expect(
+            transport.validateAction!({
+                actionType: "createTask",
+                parameters: {
+                    id: "task-3",
+                    dueDate: Temporal.PlainDate.from("2026-05-31"),
+                },
+            })
+        ).resolves.toEqual({
+            certain: true,
+            value: {
+                kind: "ok",
+                value: null,
+            },
+        });
 
         expect(response.objects[0]!.dueDate).toBeInstanceOf(Temporal.PlainDate);
         expect((response.objects[0]!.dueDate as Temporal.PlainDate).equals("2026-05-29")).toBe(true);
@@ -79,6 +114,35 @@ describe("createHttpRemoteOntologyTransport", () => {
                 dueDate: "2026-05-30",
             },
         });
+        expect(validateActionBody).toEqual({
+            actionType: "createTask",
+            parameters: {
+                id: "task-3",
+                dueDate: "2026-05-31",
+            },
+        });
+
+        let requestedLegacyValidation = false;
+        const legacyTransport = createHttpRemoteOntologyTransport({
+            url: "https://legacy.example.test/remote/",
+            fetch: async (input) => {
+                if (String(input).endsWith("/describe")) {
+                    return new Response(JSON.stringify({ ir }));
+                }
+                requestedLegacyValidation = true;
+                return new Response("Not found", { status: 404 });
+            },
+        });
+        await legacyTransport.describe();
+        await expect(
+            legacyTransport.validateAction({
+                actionType: "createTask",
+                parameters: {},
+            })
+        ).resolves.toEqual({
+            certain: false,
+        });
+        expect(requestedLegacyValidation).toBe(false);
     });
 
     it("preserves load subset cursor expressions and removes only subscriptions", () => {

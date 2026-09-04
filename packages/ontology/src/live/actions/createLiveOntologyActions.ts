@@ -8,10 +8,15 @@ import { createLiveOntologyAction } from "./createLiveOntologyAction.js";
 import { prepareActionParameters } from "./prepareActionParameters.js";
 import type { LiveOntologyAction, LiveOntologyActionOptions } from "./createLiveOntologyAction.js";
 import type { OntologyIR } from "../../ir/index.js";
+import type { Uncertain } from "../../utils/uncertain.js";
+import type { Result } from "../../utils/values.js";
 import type { LiveOntologyWrites, LiveOntologyWriteVisibility } from "../LiveOntology.js";
 import type { OntologyCollection } from "../objects/createLiveOntologyObjectCollection.js";
 import type { OntologyObject } from "../objects/OntologyObject.js";
-import type { OntologyApplyActionResult, OntologyBackendAdapter } from "../OntologyBackendAdapter.js";
+import type {
+    OntologyApplyActionResult,
+    OntologyBackendAdapter,
+} from "../OntologyBackendAdapter.js";
 import type { OntologyActionRequest, OntologyOutbox, OntologyOutboxEntry } from "../outbox/types.js";
 
 export interface LiveOntologyActionsSubsystem {
@@ -157,6 +162,36 @@ export function createLiveOntologyActions(options: {
         return executeDirect(request, visibility);
     };
 
+    const validate = (
+        actionTypeName: string,
+        parameters: Record<string, unknown>
+    ): Promise<Uncertain<Result<void, string[]>>> => {
+        if (!options.backendAdapter.validateAction) {
+            return Promise.resolve({
+                certain: false,
+            });
+        }
+        return options.backendAdapter.validateAction(actionTypeName, parameters, {
+            objects: options.objects as Record<string, Collection<Record<string, unknown>>>,
+            context: options.context,
+        });
+    };
+
+    const validateDraft = (
+        actionTypeName: string,
+        parameters: Record<string, unknown>
+    ): Promise<Uncertain<Result<void, string[]>>> => {
+        if (!options.backendAdapter.validateActionDraft) {
+            return Promise.resolve({
+                certain: false,
+            });
+        }
+        return options.backendAdapter.validateActionDraft(actionTypeName, parameters, {
+            objects: options.objects as Record<string, Collection<Record<string, unknown>>>,
+            context: options.context,
+        });
+    };
+
     const actions = Object.fromEntries(
         options.ir.actionTypes.map((action) => [
             action.name,
@@ -166,6 +201,8 @@ export function createLiveOntologyActions(options: {
                 context: options.context,
                 objects: options.objects,
                 submit,
+                validate,
+                validateDraft,
             }),
         ])
     );

@@ -159,6 +159,24 @@ describe("remote ontology error protocol", () => {
         });
         expect(RemoteOntologyError.fromEnvelope(body).toJSON()).toEqual(body);
 
+        const validationResponse = await server.handleRequest(
+            new Request("http://example.test/validate-action", {
+                method: "POST",
+                body: serializeRemoteOntologyJson({
+                    actionType: "createNote",
+                    parameters: { title: "x" },
+                }),
+            })
+        );
+        expect(validationResponse.status).toBe(200);
+        await expect(validationResponse.json()).resolves.toEqual({
+            certain: true,
+            value: {
+                kind: "err",
+                value: ['Action "createNote" is not allowed.'],
+            },
+        });
+
         const methodResponse = await server.handleRequest(
             new Request("http://example.test/describe"),
         );

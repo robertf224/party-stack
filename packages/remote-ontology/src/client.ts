@@ -12,7 +12,9 @@ import type {
     OntologyCollectionOptions,
     OntologyIR,
     OntologyApplyActionResult,
+    Uncertain,
 } from "@party-stack/ontology";
+import type { Result } from "@party-stack/ontology/values";
 import { serializeLoadSubsetOptions, type RemoteOntologyTransport } from "./protocol.js";
 
 export interface OntologyApplyActionClientResult extends OntologyApplyActionResult {
@@ -77,6 +79,30 @@ async function refreshInvalidatedCollections(opts: {
     );
 }
 
+function fromRemoteActionValidation(
+    validation: Uncertain<Result<null, string[]>>
+): Uncertain<Result<void, string[]>> {
+    if (!validation.certain) {
+        return validation;
+    }
+    if (validation.value.kind === "err") {
+        return {
+            certain: true,
+            value: {
+                kind: "err",
+                value: validation.value.value,
+            },
+        };
+    }
+    return {
+        certain: true,
+        value: {
+            kind: "ok",
+            value: undefined,
+        },
+    };
+}
+
 export function createRemoteOntologyBackendAdapter(
     opts: CreateRemoteOntologyBackendAdapterOptions
 ): OntologyBackendAdapter {
@@ -135,6 +161,14 @@ export function createRemoteOntologyBackendAdapter(
                 invalidatedObjectTypes,
             };
             return result;
+        },
+        validateAction: async (actionType, parameters) => {
+            return fromRemoteActionValidation(
+                await transport.validateAction({
+                    actionType,
+                    parameters,
+                })
+            );
         },
         runQueryFunction: async (queryFunctionType, parameters) => {
             const response = await transport.runQueryFunction({
