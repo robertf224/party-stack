@@ -12,6 +12,7 @@ import type {
     OntologyIR,
     PartialAttachmentMetadata,
     Uncertain,
+    ValidationIssue,
 } from "@party-stack/ontology";
 import type { Result } from "@party-stack/ontology/values";
 import { decode, encode } from "@party-stack/ontology/json";
@@ -196,7 +197,7 @@ export function createHttpRemoteOntologyTransport(
                 });
             }
             const ontology = getIr();
-            return postJson<Uncertain<Result<null, string[]>>>(
+            return postJson<Uncertain<Result<null, readonly ValidationIssue[]>>>(
                 fetchImpl,
                 resolveEndpoint(opts.url, "validate-action"),
                 {

@@ -1,6 +1,7 @@
 import * as v from "../utils/values.js";
 import type { AttachmentTypeDef, OntologyIR } from "../ir/index.js";
 import type { Uncertain } from "../utils/uncertain.js";
+import type { ValidationIssue } from "../utils/validation.js";
 import type { PartialAttachmentMetadata } from "./attachments/types.js";
 import type { Collection, CollectionConfig } from "@tanstack/db";
 
@@ -34,6 +35,10 @@ export interface ApplyActionLiveOpts {
 export interface ValidateActionLiveOpts {
     objects: Record<string, Collection<Record<string, unknown>>>;
     context?: Record<string, unknown>;
+}
+
+export interface ValidateActionDraftLiveOpts extends ValidateActionLiveOpts {
+    knownParameters: readonly string[];
 }
 
 export interface RunQueryLiveOpts {
@@ -80,12 +85,12 @@ export interface OntologyBackendAdapter {
         name: string,
         parameters: Record<string, unknown>,
         live: ValidateActionLiveOpts
-    ) => Promise<Uncertain<v.Result<void, string[]>>>;
+    ) => Promise<Uncertain<v.Result<void, readonly ValidationIssue[]>>>;
     validateActionDraft?: (
         name: string,
         parameters: Record<string, unknown>,
-        live: ValidateActionLiveOpts
-    ) => Promise<Uncertain<v.Result<void, string[]>>>;
+        live: ValidateActionDraftLiveOpts
+    ) => Promise<Uncertain<v.Result<void, readonly ValidationIssue[]>>>;
     runQueryFunction: (
         name: string,
         parameters: Record<string, unknown>,

@@ -10,12 +10,12 @@ function expectOk(result: ValidationResult): void {
 function expectErr(result: ValidationResult, count?: number): void {
     expect(result.kind).toBe("err");
     if (result.kind === "err" && count !== undefined) {
-        expect(result.errors).toHaveLength(count);
+        expect(result.value).toHaveLength(count);
     }
 }
 
 function getErrors(result: ValidationResult): string[] {
-    return result.kind === "ok" ? [] : result.errors.map((e) => e.message);
+    return result.kind === "ok" ? [] : result.value.map((issue) => issue.message);
 }
 
 const emptyOntology: OntologyIR = {

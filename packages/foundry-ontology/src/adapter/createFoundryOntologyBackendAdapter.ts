@@ -8,7 +8,9 @@ import {
     Queries,
 } from "@osdk/foundry.ontologies";
 import {
+    certain,
     NonRetryableError,
+    uncertain,
     type PartialAttachmentMetadata,
     type OntologyAttachmentIdMapping,
     type OntologyBackendAdapter,
@@ -16,7 +18,7 @@ import {
     type OntologyCollectionOptions,
     type OntologyAttachmentsAdapter,
     type OntologyIR,
-    type ValidateActionLiveOpts,
+    type ValidateActionDraftLiveOpts,
 } from "@party-stack/ontology";
 import { resolveType, unwrapType } from "@party-stack/ontology/utils";
 import { Collection } from "@tanstack/db";
@@ -26,7 +28,7 @@ import type { attachment } from "@party-stack/ontology/values";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import {
-    getFoundryValidationErrors,
+    getFoundryValidationIssues,
     loadFoundrySubmissionCriteria,
     validateFoundryActionDraftCriteria,
 } from "./foundryActionValidation.js";
@@ -370,26 +372,50 @@ export function createFoundryOntologyBackendAdapter(opts: {
                           }
                         : {
                               kind: "err",
-                              value: getFoundryValidationErrors(result),
+                              value: getFoundryValidationIssues(result),
                           },
             };
         },
         validateActionDraft: async (
             name: string,
             parameters: Record<string, unknown>,
-            live: ValidateActionLiveOpts
+            live: ValidateActionDraftLiveOpts
         ) => {
             const actionType = opts.ir.actionTypes.find((candidate) => candidate.name === name);
             if (!actionType) {
                 throw new NonRetryableError(`Unknown Foundry action type "${name}".`);
             }
-            const missingRequiredParameters = actionType.parameters.filter(
+            const knownParameters = new Set([
+                ...Object.entries(parameters).flatMap(([parameterName, value]) =>
+                    value === undefined
+                        ? []
+                        : [parameterName]
+                ),
+                ...live.knownParameters,
+            ]);
+            const missingKnownRequiredParameters = actionType.parameters.filter(
                 (parameter) =>
                     parameters[parameter.name] === undefined &&
-                    parameter.defaultValue === undefined &&
+                    knownParameters.has(parameter.name) &&
                     !unwrapType(resolveType(opts.ir, parameter.type)).isOptional
             );
-            if (missingRequiredParameters.length === 0) {
+            if (missingKnownRequiredParameters.length > 0) {
+                return certain({
+                    kind: "err",
+                    value: missingKnownRequiredParameters.map(
+                        (parameter) => ({
+                            message: `Required action parameter "${parameter.name}" is missing.`,
+                            path: [parameter.name],
+                        })
+                    ),
+                });
+            }
+            const hasUnknownParameters = actionType.parameters.some(
+                (parameter) =>
+                    parameters[parameter.name] === undefined &&
+                    !knownParameters.has(parameter.name)
+            );
+            if (!hasUnknownParameters) {
                 return adapter.validateAction!(name, parameters, live);
             }
 
@@ -398,9 +424,7 @@ export function createFoundryOntologyBackendAdapter(opts: {
                     ? live.context.user
                     : undefined;
             if (!userId) {
-                return {
-                    certain: false,
-                };
+                return uncertain();
             }
             const criteria = await loadFoundrySubmissionCriteria({
                 client: opts.client,
@@ -412,6 +436,7 @@ export function createFoundryOntologyBackendAdapter(opts: {
                 criteria,
                 userId,
                 parameters,
+                knownParameters,
             });
         },
         applyAction: async (name, parameters, context) => {

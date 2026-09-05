@@ -173,7 +173,7 @@ describe("remote ontology error protocol", () => {
             certain: true,
             value: {
                 kind: "err",
-                value: ['Action "createNote" is not allowed.'],
+                value: [{ message: 'Action "createNote" is not allowed.' }],
             },
         });
 

@@ -5,6 +5,7 @@ export * from "./live/index.js";
 export * from "./installation/index.js";
 export * from "./OntologyPullConfig.js";
 export { certain, uncertain, type Uncertain } from "./utils/uncertain.js";
+export type { ValidationIssue } from "./utils/validation.js";
 export type { OntologyObject } from "./live/objects/OntologyObject.js";
 export * from "./meta/pull.js";
 export type {

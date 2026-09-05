@@ -111,9 +111,14 @@ describe("createRemoteLiveOntology", () => {
         });
         expect(validatedParameters).toEqual(appliedParameters);
         await expect(
-            ontology.actions.createNote!.validateDraft({
-                title: "Hello",
-            })
+            ontology.actions.createNote!.validateDraft(
+                {
+                    title: "Hello",
+                },
+                {
+                    knownParameters: ["title"],
+                }
+            )
         ).resolves.toEqual({
             certain: false,
         });

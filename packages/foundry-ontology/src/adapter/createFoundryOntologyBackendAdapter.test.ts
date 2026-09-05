@@ -220,7 +220,7 @@ describe("Foundry media attachments", () => {
             certain: true,
             value: {
                 kind: "err",
-                value: ["Only administrators may submit."],
+                value: [{ message: "Only administrators may submit." }],
             },
         });
         const request = ontologyMocks.applyWithOverrides.mock.calls[0]?.[3] as unknown as {
@@ -288,13 +288,17 @@ describe("Foundry media attachments", () => {
                 context: {
                     user: "user-1",
                 },
+                knownParameters: [],
             })
         ).resolves.toEqual({
             certain: true,
             value: {
                 kind: "err",
                 value: [
-                    "Impossible submission criterion: Only administrators may submit.",
+                    {
+                        message:
+                            "Impossible submission criterion: Only administrators may submit.",
+                    },
                 ],
             },
         });
@@ -303,12 +307,40 @@ describe("Foundry media attachments", () => {
 
     it("reports uncertain draft validation without a context user", async () => {
         await expect(
-            adapter.validateActionDraft!("createMedia", {}, { objects: {} })
+            adapter.validateActionDraft!("createMedia", {}, {
+                objects: {},
+                knownParameters: [],
+            })
         ).resolves.toEqual({
             certain: false,
         });
         expect(ontologyMocks.getActionType).not.toHaveBeenCalled();
         expect(metadataMocks.bulkLoadOntologyEntities).not.toHaveBeenCalled();
+    });
+
+    it("reports a known required parameter as missing", async () => {
+        await expect(
+            adapter.validateActionDraft!("createMedia", {}, {
+                objects: {},
+                context: {
+                    user: "user-1",
+                },
+                knownParameters: ["media"],
+            })
+        ).resolves.toEqual({
+            certain: true,
+            value: {
+                kind: "err",
+                value: [
+                    {
+                        message: 'Required action parameter "media" is missing.',
+                        path: ["media"],
+                    },
+                ],
+            },
+        });
+        expect(metadataMocks.bulkLoadOntologyEntities).not.toHaveBeenCalled();
+        expect(ontologyMocks.applyWithOverrides).not.toHaveBeenCalled();
     });
 
     it("reads confirmed media through its object property source", async () => {

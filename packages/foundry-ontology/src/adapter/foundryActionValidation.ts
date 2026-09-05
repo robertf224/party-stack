@@ -4,7 +4,7 @@ import {
     type Condition,
     type ConditionValue,
 } from "@osdk/client.unstable";
-import { Groups, Users } from "@osdk/foundry.admin";
+import { GroupMemberships, Users } from "@osdk/foundry.admin";
 import {
     ActionTypesV2,
     type ParameterEvaluatedConstraint,
@@ -12,10 +12,16 @@ import {
     type StructEvaluatedConstraint,
     type SyncApplyActionResponseV2,
 } from "@osdk/foundry.ontologies";
-import { certain, uncertain, type Uncertain } from "@party-stack/ontology";
+import {
+    certain,
+    uncertain,
+    type Uncertain,
+    type ValidationIssue,
+} from "@party-stack/ontology";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { Result } from "@party-stack/ontology/values";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
+import * as AsyncIterable from "../utils/AsyncIterable.js";
 
 export interface FoundrySubmissionCriterion {
     condition: Condition;
@@ -86,6 +92,7 @@ interface EvaluationContext {
     client: OntologyClient;
     userId: string;
     parameters: Record<string, unknown>;
+    knownParameters: ReadonlySet<string>;
     groupIds: () => Promise<string[]>;
     markings: () => Promise<string[]>;
     user: () => ReturnType<typeof Users.get>;
@@ -95,6 +102,7 @@ function createEvaluationContext(options: {
     client: OntologyClient;
     userId: string;
     parameters: Record<string, unknown>;
+    knownParameters?: ReadonlySet<string>;
 }): EvaluationContext {
     let groupIds: Promise<string[]> | undefined;
     let markings: Promise<string[]> | undefined;
@@ -102,10 +110,9 @@ function createEvaluationContext(options: {
 
     return {
         ...options,
+        knownParameters: options.knownParameters ?? new Set(Object.keys(options.parameters)),
         groupIds: () => {
-            groupIds ??= Groups.listCurrent(options.client, {
-                preview: true,
-            }).then((response) => response.data.map((group) => group.id));
+            groupIds ??= loadGroupIds(options.client, options.userId);
             return groupIds;
         },
         markings: () => {
@@ -119,6 +126,22 @@ function createEvaluationContext(options: {
             return user;
         },
     };
+}
+
+async function loadGroupIds(client: OntologyClient, userId: string): Promise<string[]> {
+    return AsyncIterable.toArray(
+        AsyncIterable.fromPagination(
+            (pageSize, pageToken: string | undefined) =>
+                GroupMemberships.list(client, userId, {
+                    pageSize,
+                    pageToken,
+                    transitive: true,
+                }),
+            (page) => page.nextPageToken,
+            (page) => page.data.map((membership) => membership.groupId),
+            1_000
+        )
+    );
 }
 
 function evaluateStaticValue(value: ConditionValue & { type: "staticValue" }): Uncertain<unknown> {
@@ -209,9 +232,9 @@ async function evaluateConditionValue(
         case "parameterId": {
             const parameterName = value.parameterId;
             const parameterValue = context.parameters[parameterName];
-            return parameterValue === undefined
-                ? uncertain()
-                : certain(parameterValue);
+            return parameterValue !== undefined || context.knownParameters.has(parameterName)
+                ? certain(parameterValue)
+                : uncertain();
         }
         case "parameterLength": {
             const parameterName = value.parameterLength.parameterId;
@@ -328,7 +351,11 @@ async function evaluateCondition(
             if (typeof value.value !== "string") {
                 return uncertain();
             }
-            return certain(new RegExp(condition.regex.regex).test(value.value));
+            try {
+                return certain(new RegExp(condition.regex.regex).test(value.value));
+            } catch {
+                return uncertain();
+            }
         }
         case "markings":
             return uncertain();
@@ -342,7 +369,8 @@ export async function validateFoundryActionDraftCriteria(options: {
     criteria: FoundrySubmissionCriterion[];
     userId: string;
     parameters: Record<string, unknown>;
-}): Promise<Uncertain<Result<void, string[]>>> {
+    knownParameters?: ReadonlySet<string>;
+}): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>> {
     const context = createEvaluationContext(options);
     const evaluated = await Promise.all(
         options.criteria.map(async (criterion) => ({
@@ -352,7 +380,9 @@ export async function validateFoundryActionDraftCriteria(options: {
     );
     const errors = evaluated
         .filter(({ result }) => result.certain && !result.value)
-        .map(({ criterion }) => `Impossible submission criterion: ${criterion.failureMessage}`);
+        .map(({ criterion }) => ({
+            message: `Impossible submission criterion: ${criterion.failureMessage}`,
+        }));
     return errors.length > 0
         ? certain({
               kind: "err",
@@ -361,62 +391,70 @@ export async function validateFoundryActionDraftCriteria(options: {
         : uncertain();
 }
 
-function collectRegexMessage(
+function collectRegexIssue(
     constraint: StringRegexMatchConstraint,
-    messages: string[]
+    issues: ValidationIssue[],
+    path: readonly (string | number)[]
 ): void {
     if (constraint.configuredFailureMessage) {
-        messages.push(constraint.configuredFailureMessage);
+        issues.push({
+            message: constraint.configuredFailureMessage,
+            path,
+        });
     }
 }
 
-function collectStructMessages(
+function collectStructIssues(
     constraint: StructEvaluatedConstraint,
-    messages: string[]
+    issues: ValidationIssue[],
+    path: readonly (string | number)[]
 ): void {
-    for (const field of Object.values(constraint.structFields)) {
+    for (const [fieldName, field] of Object.entries(constraint.structFields)) {
         if (field.result !== "INVALID") continue;
         for (const fieldConstraint of field.evaluatedConstraints) {
             if (fieldConstraint.type === "stringRegexMatch") {
-                collectRegexMessage(fieldConstraint, messages);
+                collectRegexIssue(fieldConstraint, issues, [...path, fieldName]);
             }
         }
     }
 }
 
-function collectParameterConstraintMessages(
+function collectParameterConstraintIssues(
     constraint: ParameterEvaluatedConstraint,
-    messages: string[]
+    issues: ValidationIssue[],
+    path: readonly (string | number)[]
 ): void {
     switch (constraint.type) {
         case "stringRegexMatch":
-            collectRegexMessage(constraint, messages);
+            collectRegexIssue(constraint, issues, path);
             break;
         case "struct":
-            collectStructMessages(constraint, messages);
+            collectStructIssues(constraint, issues, path);
             break;
         case "array":
-            for (const entry of constraint.entries) {
-                collectStructMessages(entry, messages);
+            for (const [index, entry] of constraint.entries.entries()) {
+                collectStructIssues(entry, issues, [...path, index]);
             }
             break;
     }
 }
 
-export function getFoundryValidationErrors(result: SyncApplyActionResponseV2): string[] {
+export function getFoundryValidationIssues(result: SyncApplyActionResponseV2): ValidationIssue[] {
     const validation = result.validation;
     if (!validation || validation.result !== "INVALID") return [];
 
-    const messages = validation.submissionCriteria.flatMap((criterion) =>
+    const issues = validation.submissionCriteria.flatMap((criterion) =>
         criterion.result === "INVALID" && criterion.configuredFailureMessage
-            ? [criterion.configuredFailureMessage]
+            ? [{ message: criterion.configuredFailureMessage }]
             : []
     );
-    for (const parameter of Object.values(validation.parameters)) {
+    for (const [parameterName, parameter] of Object.entries(validation.parameters)) {
         if (parameter.result !== "INVALID") continue;
         for (const constraint of parameter.evaluatedConstraints) {
-            collectParameterConstraintMessages(constraint, messages);
+            collectParameterConstraintIssues(constraint, issues, [parameterName]);
         }
     }
-    return [...new Set(messages.length > 0 ? messages : ["Invalid Action arguments."])];
+    return issues.length > 0
+        ? issues
+        : [{ message: "Invalid Action arguments." }];
 }

@@ -13,6 +13,7 @@ import type {
     OntologyIR,
     OntologyApplyActionResult,
     Uncertain,
+    ValidationIssue,
 } from "@party-stack/ontology";
 import type { Result } from "@party-stack/ontology/values";
 import { serializeLoadSubsetOptions, type RemoteOntologyTransport } from "./protocol.js";
@@ -80,8 +81,8 @@ async function refreshInvalidatedCollections(opts: {
 }
 
 function fromRemoteActionValidation(
-    validation: Uncertain<Result<null, string[]>>
-): Uncertain<Result<void, string[]>> {
+    validation: Uncertain<Result<null, readonly ValidationIssue[]>>
+): Uncertain<Result<void, readonly ValidationIssue[]>> {
     if (!validation.certain) {
         return validation;
     }

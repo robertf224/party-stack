@@ -6,9 +6,14 @@ import { runOptimisticAction } from "../mutators/runOptimisticAction.js";
 import { createOntologyOutbox, type OutboxProjection } from "../outbox/createOntologyOutbox.js";
 import { createLiveOntologyAction } from "./createLiveOntologyAction.js";
 import { prepareActionParameters } from "./prepareActionParameters.js";
-import type { LiveOntologyAction, LiveOntologyActionOptions } from "./createLiveOntologyAction.js";
+import type {
+    LiveOntologyAction,
+    LiveOntologyActionDraftValidationOptions,
+    LiveOntologyActionOptions,
+} from "./createLiveOntologyAction.js";
 import type { OntologyIR } from "../../ir/index.js";
 import type { Uncertain } from "../../utils/uncertain.js";
+import type { ValidationIssue } from "../../utils/validation.js";
 import type { Result } from "../../utils/values.js";
 import type { LiveOntologyWrites, LiveOntologyWriteVisibility } from "../LiveOntology.js";
 import type { OntologyCollection } from "../objects/createLiveOntologyObjectCollection.js";
@@ -165,7 +170,7 @@ export function createLiveOntologyActions(options: {
     const validate = (
         actionTypeName: string,
         parameters: Record<string, unknown>
-    ): Promise<Uncertain<Result<void, string[]>>> => {
+    ): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>> => {
         if (!options.backendAdapter.validateAction) {
             return Promise.resolve({
                 certain: false,
@@ -179,8 +184,9 @@ export function createLiveOntologyActions(options: {
 
     const validateDraft = (
         actionTypeName: string,
-        parameters: Record<string, unknown>
-    ): Promise<Uncertain<Result<void, string[]>>> => {
+        parameters: Record<string, unknown>,
+        validationOptions?: LiveOntologyActionDraftValidationOptions<Record<string, unknown>>
+    ): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>> => {
         if (!options.backendAdapter.validateActionDraft) {
             return Promise.resolve({
                 certain: false,
@@ -189,6 +195,7 @@ export function createLiveOntologyActions(options: {
         return options.backendAdapter.validateActionDraft(actionTypeName, parameters, {
             objects: options.objects as Record<string, Collection<Record<string, unknown>>>,
             context: options.context,
+            knownParameters: validationOptions?.knownParameters ?? [],
         });
     };
 

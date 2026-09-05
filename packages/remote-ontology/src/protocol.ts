@@ -6,6 +6,7 @@ import type {
     OntologyIR,
     PartialAttachmentMetadata,
     Uncertain,
+    ValidationIssue,
 } from "@party-stack/ontology";
 import type { Result } from "@party-stack/ontology/values";
 import type { attachment } from "@party-stack/ontology/values";
@@ -92,7 +93,7 @@ export interface RemoteOntologyTransport {
     validateAction: (
         request: RemoteValidateActionRequest,
         options?: RemoteOntologyTransportOptions
-    ) => Promise<Uncertain<Result<null, string[]>>>;
+    ) => Promise<Uncertain<Result<null, readonly ValidationIssue[]>>>;
     runQueryFunction: (
         request: RemoteRunQueryFunctionRequest,
         options?: RemoteOntologyTransportOptions
@@ -120,7 +121,7 @@ export type RemoteOntologyRequestByEndpoint = {
 export type RemoteOntologyResponseByEndpoint = {
     describe: RemoteOntologyDescription;
     "load-subset": RemoteLoadSubsetResponse;
-    "validate-action": Uncertain<Result<null, string[]>>;
+    "validate-action": Uncertain<Result<null, readonly ValidationIssue[]>>;
     "apply-action": RemoteApplyActionResponse;
     "run-query-function": RemoteRunQueryFunctionResponse;
     "attachment-metadata": PartialAttachmentMetadata;

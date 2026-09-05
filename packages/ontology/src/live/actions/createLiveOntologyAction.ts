@@ -2,6 +2,7 @@ import { resolveActionParameters } from "../expression.js";
 import { createReadTx } from "../mutators/createMutatorTx.js";
 import type { OntologyIR } from "../../ir/index.js";
 import type { Uncertain } from "../../utils/uncertain.js";
+import type { ValidationIssue } from "../../utils/validation.js";
 import type { Result } from "../../utils/values.js";
 import type {
     LiveOntologyWriteMode,
@@ -18,6 +19,12 @@ export interface LiveOntologyActionOptions {
     visibility?: LiveOntologyWriteVisibility;
 }
 
+export interface LiveOntologyActionDraftValidationOptions<
+    Parameters extends Record<string, unknown>,
+> {
+    knownParameters?: readonly (keyof Parameters)[];
+}
+
 export type LiveOntologyAction<
     Parameters extends Record<string, unknown> = Record<
         string,
@@ -28,10 +35,11 @@ export type LiveOntologyAction<
         parameters: Parameters,
         options?: LiveOntologyActionOptions
     ): Promise<OntologyApplyActionResult | void>;
-    validate(parameters: Parameters): Promise<Uncertain<Result<void, string[]>>>;
+    validate(parameters: Parameters): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>>;
     validateDraft(
-        parameters: Partial<Parameters>
-    ): Promise<Uncertain<Result<void, string[]>>>;
+        parameters: Partial<Parameters>,
+        options?: LiveOntologyActionDraftValidationOptions<Parameters>
+    ): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>>;
 };
 
 export function createLiveOntologyAction(options: {
@@ -49,11 +57,12 @@ export function createLiveOntologyAction(options: {
     validate(
         actionTypeName: string,
         parameters: Record<string, unknown>
-    ): Promise<Uncertain<Result<void, string[]>>>;
+    ): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>>;
     validateDraft(
         actionTypeName: string,
-        parameters: Record<string, unknown>
-    ): Promise<Uncertain<Result<void, string[]>>>;
+        parameters: Record<string, unknown>,
+        validationOptions?: LiveOntologyActionDraftValidationOptions<Record<string, unknown>>
+    ): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>>;
 }): LiveOntologyAction {
     const resolveParameters = (
         providedParameters: Record<string, unknown>
@@ -87,10 +96,11 @@ export function createLiveOntologyAction(options: {
             options.action.name,
             await resolveParameters(providedParameters)
         );
-    apply.validateDraft = async (providedParameters) =>
+    apply.validateDraft = async (parameters, validationOptions) =>
         options.validateDraft(
             options.action.name,
-            await resolveParameters(providedParameters)
+            await resolveParameters(parameters),
+            validationOptions as LiveOntologyActionDraftValidationOptions<Record<string, unknown>>
         );
     return apply;
 }

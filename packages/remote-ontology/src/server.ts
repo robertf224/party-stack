@@ -18,6 +18,7 @@ import type {
     OntologyIR,
     PartialAttachmentMetadata,
     Uncertain,
+    ValidationIssue,
 } from "@party-stack/ontology";
 import type { Result } from "@party-stack/ontology/values";
 import { remoteOntologyErrorFromUnknown, RemoteOntologyError, statusToCode } from "./errors.js";
@@ -645,8 +646,8 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
 }
 
 function toRemoteActionValidation(
-    validation: Uncertain<Result<void, string[]>>
-): Uncertain<Result<null, string[]>> {
+    validation: Uncertain<Result<void, readonly ValidationIssue[]>>
+): Uncertain<Result<null, readonly ValidationIssue[]>> {
     if (!validation.certain) {
         return validation;
     }
@@ -672,7 +673,7 @@ async function handleValidateAction<Context, Ontology extends OntologyDefinition
     ctx: Context,
     opts: CreateRemoteOntologyServerOptions<Context, Ontology>,
     request: RemoteValidateActionRequest
-): Promise<Uncertain<Result<null, string[]>>> {
+): Promise<Uncertain<Result<null, readonly ValidationIssue[]>>> {
     const ir = await resolveValue(opts.ir, ctx);
     const backendAdapter = await resolveValue(opts.backendAdapter, ctx);
     const hydratedRequestParameters = decode({
@@ -709,7 +710,9 @@ async function handleValidateAction<Context, Ontology extends OntologyDefinition
                 certain: true,
                 value: {
                     kind: "err",
-                    value: [`Action "${request.actionType}" is not allowed.`],
+                    value: [{
+                        message: `Action "${request.actionType}" is not allowed.`,
+                    }],
                 },
             };
         }

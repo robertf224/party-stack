@@ -229,7 +229,7 @@ describe("createLiveOntology", () => {
                 certain: true as const,
                 value: {
                     kind: "err" as const,
-                    value: ["Invalid action."],
+                    value: [{ message: "Invalid action." }],
                 },
             })
         );
@@ -267,19 +267,20 @@ describe("createLiveOntology", () => {
             certain: true,
             value: {
                 kind: "err",
-                value: ["Invalid action."],
+                value: [{ message: "Invalid action." }],
             },
         });
         expect(validateAction).toHaveBeenCalledWith("save", {}, {
             objects: {},
             context,
         });
-        await expect(ontology.actions.save!.validateDraft({})).resolves.toEqual({
-            certain: false,
+        await ontology.actions.save!.validateDraft({}, {
+            knownParameters: [],
         });
         expect(validateActionDraft).toHaveBeenCalledWith("save", {}, {
             objects: {},
             context,
+            knownParameters: [],
         });
         expect(applyAction).not.toHaveBeenCalled();
         await ontology.cleanup();

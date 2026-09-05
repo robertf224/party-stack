@@ -1,5 +1,7 @@
 import { unwrapType } from "../utils/types.js";
 import { ImageMediaTypeOptions } from "./generated/constants.js";
+import type { ValidationIssue } from "../utils/validation.js";
+import type { Result } from "../utils/values.js";
 import type {
     ActionParameterDef,
     ActionTypeDef,
@@ -13,22 +15,15 @@ import type {
     ValueReferenceExpression,
 } from "./generated/types.js";
 
-export type ValidationPathElement = string | number;
-
-export interface ValidationError {
-    path: ValidationPathElement[];
-    message: string;
-}
-
-export type ValidationResult = { kind: "ok" } | { kind: "err"; errors: ValidationError[] };
+export type ValidationResult = Result<void, ValidationIssue[]>;
 
 // TODO: Replace this attachment-specific range validation with real numeric constraints in the meta ontology.
 function validateNonNegativeRange(
     range: { min?: number; max?: number } | undefined,
-    path: ValidationPathElement[]
-): ValidationError[] {
+    path: (string | number)[]
+): ValidationIssue[] {
     if (!range) return [];
-    const errors: ValidationError[] = [];
+    const errors: ValidationIssue[] = [];
     for (const bound of ["min", "max"] as const) {
         const value = range[bound];
         if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
@@ -49,7 +44,7 @@ function validateNonNegativeRange(
 
 function validateAttachmentConstraints(
     type: Extract<TypeDef, { kind: "attachment" }>
-): ValidationError[] {
+): ValidationIssue[] {
     const constraint = type.value.constraint;
     if (!constraint) return [];
 
@@ -86,10 +81,10 @@ function validateAttachmentConstraints(
 
 function validateTypeDef(
     type: TypeDef,
-    path: ValidationPathElement[],
+    path: (string | number)[],
     valueTypeNames: Set<string>,
     objectTypeNames: Set<string>
-): ValidationError[] {
+): ValidationIssue[] {
     switch (type.kind) {
         case "string":
         case "boolean":
@@ -105,7 +100,7 @@ function validateTypeDef(
         case "attachment":
             return validateAttachmentConstraints(type).map((error) => ({
                 ...error,
-                path: [...path, ...error.path],
+                path: [...path, ...(error.path ?? [])],
             }));
 
         case "objectReference":
@@ -122,7 +117,7 @@ function validateTypeDef(
             return validateTypeDef(type.value.elementType, [...path, "elementType"], valueTypeNames, objectTypeNames);
 
         case "map": {
-            const errors: ValidationError[] = [];
+            const errors: ValidationIssue[] = [];
             if (type.value.keyType.kind !== "string") {
                 errors.push({
                     message: "Map key types must be string.",
@@ -165,12 +160,12 @@ function validateTypeDef(
 
 function validateStructFields(
     fields: Array<{ name: string; displayName: string; type: TypeDef }>,
-    path: ValidationPathElement[],
+    path: (string | number)[],
     valueTypeNames: Set<string>,
     objectTypeNames: Set<string>
-): ValidationError[] {
+): ValidationIssue[] {
     const fieldNames = new Set<string>();
-    const errors: ValidationError[] = [];
+    const errors: ValidationIssue[] = [];
 
     for (let i = 0; i < fields.length; i++) {
         const field = fields[i]!;
@@ -189,12 +184,12 @@ function validateStructFields(
 
 function validateUnionVariants(
     variants: Array<{ name: string; type: TypeDef }>,
-    path: ValidationPathElement[],
+    path: (string | number)[],
     valueTypeNames: Set<string>,
     objectTypeNames: Set<string>
-): ValidationError[] {
+): ValidationIssue[] {
     const seen = new Set<string>();
-    const errors: ValidationError[] = [];
+    const errors: ValidationIssue[] = [];
 
     for (let i = 0; i < variants.length; i++) {
         const variant = variants[i]!;
@@ -216,12 +211,12 @@ function validateUnionVariants(
 
 function validateProperties(
     properties: PropertyDef[],
-    path: ValidationPathElement[],
+    path: (string | number)[],
     valueTypeNames: Set<string>,
     objectTypeNames: Set<string>
-): ValidationError[] {
+): ValidationIssue[] {
     const names = new Set<string>();
-    const errors: ValidationError[] = [];
+    const errors: ValidationIssue[] = [];
 
     for (let i = 0; i < properties.length; i++) {
         const prop = properties[i]!;
@@ -307,11 +302,11 @@ function resolveParameterReferenceType(
 function validateExpression(
     expression: Expression,
     parameters: ReadonlyMap<string, ActionParameterDef>,
-    path: ValidationPathElement[],
+    path: (string | number)[],
     valueTypes: ReadonlyMap<string, TypeDef>,
     objectTypes: ReadonlyMap<string, ObjectTypeDef>,
     contextType: TypeDef | undefined
-): ValidationError[] {
+): ValidationIssue[] {
     switch (expression.kind) {
         case "valueReference": {
             if (expression.value.path.length === 0) {
@@ -400,10 +395,10 @@ function areDefaultTypesCompatible(
 function validateActionObjectReference(
     reference: ValueReferenceExpression,
     parameters: ReadonlyMap<string, ActionParameterDef>,
-    path: ValidationPathElement[],
+    path: (string | number)[],
     valueTypes: ReadonlyMap<string, TypeDef>,
     objectTypes: ReadonlyMap<string, ObjectTypeDef>
-): { errors: ValidationError[]; objectType?: ObjectTypeDef } {
+): { errors: ValidationIssue[]; objectType?: ObjectTypeDef } {
     if (reference.path.length !== 1) {
         return {
             errors: [
@@ -457,11 +452,11 @@ function validateActionPropertyAssignment(
     assignment: PropertyAssignment,
     target: ObjectTypeDef,
     parameters: ReadonlyMap<string, ActionParameterDef>,
-    path: ValidationPathElement[],
+    path: (string | number)[],
     valueTypes: ReadonlyMap<string, TypeDef>,
     objectTypes: ReadonlyMap<string, ObjectTypeDef>,
     contextType: TypeDef | undefined
-): ValidationError[] {
+): ValidationIssue[] {
     if (assignment.property.length === 0) {
         return [{ message: "Action property assignments must specify a property.", path: [...path, "property"] }];
     }
@@ -500,12 +495,12 @@ function validateActionPropertyAssignment(
 
 function validateAction(
     action: ActionTypeDef,
-    path: ValidationPathElement[],
+    path: (string | number)[],
     valueTypes: ReadonlyMap<string, TypeDef>,
     objectTypes: ReadonlyMap<string, ObjectTypeDef>,
     contextType: TypeDef | undefined
-): ValidationError[] {
-    const errors: ValidationError[] = [];
+): ValidationIssue[] {
+    const errors: ValidationIssue[] = [];
     const parameters = new Map(action.parameters.map((parameter) => [parameter.name, parameter]));
     const seenParameters = new Set<string>();
 
@@ -645,11 +640,11 @@ function validateAction(
 
 function validateQueryFunctionType(
     queryFunctionType: QueryFunctionTypeDef,
-    path: ValidationPathElement[],
+    path: (string | number)[],
     valueTypeNames: Set<string>,
     objectTypeNames: Set<string>
-): ValidationError[] {
-    const errors: ValidationError[] = [];
+): ValidationIssue[] {
+    const errors: ValidationIssue[] = [];
     const seenParameters = new Set<string>();
 
     for (let index = 0; index < queryFunctionType.parameters.length; index++) {
@@ -673,7 +668,7 @@ function validateQueryFunctionType(
 }
 
 export function validate(ontology: OntologyIR): ValidationResult {
-    const errors: ValidationError[] = [];
+    const errors: ValidationIssue[] = [];
 
     // Collect value type names for ref resolution
     const valueTypeNames = new Set<string>();
@@ -739,7 +734,7 @@ export function validate(ontology: OntologyIR): ValidationResult {
     // Validate object types
     for (let i = 0; i < ontology.objectTypes.length; i++) {
         const ot = ontology.objectTypes[i]!;
-        const otPath = ["objectTypes", i] as ValidationPathElement[];
+        const otPath = ["objectTypes", i] as (string | number)[];
 
         // Validate properties
         errors.push(...validateProperties(ot.properties, [...otPath, "properties"], valueTypeNames, objectTypeNames));
@@ -765,7 +760,7 @@ export function validate(ontology: OntologyIR): ValidationResult {
     const linkNames = new Set<string>();
     for (let i = 0; i < ontology.linkTypes.length; i++) {
         const lt = ontology.linkTypes[i]!;
-        const ltPath = ["linkTypes", i] as ValidationPathElement[];
+        const ltPath = ["linkTypes", i] as (string | number)[];
 
         if (linkIds.has(lt.id)) {
             errors.push({
@@ -821,7 +816,7 @@ export function validate(ontology: OntologyIR): ValidationResult {
     const actionNames = new Set<string>();
     for (let i = 0; i < ontology.actionTypes.length; i++) {
         const action = ontology.actionTypes[i]!;
-        const actionPath = ["actionTypes", i] as ValidationPathElement[];
+        const actionPath = ["actionTypes", i] as (string | number)[];
 
         if (actionNames.has(action.name)) {
             errors.push({
@@ -845,7 +840,7 @@ export function validate(ontology: OntologyIR): ValidationResult {
     const queryFunctionTypeNames = new Set<string>();
     for (let i = 0; i < ontology.queryFunctionTypes.length; i++) {
         const queryFunctionType = ontology.queryFunctionTypes[i]!;
-        const queryFunctionTypePath = ["queryFunctionTypes", i] as ValidationPathElement[];
+        const queryFunctionTypePath = ["queryFunctionTypes", i] as (string | number)[];
 
         if (queryFunctionTypeNames.has(queryFunctionType.name)) {
             errors.push({
@@ -858,5 +853,7 @@ export function validate(ontology: OntologyIR): ValidationResult {
         errors.push(...validateQueryFunctionType(queryFunctionType, queryFunctionTypePath, valueTypeNames, objectTypeNames));
     }
 
-    return errors.length === 0 ? { kind: "ok" } : { kind: "err", errors };
+    return errors.length === 0
+        ? { kind: "ok", value: undefined }
+        : { kind: "err", value: errors };
 }
