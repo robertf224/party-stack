@@ -81,11 +81,22 @@ function readyCollectionOptions(): ReturnType<OntologyBackendAdapter["getCollect
 describe("remote ontology server policy projection", () => {
     it("describes the secured IR and applies server-owned action parameters last", async () => {
         let appliedParameters: Record<string, unknown> | undefined;
+        let validatedParameters: Record<string, unknown> | undefined;
         const backendAdapter: OntologyBackendAdapter = {
             name: "test",
             getCollectionOptions: readyCollectionOptions,
             applyAction: async (_actionType, parameters) => {
                 appliedParameters = parameters;
+            },
+            validateAction: async (_actionType, parameters) => {
+                validatedParameters = parameters;
+                return {
+                    certain: true,
+                    value: {
+                        kind: "ok",
+                        value: undefined,
+                    },
+                };
             },
             runQueryFunction: async (_queryFunctionType, parameters) => `Hello ${parameters.name}`,
         };
@@ -111,10 +122,40 @@ describe("remote ontology server policy projection", () => {
         );
         expect(describeResponse.status).toBe(200);
         const description = parseRemoteOntologyJson(await describeResponse.text()) as RemoteOntologyDescription;
+        expect(description.capabilities).toEqual({
+            actionValidation: true,
+        });
         expect(description.ir.actionTypes[0]!.parameters.map((parameter) => parameter.name)).toEqual([
             "title",
             "dueDate",
         ]);
+
+        const validateResponse = await server.handleRequest(
+            new Request("http://example.test/validate-action", {
+                method: "POST",
+                body: serializeRemoteOntologyJson({
+                    actionType: "createNote",
+                    parameters: {
+                        title: "Hello",
+                        ownerEmail: "mallory@example.com",
+                        dueDate: "2026-06-15",
+                    },
+                }),
+            })
+        );
+        expect(validateResponse.status).toBe(200);
+        expect(parseRemoteOntologyJson(await validateResponse.text())).toEqual({
+            certain: true,
+            value: {
+                kind: "ok",
+                value: null,
+            },
+        });
+        expect(validatedParameters).toEqual({
+            title: "Hello",
+            ownerEmail: "alice@example.com",
+            dueDate: Temporal.PlainDate.from("2026-06-15"),
+        });
 
         const applyResponse = await server.handleRequest(
             new Request("http://example.test/apply-action", {

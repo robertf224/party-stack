@@ -8,7 +8,9 @@ import {
     Queries,
 } from "@osdk/foundry.ontologies";
 import {
+    certain,
     NonRetryableError,
+    uncertain,
     type PartialAttachmentMetadata,
     type OntologyAttachmentIdMapping,
     type OntologyBackendAdapter,
@@ -16,13 +18,20 @@ import {
     type OntologyCollectionOptions,
     type OntologyAttachmentsAdapter,
     type OntologyIR,
+    type ValidateActionDraftLiveOpts,
 } from "@party-stack/ontology";
+import { resolveType, unwrapType } from "@party-stack/ontology/utils";
 import { Collection } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { attachment } from "@party-stack/ontology/values";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
+import {
+    getFoundryValidationIssues,
+    loadFoundrySubmissionCriteria,
+    validateFoundryActionDraftCriteria,
+} from "./foundryActionValidation.js";
 import { createFoundryCodec } from "./foundryCodec.js";
 import { decodeFoundryMediaId, mediaReferenceToFoundryMediaId } from "./foundryMediaId.js";
 import { objectCollectionOptions, type ObjectCollectionUtils } from "./objectCollectionOptions.js";
@@ -112,6 +121,61 @@ function getEditedObjectTypes(
     }
 
     return objectTypes;
+}
+
+function prepareFoundryActionInvocation(options: {
+    ir: OntologyIR;
+    name: string;
+    parameters: Record<string, unknown>;
+    codec: ReturnType<typeof createFoundryCodec>;
+}): {
+    parameters: Record<string, unknown>;
+    overrides: {
+        uniqueIdentifierLinkIdValues: Record<string, string>;
+        actionExecutionTime?: string;
+    };
+} {
+    const actionType = options.ir.actionTypes.find((candidate) => candidate.name === options.name);
+    if (!actionType) {
+        throw new NonRetryableError(`Unknown Foundry action type "${options.name}".`);
+    }
+    const overrideMapping = getFoundryActionOverrideParameterMapping(actionType);
+    const parameterTypes = new Map(
+        actionType.parameters.map((parameter) => [parameter.name, parameter.type])
+    );
+    const parameters: Record<string, unknown> = {};
+    const uniqueIdentifierLinkIdValues: Record<string, string> = {};
+    let actionExecutionTime: string | undefined;
+
+    for (const [parameterName, value] of Object.entries(options.parameters)) {
+        if (overrideMapping.uuidByParameterName.has(parameterName)) {
+            if (value !== undefined) {
+                uniqueIdentifierLinkIdValues[overrideMapping.uuidByParameterName.get(parameterName)!] =
+                    serializeOverrideValue(value);
+            }
+            continue;
+        }
+        if (overrideMapping.nowParameterName === parameterName) {
+            if (value !== undefined) {
+                actionExecutionTime = serializeOverrideValue(value);
+            }
+            continue;
+        }
+        if (value !== undefined) {
+            const parameterType = parameterTypes.get(parameterName);
+            parameters[parameterName] = parameterType
+                ? options.codec.encodeValue(parameterType, value)
+                : value;
+        }
+    }
+
+    return {
+        parameters,
+        overrides: {
+            uniqueIdentifierLinkIdValues,
+            actionExecutionTime,
+        },
+    };
 }
 
 export function createFoundryOntologyBackendAdapter(opts: {
@@ -238,7 +302,7 @@ export function createFoundryOntologyBackendAdapter(opts: {
         },
     };
 
-    return {
+    const adapter: OntologyBackendAdapter = {
         name: "foundry",
         getCollectionOptions: (objectType: string) => {
             if (opts.users?.objectType === objectType) {
@@ -253,10 +317,129 @@ export function createFoundryOntologyBackendAdapter(opts: {
                 decodeObject: (object) => codec.decodeObject(objectType, object) as FoundryObject,
             });
         },
+        validateAction: async (
+            name: string,
+            parameters: Record<string, unknown>
+        ) => {
+            const invocation = prepareFoundryActionInvocation({
+                ir: opts.ir,
+                name,
+                parameters,
+                codec,
+            });
+
+            let result: ApplyActionResult;
+            try {
+                result = await Actions.applyWithOverrides(
+                    opts.client,
+                    opts.client.ontologyRid,
+                    toFoundryActionTypeName(name),
+                    {
+                        request: {
+                            options: {
+                                mode: "VALIDATE_ONLY",
+                            },
+                            parameters: invocation.parameters,
+                        },
+                        overrides: invocation.overrides,
+                    },
+                    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+                    {
+                        preview: true,
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    } as any
+                );
+            } catch (error) {
+                if (isFoundryNotFoundError(error)) {
+                    throw new NonRetryableError(
+                        error instanceof Error ? error.message : "Foundry action target was not found.",
+                        { cause: error }
+                    );
+                }
+                throw error;
+            }
+
+            if (!result.validation) {
+                throw new Error("Foundry validate action response did not include a validation result.");
+            }
+            return {
+                certain: true,
+                value:
+                    result.validation.result === "VALID"
+                        ? {
+                              kind: "ok",
+                              value: undefined,
+                          }
+                        : {
+                              kind: "err",
+                              value: getFoundryValidationIssues(result),
+                          },
+            };
+        },
+        validateActionDraft: async (
+            name: string,
+            parameters: Record<string, unknown>,
+            live: ValidateActionDraftLiveOpts
+        ) => {
+            const actionType = opts.ir.actionTypes.find((candidate) => candidate.name === name);
+            if (!actionType) {
+                throw new NonRetryableError(`Unknown Foundry action type "${name}".`);
+            }
+            const knownParameters = new Set([
+                ...Object.entries(parameters).flatMap(([parameterName, value]) =>
+                    value === undefined
+                        ? []
+                        : [parameterName]
+                ),
+                ...live.knownParameters,
+            ]);
+            const missingKnownRequiredParameters = actionType.parameters.filter(
+                (parameter) =>
+                    parameters[parameter.name] === undefined &&
+                    knownParameters.has(parameter.name) &&
+                    !unwrapType(resolveType(opts.ir, parameter.type)).isOptional
+            );
+            if (missingKnownRequiredParameters.length > 0) {
+                return certain({
+                    kind: "err",
+                    value: missingKnownRequiredParameters.map(
+                        (parameter) => ({
+                            message: `Required action parameter "${parameter.name}" is missing.`,
+                            path: [parameter.name],
+                        })
+                    ),
+                });
+            }
+            const hasUnknownParameters = actionType.parameters.some(
+                (parameter) =>
+                    parameters[parameter.name] === undefined &&
+                    !knownParameters.has(parameter.name)
+            );
+            if (!hasUnknownParameters) {
+                return adapter.validateAction!(name, parameters, live);
+            }
+
+            const userId =
+                typeof live.context?.user === "string"
+                    ? live.context.user
+                    : undefined;
+            if (!userId) {
+                return uncertain();
+            }
+            const criteria = await loadFoundrySubmissionCriteria({
+                client: opts.client,
+                actionTypeName: name,
+                userId,
+            });
+            return validateFoundryActionDraftCriteria({
+                client: opts.client,
+                criteria,
+                userId,
+                parameters,
+                knownParameters,
+            });
+        },
         applyAction: async (name, parameters, context) => {
-            const actionType = opts.ir.actionTypes.find((actionType) => actionType.name === name)!;
-            const overrideMapping = getFoundryActionOverrideParameterMapping(actionType);
-            const parameterTypes = new Map(actionType.parameters.map((p) => [p.name, p.type]));
             const mediaReferences = new Map<string, Awaited<ReturnType<typeof MediaSets.uploadMedia>>>();
             const attachmentIdMappings: OntologyAttachmentIdMapping[] = [];
             await Promise.all(
@@ -283,32 +466,12 @@ export function createFoundryOntologyBackendAdapter(opts: {
             const actionCodec = createFoundryCodec(opts.ir, {
                 resolveMediaReference: (id) => mediaReferences.get(id),
             });
-            const requestParameters: Record<string, unknown> = {};
-            const uniqueIdentifierLinkIdValues: Record<string, string> = {};
-            let actionExecutionTime: string | undefined;
-
-            for (const [parameterName, value] of Object.entries(parameters)) {
-                if (overrideMapping.uuidByParameterName.has(parameterName)) {
-                    if (value !== undefined) {
-                        uniqueIdentifierLinkIdValues[
-                            overrideMapping.uuidByParameterName.get(parameterName)!
-                        ] = serializeOverrideValue(value);
-                    }
-                    continue;
-                }
-                if (overrideMapping.nowParameterName === parameterName) {
-                    if (value !== undefined) {
-                        actionExecutionTime = serializeOverrideValue(value);
-                    }
-                    continue;
-                }
-                if (value !== undefined) {
-                    const paramType = parameterTypes.get(parameterName);
-                    requestParameters[parameterName] = paramType
-                        ? actionCodec.encodeValue(paramType, value)
-                        : value;
-                }
-            }
+            const invocation = prepareFoundryActionInvocation({
+                ir: opts.ir,
+                name,
+                parameters,
+                codec: actionCodec,
+            });
 
             let result: ApplyActionResult;
             try {
@@ -322,12 +485,9 @@ export function createFoundryOntologyBackendAdapter(opts: {
                                 mode: "VALIDATE_AND_EXECUTE",
                                 returnEdits: "ALL_V2_WITH_DELETIONS",
                             },
-                            parameters: requestParameters,
+                            parameters: invocation.parameters,
                         },
-                        overrides: {
-                            uniqueIdentifierLinkIdValues,
-                            actionExecutionTime,
-                        },
+                        overrides: invocation.overrides,
                     },
                     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
                     {
@@ -393,6 +553,7 @@ export function createFoundryOntologyBackendAdapter(opts: {
         },
         attachments,
     };
+    return adapter;
 }
 
 export type CreateFoundryOntologyBackendOptions<

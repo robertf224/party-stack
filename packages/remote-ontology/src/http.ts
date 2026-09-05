@@ -8,7 +8,13 @@ import type {
     RemoteOntologyTransport,
     RemoteOntologyTransportOptions,
 } from "./protocol.js";
-import type { OntologyIR, PartialAttachmentMetadata } from "@party-stack/ontology";
+import type {
+    OntologyIR,
+    PartialAttachmentMetadata,
+    Uncertain,
+    ValidationIssue,
+} from "@party-stack/ontology";
+import type { Result } from "@party-stack/ontology/values";
 import { decode, encode } from "@party-stack/ontology/json";
 import { parseRemoteOntologyErrorBody } from "./errors.js";
 import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
@@ -113,6 +119,7 @@ export function createHttpRemoteOntologyTransport(
     const fetchImpl = opts.fetch ?? globalThis.fetch;
     const getHeaders = () => (typeof opts.headers === "function" ? opts.headers() : opts.headers);
     let ir = opts.ir;
+    let actionValidationSupported: boolean | undefined;
     const getIr = () => {
         if (!ir) {
             throw new Error(
@@ -132,6 +139,8 @@ export function createHttpRemoteOntologyTransport(
                 options
             );
             ir = description.ir;
+            actionValidationSupported =
+                description.capabilities?.actionValidation === true;
             return description;
         },
         loadSubset: async (request, options) => {
@@ -180,6 +189,28 @@ export function createHttpRemoteOntologyTransport(
                       getHeaders(),
                       options
                   );
+        },
+        validateAction: (request, options) => {
+            if (actionValidationSupported === false) {
+                return Promise.resolve({
+                    certain: false,
+                });
+            }
+            const ontology = getIr();
+            return postJson<Uncertain<Result<null, readonly ValidationIssue[]>>>(
+                fetchImpl,
+                resolveEndpoint(opts.url, "validate-action"),
+                {
+                    ...request,
+                    parameters: encode({
+                        ir: ontology,
+                        target: { kind: "actionParameters", actionType: request.actionType },
+                        value: request.parameters,
+                    }) as Record<string, unknown>,
+                },
+                getHeaders(),
+                options
+            );
         },
         runQueryFunction: async (request, options) => {
             const ontology = getIr();

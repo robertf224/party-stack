@@ -50,6 +50,7 @@ const ir: OntologyIR = {
 describe("createRemoteLiveOntology", () => {
     it("uses describe to construct a live ontology with projected context", async () => {
         let appliedParameters: Record<string, unknown> | undefined;
+        let validatedParameters: Record<string, unknown> | undefined;
         const transport: RemoteOntologyTransport = {
             describe: async () => ({
                 ir,
@@ -62,6 +63,16 @@ describe("createRemoteLiveOntology", () => {
             applyAction: async (request) => {
                 appliedParameters = request.parameters;
                 return {};
+            },
+            validateAction: async (request) => {
+                validatedParameters = request.parameters;
+                return {
+                    certain: true,
+                    value: {
+                        kind: "ok",
+                        value: null,
+                    },
+                };
             },
             runQueryFunction: async (request) => ({
                 value: `Hello ${request.parameters.name}`,
@@ -86,6 +97,31 @@ describe("createRemoteLiveOntology", () => {
             ownerEmail: "alice@example.com",
             dueDate: Temporal.PlainDate.from("2026-06-15"),
         });
+        await expect(
+            ontology.actions.createNote!.validate({
+                title: "Hello",
+                dueDate: Temporal.PlainDate.from("2026-06-15"),
+            })
+        ).resolves.toEqual({
+            certain: true,
+            value: {
+                kind: "ok",
+                value: undefined,
+            },
+        });
+        expect(validatedParameters).toEqual(appliedParameters);
+        await expect(
+            ontology.actions.createNote!.validateDraft(
+                {
+                    title: "Hello",
+                },
+                {
+                    knownParameters: ["title"],
+                }
+            )
+        ).resolves.toEqual({
+            certain: false,
+        });
         await expect(ontology.queryFunctions.greet!({ name: "Alice" })).resolves.toBe("Hello Alice");
         await ontology.cleanup();
     });
@@ -102,6 +138,9 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
             applyAction: async () => ({
                 invalidatedObjectTypes: ["Note"],
                 attachmentIdMappings: [{ localId: "local", remoteId: "remote" }],
+            }),
+            validateAction: async () => ({
+                certain: false,
             }),
             runQueryFunction: async () => ({ value: undefined }),
             getAttachmentMetadata: async () => ({}),
@@ -163,6 +202,13 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
                     objects: [],
                 }),
                 applyAction: async () => ({ invalidatedObjectTypes: ["Note"] }),
+                validateAction: async () => ({
+                    certain: true,
+                    value: {
+                        kind: "ok",
+                        value: null,
+                    },
+                }),
                 runQueryFunction: async () => ({ value: undefined }),
                 getAttachmentMetadata: async () => ({}),
                 getAttachmentContent: async () => new Blob(),

@@ -222,6 +222,100 @@ describe("createLiveOntology", () => {
         await coordination.close();
     });
 
+    it("validates an action without applying it", async () => {
+        const applyAction = vi.fn(() => Promise.resolve());
+        const validateAction = vi.fn(() =>
+            Promise.resolve({
+                certain: true as const,
+                value: {
+                    kind: "err" as const,
+                    value: [{ message: "Invalid action." }],
+                },
+            })
+        );
+        const validateActionDraft = vi.fn(() =>
+            Promise.resolve({
+                certain: false as const,
+            })
+        );
+        const context = { user: "user-1" };
+        const ontology = await createLiveOntology({
+            id: "action-validation",
+            ir: actionIr,
+            context,
+            backend: () => ({
+                name: "test",
+                getCollectionOptions: () => {
+                    throw new Error("unexpected collection");
+                },
+                applyAction,
+                validateAction,
+                validateActionDraft,
+                runQueryFunction: () => Promise.reject(new Error("unexpected query")),
+            }),
+            runtime: () => ({
+                owner: "user-1",
+                namespace: "action-validation",
+                blobBytes: new MemoryBlobBytesStore(),
+                coordination: new SingleProcessCoordination({
+                    scope: "action-validation",
+                }),
+            }),
+        });
+
+        await expect(ontology.actions.save!.validate({})).resolves.toEqual({
+            certain: true,
+            value: {
+                kind: "err",
+                value: [{ message: "Invalid action." }],
+            },
+        });
+        expect(validateAction).toHaveBeenCalledWith("save", {}, {
+            objects: {},
+            context,
+        });
+        await ontology.actions.save!.validateDraft({}, {
+            knownParameters: [],
+        });
+        expect(validateActionDraft).toHaveBeenCalledWith("save", {}, {
+            objects: {},
+            context,
+            knownParameters: [],
+        });
+        expect(applyAction).not.toHaveBeenCalled();
+        await ontology.cleanup();
+    });
+
+    it("reports uncertain validation when the backend does not implement it", async () => {
+        const coordination = new SingleProcessCoordination({
+            scope: "unsupported-action-validation",
+        });
+        const ontology = await createLiveOntology({
+            id: "unsupported-action-validation",
+            ir: actionIr,
+            backend: () => ({
+                name: "test",
+                getCollectionOptions: () => {
+                    throw new Error("unexpected collection");
+                },
+                applyAction: () => Promise.resolve(),
+                runQueryFunction: () => Promise.reject(new Error("unexpected query")),
+            }),
+            runtime: () => ({
+                owner: "user",
+                namespace: "unsupported-action-validation",
+                blobBytes: new MemoryBlobBytesStore(),
+                coordination,
+            }),
+        });
+
+        await expect(ontology.actions.save!.validate({})).resolves.toEqual({
+            certain: false,
+        });
+        await ontology.cleanup();
+        await coordination.close();
+    });
+
     it("exposes ready and settles immediate cleanup without unhandled rejections", async () => {
         const unhandled: unknown[] = [];
         const onUnhandled = (reason: unknown) => {

@@ -13,12 +13,19 @@ const mediaMocks = vi.hoisted(() => ({
 }));
 const ontologyMocks = vi.hoisted(() => ({
     applyWithOverrides: vi.fn(),
+    getActionType: vi.fn(),
     getMediaContent: vi.fn(),
     getMediaMetadata: vi.fn(),
+}));
+const metadataMocks = vi.hoisted(() => ({
+    bulkLoadOntologyEntities: vi.fn(),
 }));
 
 vi.mock("@osdk/foundry.mediasets", () => ({
     MediaSets: mediaMocks,
+}));
+vi.mock("@osdk/client.unstable", () => ({
+    bulkLoadOntologyEntities: metadataMocks.bulkLoadOntologyEntities,
 }));
 vi.mock("@osdk/foundry.ontologies", async (importOriginal) => {
     const original = await importOriginal<typeof import("@osdk/foundry.ontologies")>();
@@ -27,6 +34,10 @@ vi.mock("@osdk/foundry.ontologies", async (importOriginal) => {
         Actions: {
             ...original.Actions,
             applyWithOverrides: ontologyMocks.applyWithOverrides,
+        },
+        ActionTypesV2: {
+            ...original.ActionTypesV2,
+            get: ontologyMocks.getActionType,
         },
         MediaReferenceProperties: {
             ...original.MediaReferenceProperties,
@@ -176,6 +187,160 @@ describe("Foundry media attachments", () => {
                 },
             },
         });
+    });
+
+    it("validates without executing or uploading media", async () => {
+        ontologyMocks.applyWithOverrides.mockResolvedValue({
+            validation: {
+                result: "INVALID",
+                submissionCriteria: [
+                    {
+                        result: "INVALID",
+                        configuredFailureMessage: "Only administrators may submit.",
+                    },
+                ],
+                parameters: {},
+            },
+        });
+
+        await expect(
+            adapter.validateAction!(
+                "createMedia",
+                {
+                    media: {
+                        id: encodeFoundryMediaId(mediaId),
+                        type: "image/png",
+                    },
+                },
+                {
+                    objects: {},
+                }
+            )
+        ).resolves.toEqual({
+            certain: true,
+            value: {
+                kind: "err",
+                value: [{ message: "Only administrators may submit." }],
+            },
+        });
+        const request = ontologyMocks.applyWithOverrides.mock.calls[0]?.[3] as unknown as {
+            request: {
+                options: {
+                    mode: string;
+                };
+            };
+        };
+        expect(request.request.options).toEqual({
+            mode: "VALIDATE_ONLY",
+        });
+        expect(mediaMocks.uploadMedia).not.toHaveBeenCalled();
+    });
+
+    it("proves impossible submission criteria without validating incomplete parameters", async () => {
+        ontologyMocks.getActionType.mockResolvedValue({
+            rid: "ri.action-type.main.action-type.1",
+        });
+        metadataMocks.bulkLoadOntologyEntities.mockResolvedValue({
+            actionTypes: [
+                {
+                    actionType: {
+                        actionTypeLogic: {
+                            validation: {
+                                actionTypeLevelValidation: {
+                                    rules: {
+                                        adminOnly: {
+                                            condition: {
+                                                type: "comparison",
+                                                comparison: {
+                                                    left: {
+                                                        type: "staticValue",
+                                                        staticValue: {
+                                                            type: "string",
+                                                            string: "user",
+                                                        },
+                                                    },
+                                                    operator: "EQUALS",
+                                                    right: {
+                                                        type: "staticValue",
+                                                        staticValue: {
+                                                            type: "string",
+                                                            string: "admin",
+                                                        },
+                                                    },
+                                                },
+                                            },
+                                            displayMetadata: {
+                                                failureMessage: "Only administrators may submit.",
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            ],
+        });
+
+        await expect(
+            adapter.validateActionDraft!("createMedia", {}, {
+                objects: {},
+                context: {
+                    user: "user-1",
+                },
+                knownParameters: [],
+            })
+        ).resolves.toEqual({
+            certain: true,
+            value: {
+                kind: "err",
+                value: [
+                    {
+                        message:
+                            "Impossible submission criterion: Only administrators may submit.",
+                    },
+                ],
+            },
+        });
+        expect(ontologyMocks.applyWithOverrides).not.toHaveBeenCalled();
+    });
+
+    it("reports uncertain draft validation without a context user", async () => {
+        await expect(
+            adapter.validateActionDraft!("createMedia", {}, {
+                objects: {},
+                knownParameters: [],
+            })
+        ).resolves.toEqual({
+            certain: false,
+        });
+        expect(ontologyMocks.getActionType).not.toHaveBeenCalled();
+        expect(metadataMocks.bulkLoadOntologyEntities).not.toHaveBeenCalled();
+    });
+
+    it("reports a known required parameter as missing", async () => {
+        await expect(
+            adapter.validateActionDraft!("createMedia", {}, {
+                objects: {},
+                context: {
+                    user: "user-1",
+                },
+                knownParameters: ["media"],
+            })
+        ).resolves.toEqual({
+            certain: true,
+            value: {
+                kind: "err",
+                value: [
+                    {
+                        message: 'Required action parameter "media" is missing.',
+                        path: ["media"],
+                    },
+                ],
+            },
+        });
+        expect(metadataMocks.bulkLoadOntologyEntities).not.toHaveBeenCalled();
+        expect(ontologyMocks.applyWithOverrides).not.toHaveBeenCalled();
     });
 
     it("reads confirmed media through its object property source", async () => {
