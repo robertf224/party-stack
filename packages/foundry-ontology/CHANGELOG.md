@@ -1,5 +1,16 @@
 # @party-stack/foundry-ontology
 
+## 0.13.0
+
+### Minor Changes
+
+- 05ff1a7: add server-authoritative validation hooks
+
+### Patch Changes
+
+- Updated dependencies [05ff1a7]
+    - @party-stack/ontology@0.14.0
+
 ## 0.12.2
 
 ### Patch Changes
