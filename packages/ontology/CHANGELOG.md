@@ -1,5 +1,11 @@
 # @party-stack/ontology
 
+## 0.14.0
+
+### Minor Changes
+
+- 05ff1a7: add server-authoritative validation hooks
+
 ## 0.13.2
 
 ### Patch Changes
