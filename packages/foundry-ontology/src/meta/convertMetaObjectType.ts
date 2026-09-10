@@ -21,15 +21,23 @@ export function convertFoundryMetaObjectType(
         title: objectType.titleProperty,
         description: objectType.description,
         properties: Object.entries(objectType.properties).map(([name, property]) =>
-            convertFoundryObjectProperty(name, property)
+            convertFoundryObjectProperty(
+                name,
+                property,
+                name === objectType.primaryKey
+            )
         ),
     };
 }
 
 function convertFoundryObjectProperty(
     name: string,
-    property: PropertyV2
+    property: PropertyV2,
+    required: boolean
 ): MetaObjectProperty {
+    const type = property.valueTypeApiName
+        ? { kind: "ref" as const, value: { name: property.valueTypeApiName } }
+        : convertFoundryObjectPropertyType(property.dataType);
     return {
         id: property.rid,
         name,
@@ -41,8 +49,11 @@ function convertFoundryObjectProperty(
                       message: property.status.message,
                   }
                 : undefined,
-        type: property.valueTypeApiName
-            ? { kind: "ref", value: { name: property.valueTypeApiName } }
-            : convertFoundryObjectPropertyType(property.dataType),
+        type: required
+            ? type
+            : {
+                  kind: "optional",
+                  value: { type },
+              },
     };
 }
