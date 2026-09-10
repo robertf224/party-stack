@@ -1,5 +1,11 @@
 # @party-stack/foundry-ontology
 
+## 0.14.6
+
+### Patch Changes
+
+- 07bf6ce: make struct fields properly optional on object types
+
 ## 0.14.5
 
 ### Patch Changes
