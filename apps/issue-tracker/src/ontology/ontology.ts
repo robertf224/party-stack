@@ -14,21 +14,27 @@ export default defineOntology({
                 {
                     name: "issueCompletedAt",
                     displayName: "Issue Completed At",
-                    type: o.timestamp({}),
+                    type: o.optional({
+                        type: o.timestamp({}),
+                    }),
                     description:
                         "Timestamp when the issue entered the Completed state; empty while the issue is not completed.",
                 },
                 {
                     name: "issueStatus",
                     displayName: "Issue Status",
-                    type: o.string({}),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "Current workflow state of the issue: Open, In Progress, Waiting, or Completed.",
                 },
                 {
                     name: "issueUpdatedAt",
                     displayName: "Issue Updated At",
-                    type: o.timestamp({}),
+                    type: o.optional({
+                        type: o.timestamp({}),
+                    }),
                     description: "Timestamp of the most recent update made to the issue.",
                 },
                 {
@@ -40,36 +46,44 @@ export default defineOntology({
                 {
                     name: "createdBy",
                     displayName: "Created by",
-                    type: o.string({}),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                 },
                 {
                     name: "issueTitle",
                     displayName: "Issue Title",
-                    type: o.string({}),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "Short, human-readable summary used to identify the issue in lists and workflows.",
                 },
                 {
                     name: "assignee",
                     displayName: "Assignee",
-                    type: o.string({}),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                 },
                 {
                     name: "issueAttachments",
                     displayName: "Issue Attachments",
-                    type: o.list({
-                        elementType: o.attachment({
-                            meta: {
-                                type: "attachment",
-                            },
-                            constraint: {
-                                content: {
-                                    kind: "image",
-                                    value: {
-                                        mediaTypes: ["image/png", "image/jpeg"],
+                    type: o.optional({
+                        type: o.list({
+                            elementType: o.attachment({
+                                meta: {
+                                    type: "attachment",
+                                },
+                                constraint: {
+                                    content: {
+                                        kind: "image",
+                                        value: {
+                                            mediaTypes: ["image/png", "image/jpeg"],
+                                        },
                                     },
                                 },
-                            },
+                            }),
                         }),
                     }),
                     description: "Files that provide supporting material or evidence for the issue.",
@@ -77,19 +91,25 @@ export default defineOntology({
                 {
                     name: "projectId",
                     displayName: "Project ID",
-                    type: o.string({}),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description: "Identifier of the optional project that groups this issue.",
                 },
                 {
                     name: "issueCreatedAt",
                     displayName: "Issue Created At",
-                    type: o.timestamp({}),
+                    type: o.optional({
+                        type: o.timestamp({}),
+                    }),
                     description: "Timestamp when the issue was created through the operational workflow.",
                 },
                 {
                     name: "issueDescription",
                     displayName: "Issue Description",
-                    type: o.string({}),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "Detailed context, requirements, or notes explaining the work represented by the issue.",
                 },
@@ -107,19 +127,25 @@ export default defineOntology({
                 {
                     name: "projectUpdatedAt",
                     displayName: "Project Updated At",
-                    type: o.timestamp({}),
+                    type: o.optional({
+                        type: o.timestamp({}),
+                    }),
                     description: "Timestamp of the most recent update made to the project.",
                 },
                 {
                     name: "projectDescription",
                     displayName: "Project Description",
-                    type: o.string({}),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description: "Summary of the project's purpose, scope, or intended outcome.",
                 },
                 {
                     name: "projectColor",
                     displayName: "Project Color",
-                    type: o.string({}),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "Display color used to visually distinguish the project, stored as a hexadecimal color value such as #2D72D2.",
                 },
@@ -132,13 +158,17 @@ export default defineOntology({
                 {
                     name: "projectCreatedAt",
                     displayName: "Project Created At",
-                    type: o.timestamp({}),
+                    type: o.optional({
+                        type: o.timestamp({}),
+                    }),
                     description: "Timestamp when the project was created through the operational workflow.",
                 },
                 {
                     name: "projectTitle",
                     displayName: "Project Title",
-                    type: o.string({}),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description: "Short, human-readable name used to identify the project.",
                 },
             ],
