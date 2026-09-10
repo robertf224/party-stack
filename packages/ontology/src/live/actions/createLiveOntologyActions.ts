@@ -2,6 +2,8 @@ import { createTransaction, type Collection, type Transaction } from "@tanstack/
 import type { BlobManager } from "@party-stack/blobs";
 import type { ConnectionMonitor } from "@party-stack/connections";
 import type { RuntimeAdapter } from "@party-stack/runtime";
+import { resolveActionParameters } from "../expression.js";
+import { createReadTx } from "../mutators/createMutatorTx.js";
 import { runOptimisticAction } from "../mutators/runOptimisticAction.js";
 import { createOntologyOutbox, type OutboxProjection } from "../outbox/createOntologyOutbox.js";
 import { createLiveOntologyAction } from "./createLiveOntologyAction.js";
@@ -78,11 +80,18 @@ export function createLiveOntologyActions(options: {
         request: OntologyActionRequest
     ): Promise<boolean> => {
         try {
+            const parameters = await resolveActionParameters({
+                ir: options.ir,
+                actionTypeName: request.actionTypeName,
+                initialParameters: request.parameters,
+                context: options.context,
+                tx: createReadTx(options.objects),
+            });
             await runOptimisticAction({
                 transaction,
                 ir: options.ir,
                 actionTypeName: request.actionTypeName,
-                parameters: request.parameters,
+                parameters,
                 context: options.context,
                 objects: options.objects,
                 mutators: options.writes?.mutators,

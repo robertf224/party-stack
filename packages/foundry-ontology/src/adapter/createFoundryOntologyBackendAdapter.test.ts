@@ -105,6 +105,11 @@ describe("Foundry media attachments", () => {
                             displayName: "Media",
                             type: mediaType,
                         },
+                        {
+                            name: "caption",
+                            displayName: "Caption",
+                            type: o.optional({ type: o.string({}) }),
+                        },
                     ],
                     logic: [],
                 },
@@ -160,7 +165,7 @@ describe("Foundry media attachments", () => {
         await expect(
             adapter.applyAction(
                 "createMedia",
-                { media: attachment },
+                { media: attachment, caption: null },
                 {
                     objects: {},
                     attachmentUploads: [
@@ -184,6 +189,7 @@ describe("Foundry media attachments", () => {
             request: {
                 parameters: {
                     media: temporaryReference,
+                    caption: null,
                 },
             },
         });

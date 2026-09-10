@@ -140,7 +140,6 @@ describe("createRemoteLiveOntology", () => {
 
         expect(appliedParameters).toEqual({
             title: "Hello",
-            ownerEmail: "alice@example.com",
             dueDate: Temporal.PlainDate.from("2026-06-15"),
         });
         expect(resolutionRequest).toBeUndefined();

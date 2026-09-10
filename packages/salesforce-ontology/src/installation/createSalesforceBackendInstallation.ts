@@ -9,32 +9,22 @@ import {
     type OntologyRoute,
 } from "@party-stack/ontology";
 import { createSalesforceClient } from "@party-stack/salesforce-client";
-import type {
-    BackendConnectionAdapterProvider,
-    ConnectionEgress,
-} from "@party-stack/connections";
+import type { BackendConnectionAdapterProvider, ConnectionEgress } from "@party-stack/connections";
 import type { RuntimeAdapterProvider } from "@party-stack/runtime";
-import {
-    createSalesforceOntologyBackend,
-} from "../adapter/createSalesforceOntologyBackendAdapter.js";
+import { createSalesforceOntologyBackend } from "../adapter/createSalesforceOntologyBackendAdapter.js";
 import {
     createSalesforceConnectionAdapter,
     type CreateSalesforceConnectionAdapterOptions,
     type SalesforceAuthenticationClient,
 } from "../connection.js";
-import {
-    createSalesforceMetaOntologyBackendAdapter,
-} from "../meta/createSalesforceMetaOntologyBackendAdapter.js";
+import { createSalesforceMetaOntologyBackendAdapter } from "../meta/createSalesforceMetaOntologyBackendAdapter.js";
 
 export type SalesforceConnectionOptions = Omit<
     CreateSalesforceConnectionAdapterOptions,
     "instanceUrl" | "apiVersion"
 >;
 
-export type SalesforceOntologyRoute = (options: {
-    instanceUrl: string;
-    apiVersion: string;
-}) => OntologyRoute;
+export type SalesforceOntologyRoute = (options: { instanceUrl: string; apiVersion: string }) => OntologyRoute;
 
 export interface CreateSalesforceBackendInstallationOptions<
     AuthenticationClient extends object = SalesforceAuthenticationClient,
@@ -43,14 +33,9 @@ export interface CreateSalesforceBackendInstallationOptions<
     instanceUrl: string;
     apiVersion: string;
     runtime: RuntimeAdapterProvider;
-    connections:
-        | SalesforceConnectionOptions
-        | BackendConnectionAdapterProvider<AuthenticationClient>;
+    connections: SalesforceConnectionOptions | BackendConnectionAdapterProvider<AuthenticationClient>;
     routes: readonly SalesforceOntologyRoute[];
-    createContext?: (
-        userId: string,
-        ontologyId: string
-    ) => Record<string, unknown>;
+    createContext?: (userId: string, ontologyId: string) => Record<string, unknown>;
 }
 
 function createConnectionSalesforceClient(options: {
@@ -62,10 +47,7 @@ function createConnectionSalesforceClient(options: {
         instanceUrl: options.instanceUrl,
         apiVersion: options.apiVersion,
         authenticatedFetch: true,
-        fetch: (input, init) =>
-            options.egress.fetch(
-                new Request(input, init)
-            ),
+        fetch: (input, init) => options.egress.fetch(new Request(input, init)),
     });
 }
 
@@ -101,26 +83,22 @@ export function createSalesforceOntologyRoute(options: {
 }): SalesforceOntologyRoute {
     return ({ instanceUrl, apiVersion }) => {
         const route: OntologyRoute = {
-            matches: (ontologyId) =>
-                ontologyId === options.ontologyId,
+            matches: (ontologyId) => ontologyId === options.ontologyId,
         };
         const ir = options.ir;
         if (ir) {
             route.configure = ({ egress }) => {
-                const client =
-                    createConnectionSalesforceClient({
-                        instanceUrl,
-                        apiVersion,
-                        egress,
-                    });
+                const client = createConnectionSalesforceClient({
+                    instanceUrl,
+                    apiVersion,
+                    egress,
+                });
                 return {
                     ir,
-                    backend:
-                        createSalesforceOntologyBackend({
-                            client,
-                        }),
-                    persistObjects:
-                        options.persistObjects ?? true,
+                    backend: createSalesforceOntologyBackend({
+                        client,
+                    }),
+                    persistObjects: options.persistObjects,
                     writes: options.writes,
                 };
             };
@@ -142,23 +120,17 @@ export function createSalesforceBackendInstallation<
     AuthenticationClient extends object = SalesforceAuthenticationClient,
 >(
     options: CreateSalesforceBackendInstallationOptions<AuthenticationClient>
-): Promise<
-    OntologyBackendInstallation<AuthenticationClient>
-> {
+): Promise<OntologyBackendInstallation<AuthenticationClient>> {
     const connectionAdapter =
         typeof options.connections === "function"
             ? options.connections
             : (createSalesforceConnectionAdapter({
                   ...options.connections,
-                  instanceUrl:
-                      options.instanceUrl,
-                  apiVersion:
-                      options.apiVersion,
+                  instanceUrl: options.instanceUrl,
+                  apiVersion: options.apiVersion,
               }) as BackendConnectionAdapterProvider<AuthenticationClient>);
     return createOntologyBackendInstallation<AuthenticationClient>({
-        installationId:
-            options.installationId ??
-            `salesforce:${new URL(options.instanceUrl).origin}`,
+        installationId: options.installationId ?? `salesforce:${new URL(options.instanceUrl).origin}`,
         connections: connectionAdapter,
         runtime: options.runtime,
         routes: options.routes.map((route) =>

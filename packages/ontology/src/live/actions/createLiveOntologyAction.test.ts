@@ -13,6 +13,7 @@ import {
 import { o, type OntologyIR } from "../../ir/index.js";
 import { createLiveOntologyAction } from "./createLiveOntologyAction.js";
 import type { OntologyObject } from "../objects/OntologyObject.js";
+import type { OntologyActionRequest } from "../outbox/types.js";
 
 const users = createCollection(
     localOnlyCollectionOptions<
@@ -241,5 +242,31 @@ describe("LiveOntologyAction.resolveParameters", () => {
         await expect(
             liveAction.resolveParameters(supplied)
         ).resolves.toEqual(supplied);
+    });
+});
+
+describe("LiveOntologyAction submission", () => {
+    it("submits provided parameters without resolving defaults", async () => {
+        const submit = vi.fn((request: OntologyActionRequest) => {
+            void request;
+            return Promise.resolve();
+        });
+        const actionWithDefaults = createLiveOntologyAction({
+            ir,
+            action,
+            context: { actor: "user-1" },
+            objects: { User: users },
+            submit,
+            validate: vi.fn(),
+            validateDraft: vi.fn(),
+        });
+        const provided = {
+            entries: [{ code: "alpha" }],
+            user: "user-1",
+        };
+
+        await actionWithDefaults(provided);
+
+        expect(submit.mock.calls[0]?.[0].parameters).toEqual(provided);
     });
 });

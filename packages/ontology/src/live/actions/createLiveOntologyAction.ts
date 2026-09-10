@@ -81,14 +81,13 @@ export function createLiveOntologyAction(options: {
         providedParameters,
         executionOptions
     ) => {
-        const parameters = await resolveParameters(providedParameters);
         const idempotencyKey =
             executionOptions?.idempotencyKey ??
             crypto.randomUUID();
         return options.submit(
             {
                 actionTypeName: options.action.name,
-                parameters,
+                parameters: providedParameters,
                 idempotencyKey,
             },
             executionOptions
@@ -97,13 +96,13 @@ export function createLiveOntologyAction(options: {
     apply.validate = async (providedParameters) =>
         options.validate(
             options.action.name,
-            await resolveParameters(providedParameters)
+            providedParameters
         );
     apply.resolveParameters = resolveParameters;
     apply.validateDraft = async (parameters, validationOptions) =>
         options.validateDraft(
             options.action.name,
-            await resolveParameters(parameters),
+            parameters,
             validationOptions as LiveOntologyActionDraftValidationOptions<Record<string, unknown>>
         );
     return apply;

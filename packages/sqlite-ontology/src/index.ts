@@ -1,4 +1,8 @@
-import { createReadTx, runOptimisticAction } from "@party-stack/ontology";
+import {
+    createReadTx,
+    resolveActionParameters,
+    runOptimisticAction,
+} from "@party-stack/ontology";
 import { decode, encode } from "@party-stack/ontology/json";
 import { resolveType } from "@party-stack/ontology/utils";
 import { createTransaction, eq, queryOnce } from "@tanstack/db";
@@ -477,10 +481,17 @@ export function createSQLiteOntologyBackendAdapter(
                 );
             }
             const collections = live.objects as Record<string, OntologyCollection>;
+            const resolvedParameters = await resolveActionParameters({
+                ir: opts.ir,
+                actionTypeName,
+                initialParameters: parameters,
+                context: live.context ?? {},
+                tx: createReadTx(collections),
+            });
             await loadActionReferenceObjects({
                 ir: opts.ir,
                 actionTypeName,
-                parameters,
+                parameters: resolvedParameters,
                 collections,
             });
 
@@ -545,7 +556,7 @@ export function createSQLiteOntologyBackendAdapter(
                 transaction,
                 ir: opts.ir,
                 actionTypeName,
-                parameters,
+                parameters: resolvedParameters,
                 context: live.context ?? {},
                 objects: collections,
                 mutators: opts.mutators,

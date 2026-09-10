@@ -8,5 +8,6 @@ export * from "./mutators/types.js";
 export {
     createReadTx,
 } from "./mutators/createMutatorTx.js";
+export { resolveActionParameters } from "./expression.js";
 export * from "./mutators/runOptimisticAction.js";
 export * from "./outbox/types.js";

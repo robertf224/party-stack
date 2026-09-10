@@ -82,7 +82,7 @@ export function createFoundryOntologyRoute(options: {
                                 ? options.users(connection.userId)
                                 : options.users,
                     }),
-                    persistObjects: options.persistObjects ?? true,
+                    persistObjects: options.persistObjects,
                     writes: options.writes,
                 };
             };
