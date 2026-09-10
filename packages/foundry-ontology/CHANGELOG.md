@@ -1,5 +1,11 @@
 # @party-stack/foundry-ontology
 
+## 0.14.5
+
+### Patch Changes
+
+- 1d842ab: fix optionals in foundry generation
+
 ## 0.14.4
 
 ### Patch Changes
