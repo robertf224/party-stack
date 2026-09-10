@@ -1,5 +1,13 @@
 # @party-stack/issue-tracker
 
+## 0.2.6
+
+### Patch Changes
+
+- 1d842ab: fix optionals in foundry generation
+- Updated dependencies [1d842ab]
+    - @party-stack/foundry-ontology@0.14.5
+
 ## 0.2.5
 
 ### Patch Changes
