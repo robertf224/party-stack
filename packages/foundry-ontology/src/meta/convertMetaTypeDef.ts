@@ -165,7 +165,12 @@ export function convertFoundryStructField(field: StructFieldType): PropertyDef {
     return {
         name: field.apiName,
         displayName: field.apiName,
-        type: convertFoundryObjectPropertyType(field.dataType),
+        type: {
+            kind: "optional",
+            value: {
+                type: convertFoundryObjectPropertyType(field.dataType),
+            },
+        },
     };
 }
 

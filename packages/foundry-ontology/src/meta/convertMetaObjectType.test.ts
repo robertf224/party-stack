@@ -121,6 +121,95 @@ describe("convertFoundryMetaObjectType", () => {
         });
     });
 
+    it("treats nested struct fields as optional", () => {
+        const metadata = {
+            objectType: objectType(),
+            linkTypes: [],
+            implementsInterfaces: [],
+            implementsInterfaces2: {},
+            sharedPropertyTypeMapping: {},
+        } as ObjectTypeFullMetadata;
+        metadata.objectType.properties.address = {
+            dataType: {
+                type: "struct",
+                structFieldTypes: [
+                    {
+                        apiName: "city",
+                        rid: "ri.ontology.main.struct-field.address-city",
+                        dataType: { type: "string" },
+                        typeClasses: [],
+                    },
+                    {
+                        apiName: "coordinates",
+                        rid: "ri.ontology.main.struct-field.address-coordinates",
+                        dataType: {
+                            type: "struct",
+                            structFieldTypes: [
+                                {
+                                    apiName: "latitude",
+                                    rid: "ri.ontology.main.struct-field.coordinates-latitude",
+                                    dataType: { type: "double" },
+                                    typeClasses: [],
+                                },
+                            ],
+                        },
+                        typeClasses: [],
+                    },
+                ],
+            },
+            rid: "ri.ontology.main.property.employee-address",
+            status: { type: "active" },
+            typeClasses: [],
+        };
+
+        const result = convertFoundryMetaObjectType(metadata);
+        const address = result.properties.find((property) => property.name === "address");
+
+        expect(address?.type).toMatchObject({
+            kind: "optional",
+            value: {
+                type: {
+                    kind: "struct",
+                    value: {
+                        fields: [
+                            {
+                                name: "city",
+                                type: {
+                                    kind: "optional",
+                                    value: { type: { kind: "string" } },
+                                },
+                            },
+                            {
+                                name: "coordinates",
+                                type: {
+                                    kind: "optional",
+                                    value: {
+                                        type: {
+                                            kind: "struct",
+                                            value: {
+                                                fields: [
+                                                    {
+                                                        name: "latitude",
+                                                        type: {
+                                                            kind: "optional",
+                                                            value: {
+                                                                type: { kind: "double" },
+                                                            },
+                                                        },
+                                                    },
+                                                ],
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                },
+            },
+        });
+    });
+
     it("preserves the underlying type of Foundry-formatted identifiers", () => {
         const metadata = {
             objectType: objectType(),
