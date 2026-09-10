@@ -43,6 +43,7 @@ function createSyncHarness(
     opts: {
         commitReceipt?: () => true | Promise<void>;
         decodeObject?: (object: Record<string, unknown>) => Record<string, unknown>;
+        decodeEditObject?: (object: Record<string, unknown>) => Record<string, unknown>;
         collectionMetadata?: Map<string, unknown>;
     } = {}
 ) {
@@ -102,6 +103,7 @@ function createSyncHarness(
             "priority",
         ],
         decodeObject: opts.decodeObject,
+        decodeEditObject: opts.decodeEditObject,
     });
 
     const handle = syncConfig.sync({
@@ -640,7 +642,32 @@ describe("objectCollectionOptions", () => {
             nextPageToken: undefined,
         });
 
-        const harness = createSyncHarness();
+        const codec = createFoundryCodec({
+            types: [],
+            objectTypes: [
+                {
+                    name: "Employee",
+                    displayName: "Employee",
+                    pluralDisplayName: "Employees",
+                    primaryKey: "employeeId",
+                    properties: [
+                        { name: "employeeId", displayName: "Employee ID", type: o.integer({}) },
+                        { name: "name", displayName: "Name", type: o.string({}) },
+                        {
+                            name: "nickname",
+                            displayName: "Nickname",
+                            type: o.optional({ type: o.string({}) }),
+                        },
+                    ],
+                },
+            ],
+            linkTypes: [],
+            actionTypes: [],
+            queryFunctionTypes: [],
+        });
+        const harness = createSyncHarness([], {
+            decodeEditObject: (object) => codec.decodeEditObject("Employee", object),
+        });
 
         mockState.subscribeCallback?.({ type: "state", status: "open" });
 
@@ -712,6 +739,7 @@ describe("objectCollectionOptions", () => {
 
         const harness = createSyncHarness([], {
             decodeObject: (object) => codec.decodeObject("Employee", object),
+            decodeEditObject: (object) => codec.decodeEditObject("Employee", object),
         });
 
         mockState.subscribeCallback?.({ type: "state", status: "open" });
@@ -721,6 +749,87 @@ describe("objectCollectionOptions", () => {
                 employeeId: 7,
                 name: "Employee Seven",
                 attachments: [{ id: "ri.attachments.main.attachment.7" }],
+            });
+        });
+
+        harness.cleanup();
+    });
+
+    it("decodes media-reference wrappers from edit history using the property schema", async () => {
+        const mediaReference = {
+            mimeType: "image/png",
+            reference: {
+                type: "mediaSetViewItem",
+                mediaSetViewItem: {
+                    mediaSetRid: "ri.mio.main.media-set.1",
+                    mediaSetViewRid: "ri.mio.main.view.1",
+                    mediaItemRid: "ri.mio.main.media-item.1",
+                },
+            },
+        };
+        mockState.getEditsHistory.mockResolvedValue({
+            data: [
+                {
+                    objectPrimaryKey: { employeeId: 8 },
+                    operationId: "op-8",
+                    actionTypeRid: "action-1",
+                    userId: "user-1",
+                    timestamp: "2099-03-12T12:00:00.000Z",
+                    edit: {
+                        type: "createEdit",
+                        properties: {
+                            employeeId: 8,
+                            logoMedia: {
+                                type: "mediaReference",
+                                mediaReference,
+                            },
+                        },
+                    },
+                },
+            ],
+            nextPageToken: undefined,
+        });
+        const codec = createFoundryCodec({
+            types: [],
+            objectTypes: [
+                {
+                    name: "Employee",
+                    displayName: "Employee",
+                    pluralDisplayName: "Employees",
+                    primaryKey: "employeeId",
+                    properties: [
+                        { name: "employeeId", displayName: "Employee ID", type: o.integer({}) },
+                        {
+                            name: "logoMedia",
+                            displayName: "Logo media",
+                            type: o.optional({
+                                type: o.attachment({ meta: { type: "media" } }),
+                            }),
+                        },
+                    ],
+                },
+            ],
+            linkTypes: [],
+            actionTypes: [],
+            queryFunctionTypes: [],
+        });
+        const harness = createSyncHarness([], {
+            decodeEditObject: (object) => codec.decodeEditObject("Employee", object),
+        });
+
+        mockState.subscribeCallback?.({ type: "state", status: "open" });
+
+        await vi.waitFor(() => {
+            expect(harness.syncedData.get(8)).toEqual({
+                employeeId: 8,
+                logoMedia: {
+                    id: [
+                        "ri.mio.main.media-set.1",
+                        "ri.mio.main.view.1",
+                        "ri.mio.main.media-item.1",
+                    ].join(":"),
+                    type: "image/png",
+                },
             });
         });
 
@@ -749,7 +858,28 @@ describe("objectCollectionOptions", () => {
             nextPageToken: undefined,
         });
 
-        const harness = createSyncHarness();
+        const codec = createFoundryCodec({
+            types: [],
+            objectTypes: [
+                {
+                    name: "Employee",
+                    displayName: "Employee",
+                    pluralDisplayName: "Employees",
+                    primaryKey: "employeeId",
+                    properties: [
+                        { name: "employeeId", displayName: "Employee ID", type: o.integer({}) },
+                        { name: "name", displayName: "Name", type: o.string({}) },
+                        { name: "location", displayName: "Location", type: o.geopoint({}) },
+                    ],
+                },
+            ],
+            linkTypes: [],
+            actionTypes: [],
+            queryFunctionTypes: [],
+        });
+        const harness = createSyncHarness([], {
+            decodeEditObject: (object) => codec.decodeEditObject("Employee", object),
+        });
 
         mockState.subscribeCallback?.({ type: "state", status: "open" });
 
@@ -795,7 +925,27 @@ describe("objectCollectionOptions", () => {
             nextPageToken: undefined,
         });
 
-        const harness = createSyncHarness();
+        const codec = createFoundryCodec({
+            types: [],
+            objectTypes: [
+                {
+                    name: "Employee",
+                    displayName: "Employee",
+                    pluralDisplayName: "Employees",
+                    primaryKey: "employeeId",
+                    properties: [
+                        { name: "employeeId", displayName: "Employee ID", type: o.string({}) },
+                        { name: "name", displayName: "Name", type: o.string({}) },
+                    ],
+                },
+            ],
+            linkTypes: [],
+            actionTypes: [],
+            queryFunctionTypes: [],
+        });
+        const harness = createSyncHarness([], {
+            decodeEditObject: (object) => codec.decodeEditObject("Employee", object),
+        });
 
         mockState.subscribeCallback?.({ type: "state", status: "open" });
 
@@ -1017,6 +1167,23 @@ describe("objectCollectionOptions", () => {
         warnSpy.mockRestore();
     });
 
+    it("returns immediately when awaiting an operation before sync has started", async () => {
+        const { utils } = objectCollectionOptions({
+            client: {
+                baseUrl: "https://example.com",
+                fetch: vi.fn(),
+                ontologyRid: "ri.ontology.main",
+                tokenProvider: () => Promise.resolve("token"),
+            } as never,
+            objectType: "Employee",
+            primaryKeyProperty: "employeeId",
+            selectedProperties: ["employeeId", "name"],
+        });
+
+        await expect(utils.awaitOperationId("op-before-sync")).resolves.toBeUndefined();
+        expect(mockState.getEditsHistory).not.toHaveBeenCalled();
+    });
+
     it("resolves awaitOperationId after direct websocket sync observes an update", async () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         mockState.getEditsHistory.mockRejectedValue(new Error("Edit history is not enabled"));
@@ -1045,7 +1212,7 @@ describe("objectCollectionOptions", () => {
             ],
         });
 
-        await expect(operationPromise).resolves.toBe(true);
+        await expect(operationPromise).resolves.toBeUndefined();
         expect(harness.syncedData.get(13)).toEqual({
             employeeId: 13,
             name: "Direct Operation Employee",
@@ -1087,7 +1254,7 @@ describe("objectCollectionOptions", () => {
             commitReceipt: () => commitApplied,
         });
 
-        await expect(harness.utils.awaitOperationId("op-11")).resolves.toBe(true);
+        await expect(harness.utils.awaitOperationId("op-11")).resolves.toBeUndefined();
 
         expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
         expect(harness.syncedData.get(11)).toEqual({

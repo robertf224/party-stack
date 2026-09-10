@@ -314,6 +314,8 @@ export function createFoundryOntologyBackendAdapter(opts: {
                 primaryKeyProperty: objectTypeDef.primaryKey,
                 selectedProperties: objectTypeDef.properties.map((property) => property.name),
                 decodeObject: (object) => codec.decodeObject(objectType, object) as FoundryObject,
+                decodeEditObject: (object) =>
+                    codec.decodeEditObject(objectType, object) as FoundryObject,
             });
         },
         validateAction: async (

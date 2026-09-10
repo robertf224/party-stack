@@ -4,6 +4,23 @@ import { createFoundryCodec } from "./foundryCodec.js";
 import { encodeFoundryMediaId } from "./foundryMediaId.js";
 
 describe("createFoundryCodec", () => {
+    it("preserves explicit nulls while leaving undefined values omitted", () => {
+        const codec = createFoundryCodec({
+            types: [],
+            objectTypes: [],
+            linkTypes: [],
+            actionTypes: [],
+            queryFunctionTypes: [],
+        });
+        const optionalString = o.optional({ type: o.string({}) });
+
+        expect(codec.encodeValue(optionalString, null)).toBeNull();
+        expect(codec.encodeValue(optionalString, undefined)).toBeUndefined();
+        expect(() => codec.encodeValue(o.attachment({}), {})).toThrow(
+            "expected an attachment with a string id"
+        );
+    });
+
     it("decodes attachment rids into serializable pointers", () => {
         const codec = createFoundryCodec({
             types: [],
@@ -16,6 +33,11 @@ describe("createFoundryCodec", () => {
                     properties: [
                         { name: "id", displayName: "ID", type: o.string({}) },
                         { name: "file", displayName: "File", type: o.attachment({}) },
+                        {
+                            name: "optionalFile",
+                            displayName: "Optional file",
+                            type: o.optional({ type: o.attachment({}) }),
+                        },
                     ],
                 },
             ],
@@ -33,13 +55,21 @@ describe("createFoundryCodec", () => {
                 file: {
                     rid: "ri.attachments.main.attachment.1",
                 },
+                optionalFile: {},
             })
         ).toEqual({
             id: "doc-1",
             file: {
                 id: "ri.attachments.main.attachment.1",
             },
+            optionalFile: undefined,
         });
+        expect(() =>
+            codec.decodeObject("Document", {
+                id: "doc-2",
+                file: {},
+            })
+        ).toThrow("Invalid required Foundry attachment value");
     });
 
     it("decodes media references into serializable attachment pointers", () => {
@@ -57,6 +87,13 @@ describe("createFoundryCodec", () => {
                             name: "file",
                             displayName: "File",
                             type: o.attachment({ meta: { type: "media" } }),
+                        },
+                        {
+                            name: "optionalMedia",
+                            displayName: "Optional media",
+                            type: o.optional({
+                                type: o.attachment({ meta: { type: "media" } }),
+                            }),
                         },
                     ],
                 },
@@ -86,10 +123,12 @@ describe("createFoundryCodec", () => {
             codec.decodeObject("Document", {
                 id: "doc-1",
                 file: reference,
+                optionalMedia: {},
             })
         ).toEqual({
             id: "doc-1",
             file: attachment,
+            optionalMedia: undefined,
         });
         expect(
             codec.encodeValue(

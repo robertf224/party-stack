@@ -222,6 +222,78 @@ describe("createLiveOntology", () => {
         await coordination.close();
     });
 
+    it("resolves defaults only for direct and outbox optimistic projections", async () => {
+        const applyAction = vi.fn<OntologyBackendAdapter["applyAction"]>(() => Promise.resolve());
+        const projectedParameters: Record<string, unknown>[] = [];
+        const coordination = new SingleProcessCoordination({
+            scope: "projection-defaults",
+        });
+        const ontology = await createLiveOntology({
+            id: "projection-defaults",
+            ir: {
+                ...actionIr,
+                actionTypes: [
+                    {
+                        ...actionIr.actionTypes[0]!,
+                        parameters: [
+                            {
+                                name: "label",
+                                displayName: "Label",
+                                type: o.string({}),
+                                defaultValue: o.Expression.literal({ value: "resolved" }),
+                            },
+                        ],
+                    },
+                ],
+            },
+            backend: () => ({
+                name: "test",
+                getCollectionOptions: () => {
+                    throw new Error("unexpected collection");
+                },
+                applyAction,
+                runQueryFunction: () => Promise.reject(new Error("unexpected query")),
+            }),
+            runtime: () => ({
+                owner: "user",
+                namespace: "projection-defaults",
+                blobBytes: new MemoryBlobBytesStore(),
+                coordination,
+                connectivity: {
+                    isConnected: false,
+                    subscribe: () => () => {},
+                },
+            }),
+            writes: {
+                mutators: {
+                    save: ({ args }) => {
+                        projectedParameters.push(args);
+                    },
+                },
+            },
+        });
+
+        await ontology.actions.save!({}, { visibility: "optimistic" });
+        expect(projectedParameters).toEqual([{ label: "resolved" }]);
+        expect(applyAction.mock.calls[0]?.[1]).toEqual({});
+
+        const queued = ontology.actions.save!({}, {
+            mode: "outbox",
+            visibility: "optimistic",
+        });
+        void queued.catch(() => undefined);
+        await vi.waitFor(() => {
+            expect(projectedParameters).toEqual([
+                { label: "resolved" },
+                { label: "resolved" },
+            ]);
+        });
+        expect(Array.from(ontology.outbox.collection.values())[0]?.request.parameters).toEqual({});
+
+        await ontology.cleanup();
+        await coordination.close();
+    });
+
     it("validates an action without applying it", async () => {
         const applyAction = vi.fn(() => Promise.resolve());
         const validateAction = vi.fn(() =>

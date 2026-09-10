@@ -55,7 +55,7 @@ class ObjectCollectionSyncAbortedError extends Error {
 }
 
 export interface ObjectCollectionUtils extends UtilsRecord {
-    awaitOperationId: (operationId: string, timeout?: number) => Promise<boolean>;
+    awaitOperationId: (operationId: string, timeout?: number) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,12 +160,18 @@ function advanceEditHistoryCursor(cursor: EditHistoryCursor, entry: ObjectEditHi
     cursor.seenEntryKeysAtTimestamp.add(entryKey);
 }
 
-function getPrimaryKeyValue(primaryKey: ObjectPrimaryKeyV2): string | number {
+function getPrimaryKeyValue(
+    primaryKey: ObjectPrimaryKeyV2,
+    primaryKeyProperty: string,
+    decodeEditObject: (object: FoundryObject) => FoundryObject
+): string | number {
     const values = Object.values(primaryKey);
     if (values.length !== 1) {
         throw new Error("Foundry object collections currently only support single-field primary keys.");
     }
-    const value = normalizeEditPropertyValue(values[0]);
+    const value = decodeEditObject({
+        [primaryKeyProperty]: values[0],
+    })[primaryKeyProperty];
     if (typeof value !== "string" && typeof value !== "number") {
         throw new Error("Foundry object collections currently only support string or number primary keys.");
     }
@@ -174,58 +180,6 @@ function getPrimaryKeyValue(primaryKey: ObjectPrimaryKeyV2): string | number {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNullPropertyValue(value: unknown): boolean {
-    return value === "NullPropertyValue{}";
-}
-
-const geoPointPattern = /^GeoPointPropertyValue\{latitude:\s*(-?[\d.]+),\s*longitude:\s*(-?[\d.]+)\}$/;
-
-function parseGeoPointPropertyValue(value: unknown): { lat: number; lon: number } | undefined {
-    if (typeof value !== "string") return undefined;
-    const match = geoPointPattern.exec(value);
-    if (!match) return undefined;
-    const lat = Number(match[1]);
-    const lon = Number(match[2]);
-    if (Number.isNaN(lat) || Number.isNaN(lon)) return undefined;
-    return { lat, lon };
-}
-
-function isWrappedPrimitivePropertyValue(
-    value: unknown
-): value is { type: string; value: string | number | boolean } {
-    if (!isPlainObject(value) || typeof value.type !== "string" || !("value" in value)) {
-        return false;
-    }
-    return [
-        "stringValue",
-        "integerValue",
-        "doubleValue",
-        "longValue",
-        "booleanValue",
-        "dateValue",
-        "timestampValue",
-    ].includes(value.type);
-}
-
-function isAttachmentPropertyValue(value: unknown): value is { type: "attachment"; attachment: string } {
-    return isPlainObject(value) && value.type === "attachment" && typeof value.attachment === "string";
-}
-
-function normalizeEditPropertyValue(value: unknown): unknown {
-    if (isNullPropertyValue(value)) return undefined;
-    const geoPoint = parseGeoPointPropertyValue(value);
-    if (geoPoint) return geoPoint;
-    if (isWrappedPrimitivePropertyValue(value)) return value.value;
-    if (isAttachmentPropertyValue(value)) return { rid: value.attachment };
-    if (Array.isArray(value)) return value.map(normalizeEditPropertyValue);
-    if (isPlainObject(value)) {
-        return Object.fromEntries(
-            Object.entries(value).map(([key, v]) => [key, normalizeEditPropertyValue(v)])
-        );
-    }
-    return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -288,7 +242,8 @@ function createSyncConfig(
     objectType: string,
     primaryKeyProperty: string,
     selectedProperties: string[],
-    decodeObject: (object: FoundryObject) => FoundryObject = (object) => object
+    decodeObject: (object: FoundryObject) => FoundryObject = (object) => object,
+    decodeEditObject: (object: FoundryObject) => FoundryObject = decodeObject
 ): { sync: SyncConfig<Record<string, unknown>, string | number>; utils: ObjectCollectionUtils } {
     const seenOperationIds =
         new Store<Set<string>>(new Set<string>());
@@ -302,7 +257,7 @@ function createSyncConfig(
     const awaitOperationId = async (
         operationId: string,
         timeout: number = COLLECTION_SYNC_TIMEOUT_MS
-    ): Promise<boolean> => {
+    ): Promise<void> => {
         if (typeof operationId !== "string" || operationId.length === 0) {
             throw new Error("Foundry operationId must be a non-empty string.");
         }
@@ -310,18 +265,25 @@ function createSyncConfig(
         if (
             seenOperationIds.state.has(operationId)
         ) {
-            return true;
+            return;
         }
 
         if (syncDisposed.state) {
             throw new ObjectCollectionSyncAbortedError(objectType);
         }
 
+        if (!requestEditHistoryCatchUp) {
+            // An on-demand collection has no local state to confirm until its sync starts.
+            // TODO: Track sync activity and edit-history availability separately. If sync is
+            // active but edit-history catch-up is unavailable, request and await a full refresh.
+            return;
+        }
+
         const directSyncVersionAtStart =
             directWebsocketSyncVersion.state;
-        requestEditHistoryCatchUp?.();
+        requestEditHistoryCatchUp();
 
-        return new Promise((resolve, reject) => {
+        return new Promise<void>((resolve, reject) => {
             const cleanup = () => {
                 clearTimeout(timeoutId);
                 seenOperationIdsSubscription.unsubscribe();
@@ -346,7 +308,7 @@ function createSyncConfig(
                         )
                     ) {
                         cleanup();
-                        resolve(true);
+                        resolve();
                     }
                 });
             const directWebsocketSyncVersionSubscription =
@@ -358,7 +320,7 @@ function createSyncConfig(
                                 directSyncVersionAtStart
                         ) {
                             cleanup();
-                            resolve(true);
+                            resolve();
                         }
                     }
                 );
@@ -464,13 +426,8 @@ function createSyncConfig(
                 properties: Record<string, unknown>,
                 primaryKey: string | number
             ): FoundryObject =>
-                decodeObject({
-                    ...Object.fromEntries(
-                        Object.entries(properties).map(([key, value]) => [
-                            key,
-                            normalizeEditPropertyValue(value),
-                        ])
-                    ),
+                decodeEditObject({
+                    ...properties,
                     [primaryKeyProperty]: primaryKey,
                 } as FoundryObject);
 
@@ -588,7 +545,11 @@ function createSyncConfig(
                     advanceEditHistoryCursor(nextEditHistoryCursor, entry);
                     newOperationIds.add(entry.operationId);
 
-                    const primaryKey = getPrimaryKeyValue(entry.objectPrimaryKey);
+                    const primaryKey = getPrimaryKeyValue(
+                        entry.objectPrimaryKey,
+                        primaryKeyProperty,
+                        decodeEditObject
+                    );
 
                     switch (entry.edit.type) {
                         case "createEdit":
@@ -838,6 +799,7 @@ export interface ObjectCollectionOpts {
     primaryKeyProperty: string;
     selectedProperties: string[];
     decodeObject?: (object: Record<string, unknown>) => Record<string, unknown>;
+    decodeEditObject?: (object: Record<string, unknown>) => Record<string, unknown>;
 }
 
 export interface ObjectCollectionConfig<TSchema extends StandardSchema<OntologyObject>>
@@ -866,7 +828,16 @@ export function objectCollectionOptions(config: ObjectCollectionOpts): {
 };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function objectCollectionOptions(config: any): any {
-    const { client, objectType, primaryKeyProperty, selectedProperties, decodeObject, schema, ...rest } =
+    const {
+        client,
+        objectType,
+        primaryKeyProperty,
+        selectedProperties,
+        decodeObject,
+        decodeEditObject,
+        schema,
+        ...rest
+    } =
         config as ObjectCollectionOpts & { schema?: StandardSchema<OntologyObject> } & Record<
                 string,
                 unknown
@@ -876,7 +847,8 @@ export function objectCollectionOptions(config: any): any {
         objectType,
         primaryKeyProperty,
         selectedProperties,
-        decodeObject
+        decodeObject,
+        decodeEditObject
     );
 
     if (schema === undefined) {
