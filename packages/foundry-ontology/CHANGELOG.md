@@ -1,5 +1,13 @@
 # @party-stack/foundry-ontology
 
+## 0.14.4
+
+### Patch Changes
+
+- 98faee7: fix authoritative action param resolution, foundry codec issues, and foundry sync resolution
+- Updated dependencies [98faee7]
+    - @party-stack/ontology@0.16.2
+
 ## 0.14.3
 
 ### Patch Changes

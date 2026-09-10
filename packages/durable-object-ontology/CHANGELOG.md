@@ -1,5 +1,13 @@
 # @party-stack/durable-object-ontology
 
+## 0.2.5
+
+### Patch Changes
+
+- Updated dependencies [98faee7]
+    - @party-stack/sqlite-ontology@0.6.3
+    - @party-stack/ontology@0.16.2
+
 ## 0.2.4
 
 ### Patch Changes
