@@ -145,21 +145,6 @@ function collectActionAttachments(opts: {
     return [...new Map(attachments.map((entry) => [entry.attachment.id, entry])).values()];
 }
 
-async function collectActionAttachmentUploads(opts: {
-    attachments: ActionAttachment[];
-    blobManager?: BlobManager;
-}): Promise<OntologyAttachmentUpload[]> {
-    if (opts.attachments.length === 0) return [];
-    const blobManager = opts.blobManager;
-    invariant(blobManager, "Missing required BlobManager for collecting attachment uploads.");
-    return Promise.all(
-        opts.attachments.map(async (entry) => ({
-            ...entry,
-            blob: await blobManager.read(entry.attachment.id),
-        }))
-    );
-}
-
 async function materializeValue(opts: {
     ir: OntologyIR;
     type: TypeDef;
@@ -173,8 +158,6 @@ async function materializeValue(opts: {
     if (opts.value === undefined || opts.value === null) {
         return opts.value;
     }
-    const materializeAttachment = opts.backendAdapter.attachments?.materializeAttachment;
-    invariant(materializeAttachment, "Missing attachment materializer.");
     const type = resolveType(opts.ir, opts.type);
     switch (type.kind) {
         case "attachment": {
@@ -182,35 +165,50 @@ async function materializeValue(opts: {
             const local = opts.value;
             let pending = opts.materialized.get(local.id);
             if (!pending) {
-                const materializeOptions = {
-                    target: type.value,
-                };
-                const canMaterialize =
-                    opts.backendAdapter.attachments?.canMaterializeAttachment?.(local, materializeOptions) ??
-                    true;
-                pending = opts.blobManager
-                    .read(local.id)
-                    .then(async (blob) => {
-                        if (!canMaterialize) {
-                            opts.uploads.push({
-                                attachment: local,
-                                target: type.value,
-                                blob,
-                            });
-                            return local;
-                        }
-                        return (await materializeAttachment(local, blob, materializeOptions)) ?? local;
-                    })
-                    .then((result) => {
-                        const remote = result;
-                        if (remote.id !== local.id) {
-                            opts.mappings.push({
-                                localId: local.id,
-                                remoteId: remote.id,
-                            });
-                        }
-                        return remote;
-                    });
+                pending = (async () => {
+                    const record = await opts.blobManager.find(local.id);
+                    if (record?.state !== "staged") {
+                        return record?.remoteId
+                            ? {
+                                  ...local,
+                                  id: record.remoteId,
+                              }
+                            : local;
+                    }
+
+                    const blob = await opts.blobManager.read(local.id);
+                    const materializeAttachment =
+                        opts.backendAdapter.attachments?.materializeAttachment;
+                    const materializeOptions = {
+                        target: type.value,
+                        idKind: record.idKind,
+                    };
+                    const canMaterialize =
+                        materializeAttachment &&
+                        (opts.backendAdapter.attachments?.canMaterializeAttachment?.(
+                            local,
+                            materializeOptions
+                        ) ??
+                            true);
+                    if (!canMaterialize) {
+                        opts.uploads.push({
+                            attachment: local,
+                            target: type.value,
+                            blob,
+                        });
+                        return local;
+                    }
+
+                    const remote =
+                        (await materializeAttachment(local, blob, materializeOptions)) ?? local;
+                    if (remote.id !== local.id) {
+                        opts.mappings.push({
+                            localId: local.id,
+                            remoteId: remote.id,
+                        });
+                    }
+                    return remote;
+                })();
                 opts.materialized.set(local.id, pending);
             }
             return pending;
@@ -326,28 +324,26 @@ export async function prepareActionParameters(opts: {
         actionTypeName: opts.actionTypeName,
         parameters: opts.parameters,
     });
-    if (opts.backendAdapter.attachments?.materializeAttachment) {
-        const blobManager = opts.blobManager;
-        invariant(blobManager, "Missing required BlobManager for materializing attachments.");
-        const materialized = await materializeActionParameters({
-            ir: opts.ir,
-            actionTypeName: opts.actionTypeName,
-            parameters: opts.parameters,
-            backendAdapter: opts.backendAdapter,
-            blobManager,
-        });
+    if (attachments.length === 0) {
         return {
-            parameters: materialized.parameters,
-            attachmentUploads: materialized.attachmentUploads,
-            attachmentIdMappings: materialized.attachmentIdMappings,
+            parameters: opts.parameters,
+            attachmentUploads: [],
+            attachmentIdMappings: [],
         };
     }
-    return {
+
+    const blobManager = opts.blobManager;
+    invariant(blobManager, "Missing required BlobManager for preparing attachment parameters.");
+    const materialized = await materializeActionParameters({
+        ir: opts.ir,
+        actionTypeName: opts.actionTypeName,
         parameters: opts.parameters,
-        attachmentUploads: await collectActionAttachmentUploads({
-            attachments,
-            blobManager: opts.blobManager,
-        }),
-        attachmentIdMappings: [],
+        backendAdapter: opts.backendAdapter,
+        blobManager,
+    });
+    return {
+        parameters: materialized.parameters,
+        attachmentUploads: materialized.attachmentUploads,
+        attachmentIdMappings: materialized.attachmentIdMappings,
     };
 }

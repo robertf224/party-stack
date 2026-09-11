@@ -1,3 +1,4 @@
+import type { BlobIdKind } from "@party-stack/blobs";
 import * as v from "../utils/values.js";
 import type { AttachmentTypeDef, OntologyIR } from "../ir/index.js";
 import type { Uncertain } from "../utils/uncertain.js";
@@ -23,6 +24,11 @@ export interface OntologyAttachmentIdMapping {
 
 export interface OntologyApplyActionResult {
     attachmentIdMappings?: OntologyAttachmentIdMapping[];
+}
+
+export interface OntologyGeneratedAttachmentId {
+    id: string;
+    idKind: BlobIdKind;
 }
 
 export interface ApplyActionLiveOpts {
@@ -52,7 +58,7 @@ export interface OntologyAttachmentsAdapter {
         opts: {
             target?: AttachmentTypeDef;
         }
-    ) => Promise<string> | string;
+    ) => Promise<string | OntologyGeneratedAttachmentId> | string | OntologyGeneratedAttachmentId;
     canMaterializeAttachment?: (
         attachment: v.attachment,
         opts: {
@@ -64,6 +70,7 @@ export interface OntologyAttachmentsAdapter {
         blob: Blob,
         opts: {
             target?: AttachmentTypeDef;
+            idKind?: BlobIdKind;
         }
     ) => Promise<v.attachment | void>;
     getAttachmentContent: (attachment: v.attachment) => Promise<Blob>;

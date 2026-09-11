@@ -88,6 +88,7 @@ describe("createBlobManager", () => {
 
         expect(manager.collection.get("attachment-1")).toMatchObject({
             id: "attachment-1",
+            idKind: "local",
             name: "hello.txt",
             size: 5,
             state: "staged",
@@ -101,6 +102,21 @@ describe("createBlobManager", () => {
             type: "text/plain",
         });
         await expect(bytes.read("attachment-1")).resolves.toBeInstanceOf(Blob);
+        await manager.cleanup();
+    });
+
+    it("persists explicitly backend-native staged IDs", async () => {
+        const { manager } = setup();
+
+        await manager.stage("backend-id", new Blob(["hello"]), {
+            idKind: "backend-native",
+        });
+
+        await expect(manager.find("backend-id")).resolves.toMatchObject({
+            id: "backend-id",
+            idKind: "backend-native",
+            state: "staged",
+        });
         await manager.cleanup();
     });
 
@@ -296,6 +312,17 @@ describe("createBlobManager", () => {
         await manager.stage("local-id", new Blob(["hello"], { type: "text/plain" }));
         await manager.bindRemoteId("local-id", "remote-id");
 
+        await expect(manager.find("local-id")).resolves.toMatchObject({
+            id: "local-id",
+            idKind: "local",
+            remoteId: "remote-id",
+            state: "persisted",
+        });
+        await expect(manager.find("remote-id")).resolves.toMatchObject({
+            id: "local-id",
+            remoteId: "remote-id",
+            state: "persisted",
+        });
         await expect(manager.read("remote-id").then((blob) => blob.text())).resolves.toBe("hello");
         await manager.cleanup();
     });

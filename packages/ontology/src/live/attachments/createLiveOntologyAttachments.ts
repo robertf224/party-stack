@@ -143,13 +143,17 @@ export function createLiveOntologyAttachments<
             );
             // TODO: Validate image dimensions once runtimes expose a portable media-inspection capability.
         }
-        const id =
+        const generatedId =
             targetType?.kind === "attachment" && attachmentsAdapter.generateAttachmentId
                 ? await attachmentsAdapter.generateAttachmentId(blob, {
                       target: targetType.value,
                   })
                 : crypto.randomUUID();
-        await blobManager.stage(id, blob);
+        const id = typeof generatedId === "string" ? generatedId : generatedId.id;
+        const idKind = typeof generatedId === "string" ? "local" : generatedId.idKind;
+        await blobManager.stage(id, blob, {
+            idKind,
+        });
         const attachment: v.attachment = {
             id,
             type: blob.type,
@@ -157,6 +161,7 @@ export function createLiveOntologyAttachments<
         const materializeAttachment = attachmentsAdapter.materializeAttachment;
         const materializeOptions = {
             target: targetType?.kind === "attachment" ? targetType.value : undefined,
+            idKind,
         };
         const canMaterialize =
             materializeAttachment &&

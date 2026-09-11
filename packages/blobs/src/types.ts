@@ -3,6 +3,8 @@ import type { Collection } from "@tanstack/db";
 
 export type BlobState = "staged" | "persisted" | "cached";
 
+export type BlobIdKind = "local" | "backend-native";
+
 export type BlobOperation =
     | {
           kind: "stage" | "cache" | "purge";
@@ -25,6 +27,7 @@ export interface PartialBlobMetadata {
 
 export interface BlobMetadataRecord extends PartialBlobMetadata {
     id: string;
+    idKind?: BlobIdKind;
     remoteId?: string;
     state?: BlobState;
     operation?: BlobOperation;
@@ -55,6 +58,10 @@ export interface BlobMetadataOptions extends BlobReadOptions {
     select?: readonly BlobMetadataField[];
 }
 
+export interface BlobStageOptions {
+    idKind?: BlobIdKind;
+}
+
 export interface BlobRemoteSource {
     metadata?: (id: string, opts?: BlobMetadataOptions) => Promise<PartialBlobMetadata>;
     read: (id: string, opts?: BlobReadOptions) => Promise<Blob>;
@@ -64,7 +71,8 @@ export interface BlobManager {
     readonly collection: Collection<BlobMetadataRecord, string>;
     /** Resolves once blob metadata persistence has finished starting. */
     readonly ready: Promise<void>;
-    stage: (id: string, blob: Blob | File) => Promise<void>;
+    find: (id: string) => Promise<BlobMetadataRecord | undefined>;
+    stage: (id: string, blob: Blob | File, opts?: BlobStageOptions) => Promise<void>;
     metadata: (id: string, opts?: BlobMetadataOptions) => Promise<PartialBlobMetadata & { id: string }>;
     read: (id: string, opts?: BlobReadOptions) => Promise<Blob>;
     bindRemoteId: (localId: string, remoteId: string) => Promise<void>;

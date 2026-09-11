@@ -306,8 +306,12 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
         collection: store.collection,
         ready: store.ready,
 
-        async stage(id, blob) {
-            await store.stage(id, blob);
+        find(id) {
+            return store.find(id);
+        },
+
+        async stage(id, blob, stageOptions) {
+            await store.stage(id, blob, stageOptions);
         },
 
         metadata(id, metadataOptions) {

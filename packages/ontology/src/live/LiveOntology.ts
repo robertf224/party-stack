@@ -1,4 +1,4 @@
-import { createBlobManager, type BlobManager } from "@party-stack/blobs";
+import { createBlobManager, type BlobIdKind, type BlobManager } from "@party-stack/blobs";
 import { createDefaultRuntime, type RuntimeAdapterProvider } from "@party-stack/runtime";
 import { type Collection } from "@tanstack/db";
 import type { ConnectionMonitor } from "@party-stack/connections";
@@ -15,7 +15,11 @@ import type { LiveOntologyAction } from "./actions/createLiveOntologyAction.js";
 import type { OntologyMutatorRegistry } from "./mutators/types.js";
 import type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
 import type { OntologyObject } from "./objects/OntologyObject.js";
-import type { OntologyBackendAdapter, OntologyBackendAdapterProvider } from "./OntologyBackendAdapter.js";
+import type {
+    OntologyAttachmentUpload,
+    OntologyBackendAdapter,
+    OntologyBackendAdapterProvider,
+} from "./OntologyBackendAdapter.js";
 import type { OntologyOutbox } from "./outbox/types.js";
 import type { OntologyIR } from "../ir/index.js";
 import type { attachment } from "../utils/values.js";
@@ -115,6 +119,9 @@ export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> 
     writes?: LiveOntologyWrites;
     context?: Context;
     connection?: ConnectionMonitor;
+    stagedAttachments?: readonly (OntologyAttachmentUpload & {
+        idKind?: BlobIdKind;
+    })[];
 }
 
 function getContextUserId(context: Record<string, unknown>): string | undefined {
@@ -165,6 +172,13 @@ export async function createLiveOntology<
                 : undefined,
         },
     });
+    await Promise.all(
+        (opts.stagedAttachments ?? []).map((upload) =>
+            blobManager.stage(upload.attachment.id, upload.blob, {
+                idKind: upload.idKind,
+            })
+        )
+    );
     const attachments = createLiveOntologyAttachments<Ontology>({
         ir: opts.ir,
         attachmentsAdapter,

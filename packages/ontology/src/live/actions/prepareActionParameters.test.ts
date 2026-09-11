@@ -144,8 +144,9 @@ describe("prepareActionParameters", () => {
             ...backendAdapter,
             attachments: {
                 ...backendAdapter.attachments!,
-                materializeAttachment: async (attachment, blob) => {
+                materializeAttachment: async (attachment, blob, materializeOptions) => {
                     await expect(blob.text()).resolves.toBe("hello");
+                    expect(materializeOptions.idKind).toBe("local");
                     return {
                         ...attachment,
                         id: "remote-id",
@@ -203,6 +204,97 @@ describe("prepareActionParameters", () => {
         expect(uploaded.attachmentIdMappings).toEqual([]);
         expect(uploaded.attachmentUploads).toHaveLength(1);
         await expect(uploaded.attachmentUploads[0]!.blob.text()).resolves.toBe("upload");
+
+        await blobManager.stage("preserved-id", new Blob(["preserved"]));
+        const preserved = await prepareActionParameters({
+            ir,
+            actionTypeName: "uploadDocument",
+            parameters: {
+                file: { id: "preserved-id" },
+            },
+            backendAdapter: {
+                ...materializingAdapter,
+                attachments: {
+                    ...materializingAdapter.attachments!,
+                    materializeAttachment: (attachment) => Promise.resolve(attachment),
+                },
+            },
+            blobManager,
+        });
+        expect(preserved.parameters).toEqual({
+            file: { id: "preserved-id" },
+        });
+        expect(preserved.attachmentIdMappings).toEqual([]);
+        expect(preserved.attachmentUploads).toEqual([]);
+
+        await blobManager.cleanup();
+        await coordination.close();
+    });
+
+    it("substitutes known remote IDs and passes existing remote attachments through", async () => {
+        const coordination = new SingleProcessCoordination({
+            scope: "mapped-action-parameters-test",
+        });
+        const blobManager = createBlobManager({
+            runtime: {
+                owner: "test",
+                namespace: "mapped-action",
+                blobBytes: new MemoryBlobBytesStore(),
+                coordination,
+            },
+            remote: {
+                metadata: () => Promise.reject(new Error("unexpected remote metadata read")),
+                read: () => Promise.reject(new Error("unexpected remote content read")),
+            },
+        });
+        await blobManager.stage("local-id", new Blob(["hello"]));
+        await blobManager.bindRemoteId("local-id", "remote-id");
+        let materializationCalls = 0;
+        const materializingAdapter: OntologyBackendAdapter = {
+            ...backendAdapter,
+            attachments: {
+                ...backendAdapter.attachments!,
+                materializeAttachment: () => {
+                    materializationCalls += 1;
+                    return Promise.reject(new Error("unexpected materialization"));
+                },
+            },
+        };
+
+        const mapped = await prepareActionParameters({
+            ir,
+            actionTypeName: "uploadDocument",
+            parameters: {
+                file: { id: "local-id", type: "text/plain" },
+            },
+            backendAdapter: materializingAdapter,
+            blobManager,
+        });
+        expect(mapped).toEqual({
+            parameters: {
+                file: { id: "remote-id", type: "text/plain" },
+            },
+            attachmentIdMappings: [],
+            attachmentUploads: [],
+        });
+
+        const existing = await prepareActionParameters({
+            ir,
+            actionTypeName: "uploadDocument",
+            parameters: {
+                file: { id: "existing-remote-id", type: "text/plain" },
+            },
+            backendAdapter: materializingAdapter,
+            blobManager,
+        });
+        expect(existing).toEqual({
+            parameters: {
+                file: { id: "existing-remote-id", type: "text/plain" },
+            },
+            attachmentIdMappings: [],
+            attachmentUploads: [],
+        });
+        expect(materializationCalls).toBe(0);
 
         await blobManager.cleanup();
         await coordination.close();

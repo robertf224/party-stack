@@ -9,7 +9,14 @@ import {
     type RuntimeAdapter,
 } from "@party-stack/runtime";
 import { eq, or, queryOnce, type Collection } from "@tanstack/db";
-import type { BlobMetadataRecord, BlobOperation, BlobRef, PartialBlobMetadata } from "../types.js";
+import type {
+    BlobIdKind,
+    BlobMetadataRecord,
+    BlobOperation,
+    BlobRef,
+    BlobStageOptions,
+    PartialBlobMetadata,
+} from "../types.js";
 
 type BlobWriteRecord = BlobMetadataRecord & Required<Pick<PartialBlobMetadata, "size" | "type">>;
 
@@ -32,6 +39,7 @@ export interface BlobWriteMetadata {
 export interface BeginBlobWriteInput {
     id: string;
     kind: BlobWriteKind;
+    idKind?: BlobIdKind;
     metadata: BlobWriteMetadata;
 }
 
@@ -86,7 +94,7 @@ export interface BlobStore {
     beginWrite(input: BeginBlobWriteInput): Promise<BeginBlobWriteResult>;
     commitWrite(input: BlobOperationInput): Promise<BlobRef>;
     failWrite(input: FailBlobWriteInput): Promise<BlobRef>;
-    stage(id: string, blob: Blob | File): Promise<BlobRef>;
+    stage(id: string, blob: Blob | File, opts?: BlobStageOptions): Promise<BlobRef>;
     cache(id: string, blob: Blob | File): Promise<BlobRef>;
     find(id: string): Promise<BlobMetadataRecord | undefined>;
     upsertMetadata(id: string, metadata: PartialBlobMetadata, remote: boolean): Promise<BlobMetadataRecord>;
@@ -162,6 +170,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                 .where(({ blob }) => or(eq(blob.id, id), eq(blob.remoteId, id)))
                 .select(({ blob }) => ({
                     id: blob.id,
+                    idKind: blob.idKind,
                     remoteId: blob.remoteId,
                     type: blob.type,
                     size: blob.size,
@@ -280,6 +289,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                   const timestamp = Date.now();
                   const ref: BlobWriteRecord = {
                       id: existing?.id ?? input.id,
+                      idKind: input.idKind ?? existing?.idKind,
                       remoteId:
                           input.kind === "cache"
                               ? (existing?.remoteId ?? (existing ? undefined : input.id))
@@ -385,12 +395,16 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                   if (existing) {
                       return patchRef(existing.id, (draft, updatedAt) => {
                           applyMetadata(draft, input.metadata);
+                          if (input.remote && draft.idKind === undefined) {
+                              draft.idKind = "backend-native";
+                          }
                           draft.updatedAt = updatedAt;
                       });
                   }
                   const timestamp = Date.now();
                   const record: BlobMetadataRecord = {
                       id: input.id,
+                      idKind: input.remote ? "backend-native" : undefined,
                       remoteId: input.remote ? input.id : undefined,
                       state: input.remote ? "persisted" : undefined,
                       createdAt: timestamp,
@@ -552,10 +566,16 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
             ? host.serve<BlobCoordinationService>(BLOB_COORDINATION_SERVICE, handlers)
             : undefined;
 
-    const write = async (id: string, blob: Blob | File, kind: BlobWriteKind): Promise<BlobRef> => {
+    const write = async (
+        id: string,
+        blob: Blob | File,
+        kind: BlobWriteKind,
+        idKind: BlobIdKind
+    ): Promise<BlobRef> => {
         const operation = await client.methods.beginWrite({
             id,
             kind,
+            idKind,
             metadata: {
                 type: blob.type,
                 size: blob.size,
@@ -591,8 +611,8 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
         },
         commitWrite: (input) => client.methods.commitWrite(input),
         failWrite: (input) => client.methods.failWrite(input),
-        stage: (id, blob) => write(id, blob, "stage"),
-        cache: (id, blob) => write(id, blob, "cache"),
+        stage: (id, blob, opts) => write(id, blob, "stage", opts?.idKind ?? "local"),
+        cache: (id, blob) => write(id, blob, "cache", "backend-native"),
         find: (id) => client.methods.find({ id }),
         upsertMetadata: (id, metadata, remote) => client.methods.upsertMetadata({ id, metadata, remote }),
 

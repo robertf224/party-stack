@@ -208,6 +208,105 @@ describe("remote ontology server policy projection", () => {
         });
     });
 
+    it("stages multipart attachments and returns backend ID mappings", async () => {
+        const attachmentIr: OntologyIR = {
+            types: [],
+            objectTypes: [],
+            linkTypes: [],
+            actionTypes: [
+                {
+                    name: "uploadDocument",
+                    displayName: "Upload document",
+                    parameters: [
+                        {
+                            name: "file",
+                            displayName: "File",
+                            type: o.attachment({}),
+                        },
+                    ],
+                    logic: [],
+                },
+            ],
+            queryFunctionTypes: [],
+        };
+        let appliedParameters: Record<string, unknown> | undefined;
+        let uploadedContent: string | undefined;
+        let uploadedName: string | undefined;
+        const server = createRemoteOntologyServer<any, any>({
+            ir: attachmentIr,
+            backendAdapter: {
+                name: "test",
+                getCollectionOptions: readyCollectionOptions,
+                applyAction: async (_actionType, parameters) => {
+                    appliedParameters = parameters;
+                },
+                runQueryFunction: async () => undefined,
+                attachments: {
+                    materializeAttachment: async (attachment, blob, materializeOptions) => {
+                        expect(materializeOptions.idKind).toBe("local");
+                        uploadedContent = await blob.text();
+                        uploadedName = blob instanceof File ? blob.name : undefined;
+                        return {
+                            ...attachment,
+                            id: "remote-id",
+                        };
+                    },
+                    getAttachmentContent: () =>
+                        Promise.reject(new Error("unexpected attachment content read")),
+                },
+            },
+            policy: {
+                canApplyAction: () => true,
+            },
+        });
+        const formData = new FormData();
+        formData.append(
+            "payload",
+            serializeRemoteOntologyJson({
+                actionType: "uploadDocument",
+                parameters: {
+                    file: {
+                        id: "local-id",
+                        type: "text/plain",
+                    },
+                },
+            })
+        );
+        formData.append(
+            "attachment:local-id",
+            new Blob(["hello"], {
+                type: "text/plain",
+            }),
+            "hello.txt"
+        );
+
+        const response = await server.handleRequest(
+            new Request("http://example.test/apply-action", {
+                method: "POST",
+                body: formData,
+            })
+        );
+
+        expect(response.status).toBe(200);
+        expect(uploadedContent).toBe("hello");
+        expect(uploadedName).toBe("hello.txt");
+        expect(appliedParameters).toEqual({
+            file: {
+                id: "remote-id",
+                type: "text/plain",
+            },
+        });
+        expect(parseRemoteOntologyJson(await response.text())).toEqual({
+            invalidatedObjectTypes: [],
+            attachmentIdMappings: [
+                {
+                    localId: "local-id",
+                    remoteId: "remote-id",
+                },
+            ],
+        });
+    });
+
     it("resolves defaults from fixed object references without exposing blocked properties", async () => {
         const employeeReference =
             o.Expression.inputReference({
