@@ -106,6 +106,10 @@ function getAttachmentProviderType(
     return target?.meta?.type === "media" ? "media" : "attachment";
 }
 
+function isFoundryAttachmentRid(id: string): id is AttachmentRid {
+    return /^ri\.attachments\.[^.]+\.attachment\..+$/.test(id);
+}
+
 function getEditedObjectTypes(
     edits: Awaited<ReturnType<typeof Actions.applyWithOverrides>>["edits"]
 ): Set<string> {
@@ -206,16 +210,30 @@ export function createFoundryOntologyBackendAdapter(opts: {
                 getAttachmentProviderType(target) === "attachment",
                 "Foundry media references must be uploaded during action execution."
             );
-            try {
-                await Attachments.get(opts.client, attachment.id as AttachmentRid);
+            if (isFoundryAttachmentRid(attachment.id)) {
+                try {
+                    await Attachments.get(opts.client, attachment.id);
+                    return;
+                } catch (error) {
+                    if (!isFoundryNotFoundError(error)) {
+                        throw error;
+                    }
+                    // The stable attachment RID has not been materialized yet.
+                }
+                await Attachments.uploadWithRid(opts.client, attachment.id, blob, {
+                    filename: getAttachmentName(blob) ?? "",
+                    preview: true,
+                });
                 return;
-            } catch {
-                // The stable attachment RID has not been materialized yet.
             }
-            await Attachments.uploadWithRid(opts.client, attachment.id as AttachmentRid, blob, {
+
+            const uploaded = await Attachments.upload(opts.client, blob, {
                 filename: getAttachmentName(blob) ?? "",
-                preview: true,
             });
+            return {
+                ...attachment,
+                id: uploaded.rid,
+            };
         },
         getAttachmentContent: async (attachment) => {
             const userContent = await opts.users?.getAttachmentContent?.(opts.client, attachment);

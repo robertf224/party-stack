@@ -13,9 +13,12 @@ const mediaMocks = vi.hoisted(() => ({
 }));
 const ontologyMocks = vi.hoisted(() => ({
     applyWithOverrides: vi.fn(),
+    getAttachment: vi.fn(),
     getActionType: vi.fn(),
     getMediaContent: vi.fn(),
     getMediaMetadata: vi.fn(),
+    uploadAttachment: vi.fn(),
+    uploadAttachmentWithRid: vi.fn(),
 }));
 const metadataMocks = vi.hoisted(() => ({
     bulkLoadOntologyEntities: vi.fn(),
@@ -34,6 +37,12 @@ vi.mock("@osdk/foundry.ontologies", async (importOriginal) => {
         Actions: {
             ...original.Actions,
             applyWithOverrides: ontologyMocks.applyWithOverrides,
+        },
+        Attachments: {
+            ...original.Attachments,
+            get: ontologyMocks.getAttachment,
+            upload: ontologyMocks.uploadAttachment,
+            uploadWithRid: ontologyMocks.uploadAttachmentWithRid,
         },
         ActionTypesV2: {
             ...original.ActionTypesV2,
@@ -68,6 +77,100 @@ describe("isFoundryNotFoundError", () => {
                 statusCode: 500,
             })
         ).toBe(false);
+    });
+});
+
+describe("Foundry attachments", () => {
+    const attachmentType = o.attachment({
+        meta: { type: "attachment" },
+    });
+    const client = {
+        ontologyRid: "ri.ontology.main.1",
+    } as OntologyClient;
+    const adapter = createFoundryOntologyBackendAdapter({
+        client,
+        ir: {
+            types: [],
+            objectTypes: [],
+            linkTypes: [],
+            actionTypes: [],
+            queryFunctionTypes: [],
+        },
+    });
+    const materializeAttachment = adapter.attachments!.materializeAttachment!;
+    const target = attachmentType.value;
+
+    it("uploads opaque attachment IDs and returns the allocated Foundry RID", async () => {
+        const foundryRid = "ri.attachments.main.attachment.remote-1";
+        const attachment = {
+            id: "b6ff2b1f-7274-4334-9dcf-32348d575a47",
+            type: "text/plain",
+        };
+        const blob = new Blob(["hello"], {
+            type: "text/plain",
+        });
+        ontologyMocks.uploadAttachment.mockResolvedValue({
+            rid: foundryRid,
+        });
+
+        await expect(materializeAttachment(attachment, blob, { target })).resolves.toEqual({
+            ...attachment,
+            id: foundryRid,
+        });
+        expect(ontologyMocks.uploadAttachment).toHaveBeenCalledWith(client, blob, {
+            filename: "",
+        });
+        expect(ontologyMocks.getAttachment).not.toHaveBeenCalled();
+        expect(ontologyMocks.uploadAttachmentWithRid).not.toHaveBeenCalled();
+    });
+
+    it("preserves valid Foundry RIDs when uploading an unmaterialized attachment", async () => {
+        const attachmentRid = "ri.attachments.main.attachment.local-1";
+        const attachment = {
+            id: attachmentRid,
+            type: "text/plain",
+        };
+        const blob = new Blob(["hello"], {
+            type: "text/plain",
+        });
+        ontologyMocks.getAttachment.mockRejectedValue({
+            statusCode: 404,
+        });
+        ontologyMocks.uploadAttachmentWithRid.mockResolvedValue({
+            rid: attachmentRid,
+        });
+
+        await expect(materializeAttachment(attachment, blob, { target })).resolves.toBeUndefined();
+        expect(ontologyMocks.getAttachment).toHaveBeenCalledWith(client, attachmentRid);
+        expect(ontologyMocks.uploadAttachmentWithRid).toHaveBeenCalledWith(
+            client,
+            attachmentRid,
+            blob,
+            {
+                filename: "",
+                preview: true,
+            }
+        );
+        expect(ontologyMocks.uploadAttachment).not.toHaveBeenCalled();
+    });
+
+    it("propagates authorization errors while checking an existing Foundry RID", async () => {
+        const error = Object.assign(new Error("Forbidden"), {
+            statusCode: 403,
+        });
+        ontologyMocks.getAttachment.mockRejectedValue(error);
+
+        await expect(
+            materializeAttachment(
+                {
+                    id: "ri.attachments.main.attachment.local-1",
+                },
+                new Blob(["hello"]),
+                { target }
+            )
+        ).rejects.toBe(error);
+        expect(ontologyMocks.uploadAttachmentWithRid).not.toHaveBeenCalled();
+        expect(ontologyMocks.uploadAttachment).not.toHaveBeenCalled();
     });
 });
 
