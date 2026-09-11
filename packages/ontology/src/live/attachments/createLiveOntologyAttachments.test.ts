@@ -117,7 +117,10 @@ describe("createLiveOntologyAttachments", () => {
         const attachments = createLiveOntologyAttachments({
             ir: constrainedIr,
             attachmentsAdapter: {
-                generateAttachmentId: () => "image-1",
+                generateAttachmentId: () => ({
+                    id: "image-1",
+                    idKind: "backend-native",
+                }),
                 getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
             },
             blobManager: { stage } as unknown as BlobManager,
@@ -152,7 +155,9 @@ describe("createLiveOntologyAttachments", () => {
         ).resolves.toMatchObject({
             attachment: { id: "image-1" },
         });
-        expect(stage).toHaveBeenCalledOnce();
+        expect(stage).toHaveBeenCalledWith("image-1", expect.any(Blob), {
+            idKind: "backend-native",
+        });
     });
 
     it("starts eager materialization in the background when the adapter supports it", async () => {

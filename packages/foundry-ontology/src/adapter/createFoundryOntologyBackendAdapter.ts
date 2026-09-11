@@ -2,10 +2,10 @@ import { invariant } from "@bobbyfidz/panic";
 import { MediaSets } from "@osdk/foundry.mediasets";
 import {
     Actions,
-    AttachmentRid,
     Attachments,
     MediaReferenceProperties,
     Queries,
+    type AttachmentRid,
 } from "@osdk/foundry.ontologies";
 import {
     certain,
@@ -106,6 +106,25 @@ function getAttachmentProviderType(
     return target?.meta?.type === "media" ? "media" : "attachment";
 }
 
+function isFoundryAttachmentRid(id: string): id is AttachmentRid {
+    return /^ri\.attachments\.[^.]+\.attachment\..+$/.test(id);
+}
+
+function getFoundryAttachmentRid(
+    id: string,
+    idKind: "local" | "backend-native" | undefined
+): AttachmentRid {
+    if (idKind === "backend-native" || (idKind === undefined && isFoundryAttachmentRid(id))) {
+        invariant(isFoundryAttachmentRid(id), `Invalid backend-native Foundry attachment RID "${id}".`);
+        return id;
+    }
+    invariant(
+        /^[a-zA-Z0-9._-]+$/.test(id),
+        `Cannot derive a Foundry attachment RID from local ID "${id}".`
+    );
+    return `ri.attachments.main.attachment.${id}`;
+}
+
 function getEditedObjectTypes(
     edits: Awaited<ReturnType<typeof Actions.applyWithOverrides>>["edits"]
 ): Set<string> {
@@ -185,19 +204,8 @@ export function createFoundryOntologyBackendAdapter(opts: {
 }): OntologyBackendAdapter {
     const codec = createFoundryCodec(opts.ir);
     const attachments: OntologyAttachmentsAdapter = {
-        generateAttachmentId: (_, { target }) => {
-            invariant(
-                target,
-                "A property target must be passed to generateAttachmentId in the Foundry adapter so that we know whether to target attachments or media."
-            );
-            const meta = target.meta as { type: "attachment" | "media" };
-            if (meta.type === "attachment") {
-                return `ri.attachments.main.attachment.${crypto.randomUUID()}`;
-            }
-            return crypto.randomUUID();
-        },
         canMaterializeAttachment: (_, { target }) => getAttachmentProviderType(target) !== "media",
-        materializeAttachment: async (attachment, blob, { target }) => {
+        materializeAttachment: async (attachment, blob, { target, idKind }) => {
             invariant(
                 target,
                 "A property target must be passed to materializeAttachment in the Foundry adapter so that we know whether to target attachments or media."
@@ -206,16 +214,22 @@ export function createFoundryOntologyBackendAdapter(opts: {
                 getAttachmentProviderType(target) === "attachment",
                 "Foundry media references must be uploaded during action execution."
             );
+            const rid = getFoundryAttachmentRid(attachment.id, idKind);
             try {
-                await Attachments.get(opts.client, attachment.id as AttachmentRid);
-                return;
-            } catch {
-                // The stable attachment RID has not been materialized yet.
+                await Attachments.get(opts.client, rid);
+            } catch (error) {
+                if (!isFoundryNotFoundError(error)) {
+                    throw error;
+                }
+                await Attachments.uploadWithRid(opts.client, rid, blob, {
+                    filename: getAttachmentName(blob) ?? "",
+                    preview: true,
+                });
             }
-            await Attachments.uploadWithRid(opts.client, attachment.id as AttachmentRid, blob, {
-                filename: getAttachmentName(blob) ?? "",
-                preview: true,
-            });
+            return {
+                ...attachment,
+                id: rid,
+            };
         },
         getAttachmentContent: async (attachment) => {
             const userContent = await opts.users?.getAttachmentContent?.(opts.client, attachment);

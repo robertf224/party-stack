@@ -4,11 +4,13 @@ export type {
     BlobManager,
     BlobManagerOptions,
     BlobDimensions,
+    BlobIdKind,
     BlobMetadataOptions,
     BlobMetadataRecord,
     BlobOperation,
     BlobReadOptions,
     BlobRemoteSource,
+    BlobStageOptions,
     BlobState,
     PartialBlobMetadata,
 } from "./types.js";
