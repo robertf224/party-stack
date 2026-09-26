@@ -10,6 +10,15 @@ export default defineOntology({
             pluralDisplayName: "Issues",
             primaryKey: "issueId",
             title: "issueTitle",
+            icon: {
+                name: "ticket",
+                meta: {
+                    blueprint: {
+                        name: "issue",
+                    },
+                },
+            },
+            color: "#2D72D2",
             properties: [
                 {
                     name: "issueCompletedAt",
@@ -134,6 +143,15 @@ export default defineOntology({
             pluralDisplayName: "Projects",
             primaryKey: "projectId",
             title: "projectTitle",
+            icon: {
+                name: "project",
+                meta: {
+                    blueprint: {
+                        name: "projects",
+                    },
+                },
+            },
+            color: "#2D72D2",
             properties: [
                 {
                     name: "projectUpdatedAt",

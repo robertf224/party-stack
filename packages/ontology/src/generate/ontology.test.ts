@@ -4,7 +4,7 @@ import { generateOntology } from "./ontology.js";
 import type { OntologyIR } from "../ir/index.js";
 
 describe("generateOntology", () => {
-    it("preserves object title and string suggestion metadata", () => {
+    it("preserves object and action presentation metadata", () => {
         const ontology: OntologyIR = {
             types: [],
             objectTypes: [
@@ -14,6 +14,15 @@ describe("generateOntology", () => {
                     pluralDisplayName: "Employees",
                     primaryKey: "id",
                     title: "name",
+                    icon: {
+                        name: "person",
+                        meta: {
+                            blueprint: {
+                                name: "person",
+                            },
+                        },
+                    },
+                    color: "#2d72d2",
                     properties: [
                         { name: "id", displayName: "ID", type: o.string({}) },
                         {
@@ -32,12 +41,25 @@ describe("generateOntology", () => {
                 },
             ],
             linkTypes: [],
-            actionTypes: [],
+            actionTypes: [
+                {
+                    name: "createEmployee",
+                    displayName: "Create employee",
+                    icon: { name: "plus-circle" },
+                    color: "#15b371",
+                    parameters: [],
+                    logic: [],
+                },
+            ],
             queryFunctionTypes: [],
         };
 
         const output = generateOntology(ontology);
         expect(output).toContain('title: "name"');
+        expect(output).toContain('name: "person"');
+        expect(output).toContain('color: "#2d72d2"');
+        expect(output).toContain('name: "plus-circle"');
+        expect(output).toContain('color: "#15b371"');
         expect(output).toContain('suggestions: [');
         expect(output).toContain('label: "Ada Lovelace"');
     });

@@ -1,16 +1,9 @@
-import type {
-    MetaObjectProperty,
-    MetaObjectType,
-} from "@party-stack/ontology";
+import { fromBlueprintIconName } from "@party-stack/icons-blueprint";
+import type { MetaObjectProperty, MetaObjectType } from "@party-stack/ontology";
 import { convertFoundryObjectPropertyType } from "./convertMetaTypeDef.js";
-import type {
-    ObjectTypeFullMetadata,
-    PropertyV2,
-} from "@osdk/foundry.ontologies";
+import type { ObjectTypeFullMetadata, PropertyV2 } from "@osdk/foundry.ontologies";
 
-export function convertFoundryMetaObjectType(
-    metadata: ObjectTypeFullMetadata
-): MetaObjectType {
+export function convertFoundryMetaObjectType(metadata: ObjectTypeFullMetadata): MetaObjectType {
     const objectType = metadata.objectType;
     return {
         id: objectType.rid,
@@ -19,6 +12,8 @@ export function convertFoundryMetaObjectType(
         pluralDisplayName: objectType.pluralDisplayName,
         primaryKey: objectType.primaryKey,
         title: objectType.titleProperty,
+        icon: objectType.icon ? fromBlueprintIconName(objectType.icon.name) : undefined,
+        color: objectType.icon?.color,
         description: objectType.description,
         properties: Object.entries(objectType.properties).map(([name, property]) =>
             convertFoundryObjectProperty(

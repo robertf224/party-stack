@@ -1,3 +1,7 @@
+import {
+    fromSalesforceLightningIconName,
+    getSalesforceActionIconName,
+} from "@party-stack/icons-salesforce-lightning";
 import type { MetaActionType } from "@party-stack/ontology";
 import type {
     SalesforceInvocableActionDescribe,
@@ -33,6 +37,7 @@ function convertSalesforceInvocableMetaActionType(
         name: toOntologyActionTypeName(describe.name),
         displayName: describe.label ?? describe.name,
         description: describe.description,
+        icon: fromSalesforceLightningIconName(getSalesforceActionIconName(describe.name)),
         parameters: (describe.inputs ?? []).map((parameter) => ({
             name: parameter.name,
             displayName: parameter.label ?? parameter.name,

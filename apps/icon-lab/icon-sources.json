@@ -1,0 +1,38 @@
+{
+    "blueprint": {
+        "package": "@blueprintjs/icons",
+        "version": "6.13.0",
+        "archiveUrl": "https://registry.npmjs.org/@blueprintjs/icons/-/icons-6.13.0.tgz",
+        "homepage": "https://blueprintjs.com/docs/#icons",
+        "license": "Apache-2.0"
+    },
+    "lucide": {
+        "package": "@lucide/icons",
+        "version": "1.31.0",
+        "archiveUrl": "https://registry.npmjs.org/@lucide/icons/-/icons-1.31.0.tgz",
+        "homepage": "https://lucide.dev/icons",
+        "license": "ISC"
+    },
+    "material": {
+        "package": "@iconify-json/material-symbols",
+        "version": "1.2.88",
+        "archiveUrl": "https://registry.npmjs.org/@iconify-json/material-symbols/-/material-symbols-1.2.88.tgz",
+        "homepage": "https://fonts.google.com/icons",
+        "license": "Apache-2.0"
+    },
+    "salesforce": {
+        "package": "@salesforce-ux/icons",
+        "version": "10.17.0",
+        "archiveUrl": "https://registry.npmjs.org/@salesforce-ux/icons/-/icons-10.17.0.tgz",
+        "homepage": "https://www.lightningdesignsystem.com/icons/",
+        "license": "CC-BY-ND-4.0"
+    },
+    "sfsymbols": {
+        "package": "sf-symbols-typescript",
+        "version": "2.2.0",
+        "archiveUrl": "https://registry.npmjs.org/sf-symbols-typescript/-/sf-symbols-typescript-2.2.0.tgz",
+        "homepage": "https://developer.apple.com/sf-symbols/",
+        "license": "Names: MIT; glyphs: Apple SF Symbols License",
+        "note": "Only names are committed. Set SF_SYMBOLS_ASSET_DIR to a locally licensed PNG/SVG export for image embeddings."
+    }
+}

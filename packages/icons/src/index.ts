@@ -1,0 +1,140 @@
+/**
+ * Provider-neutral concepts shared by general-purpose icon systems including
+ * Blueprint, Lucide, SF Symbols/Material Symbols, and Salesforce Lightning.
+ *
+ * Names describe meaning rather than any provider's asset vocabulary.
+ */
+export const IconNames = [
+    "activity",
+    "add",
+    "airplane",
+    "alarm",
+    "alert",
+    "archive",
+    "arrow-down",
+    "arrow-left",
+    "arrow-right",
+    "arrow-up",
+    "attachment",
+    "award",
+    "bank",
+    "barcode",
+    "bell",
+    "book",
+    "bookmark",
+    "briefcase",
+    "bug",
+    "building",
+    "calculator",
+    "calendar",
+    "camera",
+    "chart-bar",
+    "chart-line",
+    "chart-pie",
+    "chat",
+    "check",
+    "check-circle",
+    "chevron-down",
+    "chevron-left",
+    "chevron-right",
+    "chevron-up",
+    "circle",
+    "clipboard",
+    "clock",
+    "cloud",
+    "code",
+    "compass",
+    "copy",
+    "credit-card",
+    "cube",
+    "database",
+    "delete",
+    "document",
+    "download",
+    "edit",
+    "email",
+    "error",
+    "eye",
+    "eye-off",
+    "filter",
+    "flag",
+    "folder",
+    "globe",
+    "grid",
+    "heart",
+    "help",
+    "history",
+    "home",
+    "image",
+    "info",
+    "key",
+    "layers",
+    "lightbulb",
+    "link",
+    "list",
+    "location",
+    "lock",
+    "lock-open",
+    "map",
+    "menu",
+    "microphone",
+    "minus",
+    "minus-circle",
+    "moon",
+    "more-horizontal",
+    "more-vertical",
+    "notification",
+    "package",
+    "pause",
+    "people",
+    "person",
+    "phone",
+    "pin",
+    "play",
+    "play-circle",
+    "plus-circle",
+    "printer",
+    "project",
+    "refresh",
+    "rocket",
+    "save",
+    "search",
+    "send",
+    "settings",
+    "share",
+    "shield",
+    "shopping-bag",
+    "shopping-cart",
+    "star",
+    "stop",
+    "sun",
+    "tag",
+    "ticket",
+    "tools",
+    "upload",
+    "video",
+    "warning",
+    "window",
+    "wrench",
+    "x",
+    "x-circle",
+] as const;
+
+export type IconName = (typeof IconNames)[number];
+
+const iconNameSet: ReadonlySet<string> = new Set(IconNames);
+
+export function isIconName(value: string): value is IconName {
+    return iconNameSet.has(value);
+}
+
+/**
+ * Portable icon descriptor. `name` drives rendering while `meta` preserves
+ * namespaced source-provider data for lossless round trips.
+ */
+export interface IconDescriptor {
+    name: IconName;
+    meta?: Record<string, unknown>;
+}
+
+export type IconResolver<Output> = (name: IconName) => Output | undefined;

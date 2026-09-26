@@ -2,6 +2,130 @@
 
 import * as v from "../../utils/values.js";
 
+/** A renderer-independent icon name from @party-stack/icons. */
+export type IconName =
+    | "activity"
+    | "add"
+    | "airplane"
+    | "alarm"
+    | "alert"
+    | "archive"
+    | "arrow-down"
+    | "arrow-left"
+    | "arrow-right"
+    | "arrow-up"
+    | "attachment"
+    | "award"
+    | "bank"
+    | "barcode"
+    | "bell"
+    | "book"
+    | "bookmark"
+    | "briefcase"
+    | "bug"
+    | "building"
+    | "calculator"
+    | "calendar"
+    | "camera"
+    | "chart-bar"
+    | "chart-line"
+    | "chart-pie"
+    | "chat"
+    | "check"
+    | "check-circle"
+    | "chevron-down"
+    | "chevron-left"
+    | "chevron-right"
+    | "chevron-up"
+    | "circle"
+    | "clipboard"
+    | "clock"
+    | "cloud"
+    | "code"
+    | "compass"
+    | "copy"
+    | "credit-card"
+    | "cube"
+    | "database"
+    | "delete"
+    | "document"
+    | "download"
+    | "edit"
+    | "email"
+    | "error"
+    | "eye"
+    | "eye-off"
+    | "filter"
+    | "flag"
+    | "folder"
+    | "globe"
+    | "grid"
+    | "heart"
+    | "help"
+    | "history"
+    | "home"
+    | "image"
+    | "info"
+    | "key"
+    | "layers"
+    | "lightbulb"
+    | "link"
+    | "list"
+    | "location"
+    | "lock"
+    | "lock-open"
+    | "map"
+    | "menu"
+    | "microphone"
+    | "minus"
+    | "minus-circle"
+    | "moon"
+    | "more-horizontal"
+    | "more-vertical"
+    | "notification"
+    | "package"
+    | "pause"
+    | "people"
+    | "person"
+    | "phone"
+    | "pin"
+    | "play"
+    | "play-circle"
+    | "plus-circle"
+    | "printer"
+    | "project"
+    | "refresh"
+    | "rocket"
+    | "save"
+    | "search"
+    | "send"
+    | "settings"
+    | "share"
+    | "shield"
+    | "shopping-bag"
+    | "shopping-cart"
+    | "star"
+    | "stop"
+    | "sun"
+    | "tag"
+    | "ticket"
+    | "tools"
+    | "upload"
+    | "video"
+    | "warning"
+    | "window"
+    | "wrench"
+    | "x"
+    | "x-circle";
+
+/** A portable icon descriptor with optional provider meta for lossless round trips. */
+export type IconDescriptor = {
+    /** Renderer-independent icon name. */
+    name: IconName;
+    /** Namespaced source-provider meta. */
+    meta?: Record<string, unknown>;
+};
+
 export type Deprecation = {
     message: string;
 };
@@ -236,6 +360,10 @@ export type ObjectTypeDef = {
     primaryKey: string;
     /** The optional property name used as the human-readable title for an object. */
     title?: string;
+    /** Optional portable icon descriptor. */
+    icon?: IconDescriptor;
+    /** Optional display color independent of the icon. */
+    color?: string;
     /** The object type's propertieo. */
     properties: Array<PropertyDef>;
     /** Optional description. */
@@ -393,6 +521,10 @@ export type ActionTypeDef = {
     name: string;
     /** Human-readable name. */
     displayName: string;
+    /** Optional portable icon descriptor. */
+    icon?: IconDescriptor;
+    /** Optional display color independent of the icon. */
+    color?: string;
     /** The action type's parametero. */
     parameters: Array<ActionParameterDef>;
     /** The action type's local logic stepo. */

@@ -1,0 +1,52 @@
+{
+    "name": "@party-stack/icon-lab",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "tsc --noEmit",
+        "dev": "vite dev",
+        "dist": "vite build",
+        "icons:archive": "tsx scripts/extract-assets.ts",
+        "icons:catalog": "tsx scripts/extract-assets.ts --catalog-only",
+        "icons:embed": "tsx scripts/generate-embeddings.ts",
+        "icons:extract": "tsx scripts/extract-assets.ts --catalog-only",
+        "icons:prepare": "tsx scripts/extract-assets.ts && tsx scripts/generate-embeddings.ts",
+        "icons:sf:export": "tsx scripts/export-sf-symbols.ts",
+        "icons:update": "pnpm update --latest @blueprintjs/icons @iconify-json/material-symbols @lucide/icons @salesforce-ux/icons sf-symbols-typescript && tsx scripts/extract-assets.ts && tsx scripts/generate-embeddings.ts",
+        "lint": "eslint",
+        "test": "vitest run src"
+    },
+    "dependencies": {
+        "@base-ui/react": "^1.8.0",
+        "@party-stack/icons": "workspace:*",
+        "@party-stack/icons-blueprint": "workspace:*",
+        "@party-stack/icons-expo": "workspace:*",
+        "@party-stack/icons-lucide": "workspace:*",
+        "@party-stack/icons-salesforce-lightning": "workspace:*",
+        "fflate": "^0.8.3",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0"
+    },
+    "devDependencies": {
+        "@blueprintjs/icons": "^6.13.0",
+        "@iconify-json/material-symbols": "^1.2.88",
+        "@lucide/icons": "^1.31.0",
+        "@resvg/resvg-js": "^2.6.2",
+        "@salesforce-ux/icons": "^10.17.0",
+        "@tailwindcss/vite": "^4",
+        "@types/node": "^24.10.1",
+        "@types/react": "^19.2.6",
+        "@types/react-dom": "^19.2.3",
+        "@vitejs/plugin-react": "^4.7.0",
+        "@xenova/transformers": "^2.17.2",
+        "eslint": "^9.25.0",
+        "sf-symbols-typescript": "^2.2.0",
+        "sharp": "^0.34.2",
+        "tailwindcss": "^4.0.6",
+        "tsx": "^4.20.3",
+        "typescript": "~5.8.3",
+        "vite": "^7.2.4",
+        "vitest": "^3.1.1"
+    }
+}

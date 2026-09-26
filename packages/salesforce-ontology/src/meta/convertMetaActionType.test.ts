@@ -38,6 +38,7 @@ describe("convertSalesforceMetaActionType", () => {
             name: "Create_Account",
             displayName: "Create Account",
             description: "Creates an account",
+            icon: undefined,
             parameters: [
                 {
                     name: "accountName",
@@ -87,12 +88,11 @@ describe("convertSalesforceMetaActionType", () => {
     });
 
     it("identifies Salesforce standard actions", () => {
-        const action =
-            convertSalesforceMetaStandardActionType({
-                name: "confirmSalesMeeting",
-                label: "Confirm Sales Meeting",
-                inputs: [],
-            });
+        const action = convertSalesforceMetaStandardActionType({
+            name: "confirmSalesMeeting",
+            label: "Confirm Sales Meeting",
+            inputs: [],
+        });
 
         expect(action).toMatchObject({
             id: "salesforce:standard:confirmSalesMeeting",

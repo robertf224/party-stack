@@ -1,0 +1,41 @@
+{
+    "name": "@party-stack/icons-expo",
+    "version": "0.1.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./react": {
+            "types": "./lib/react.d.ts",
+            "default": "./lib/react.js"
+        }
+    },
+    "files": [
+        "lib"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint",
+        "test": "vitest run src"
+    },
+    "dependencies": {
+        "@party-stack/icons": "workspace:^",
+        "expo-symbols": "^57.0.2"
+    },
+    "devDependencies": {
+        "@bobbyfidz/react-build-config": "^0.1.1",
+        "@types/react": "^19.2.6",
+        "eslint": "^9.25.0",
+        "react": "^19.2.0",
+        "typescript": "~5.8.3",
+        "vitest": "^3.1.1"
+    },
+    "peerDependencies": {
+        "expo": "*",
+        "expo-font": "*",
+        "react": "^18.0.0 || ^19.0.0",
+        "react-native": "*"
+    }
+}

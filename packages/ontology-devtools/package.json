@@ -20,11 +20,13 @@
     "dependencies": {
         "@base-ui/react": "^1.6.0",
         "@dagrejs/dagre": "^3.1.1",
-        "@heroicons/react": "^2.2.0",
         "@number-flow/react": "^0.6.2",
+        "@party-stack/icons": "workspace:^",
+        "@party-stack/icons-lucide": "workspace:^",
         "@party-stack/ontology": "workspace:*",
         "@tanstack/devtools-utils": "^0.6.0",
-        "@tanstack/react-table": "^8.21.3"
+        "@tanstack/react-table": "^8.21.3",
+        "lucide-react": "^1.31.0"
     },
     "devDependencies": {
         "@bobbyfidz/react-build-config": "^0.1.1",

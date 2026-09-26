@@ -1,3 +1,7 @@
+import {
+    fromSalesforceLightningIconName,
+    getSalesforceObjectIconName,
+} from "@party-stack/icons-salesforce-lightning";
 import type { MetaObjectProperty, MetaObjectType } from "@party-stack/ontology";
 import type { SalesforceFieldDescribe, SalesforceSObjectDescribe } from "@party-stack/salesforce-client";
 import { salesforceObjectTypeId, salesforcePropertyId } from "../utils/ids.js";
@@ -32,6 +36,7 @@ export function convertSalesforceMetaObjectType(describe: SalesforceSObjectDescr
     const properties = describe.fields
         .filter(isQueryableField)
         .map((field) => convertSalesforceObjectProperty(describe.name, field));
+    const sourceIconName = getSalesforceObjectIconName(describe.name, describe.custom === true);
 
     return {
         id: salesforceObjectTypeId(describe.name),
@@ -40,6 +45,9 @@ export function convertSalesforceMetaObjectType(describe: SalesforceSObjectDescr
         pluralDisplayName: describe.labelPlural,
         primaryKey: "Id",
         title: chooseTitleProperty(describe.fields),
+        icon: sourceIconName
+            ? fromSalesforceLightningIconName(sourceIconName)
+            : undefined,
         properties,
     };
 }

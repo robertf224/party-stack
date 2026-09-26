@@ -2,6 +2,7 @@ import { validate, type OntologyIR } from "@party-stack/ontology";
 import { Temporal } from "temporal-polyfill";
 import { describe, expect, it } from "vitest";
 import { convertFoundryMetaActionType } from "./convertMetaActionType.js";
+import type { ActionTypeOmsMetadata } from "./loadActionTypeOmsMetadata.js";
 import type { ActionParameterV2, ActionTypeFullMetadata } from "@osdk/foundry.ontologies";
 
 function actionType(parameters: Record<string, ActionParameterV2>): ActionTypeFullMetadata {
@@ -16,6 +17,27 @@ function actionType(parameters: Record<string, ActionParameterV2>): ActionTypeFu
         },
         fullLogicRules: [],
     };
+}
+
+function omsIconMetadata(locator: string, color: string): ActionTypeOmsMetadata {
+    return {
+        actionType: {
+            actionTypeLogic: {
+                validation: {
+                    parameterValidations: {},
+                },
+            },
+            metadata: {
+                displayMetadata: {
+                    icon: {
+                        type: "blueprint",
+                        blueprint: { locator, color },
+                    },
+                },
+            },
+        },
+        propertyApiNamesByParameter: new Map(),
+    } as unknown as ActionTypeOmsMetadata;
 }
 
 function objectParameter(objectType: string, required: boolean): ActionParameterV2 {
@@ -106,12 +128,7 @@ function omsActionMetadata(
             ? new Map([
                   [
                       resolvedProperty.parameterId,
-                      new Map([
-                          [
-                              resolvedProperty.propertyTypeId,
-                              resolvedProperty.propertyApiName,
-                          ],
-                      ]),
+                      new Map([[resolvedProperty.propertyTypeId, resolvedProperty.propertyApiName]]),
                   ],
               ])
             : new Map(),
@@ -157,6 +174,20 @@ describe("convertFoundryMetaActionType parameter validation", () => {
         expect(convertFoundryMetaActionType(actionType({}))).toMatchObject({
             id: "ri.actions.main.action-type.example",
             name: "validatedAction",
+        });
+    });
+
+    it("maps Blueprint icons and colors from OMS action metadata", () => {
+        expect(
+            convertFoundryMetaActionType(actionType({}), omsIconMetadata("person", "#2d72d2"))
+        ).toMatchObject({
+            icon: {
+                name: "person",
+                meta: {
+                    blueprint: { name: "person" },
+                },
+            },
+            color: "#2d72d2",
         });
     });
 
@@ -1309,36 +1340,32 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                 typeClasses: [],
             },
         });
-        const result = convertFoundryMetaActionType(
-            metadata,
-            {
-                actionType: {
-                    actionTypeLogic: {
-                        validation: {
-                            parameterValidations: {
-                                assigneeName: {
-                                    defaultValidation: {
-                                        display: {
-                                            prefill: {
-                                                type: "objectParameterPropertyValue",
-                                                objectParameterPropertyValue: {
-                                                    parameterId: "assignee",
-                                                    propertyTypeId:
-                                                        "legacy-display-name-id",
-                                                },
+        const result = convertFoundryMetaActionType(metadata, {
+            actionType: {
+                actionTypeLogic: {
+                    validation: {
+                        parameterValidations: {
+                            assigneeName: {
+                                defaultValidation: {
+                                    display: {
+                                        prefill: {
+                                            type: "objectParameterPropertyValue",
+                                            objectParameterPropertyValue: {
+                                                parameterId: "assignee",
+                                                propertyTypeId: "legacy-display-name-id",
                                             },
                                         },
                                     },
                                 },
-                                notes: {
-                                    defaultValidation: {
-                                        display: {
-                                            prefill: {
-                                                type: "staticValue",
-                                                staticValue: {
-                                                    type: "string",
-                                                    string: "from-foundry",
-                                                },
+                            },
+                            notes: {
+                                defaultValidation: {
+                                    display: {
+                                        prefill: {
+                                            type: "staticValue",
+                                            staticValue: {
+                                                type: "string",
+                                                string: "from-foundry",
                                             },
                                         },
                                     },
@@ -1347,19 +1374,11 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                         },
                     },
                 },
-                propertyApiNamesByParameter: new Map([
-                    [
-                        "assignee",
-                        new Map([
-                            [
-                                "legacy-display-name-id",
-                                "displayName",
-                            ],
-                        ]),
-                    ],
-                ]),
-            } as never
-        );
+            },
+            propertyApiNamesByParameter: new Map([
+                ["assignee", new Map([["legacy-display-name-id", "displayName"]])],
+            ]),
+        } as never);
 
         expect(result.parameters).toMatchObject([
             {
@@ -1522,8 +1541,7 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                                                 staticValue: {
                                                     type: "date",
                                                     date: {
-                                                        dateValue:
-                                                            "2026-08-31",
+                                                        dateValue: "2026-08-31",
                                                     },
                                                 },
                                             },
@@ -1538,10 +1556,7 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                                                 staticValue: {
                                                     type: "stringList",
                                                     stringList: {
-                                                        strings: [
-                                                            "priority",
-                                                            "customer",
-                                                        ],
+                                                        strings: ["priority", "customer"],
                                                     },
                                                 },
                                             },

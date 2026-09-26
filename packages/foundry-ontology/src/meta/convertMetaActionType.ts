@@ -1,3 +1,4 @@
+import { fromBlueprintIconName } from "@party-stack/icons-blueprint";
 import { Temporal } from "temporal-polyfill";
 import type {
     ActionParameterDef,
@@ -469,20 +470,14 @@ function inputReference(name: string): Expression {
     };
 }
 
-function getAtExpression(
-    source: Expression,
-    path: string[]
-): Expression {
+function getAtExpression(source: Expression, path: string[]): Expression {
     return {
         kind: "getAt",
         value: { source, path },
     };
 }
 
-function objectField(
-    parameterName: string,
-    path: string[]
-): Expression {
+function objectField(parameterName: string, path: string[]): Expression {
     return getAtExpression(
         {
             kind: "objectLookup",
@@ -542,9 +537,7 @@ function convertLogicRuleArgument(
         case "parameterId":
             return inputReference(argument.parameterId);
         case "objectParameterPropertyValue":
-            return objectField(argument.parameterId, [
-                argument.propertyTypeApiName,
-            ]);
+            return objectField(argument.parameterId, [argument.propertyTypeApiName]);
         case "structParameterFieldValue":
             return getAtExpression(inputReference(argument.parameterId), [
                 argument.structParameterFieldApiName,
@@ -740,11 +733,7 @@ export function convertFoundryMetaActionType(
     const parameters = Object.entries(actionType.actionType.parameters).map(
         ([name, parameter]): ActionParameterDef => {
             const type = requireObjectReferenceMutationTarget(
-                convertActionParameterType(
-                    parameter.dataType,
-                    parameter.required,
-                    parameter.validation
-                ),
+                convertActionParameterType(parameter.dataType, parameter.required, parameter.validation),
                 mutationTargetParameterNames.has(name)
             );
             return {
@@ -761,17 +750,19 @@ export function convertFoundryMetaActionType(
             };
         }
     );
-    const defaultsByParameter =
-        convertOmsActionParameterDefaults(
-            omsMetadata,
-            parameters
-        );
+    const defaultsByParameter = convertOmsActionParameterDefaults(omsMetadata, parameters);
+    const foundryIcon = omsMetadata?.actionType.metadata?.displayMetadata?.icon;
 
     return {
         id: actionType.actionType.rid,
         name: toOntologyActionTypeName(actionType.actionType.apiName),
         displayName: actionType.actionType.displayName ?? actionType.actionType.apiName,
         description: actionType.actionType.description,
+        icon:
+            foundryIcon?.type === "blueprint"
+                ? fromBlueprintIconName(foundryIcon.blueprint.locator)
+                : undefined,
+        color: foundryIcon?.type === "blueprint" ? foundryIcon.blueprint.color : undefined,
         deprecated:
             actionType.actionType.status === "DEPRECATED" ? { message: "Deprecated in Foundry." } : undefined,
         parameters: [

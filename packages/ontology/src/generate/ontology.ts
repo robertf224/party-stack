@@ -276,6 +276,14 @@ function renderObjectType(objectType: ObjectTypeDef): string {
             value: objectType.title ? renderPlainValue(objectType.title) : undefined,
         },
         {
+            name: "icon",
+            value: objectType.icon ? renderPlainValue(objectType.icon) : undefined,
+        },
+        {
+            name: "color",
+            value: objectType.color ? renderPlainValue(objectType.color) : undefined,
+        },
+        {
             name: "properties",
             value: withWriter((writer) =>
                 writeArray(
@@ -326,6 +334,11 @@ function renderActionType(actionType: ActionTypeDef, ctx?: RenderContext): strin
         { name: "meta", value: actionType.meta ? renderPlainValue(actionType.meta) : undefined },
         { name: "name", value: renderPlainValue(actionType.name) },
         { name: "displayName", value: renderPlainValue(actionType.displayName) },
+        { name: "icon", value: actionType.icon ? renderPlainValue(actionType.icon) : undefined },
+        {
+            name: "color",
+            value: actionType.color ? renderPlainValue(actionType.color) : undefined,
+        },
         {
             name: "parameters",
             value: withWriter((writer) =>
@@ -338,7 +351,9 @@ function renderActionType(actionType: ActionTypeDef, ctx?: RenderContext): strin
                             { name: "type", value: renderType(parameter.type) },
                             {
                                 name: "description",
-                                value: parameter.description ? renderPlainValue(parameter.description) : undefined,
+                                value: parameter.description
+                                    ? renderPlainValue(parameter.description)
+                                    : undefined,
                             },
                             { name: "deprecated", value: renderDeprecation(parameter.deprecated) },
                             {
@@ -357,42 +372,47 @@ function renderActionType(actionType: ActionTypeDef, ctx?: RenderContext): strin
             value: withWriter((writer) =>
                 writeArray(
                     writer,
-                    actionType.logic.map((step) =>
-                        `o.ActionLogicStep.${step.kind}(${renderObject([
-                            {
-                                name: "objectType",
-                                value:
-                                    "objectType" in step.value
-                                        ? renderPlainValue(step.value.objectType)
-                                        : undefined,
-                            },
-                            {
-                                name: "object",
-                                value:
-                                    "object" in step.value
-                                        ? renderPlainValue(step.value.object)
-                                        : undefined,
-                            },
-                            {
-                                name: "values",
-                                value:
-                                    "values" in step.value
-                                        ? withWriter((arrayWriter) =>
-                                              writeArray(
-                                                  arrayWriter,
-                                                  ("values" in step.value ? step.value.values : []).map((value) =>
-                                                      renderActionPropertyAssignment(value, ctx)
+                    actionType.logic.map(
+                        (step) =>
+                            `o.ActionLogicStep.${step.kind}(${renderObject([
+                                {
+                                    name: "objectType",
+                                    value:
+                                        "objectType" in step.value
+                                            ? renderPlainValue(step.value.objectType)
+                                            : undefined,
+                                },
+                                {
+                                    name: "object",
+                                    value:
+                                        "object" in step.value
+                                            ? renderPlainValue(step.value.object)
+                                            : undefined,
+                                },
+                                {
+                                    name: "values",
+                                    value:
+                                        "values" in step.value
+                                            ? withWriter((arrayWriter) =>
+                                                  writeArray(
+                                                      arrayWriter,
+                                                      ("values" in step.value ? step.value.values : []).map(
+                                                          (value) =>
+                                                              renderActionPropertyAssignment(value, ctx)
+                                                      )
                                                   )
                                               )
-                                          )
-                                        : undefined,
-                            },
-                        ])})`
+                                            : undefined,
+                                },
+                            ])})`
                     )
                 )
             ),
         },
-        { name: "description", value: actionType.description ? renderPlainValue(actionType.description) : undefined },
+        {
+            name: "description",
+            value: actionType.description ? renderPlainValue(actionType.description) : undefined,
+        },
         { name: "deprecated", value: renderDeprecation(actionType.deprecated) },
     ]);
 }
@@ -413,7 +433,9 @@ function renderQueryFunctionType(queryFunctionType: QueryFunctionTypeDef): strin
                             { name: "type", value: renderType(parameter.type) },
                             {
                                 name: "description",
-                                value: parameter.description ? renderPlainValue(parameter.description) : undefined,
+                                value: parameter.description
+                                    ? renderPlainValue(parameter.description)
+                                    : undefined,
                             },
                             { name: "deprecated", value: renderDeprecation(parameter.deprecated) },
                         ])
@@ -422,7 +444,12 @@ function renderQueryFunctionType(queryFunctionType: QueryFunctionTypeDef): strin
             ),
         },
         { name: "returnType", value: renderType(queryFunctionType.returnType) },
-        { name: "description", value: queryFunctionType.description ? renderPlainValue(queryFunctionType.description) : undefined },
+        {
+            name: "description",
+            value: queryFunctionType.description
+                ? renderPlainValue(queryFunctionType.description)
+                : undefined,
+        },
         { name: "deprecated", value: renderDeprecation(queryFunctionType.deprecated) },
     ]);
 }
@@ -484,16 +511,16 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
             },
             {
                 name: "actionTypes",
-                value: withWriter((arrayWriter) =>
-                    writeArray(arrayWriter, renderedActionTypes)
-                ),
+                value: withWriter((arrayWriter) => writeArray(arrayWriter, renderedActionTypes)),
             },
             {
                 name: "queryFunctionTypes",
                 value: withWriter((arrayWriter) =>
                     writeArray(
                         arrayWriter,
-                        ir.queryFunctionTypes.map((queryFunctionType) => renderQueryFunctionType(queryFunctionType))
+                        ir.queryFunctionTypes.map((queryFunctionType) =>
+                            renderQueryFunctionType(queryFunctionType)
+                        )
                     )
                 ),
             },

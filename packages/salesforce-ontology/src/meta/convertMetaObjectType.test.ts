@@ -134,6 +134,14 @@ describe("convertSalesforceMetaObjectType", () => {
             name: "Account",
             primaryKey: "Id",
             title: "Name",
+            icon: {
+                name: "building",
+                meta: {
+                    salesforce: {
+                        name: "standard/account",
+                    },
+                },
+            },
         });
         expect(objectType.properties.find((property) => property.name === "BillingAddress")).toBeUndefined();
         expect(objectType.properties.find((property) => property.name === "Industry")?.type).toEqual({

@@ -1,3 +1,4 @@
+import { LucideIcon } from "@party-stack/icons-lucide/react";
 import { isValidElement, type ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 import type { LiveOntology, OntologyIR, OntologyOutboxEntry } from "@party-stack/ontology";
@@ -7,6 +8,7 @@ import {
     layoutSchema,
     moveColumn,
     OntologyDevtoolsPanel,
+    OntologyIcon,
     OntologyDevtoolsPluginName,
     ontologyDevtoolsTrigger,
     OntologyDevtoolsTrigger,
@@ -86,6 +88,28 @@ describe("createOntologyDevtoolsPlugin", () => {
 
         expect(trigger.type).toBe(OntologyDevtoolsTrigger);
         expect(trigger.props).toMatchObject({ theme: "dark" });
+    });
+});
+
+describe("OntologyIcon", () => {
+    it("renders standard icons through the Lucide adapter", () => {
+        const icon = OntologyIcon({ name: "ticket", className: "object-icon" });
+
+        expect(isValidElement(icon)).toBe(true);
+        expect(icon).toMatchObject({
+            type: LucideIcon,
+            props: {
+                className: "object-icon",
+                name: "ticket",
+                style: undefined,
+            },
+        });
+    });
+
+    it("tints the icon with the ontology color when one is defined", () => {
+        expect(OntologyIcon({ name: "ticket", color: "#2D72D2" })).toMatchObject({
+            props: { style: { color: "#2D72D2" } },
+        });
     });
 });
 
@@ -231,9 +255,7 @@ describe("property presentation", () => {
                 },
             })
         ).toBe("List of Attachment (optional)");
-        expect(typeDisplayName(ir, { kind: "ref", value: { name: "EventTime" } })).toBe(
-            "EventTime"
-        );
+        expect(typeDisplayName(ir, { kind: "ref", value: { name: "EventTime" } })).toBe("EventTime");
     });
 
     it("formats timestamps for display while retaining the exact value", () => {
@@ -245,9 +267,7 @@ describe("property presentation", () => {
 });
 
 describe("getOutboxActivity", () => {
-    function entry(
-        overrides: Partial<OntologyOutboxEntry> = {}
-    ): OntologyOutboxEntry {
+    function entry(overrides: Partial<OntologyOutboxEntry> = {}): OntologyOutboxEntry {
         return {
             id: "entry",
             sequence: 1,
@@ -269,9 +289,7 @@ describe("getOutboxActivity", () => {
     it("derives idle, draining, and blocked states", () => {
         expect(getOutboxActivity([])).toBe("idle");
         expect(getOutboxActivity([entry()])).toBe("draining");
-        expect(
-            getOutboxActivity([entry({ nextAttemptAt: Date.now() + 60_000 })])
-        ).toBe("draining");
+        expect(getOutboxActivity([entry({ nextAttemptAt: Date.now() + 60_000 })])).toBe("draining");
         expect(getOutboxActivity([entry({ status: "executing" })])).toBe("draining");
         expect(
             getOutboxActivity([

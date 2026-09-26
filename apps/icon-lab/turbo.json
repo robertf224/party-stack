@@ -1,0 +1,47 @@
+{
+    "extends": ["//"],
+    "tasks": {
+        "icons:archive": {
+            "inputs": ["scripts/extract-assets.ts", "icon-sources.json", "package.json"],
+            "outputs": ["public/icon-sets/**"]
+        },
+        "icons:catalog": {
+            "cache": false,
+            "env": ["SF_SYMBOLS_ASSET_DIR"],
+            "inputs": [
+                "scripts/extract-assets.ts",
+                "icon-sources.json",
+                "package.json",
+                "public/icon-sets/**"
+            ],
+            "outputs": ["temp/data/catalog.json", "temp/data/sfsymbols.local.zip"]
+        },
+        "icons:embed": {
+            "dependsOn": ["icons:catalog"],
+            "env": ["SF_SYMBOLS_ASSET_DIR"],
+            "inputs": [
+                "scripts/generate-embeddings.ts",
+                "src/shared/math.ts",
+                "src/shared/types.ts",
+                "temp/data/catalog.json",
+                "temp/data/sfsymbols.local.zip",
+                "public/icon-sets/**"
+            ],
+            "outputs": [
+                "temp/data/draft-mappings.json",
+                "temp/data/embeddings-index.json",
+                "temp/data/embeddings.i8",
+                "temp/data/mapping-audit.json"
+            ]
+        },
+        "dev": {
+            "dependsOn": ["icons:embed"],
+            "cache": false,
+            "persistent": true
+        },
+        "dist": {
+            "dependsOn": ["icons:embed"],
+            "outputs": ["dist/**"]
+        }
+    }
+}

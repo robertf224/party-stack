@@ -32,6 +32,7 @@
         "@bobbyfidz/panic": "^0.1.0",
         "@party-stack/connections": "workspace:^",
         "@party-stack/errors": "workspace:^",
+        "@party-stack/icons-salesforce-lightning": "workspace:^",
         "@party-stack/oauth": "workspace:^",
         "@party-stack/ontology": "workspace:*",
         "@party-stack/runtime": "workspace:^",
