@@ -1,5 +1,11 @@
 # @party-stack/foundry-ontology
 
+## 0.16.1
+
+### Patch Changes
+
+- 578cd26: Preserve OMS string constraints and labeled suggestions on action struct fields, including fields inside optional lists of structs and optional or list string fields.
+
 ## 0.16.0
 
 ### Minor Changes
