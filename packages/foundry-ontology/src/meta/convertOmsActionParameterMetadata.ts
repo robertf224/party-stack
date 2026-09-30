@@ -129,11 +129,15 @@ function convertDefaultValue(
 
 function getOmsActionParameterAllowedValues(
     actionType: ActionTypeOmsMetadata | undefined,
-    parameterName: string
+    parameterName: string,
+    fieldName?: string
 ): AllowedParameterValues | undefined {
-    return actionType?.actionType.actionTypeLogic.validation
-        .parameterValidations[parameterName]?.defaultValidation
-        .validation?.allowedValues;
+    const parameterValidation = actionType?.actionType.actionTypeLogic.validation
+        .parameterValidations[parameterName];
+    const validation = fieldName === undefined
+        ? parameterValidation
+        : parameterValidation?.structFieldValidations?.[fieldName];
+    return validation?.defaultValidation.validation?.allowedValues;
 }
 
 function getOmsOneOf(
@@ -170,11 +174,13 @@ function getOmsOneOf(
 
 export function convertOmsActionParameterStringConstraint(
     actionType: ActionTypeOmsMetadata | undefined,
-    parameterName: string
+    parameterName: string,
+    fieldName?: string
 ): StringConstraint | undefined {
     const allowedValues = getOmsActionParameterAllowedValues(
         actionType,
-        parameterName
+        parameterName,
+        fieldName
     );
 
     if (allowedValues?.type === "oneOf") {
@@ -205,12 +211,14 @@ export function convertOmsActionParameterStringConstraint(
 
 export function convertOmsActionParameterStringSuggestions(
     actionType: ActionTypeOmsMetadata | undefined,
-    parameterName: string
+    parameterName: string,
+    fieldName?: string
 ): StringSuggestion[] | undefined {
     const oneOf = getOmsOneOf(
         getOmsActionParameterAllowedValues(
             actionType,
-            parameterName
+            parameterName,
+            fieldName
         )
     );
     return oneOf?.otherValuesAllowed

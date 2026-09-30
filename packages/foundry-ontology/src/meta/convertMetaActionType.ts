@@ -64,6 +64,7 @@ function applyStringConstraintFallback(type: TypeDef, constraint: StringConstrai
             return {
                 ...type,
                 value: {
+                    ...type.value,
                     type: applyStringConstraintFallback(type.value.type, constraint),
                 },
             };
@@ -71,6 +72,7 @@ function applyStringConstraintFallback(type: TypeDef, constraint: StringConstrai
             return {
                 ...type,
                 value: {
+                    ...type.value,
                     elementType: applyStringConstraintFallback(type.value.elementType, constraint),
                 },
             };
@@ -96,6 +98,7 @@ function applyStringSuggestionsFallback(type: TypeDef, suggestions: StringSugges
             return {
                 ...type,
                 value: {
+                    ...type.value,
                     type: applyStringSuggestionsFallback(type.value.type, suggestions),
                 },
             };
@@ -103,7 +106,53 @@ function applyStringSuggestionsFallback(type: TypeDef, suggestions: StringSugges
             return {
                 ...type,
                 value: {
+                    ...type.value,
                     elementType: applyStringSuggestionsFallback(type.value.elementType, suggestions),
+                },
+            };
+        default:
+            return type;
+    }
+}
+
+function applyOmsStructFieldValidation(
+    type: TypeDef,
+    omsMetadata: ActionTypeOmsMetadata | undefined,
+    parameterName: string
+): TypeDef {
+    if (!omsMetadata) return type;
+    switch (type.kind) {
+        case "optional":
+            return {
+                ...type,
+                value: {
+                    ...type.value,
+                    type: applyOmsStructFieldValidation(type.value.type, omsMetadata, parameterName),
+                },
+            };
+        case "list":
+            return {
+                ...type,
+                value: {
+                    ...type.value,
+                    elementType: applyOmsStructFieldValidation(type.value.elementType, omsMetadata, parameterName),
+                },
+            };
+        case "struct":
+            return {
+                ...type,
+                value: {
+                    ...type.value,
+                    fields: type.value.fields.map((field) => ({
+                        ...field,
+                        type: applyStringSuggestionsFallback(
+                            applyStringConstraintFallback(
+                                field.type,
+                                convertOmsActionParameterStringConstraint(omsMetadata, parameterName, field.name)
+                            ),
+                            convertOmsActionParameterStringSuggestions(omsMetadata, parameterName, field.name)
+                        ),
+                    })),
                 },
             };
         default:
@@ -741,7 +790,7 @@ export function convertFoundryMetaActionType(
                 displayName: parameter.displayName ?? name,
                 type: applyStringSuggestionsFallback(
                     applyStringConstraintFallback(
-                        type,
+                        applyOmsStructFieldValidation(type, omsMetadata, name),
                         convertOmsActionParameterStringConstraint(omsMetadata, name)
                     ),
                     convertOmsActionParameterStringSuggestions(omsMetadata, name)

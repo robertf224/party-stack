@@ -1314,6 +1314,120 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
     });
 });
 
+describe("convertFoundryMetaActionType OMS struct field validations", () => {
+    const options = [{ value: "high", label: "High severity" }];
+    const fields = [
+        { name: "severity", fieldType: { type: "string" as const }, required: false },
+        { name: "category", fieldType: { type: "string" as const }, required: false },
+        {
+            name: "tags",
+            fieldType: { type: "array" as const, itemType: { type: "string" as const } },
+            required: false,
+        },
+        { name: "code", fieldType: { type: "string" as const }, required: true },
+    ];
+
+    it.each([false, true])("converts field validation through optional list wrappers: %s", (list) => {
+        const struct = { type: "struct" as const, fields };
+        const metadata = actionType({
+            issues: {
+                displayName: "Issues",
+                dataType: list ? { type: "array", subType: struct } : struct,
+                required: !list,
+                typeClasses: [],
+            },
+        });
+        const oms = {
+            actionType: {
+                actionTypeLogic: {
+                    validation: {
+                        parameterValidations: {
+                            issues: {
+                                defaultValidation: { display: {} },
+                                structFieldValidations: Object.fromEntries(
+                                    Object.entries({
+                                        severity: omsOneOf(options),
+                                        category: omsOneOf(options, true),
+                                        tags: omsOneOf(options, true),
+                                        code: omsTextRegex("^[A-Z]+$"),
+                                    }).map(([name, allowedValues]) => [
+                                        name,
+                                        { defaultValidation: { validation: { allowedValues } } },
+                                    ])
+                                ),
+                            },
+                        },
+                    },
+                },
+            },
+            propertyApiNamesByParameter: new Map(),
+        } as unknown as ActionTypeOmsMetadata;
+        const result = convertFoundryMetaActionType(metadata, oms);
+        let type = result.parameters[0]!.type;
+        if (list) {
+            expect(type.kind).toBe("optional");
+            if (type.kind !== "optional") throw new Error("Expected optional list");
+            expect(type.value.type.kind).toBe("list");
+            if (type.value.type.kind !== "list") throw new Error("Expected list");
+            type = type.value.type.value.elementType;
+        }
+        expect(type.kind).toBe("struct");
+        if (type.kind !== "struct") throw new Error("Expected struct");
+        expect(type.value.fields).toEqual([
+            {
+                name: "severity", displayName: "severity",
+                type: { kind: "optional", value: { type: {
+                    kind: "string", value: { constraint: { kind: "enum", value: { options } } },
+                } } },
+            },
+            {
+                name: "category", displayName: "category",
+                type: { kind: "optional", value: { type: {
+                    kind: "string", value: { suggestions: options },
+                } } },
+            },
+            {
+                name: "tags", displayName: "tags",
+                type: { kind: "optional", value: { type: {
+                    kind: "list", value: { elementType: {
+                        kind: "string", value: { suggestions: options },
+                    } },
+                } } },
+            },
+            {
+                name: "code", displayName: "code",
+                type: { kind: "string", value: {
+                    constraint: { kind: "regex", value: { regex: "^[A-Z]+$" } },
+                } },
+            },
+        ]);
+        expect(convertFoundryMetaActionType(metadata).parameters[0]?.type).toEqual(
+            convertFoundryMetaActionType(metadata, { ...oms, actionType: {
+                ...oms.actionType,
+                actionTypeLogic: { ...oms.actionType.actionTypeLogic, validation: {
+                    ...oms.actionType.actionTypeLogic.validation, parameterValidations: {},
+                } },
+            } }).parameters[0]?.type
+        );
+    });
+
+    it.each([false, true])("retains top-level open string suggestions, list: %s", (list) => {
+        const result = convertFoundryMetaActionType(actionType({
+            tags: {
+                displayName: "Tags",
+                dataType: list ? { type: "array", subType: { type: "string" } } : { type: "string" },
+                required: false,
+                typeClasses: [],
+            },
+        }), omsActionMetadata("tags", omsOneOf(options, true)));
+        let type = result.parameters[0]!.type;
+        if (type.kind !== "optional") throw new Error("Expected optional type");
+        type = type.value.type;
+        if (type.kind === "list") type = type.value.elementType;
+        expect(type).toEqual({ kind: "string", value: { suggestions: options } });
+    });
+});
+
 describe("convertFoundryMetaActionType OMS defaults", () => {
     it("converts static and object-property prefills to parameter defaults", () => {
         const metadata = actionType({
