@@ -13,7 +13,6 @@ export function createCollectionPersistence(
         coordinator,
         resolvePersistenceForCollection: (context) => {
             const resolved = persistence.resolvePersistenceForCollection?.(context) ?? persistence;
-            coordinator.setAdapterForCollection?.(context.collectionId, resolved.adapter);
             return { ...resolved, coordinator };
         },
     };

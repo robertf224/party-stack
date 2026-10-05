@@ -343,6 +343,8 @@ describe("collection-scoped persistence", () => {
         const scoped = { ...memoryAdapter(), schemaVersion: 2 };
         const apply = vi.spyOn(scoped, "applyCommittedTx");
         const root = memoryAdapter();
+        const coordinator = createPersistedCollectionCoordinator(coordination, root);
+        const registerAdapter = vi.spyOn(coordinator, "setAdapterForCollection");
         const defaultCoordinator = new SingleProcessCoordinator();
         const defaultApply = vi.spyOn(defaultCoordinator, "requestApplyCommittedTx");
         const resolvePersistenceForCollection = vi.fn(() => ({
@@ -360,6 +362,7 @@ describe("collection-scoped persistence", () => {
             }).runtime,
         });
         await collection.preload();
+        expect(registerAdapter).toHaveBeenCalledExactlyOnceWith(collection.id, scoped);
         expect(resolvePersistenceForCollection).toHaveBeenCalledWith({
             collectionId: collection.id,
             mode: "sync-absent",
