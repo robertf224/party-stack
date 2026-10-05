@@ -160,6 +160,7 @@ export function createPersistedCollectionCoordinator(
 class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     private readonly nodeId = safeRandomUUID();
     private readonly collectionAdapters = new Map<string, AdapterWithPullSince>();
+    private readonly collectionSubscriptions = new Map<string, number>();
 
     setAdapterForCollection(collectionId: string, adapter: HydrationPersistenceAdapter): void {
         this.collectionAdapters.set(collectionId, adapter);
@@ -242,11 +243,32 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     }
 
     subscribe(collectionId: string, callback: (message: ProtocolEnvelope<unknown>) => void): () => void {
-        return this.service.events.subscribe("message", (event) => {
+        const unsubscribe = this.service.events.subscribe("message", (event) => {
             if (event.collectionId === collectionId) {
                 callback(event.message);
             }
         });
+        this.collectionSubscriptions.set(
+            collectionId,
+            (this.collectionSubscriptions.get(collectionId) ?? 0) + 1
+        );
+        let active = true;
+        return () => {
+            if (!active) return;
+            active = false;
+            try {
+                unsubscribe();
+            } finally {
+                const remaining = this.collectionSubscriptions.get(collectionId)! - 1;
+                if (remaining > 0) {
+                    this.collectionSubscriptions.set(collectionId, remaining);
+                } else {
+                    this.collectionSubscriptions.delete(collectionId);
+                    this.collectionAdapters.delete(collectionId);
+                    this.positions.delete(collectionId);
+                }
+            }
+        };
     }
 
     publish(collectionId: string, message: ProtocolEnvelope<unknown>): void {

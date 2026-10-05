@@ -25,7 +25,7 @@ Maintain only changed rows, metadata, and index entries during IndexedDB commits
 
 Preserve nanosecond precision for Instant range indexes and chronological PlainDate ordering across negative and extended years. Older index encodings fall back to scans until rebuilt.
 
-Enforce collection schema versions and fence stale IndexedDB adapters after resets. Expose a standalone `createIndexedDBPersistence` factory matching TanStack SQLite's collection resolvers and schema mismatch policies. Web, Node, and Expo runtimes preserve those standard resolvers, protecting incompatible local-only data and resetting refetchable synced caches. Upgrade existing IndexedDB databases without discarding rows.
+Enforce collection schema versions and fence stale IndexedDB adapters after resets. Expose a standalone `createIndexedDBPersistence` factory matching TanStack SQLite's collection resolvers and schema mismatch policies. Web, Node, and Expo runtimes preserve those standard resolvers, protecting incompatible local-only data and resetting refetchable synced caches. Upgrade existing IndexedDB databases without discarding rows. Release collection adapter registrations and cached coordinator positions when the last collection subscription closes.
 
 Bound transaction deduplication and replay history, replay missed commits with rows and metadata, and reload when a baseline replacement, history gap, or large change set prevents incremental recovery.
 

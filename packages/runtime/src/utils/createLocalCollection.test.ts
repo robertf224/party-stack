@@ -17,7 +17,9 @@ interface Item {
     title: string;
 }
 
-function memoryAdapter(): PersistenceAdapter {
+function memoryAdapter(): PersistenceAdapter & {
+    getStreamPosition: NonNullable<PersistenceAdapter["getStreamPosition"]>;
+} {
     const collections = new Map<string, Map<string | number, Record<string, unknown>>>();
     const positions = new Map<
         string,
@@ -345,6 +347,8 @@ describe("collection-scoped persistence", () => {
         const root = memoryAdapter();
         const coordinator = createPersistedCollectionCoordinator(coordination, root);
         const registerAdapter = vi.spyOn(coordinator, "setAdapterForCollection");
+        const scopedPosition = vi.spyOn(scoped, "getStreamPosition");
+        const rootPosition = vi.spyOn(root, "getStreamPosition");
         const defaultCoordinator = new SingleProcessCoordinator();
         const defaultApply = vi.spyOn(defaultCoordinator, "requestApplyCommittedTx");
         const resolvePersistenceForCollection = vi.fn(() => ({
@@ -373,6 +377,41 @@ describe("collection-scoped persistence", () => {
         expect(rootApply).not.toHaveBeenCalled();
         expect(defaultApply).not.toHaveBeenCalled();
         await collection.cleanup();
+        scopedPosition.mockClear();
+        rootPosition.mockClear();
+        await coordinator.pullSince!(collection.id, 0);
+        expect(scopedPosition).not.toHaveBeenCalled();
+        expect(rootPosition).toHaveBeenCalledWith(collection.id);
+        await coordination.close();
+    });
+
+    it("keeps a scoped adapter until its last subscription closes and supports reopening", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "scoped-cleanup" });
+        const root = memoryAdapter();
+        const rootPosition = vi.spyOn(root, "getStreamPosition");
+        const scoped = memoryAdapter();
+        const scopedPosition = vi.spyOn(scoped, "getStreamPosition");
+        const coordinator = createPersistedCollectionCoordinator(coordination, root);
+        coordinator.setAdapterForCollection!("items", scoped);
+        const first = coordinator.subscribe("items", () => {});
+        const second = coordinator.subscribe("items", () => {});
+        first();
+        first();
+        await coordinator.pullSince!("items", 0);
+        expect(scopedPosition).toHaveBeenCalled();
+        expect(rootPosition).not.toHaveBeenCalled();
+        second();
+        scopedPosition.mockClear();
+        await coordinator.pullSince!("items", 0);
+        expect(scopedPosition).not.toHaveBeenCalled();
+        expect(rootPosition).toHaveBeenCalled();
+        const reopened = memoryAdapter();
+        const reopenedPosition = vi.spyOn(reopened, "getStreamPosition");
+        coordinator.setAdapterForCollection!("items", reopened);
+        const close = coordinator.subscribe("items", () => {});
+        await coordinator.pullSince!("items", 0);
+        expect(reopenedPosition).toHaveBeenCalled();
+        close();
         await coordination.close();
     });
 
