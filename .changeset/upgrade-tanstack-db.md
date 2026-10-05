@@ -14,6 +14,7 @@
 "@party-stack/runtime": minor
 "@party-stack/salesforce-ontology": minor
 "@party-stack/sqlite-ontology": minor
+"@party-stack/web-runtime": minor
 ---
 
 Upgrade TanStack DB dependencies and peer requirements to DB 0.11.3, React DB 0.5.3, Query DB Collection 1.3.4, SQLite persistence core 0.4.3, and Expo/Node SQLite persistence 0.2.28.
@@ -24,7 +25,7 @@ Maintain only changed rows, metadata, and index entries during IndexedDB commits
 
 Preserve nanosecond precision for Instant range indexes and chronological PlainDate ordering across negative and extended years. Older index encodings fall back to scans until rebuilt.
 
-Enforce collection schema versions and fence stale IndexedDB adapters after resets. Runtime collection factories forward schema and local/synced mode to scoped adapters, preserving incompatible local-only data and resetting refetchable synced caches. Upgrade existing IndexedDB databases without discarding rows.
+Enforce collection schema versions and fence stale IndexedDB adapters after resets. Expose a standalone `createIndexedDBPersistence` factory matching TanStack SQLite's collection resolvers and schema mismatch policies. Web, Node, and Expo runtimes preserve those standard resolvers, protecting incompatible local-only data and resetting refetchable synced caches. Upgrade existing IndexedDB databases without discarding rows.
 
 Bound transaction deduplication and replay history, replay missed commits with rows and metadata, and reload when a baseline replacement, history gap, or large change set prevents incremental recovery.
 

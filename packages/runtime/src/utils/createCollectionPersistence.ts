@@ -1,28 +1,28 @@
 import type { Coordination } from "@party-stack/coordination";
 import { createPersistedCollectionCoordinator } from "../coordinator/createPersistedCollectionCoordinator.js";
-
-import type { RuntimePersistenceAdapter } from "../types.js";
 import type {
     PersistedCollectionPersistence,
     PersistenceAdapter,
 } from "@tanstack/db-sqlite-persistence-core";
 
-/** Forward the collection's schema and mode to adapters that support collection scoping. */
+/** Use the runtime coordinator while preserving the persistence factory's standard resolvers. */
 export function createCollectionPersistence(
     coordination: Coordination,
-    adapter: PersistenceAdapter
+    persistence: PersistenceAdapter | PersistedCollectionPersistence
 ): PersistedCollectionPersistence {
-    const coordinator = createPersistedCollectionCoordinator(coordination, adapter);
-    const scoped = adapter as RuntimePersistenceAdapter;
+    const source: PersistedCollectionPersistence =
+        "adapter" in persistence ? persistence : { adapter: persistence };
+    const coordinator = createPersistedCollectionCoordinator(coordination, source.adapter);
     return {
-        adapter,
+        ...source,
         coordinator,
-        resolvePersistenceForCollection: scoped.forCollection
-            ? (context) => {
-                  const resolved = scoped.forCollection!(context);
-                  coordinator.setAdapterForCollection?.(context.collectionId, resolved);
-                  return { adapter: resolved, coordinator };
-              }
-            : undefined,
+        resolvePersistenceForCollection: (context) => {
+            const resolved =
+                source.resolvePersistenceForCollection?.(context) ??
+                source.resolvePersistenceForMode?.(context.mode) ??
+                source;
+            coordinator.setAdapterForCollection?.(context.collectionId, resolved.adapter);
+            return { ...resolved, coordinator };
+        },
     };
 }

@@ -37,12 +37,6 @@ export interface BrowserAuthentication {
 
 export type { PersistenceAdapter } from "@tanstack/db-sqlite-persistence-core";
 
-export type RuntimePersistenceAdapter = PersistenceAdapter & {
-    forCollection?: (
-        context: Parameters<NonNullable<PersistedCollectionPersistence["resolvePersistenceForCollection"]>>[0]
-    ) => PersistenceAdapter;
-};
-
 export interface RuntimeAdapter {
     readonly owner: string;
     readonly namespace: string;
@@ -51,7 +45,7 @@ export interface RuntimeAdapter {
     connectivity?: NetworkConnectivity;
     browserAuthentication?: BrowserAuthentication;
     secrets?: SecretStore;
-    persistence?: RuntimePersistenceAdapter;
+    persistence?: PersistenceAdapter | PersistedCollectionPersistence;
     cleanup?: () => void | Promise<void>;
     destroy?: () => void | Promise<void>;
 }

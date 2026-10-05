@@ -24,7 +24,6 @@ export type {
     SecretStore,
     NetworkConnectivity,
     PersistenceAdapter,
-    RuntimePersistenceAdapter,
     RuntimeAdapter,
     RuntimeAdapterProvider,
 } from "./types.js";

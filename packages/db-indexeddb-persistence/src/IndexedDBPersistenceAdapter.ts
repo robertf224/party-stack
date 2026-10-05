@@ -92,7 +92,7 @@ interface IndexEntryRecord {
     value: IndexValue;
 }
 
-interface RuntimePersistenceDB extends DBSchema {
+interface IndexedDBPersistenceDB extends DBSchema {
     rows: {
         key: string;
         value: RowRecord;
@@ -708,11 +708,10 @@ function orderRows(
 }
 
 export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
-    private databasePromise?: Promise<IDBPDatabase<RuntimePersistenceDB>>;
+    private databasePromise?: Promise<IDBPDatabase<IndexedDBPersistenceDB>>;
     private closed = false;
 
     private readonly initialized = new Map<string, Promise<number>>();
-    private readonly scopedAdapters = new Map<string, IndexedDBPersistenceAdapter>();
     readonly schemaVersion: number;
 
     constructor(private readonly options: IndexedDBPersistenceAdapterOptions) {
@@ -731,28 +730,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         }
     }
 
-    /** Bind the upstream collection schema and preserve local-only data on mismatch. */
-    forCollection(context: {
-        collectionId: string;
-        mode: "sync-present" | "sync-absent";
-        schemaVersion?: number;
-    }): IndexedDBPersistenceAdapter {
-        const key = JSON.stringify([context.collectionId, context.mode, context.schemaVersion ?? 1]);
-        let adapter = this.scopedAdapters.get(key);
-        if (!adapter) {
-            adapter = new IndexedDBPersistenceAdapter({
-                ...this.options,
-                schemaVersion: context.schemaVersion ?? 1,
-                schemaMismatchPolicy:
-                    this.options.schemaMismatchPolicy ??
-                    (context.mode === "sync-absent" ? "sync-absent-error" : "sync-present-reset"),
-            });
-            this.scopedAdapters.set(key, adapter);
-        }
-        return adapter;
-    }
-
-    private async collectionDatabase(collectionId: string): Promise<IDBPDatabase<RuntimePersistenceDB>> {
+    private async collectionDatabase(collectionId: string): Promise<IDBPDatabase<IndexedDBPersistenceDB>> {
         const database = await this.database();
         let initialized = this.initialized.get(collectionId);
         if (!initialized) {
@@ -765,7 +743,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
     }
 
     private async initializeCollection(
-        database: IDBPDatabase<RuntimePersistenceDB>,
+        database: IDBPDatabase<IndexedDBPersistenceDB>,
         collectionId: string
     ): Promise<number> {
         const transaction = database.transaction(
@@ -1541,17 +1519,15 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
 
     close(): void {
         this.closed = true;
-        for (const adapter of this.scopedAdapters.values()) adapter.close();
-        this.scopedAdapters.clear();
         void this.databasePromise?.then((database) => database.close());
         this.databasePromise = undefined;
     }
 
-    private database(): Promise<IDBPDatabase<RuntimePersistenceDB>> {
+    private database(): Promise<IDBPDatabase<IndexedDBPersistenceDB>> {
         if (this.closed) {
             return Promise.reject(new Error("IndexedDB persistence adapter is closed."));
         }
-        this.databasePromise ??= openDB<RuntimePersistenceDB>(this.options.databaseName, DATABASE_VERSION, {
+        this.databasePromise ??= openDB<IndexedDBPersistenceDB>(this.options.databaseName, DATABASE_VERSION, {
             upgrade(database, oldVersion, _newVersion, transaction) {
                 if (oldVersion < 1) {
                     const rows = database.createObjectStore(ROWS, {

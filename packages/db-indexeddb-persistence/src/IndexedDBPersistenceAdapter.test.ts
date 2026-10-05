@@ -1071,9 +1071,14 @@ describe("IndexedDB persistence lifecycle and paging", () => {
         const name = databaseName();
         const original = new IndexedDBPersistenceAdapter({ databaseName: name });
         await seed(original, [{ id: "saved", priority: 1 }]);
-        const next = original.forCollection({ collectionId: "items", mode: "sync-absent", schemaVersion: 2 });
+        const next = new IndexedDBPersistenceAdapter({
+            databaseName: name,
+            schemaVersion: 2,
+            schemaMismatchPolicy: "sync-absent-error",
+        });
         await expect(next.loadResumeSnapshot("items")).rejects.toThrow("Local-only data was preserved");
         expect(ids(await original.loadSubset("items", {}))).toEqual(["saved"]);
+        next.close();
         original.close();
     });
 
@@ -1085,9 +1090,9 @@ describe("IndexedDB persistence lifecycle and paging", () => {
             collectionMetadataMutations: [{ type: "set", key: "cursor", value: "old" }],
         });
         await original.ensureIndex("items", "priority-index", indexSpec(["priority"]));
-        const next = original.forCollection({
-            collectionId: "items",
-            mode: "sync-present",
+        const next = new IndexedDBPersistenceAdapter({
+            databaseName: name,
+            schemaMismatchPolicy: "sync-present-reset",
             schemaVersion: 2,
         });
         const snapshot = await next.loadResumeSnapshot("items");
@@ -1114,6 +1119,7 @@ describe("IndexedDB persistence lifecycle and paging", () => {
             requiresFullReload: true,
         });
         reopenedOld.close();
+        next.close();
         original.close();
     });
 

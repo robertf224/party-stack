@@ -1,5 +1,5 @@
 import { LockBroadcastCoordination } from "@party-stack/coordination";
-import { IndexedDBPersistenceAdapter } from "@party-stack/db-indexeddb-persistence";
+import { createIndexedDBPersistence } from "@party-stack/db-indexeddb-persistence";
 import { defineRuntime } from "@party-stack/runtime";
 import {
     createWebBrowserAuthentication,
@@ -27,7 +27,7 @@ export const createWebRuntime = defineRuntime((
     namespace
 ) => {
     const name = `party-stack:${owner}:${namespace}`;
-    const persistence = new IndexedDBPersistenceAdapter({
+    const persistence = createIndexedDBPersistence({
         databaseName: name,
     });
     const connectivity = NavigatorNetworkConnectivity.create();

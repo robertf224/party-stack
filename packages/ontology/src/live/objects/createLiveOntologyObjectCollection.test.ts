@@ -156,7 +156,7 @@ describe("createLiveOntologyObjectCollection", () => {
                 },
             },
         ]);
-        const forCollection = vi.fn(() => persistence.adapter);
+        const resolvePersistenceForCollection = vi.fn(() => persistence);
         const collection = createLiveOntologyObjectCollection({
             ...options,
             backendAdapter: backend(({ markReady }) => markReady()),
@@ -165,7 +165,7 @@ describe("createLiveOntologyObjectCollection", () => {
                 namespace: options.ontologyId,
                 blobBytes: new MemoryBlobBytesStore(),
                 coordination: options.coordination,
-                persistence: { ...persistence.adapter, forCollection },
+                persistence: { ...persistence, resolvePersistenceForCollection },
             },
             persistObjects: true,
         });
@@ -173,7 +173,7 @@ describe("createLiveOntologyObjectCollection", () => {
         await collection.preload();
 
         expect(collection.id).toBe("party-stack:user-1:ontology-1:objects:Task");
-        expect(forCollection).toHaveBeenCalledWith({
+        expect(resolvePersistenceForCollection).toHaveBeenCalledWith({
             collectionId: collection.id,
             mode: "sync-present",
             schemaVersion: 1,

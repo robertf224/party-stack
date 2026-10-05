@@ -4,6 +4,7 @@ import {
     SharedWorkerCoordinationHost,
     type CoordinationMessagePort,
 } from "@party-stack/coordination/shared-worker";
+import { SingleProcessCoordinator } from "@tanstack/db-sqlite-persistence-core";
 import { describe, expect, it, vi } from "vitest";
 import { createPersistedCollectionCoordinator } from "../coordinator/createPersistedCollectionCoordinator.js";
 import { MemoryBlobBytesStore } from "../memory/MemoryBlobBytesStore.js";
@@ -77,7 +78,10 @@ function memoryAdapter(): PersistenceAdapter {
     };
 }
 
-function coordinatedRuntime(options: { adapter: PersistenceAdapter; coordination: Coordination }): {
+function coordinatedRuntime(options: {
+    adapter: RuntimeAdapter["persistence"];
+    coordination: Coordination;
+}): {
     runtime: RuntimeAdapter;
     coordination: Coordination;
 } {
@@ -338,16 +342,25 @@ describe("collection-scoped persistence", () => {
         const coordination = new SingleProcessCoordination({ scope: "scoped-persistence" });
         const scoped = { ...memoryAdapter(), schemaVersion: 2 };
         const apply = vi.spyOn(scoped, "applyCommittedTx");
-        const root = { ...memoryAdapter(), forCollection: vi.fn(() => scoped) };
+        const root = memoryAdapter();
+        const defaultCoordinator = new SingleProcessCoordinator();
+        const defaultApply = vi.spyOn(defaultCoordinator, "requestApplyCommittedTx");
+        const resolvePersistenceForCollection = vi.fn(() => ({
+            adapter: scoped,
+            coordinator: defaultCoordinator,
+        }));
         const rootApply = vi.spyOn(root, "applyCommittedTx");
         const collection = createLocalCollection<Item, string>({
             name: "scoped",
             schemaVersion: 2,
             getKey: (item) => item.id,
-            runtime: coordinatedRuntime({ adapter: root, coordination }).runtime,
+            runtime: coordinatedRuntime({
+                adapter: { adapter: root, resolvePersistenceForCollection },
+                coordination,
+            }).runtime,
         });
         await collection.preload();
-        expect(root.forCollection).toHaveBeenCalledWith({
+        expect(resolvePersistenceForCollection).toHaveBeenCalledWith({
             collectionId: collection.id,
             mode: "sync-absent",
             schemaVersion: 2,
@@ -355,6 +368,7 @@ describe("collection-scoped persistence", () => {
         await collection.insert({ id: "one", title: "Scoped" }).isPersisted.promise;
         expect(apply).toHaveBeenCalled();
         expect(rootApply).not.toHaveBeenCalled();
+        expect(defaultApply).not.toHaveBeenCalled();
         await collection.cleanup();
         await coordination.close();
     });
