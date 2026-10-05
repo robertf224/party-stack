@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@tanstack/db': 0.9.2
+  '@tanstack/db': 0.11.3
   '@types/node': 24.10.1
 
 importers:
@@ -161,11 +161,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/web-runtime
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       '@tanstack/react-db':
-        specifier: ~0.4.1
-        version: 0.4.1(react@19.2.0)(typescript@5.8.3)
+        specifier: ~0.5.3
+        version: 0.5.3(react@19.2.0)(typescript@5.8.3)
       '@tanstack/react-devtools':
         specifier: ^0.10.9
         version: 0.10.9(@types/react-dom@19.2.3(@types/react@19.2.6))(@types/react@19.2.6)(csstype@3.2.3)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(solid-js@1.9.14)
@@ -246,17 +246,17 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ontology
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       '@tanstack/query-core':
         specifier: ^5.102.8
         version: 5.102.8
       '@tanstack/query-db-collection':
-        specifier: 1.2.15
-        version: 1.2.15(@tanstack/query-core@5.102.8)(typescript@5.8.3)
+        specifier: 1.3.4
+        version: 1.3.4(@tanstack/query-core@5.102.8)(typescript@5.8.3)
       '@tanstack/react-db':
-        specifier: ~0.4.1
-        version: 0.4.1(react@19.2.0)(typescript@5.8.3)
+        specifier: ~0.5.3
+        version: 0.5.3(react@19.2.0)(typescript@5.8.3)
       '@tanstack/react-router':
         specifier: ^1.168.7
         version: 1.168.7(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
@@ -319,17 +319,17 @@ importers:
         specifier: workspace:*
         version: link:../../packages/web-runtime
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       '@tanstack/query-core':
         specifier: ^5.102.8
         version: 5.102.8
       '@tanstack/query-db-collection':
-        specifier: 1.2.15
-        version: 1.2.15(@tanstack/query-core@5.102.8)(typescript@5.8.3)
+        specifier: 1.3.4
+        version: 1.3.4(@tanstack/query-core@5.102.8)(typescript@5.8.3)
       '@tanstack/react-db':
-        specifier: ~0.4.1
-        version: 0.4.1(react@19.2.0)(typescript@5.8.3)
+        specifier: ~0.5.3
+        version: 0.5.3(react@19.2.0)(typescript@5.8.3)
       '@tanstack/react-devtools':
         specifier: ^0.10.9
         version: 0.10.9(@types/react-dom@19.2.3(@types/react@19.2.6))(@types/react@19.2.6)(csstype@3.2.3)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(solid-js@1.9.14)
@@ -416,11 +416,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/web-runtime
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       '@tanstack/react-db':
-        specifier: ~0.4.1
-        version: 0.4.1(react@19.2.0)(typescript@5.8.3)
+        specifier: ~0.5.3
+        version: 0.5.3(react@19.2.0)(typescript@5.8.3)
       '@tanstack/react-devtools':
         specifier: ^0.10.9
         version: 0.10.9(@types/react-dom@19.2.3(@types/react@19.2.6))(@types/react@19.2.6)(csstype@3.2.3)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(solid-js@1.9.14)
@@ -809,8 +809,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       better-auth:
         specifier: ^1.7.1
         version: 1.7.1(@cloudflare/workers-types@5.20260827.1)(@tanstack/react-start@1.167.12(react-dom@19.2.0(react@19.2.0))(react@19.2.0))(better-sqlite3@12.9.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(solid-js@1.9.14)(vitest@3.2.4(@types/debug@4.1.12)(@types/node@24.10.1)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.1))
@@ -846,8 +846,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       eslint:
         specifier: ^9.25.0
         version: 9.28.0(jiti@2.7.0)
@@ -874,8 +874,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       eslint:
         specifier: ^9.25.0
         version: 9.28.0(jiti@2.7.0)
@@ -908,8 +908,8 @@ importers:
   packages/db-indexeddb-persistence:
     dependencies:
       '@tanstack/db-sqlite-persistence-core':
-        specifier: 0.2.23
-        version: 0.2.23(typescript@5.8.3)
+        specifier: 0.4.3
+        version: 0.4.3(typescript@5.8.3)
       idb:
         specifier: ^8.0.3
         version: 8.0.3
@@ -921,8 +921,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       '@vitest/browser':
         specifier: 3.2.4
         version: 3.2.4(playwright@1.61.1)(vite@7.2.4(@types/node@24.10.1)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.1))(vitest@3.2.4)
@@ -961,8 +961,8 @@ importers:
         specifier: ^5.20260827.1
         version: 5.20260827.1
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       esbuild:
         specifier: ^0.28.1
         version: 0.28.1
@@ -1003,8 +1003,8 @@ importers:
         specifier: workspace:*
         version: link:../runtime
       '@tanstack/expo-db-sqlite-persistence':
-        specifier: 0.2.23
-        version: 0.2.23(expo-sqlite@55.0.15(expo@55.0.23(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(react-dom@19.2.0(react@19.2.0))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)(typescript@5.8.3))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0))(typescript@5.8.3)
+        specifier: 0.2.28
+        version: 0.2.28(expo-sqlite@55.0.15(expo@55.0.23(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(react-dom@19.2.0(react@19.2.0))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)(typescript@5.8.3))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0))(typescript@5.8.3)
       expo-secure-store:
         specifier: ^57.0.1
         version: 57.0.1(expo@55.0.23(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(react-dom@19.2.0(react@19.2.0))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)(typescript@5.8.3))
@@ -1181,11 +1181,11 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       '@tanstack/query-db-collection':
-        specifier: 1.2.15
-        version: 1.2.15(@tanstack/query-core@5.102.8)(typescript@5.8.3)
+        specifier: 1.3.4
+        version: 1.3.4(@tanstack/query-core@5.102.8)(typescript@5.8.3)
       '@types/node':
         specifier: 24.10.1
         version: 24.10.1
@@ -1356,8 +1356,8 @@ importers:
         specifier: workspace:*
         version: link:../runtime
       '@tanstack/node-db-sqlite-persistence':
-        specifier: 0.2.23
-        version: 0.2.23(typescript@5.8.3)
+        specifier: 0.2.28
+        version: 0.2.28(typescript@5.8.3)
       better-sqlite3:
         specifier: ^12.4.6
         version: 12.9.0
@@ -1406,8 +1406,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       eslint:
         specifier: ^9.25.0
         version: 9.28.0(jiti@2.7.0)
@@ -1445,8 +1445,8 @@ importers:
         specifier: workspace:*
         version: link:../runtime
       '@tanstack/db-sqlite-persistence-core':
-        specifier: 0.2.23
-        version: 0.2.23(typescript@5.8.3)
+        specifier: 0.4.3
+        version: 0.4.3(typescript@5.8.3)
       change-case:
         specifier: ^5.4.4
         version: 5.4.4
@@ -1476,8 +1476,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.6.1))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       eslint:
         specifier: ^9.25.0
         version: 9.28.0(jiti@2.6.1)
@@ -1528,11 +1528,11 @@ importers:
         specifier: 4.1.17
         version: 4.1.17
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       '@tanstack/react-db':
-        specifier: ~0.4.1
-        version: 0.4.1(react@19.2.0)(typescript@5.8.3)
+        specifier: ~0.5.3
+        version: 0.5.3(react@19.2.0)(typescript@5.8.3)
       '@tanstack/react-devtools':
         specifier: ^0.10.9
         version: 0.10.9(@types/react-dom@19.2.3(@types/react@19.2.6))(@types/react@19.2.6)(csstype@3.2.3)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(solid-js@1.9.14)
@@ -1573,8 +1573,8 @@ importers:
         specifier: ^5.102.8
         version: 5.102.8
       '@tanstack/query-db-collection':
-        specifier: 1.2.15
-        version: 1.2.15(@tanstack/query-core@5.102.8)(typescript@5.8.3)
+        specifier: 1.3.4
+        version: 1.3.4(@tanstack/query-core@5.102.8)(typescript@5.8.3)
       temporal-polyfill:
         specifier: ^0.3.0
         version: 0.3.0
@@ -1586,8 +1586,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       '@types/node':
         specifier: 24.10.1
         version: 24.10.1
@@ -1614,11 +1614,11 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       '@tanstack/db-sqlite-persistence-core':
-        specifier: 0.2.23
-        version: 0.2.23(typescript@5.8.3)
+        specifier: 0.4.3
+        version: 0.4.3(typescript@5.8.3)
       eslint:
         specifier: ^9.25.0
         version: 9.28.0(jiti@2.7.0)
@@ -1688,14 +1688,14 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       '@tanstack/query-core':
         specifier: ^5.102.8
         version: 5.102.8
       '@tanstack/query-db-collection':
-        specifier: 1.2.15
-        version: 1.2.15(@tanstack/query-core@5.102.8)(typescript@5.8.3)
+        specifier: 1.3.4
+        version: 1.3.4(@tanstack/query-core@5.102.8)(typescript@5.8.3)
       eslint:
         specifier: ^9.25.0
         version: 9.28.0(jiti@2.7.0)
@@ -1719,8 +1719,8 @@ importers:
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
       '@tanstack/db':
-        specifier: 0.9.2
-        version: 0.9.2(typescript@5.8.3)
+        specifier: 0.11.3
+        version: 0.11.3(typescript@5.8.3)
       '@types/node':
         specifier: 24.10.1
         version: 24.10.1
@@ -4578,18 +4578,18 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7
 
-  '@tanstack/db-ivm@0.1.22':
-    resolution: {integrity: sha512-vpNIY6QnvFiVGPwdMVnh1OAZyFLioFkM5gQAqefghvgDhCMmWUPjYka2gw6w+2TBy742zsGPtLnpxBzUKXo9Jw==}
+  '@tanstack/db-ivm@0.1.25':
+    resolution: {integrity: sha512-/lLM7DHZLDurkoAGGgIAkc2Io483hXMXneaIOTrnpe7saJDU6Vz/GLT/bkvMpg6WfM3j4VJHw85fduo761CTNw==}
     peerDependencies:
       typescript: '>=4.7'
 
-  '@tanstack/db-sqlite-persistence-core@0.2.23':
-    resolution: {integrity: sha512-czdn4wXGZNd+RD4POGMZAB2EozAdFmlxPuF54kIrq+h86HNruqDd5kyxavKzyOspo72uUQpjaMdMH+6ix9iAoQ==}
+  '@tanstack/db-sqlite-persistence-core@0.4.3':
+    resolution: {integrity: sha512-bDI/3BGGfyUWQTMOdTCHAeoVWGqwYNQs3zr5PP6rNePu6sjAG+bKPBEToNWehIVjzY4mPlDX5fK2Z0H0bOitZg==}
     peerDependencies:
       typescript: '>=4.7'
 
-  '@tanstack/db@0.9.2':
-    resolution: {integrity: sha512-jeyKbppXwjPNHe0GEVIvsvtirDCxjbPR2xphQaNjgteR15Y+Qnm+6IQNcd3zJ+98uJZ3ot9nagV3UNI+ckVRhQ==}
+  '@tanstack/db@0.11.3':
+    resolution: {integrity: sha512-xrBwD+mIm0BU4zYm0jrhQcWorhZGwSysjCXTB+7i9B9m2LsbTSdqYRT9RhvB0D51cbteX6p959LCbyIyeZ3XUg==}
     peerDependencies:
       typescript: '>=4.7'
 
@@ -4667,18 +4667,18 @@ packages:
     peerDependencies:
       solid-js: '>=1.9.7'
 
-  '@tanstack/expo-db-sqlite-persistence@0.2.23':
-    resolution: {integrity: sha512-53Mbb9pCWKl6z4KaiFYwXS822BnovFR4srgoCk18F0fa4/zmifU5OO6dFC//UDTmMXrI/6YKijg19b+IYJxw1w==}
+  '@tanstack/expo-db-sqlite-persistence@0.2.28':
+    resolution: {integrity: sha512-VnIGLtjqL4OVdMXUn62FRZBSVl+5P0R83OkecQ5G5V45Nn3a0er+tfmCZfITMioO4+OR17/N1dkrcf7/YXC7eA==}
     peerDependencies:
-      expo-sqlite: ^55.0.10
+      expo-sqlite: ^55.0.10 || ^57.0.0
       typescript: '>=4.7'
 
   '@tanstack/history@1.161.6':
     resolution: {integrity: sha512-NaOGLRrddszbQj9upGat6HG/4TKvXLvu+osAIgfxPYA+eIvYKv8GKDJOrY2D3/U9MRnKfMWD7bU4jeD4xmqyIg==}
     engines: {node: '>=20.19'}
 
-  '@tanstack/node-db-sqlite-persistence@0.2.23':
-    resolution: {integrity: sha512-W6UbeGU+j4lXG7xwaHaDV7H4giMq1M9/ZXPS8uiSnamEFU9QNAtLu80lFhkwI7cuhwwmlilavq18O1jYNZH6Tg==}
+  '@tanstack/node-db-sqlite-persistence@0.2.28':
+    resolution: {integrity: sha512-LLwZNEMwB+vW3tmIPCFOKQYkKyO8hHPEtwmFH5qgvfZHDFCnm4+6cYNR23BiER/+1PFDGsNrjT5qtoL73nxhMw==}
     peerDependencies:
       typescript: '>=4.7'
 
@@ -4692,16 +4692,16 @@ packages:
   '@tanstack/query-core@5.90.10':
     resolution: {integrity: sha512-EhZVFu9rl7GfRNuJLJ3Y7wtbTnENsvzp+YpcAV7kCYiXni1v8qZh++lpw4ch4rrwC0u/EZRnBHIehzCGzwXDSQ==}
 
-  '@tanstack/query-db-collection@1.2.15':
-    resolution: {integrity: sha512-02d2haENejJObceIFuxCBY/YbyH1t5+Bw6VEl1vev8pX6CkXnkF1cAwxKPTQgHyj34dfWJ5RLo9bB3BgwuQz5Q==}
+  '@tanstack/query-db-collection@1.3.4':
+    resolution: {integrity: sha512-Cy1iGfLm4qPOWB2yz1WuCRG6YIRREIzRtTlJw4WB6FV7N/lbpJIxd0BDMbX/k4IgcfYaRIjO/ZqB93FaEyZuOw==}
     peerDependencies:
       '@tanstack/query-core': ^5.0.0
       typescript: '>=4.7'
 
-  '@tanstack/react-db@0.4.1':
-    resolution: {integrity: sha512-mA/a3TAufm0/AZUHmfyKKYfJnEH0XEzJ1Cymt5ZOLqR90MzzDK9KyaDh/JScYHYEipoRkKeRcmedAnHksP6yrg==}
+  '@tanstack/react-db@0.5.3':
+    resolution: {integrity: sha512-UVR/gsm5Q4uGi6mrLXVsu7ZgNh9MokZNd9ZBAzg286P2TaBNZvnPUA6K09FydPlIRz+M1gC7f/5o1FHCwPLrFw==}
     peerDependencies:
-      react: '>=16.8.0'
+      react: '>=18.0.0'
 
   '@tanstack/react-devtools@0.10.9':
     resolution: {integrity: sha512-lS6mtccEmUaodsWiRORGM/MGKT0jgzcy5v+eY6pzOPxEgzTHUDhca+WGxShFqKxmF4oneRxXjww1gkvMrWq6uw==}
@@ -13009,22 +13009,22 @@ snapshots:
       tailwindcss: 4.1.17
       vite: 7.2.4(@types/node@24.10.1)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.1)
 
-  '@tanstack/db-ivm@0.1.22(typescript@5.8.3)':
+  '@tanstack/db-ivm@0.1.25(typescript@5.8.3)':
     dependencies:
       fractional-indexing: 3.4.0
       sorted-btree: 1.8.1
       typescript: 5.8.3
 
-  '@tanstack/db-sqlite-persistence-core@0.2.23(typescript@5.8.3)':
+  '@tanstack/db-sqlite-persistence-core@0.4.3(typescript@5.8.3)':
     dependencies:
       '@standard-schema/spec': 1.1.0
-      '@tanstack/db': 0.9.2(typescript@5.8.3)
+      '@tanstack/db': 0.11.3(typescript@5.8.3)
       typescript: 5.8.3
 
-  '@tanstack/db@0.9.2(typescript@5.8.3)':
+  '@tanstack/db@0.11.3(typescript@5.8.3)':
     dependencies:
       '@standard-schema/spec': 1.1.0
-      '@tanstack/db-ivm': 0.1.22(typescript@5.8.3)
+      '@tanstack/db-ivm': 0.1.25(typescript@5.8.3)
       '@tanstack/pacer-lite': 0.2.2
       typescript: 5.8.3
 
@@ -13103,17 +13103,17 @@ snapshots:
       - csstype
       - utf-8-validate
 
-  '@tanstack/expo-db-sqlite-persistence@0.2.23(expo-sqlite@55.0.15(expo@55.0.23(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(react-dom@19.2.0(react@19.2.0))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)(typescript@5.8.3))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0))(typescript@5.8.3)':
+  '@tanstack/expo-db-sqlite-persistence@0.2.28(expo-sqlite@55.0.15(expo@55.0.23(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(react-dom@19.2.0(react@19.2.0))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)(typescript@5.8.3))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0))(typescript@5.8.3)':
     dependencies:
-      '@tanstack/db-sqlite-persistence-core': 0.2.23(typescript@5.8.3)
+      '@tanstack/db-sqlite-persistence-core': 0.4.3(typescript@5.8.3)
       expo-sqlite: 55.0.15(expo@55.0.23(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(react-dom@19.2.0(react@19.2.0))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)(typescript@5.8.3))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)
       typescript: 5.8.3
 
   '@tanstack/history@1.161.6': {}
 
-  '@tanstack/node-db-sqlite-persistence@0.2.23(typescript@5.8.3)':
+  '@tanstack/node-db-sqlite-persistence@0.2.28(typescript@5.8.3)':
     dependencies:
-      '@tanstack/db-sqlite-persistence-core': 0.2.23(typescript@5.8.3)
+      '@tanstack/db-sqlite-persistence-core': 0.4.3(typescript@5.8.3)
       better-sqlite3: 12.9.0
       typescript: 5.8.3
 
@@ -13123,18 +13123,17 @@ snapshots:
 
   '@tanstack/query-core@5.90.10': {}
 
-  '@tanstack/query-db-collection@1.2.15(@tanstack/query-core@5.102.8)(typescript@5.8.3)':
+  '@tanstack/query-db-collection@1.3.4(@tanstack/query-core@5.102.8)(typescript@5.8.3)':
     dependencies:
       '@standard-schema/spec': 1.1.0
-      '@tanstack/db': 0.9.2(typescript@5.8.3)
+      '@tanstack/db': 0.11.3(typescript@5.8.3)
       '@tanstack/query-core': 5.102.8
       typescript: 5.8.3
 
-  '@tanstack/react-db@0.4.1(react@19.2.0)(typescript@5.8.3)':
+  '@tanstack/react-db@0.5.3(react@19.2.0)(typescript@5.8.3)':
     dependencies:
-      '@tanstack/db': 0.9.2(typescript@5.8.3)
+      '@tanstack/db': 0.11.3(typescript@5.8.3)
       react: 19.2.0
-      use-sync-external-store: 1.7.0(react@19.2.0)
     transitivePeerDependencies:
       - typescript
 
@@ -13665,7 +13664,7 @@ snapshots:
       magic-string: 0.30.21
       sirv: 3.0.2
       tinyrainbow: 2.0.0
-      vitest: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.1)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.0)
+      vitest: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.1)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.1)
       ws: 8.21.3
     transitivePeerDependencies:
       - bufferutil

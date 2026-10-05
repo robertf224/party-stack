@@ -1,7 +1,4 @@
-import {
-    createPersistedCollectionCoordinator,
-    type RuntimeAdapter,
-} from "@party-stack/runtime";
+import { createCollectionPersistence, type RuntimeAdapter } from "@party-stack/runtime";
 import { BasicIndex, createCollection, type Collection } from "@tanstack/db";
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
 import { decorateObjectAttachmentSources } from "../attachments/attachmentSources.js";
@@ -57,11 +54,7 @@ export function createLiveOntologyObjectCollection(opts: {
     });
     const options = {
         ...collectionOptions,
-        id: ontologyObjectCollectionId(
-            opts.runtime.owner,
-            opts.runtime.namespace,
-            opts.objectType.name
-        ),
+        id: ontologyObjectCollectionId(opts.runtime.owner, opts.runtime.namespace, opts.objectType.name),
         defaultIndexType: BasicIndex,
         autoIndex: "eager" as const,
         getKey: (object: OntologyObject) =>
@@ -77,20 +70,10 @@ export function createLiveOntologyObjectCollection(opts: {
     }
 
     return createCollection(
-        persistedCollectionOptions<
-            OntologyObject,
-            string | number
-        >({
+        persistedCollectionOptions<OntologyObject, string | number>({
             ...options,
             schemaVersion: 1,
-            persistence: {
-                adapter: opts.runtime.persistence,
-                coordinator:
-                    createPersistedCollectionCoordinator(
-                        opts.runtime.coordination,
-                        opts.runtime.persistence
-                    ),
-            },
+            persistence: createCollectionPersistence(opts.runtime.coordination, opts.runtime.persistence),
         })
     ) as OntologyCollection<OntologyObject>;
 }

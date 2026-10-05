@@ -1,9 +1,11 @@
 import "fake-indexeddb/auto";
 import {
+    BTreeIndex,
     IR,
     Query,
     and,
     createCollection,
+    createLiveQueryCollection,
     eq,
     gt,
     ilike,
@@ -17,8 +19,9 @@ import {
     or,
 } from "@tanstack/db";
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
+import { openDB } from "idb";
 import { Temporal } from "temporal-polyfill";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { IndexedDBPersistenceAdapter } from "./IndexedDBPersistenceAdapter.js";
 import type { LoadSubsetOptions } from "@tanstack/db";
 import type { PersistedIndexSpec, PersistedTx } from "@tanstack/db-sqlite-persistence-core";
@@ -123,6 +126,319 @@ function ids(rows: Array<{ value: Record<string, unknown> }>): string[] {
 }
 
 describe("IndexedDBPersistenceAdapter", () => {
+    it("rebuilds legacy index encodings once and avoids using them before migration", async () => {
+        const name = databaseName();
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: name });
+        await seed(adapter, [{ id: "one", priority: 1, status: "open" }]);
+        await adapter.ensureIndex("items", "status", indexSpec(["status"]));
+        const database = await openDB(name);
+        const legacy = (await database.get("indexDefinitions", ["items", "status"])) as {
+            valueTypeCounts?: unknown;
+            unsupportedValueCount?: unknown;
+            encodingVersion?: unknown;
+        };
+        delete legacy.valueTypeCounts;
+        delete legacy.unsupportedValueCount;
+        delete legacy.encodingVersion;
+        await database.put("indexDefinitions", legacy);
+        database.close();
+        expect(
+            ids(
+                await adapter.loadSubset(
+                    "items",
+                    queryOptions((query) => query.where(({ item }) => eq(item.status, "missing")))
+                )
+            )
+        ).toEqual(["one"]);
+        const put = vi.spyOn(IDBObjectStore.prototype, "put");
+        try {
+            await adapter.ensureIndex("items", "status", indexSpec(["status"]));
+            expect(
+                put.mock.contexts.filter((store) => (store as IDBObjectStore).name === "indexEntries")
+            ).toHaveLength(2);
+            put.mockClear();
+            await adapter.ensureIndex("items", "status", indexSpec(["status"]));
+            expect(put).not.toHaveBeenCalled();
+            expect(
+                await adapter.loadSubset(
+                    "items",
+                    queryOptions((query) => query.where(({ item }) => eq(item.status, "missing")))
+                )
+            ).toEqual([]);
+        } finally {
+            put.mockRestore();
+            adapter.close();
+        }
+    });
+
+    it("rolls back row writes when index maintenance fails", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        await seed(adapter, [{ id: "one", priority: 1 }]);
+        await adapter.ensureIndex("items", "priority", indexSpec(["priority"]));
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- Rebound to the actual store with call below.
+        const originalPut = IDBObjectStore.prototype.put;
+        const put = vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (
+            this: IDBObjectStore,
+            value,
+            key
+        ) {
+            if (this.name === "indexEntries") throw new Error("Index write failed");
+            return originalPut.call(this, value, key);
+        });
+        try {
+            await expect(
+                adapter.applyCommittedTx(
+                    "items",
+                    tx("failed", 2, [{ type: "update", key: "one", value: { id: "one", priority: 2 } }])
+                )
+            ).rejects.toThrow("Index write failed");
+        } finally {
+            put.mockRestore();
+        }
+        try {
+            expect((await adapter.loadResumeSnapshot("items")).latestRowVersion).toBe(1);
+            expect(
+                await adapter.loadSubset(
+                    "items",
+                    queryOptions((query) => query.where(({ item }) => eq(item.priority, 1)))
+                )
+            ).toMatchObject([{ key: "one", value: { priority: 1 } }]);
+        } finally {
+            adapter.close();
+        }
+    });
+
+    it("updates only touched rows and index entries, and reuses an existing index", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        await seed(
+            adapter,
+            Array.from({ length: 50 }, (_, priority) => ({ id: String(priority), priority, status: "open" }))
+        );
+        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
+        const put = vi.spyOn(IDBObjectStore.prototype, "put");
+        const remove = vi.spyOn(IDBObjectStore.prototype, "delete");
+        const scan = vi.spyOn(IDBIndex.prototype, "getAll");
+        try {
+            await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
+            expect(put).not.toHaveBeenCalled();
+            expect(remove).not.toHaveBeenCalled();
+            expect(scan).not.toHaveBeenCalled();
+            await adapter.applyCommittedTx(
+                "items",
+                tx("edit", 2, [
+                    { type: "update", key: "0", value: { id: "0", priority: 0, status: "closed" } },
+                ])
+            );
+            expect(
+                put.mock.contexts.filter((store) => (store as IDBObjectStore).name === "rows")
+            ).toHaveLength(1);
+            expect(
+                put.mock.contexts.filter((store) => (store as IDBObjectStore).name === "indexEntries")
+            ).toHaveLength(2);
+            expect(
+                remove.mock.contexts.filter((store) => (store as IDBObjectStore).name === "rows")
+            ).toHaveLength(0);
+            expect(
+                remove.mock.contexts.filter((store) => (store as IDBObjectStore).name === "indexEntries")
+            ).toHaveLength(2);
+            expect(scan.mock.contexts.some((index) => (index as IDBIndex).objectStore.name === "rows")).toBe(
+                false
+            );
+            put.mockClear();
+            remove.mockClear();
+            scan.mockClear();
+            await adapter.applyCommittedTx("items", {
+                ...tx("metadata", 3, []),
+                collectionMetadataMutations: [{ type: "set", key: "cursor", value: "next" }],
+            });
+            expect(put.mock.contexts.map((store) => (store as IDBObjectStore).name)).not.toContain("rows");
+            expect(put.mock.contexts.map((store) => (store as IDBObjectStore).name)).not.toContain(
+                "indexEntries"
+            );
+            expect(remove).not.toHaveBeenCalled();
+        } finally {
+            put.mockRestore();
+            remove.mockRestore();
+            scan.mockRestore();
+            adapter.close();
+        }
+    });
+
+    it("restores indexed range filtering when the last mixed or unsupported value is removed", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        try {
+            await seed(adapter, [
+                { id: "one", priority: 1, mixed: 1 },
+                { id: "two", priority: 2, mixed: 2 },
+                { id: "string", priority: 0, mixed: "text" },
+                { id: "object", priority: 0, mixed: {} },
+            ]);
+            await adapter.ensureIndex("items", "mixed", indexSpec(["mixed"]));
+            await adapter.applyCommittedTx(
+                "items",
+                tx("remove-mixed", 2, [
+                    { type: "delete", key: "string", value: { id: "string", priority: 0 } },
+                    { type: "delete", key: "object", value: { id: "object", priority: 0 } },
+                ])
+            );
+            expect(
+                ids(
+                    await adapter.loadSubset(
+                        "items",
+                        queryOptions((query) => query.where(({ item }) => gt(item.mixed, 1)))
+                    )
+                )
+            ).toEqual(["two"]);
+            await adapter.applyCommittedTx("items", { ...tx("reset", 3, []), truncate: true });
+            await adapter.applyCommittedTx(
+                "items",
+                tx("reseed", 4, [{ type: "insert", key: "new", value: { id: "new", priority: 3, mixed: 3 } }])
+            );
+            expect(
+                ids(
+                    await adapter.loadSubset(
+                        "items",
+                        queryOptions((query) => query.where(({ item }) => gt(item.mixed, 1)))
+                    )
+                )
+            ).toEqual(["new"]);
+        } finally {
+            adapter.close();
+        }
+    });
+
+    it("keeps indexed Instant ranges accurate within one millisecond", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        try {
+            const instant = Temporal.Instant.from("2026-10-05T12:00:00.000000001Z");
+            await seed(adapter, [
+                { id: "early", priority: 1, instant },
+                { id: "later", priority: 2, instant: instant.add({ nanoseconds: 1 }) },
+            ]);
+            await adapter.ensureIndex("items", "instant", indexSpec(["instant"]));
+            expect(
+                ids(
+                    await adapter.loadSubset(
+                        "items",
+                        queryOptions((query) => query.where(({ item }) => gt(item.instant, instant)))
+                    )
+                )
+            ).toEqual(["later"]);
+        } finally {
+            adapter.close();
+        }
+    });
+
+    it("orders indexed PlainDate ranges across negative and extended years", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        try {
+            const date = Temporal.PlainDate.from("-000002-01-01");
+            await seed(adapter, [
+                { id: "earlier", priority: 1, date: Temporal.PlainDate.from("-000003-01-01") },
+                { id: "later", priority: 2, date: Temporal.PlainDate.from("-000001-01-01") },
+                { id: "future", priority: 3, date: Temporal.PlainDate.from("+010000-01-01") },
+            ]);
+            await adapter.ensureIndex("items", "date", indexSpec(["date"]));
+            expect(
+                ids(
+                    await adapter.loadSubset(
+                        "items",
+                        queryOptions((query) => query.where(({ item }) => gt(item.date, date)))
+                    )
+                )
+            ).toEqual(["future", "later"]);
+        } finally {
+            adapter.close();
+        }
+    });
+
+    it("restores rows, metadata, and stream position from one resume snapshot", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const instant = Temporal.Instant.from("2026-10-05T12:00:00Z");
+        try {
+            await adapter.applyCommittedTx("items", {
+                ...tx("snapshot", 7, [
+                    { type: "insert", key: "one", value: { id: "one", priority: 1, instant } },
+                ]),
+                collectionMetadataMutations: [{ type: "set", key: "cursor", value: instant }],
+            });
+            const snapshot = await adapter.loadResumeSnapshot("items");
+            expect(snapshot).toMatchObject({
+                rows: [{ key: "one", value: { id: "one", priority: 1, instant } }],
+                collectionMetadata: [{ key: "cursor", value: instant }],
+                latestTerm: 1,
+                latestSeq: 7,
+                latestRowVersion: 7,
+                resetEpoch: 0,
+            });
+            expect(await adapter.loadResumeSnapshot("items", { includeRows: false })).toEqual({
+                ...snapshot,
+                rows: [],
+            });
+            expect(await adapter.loadResumeSnapshot("missing")).toEqual({
+                rows: [],
+                collectionMetadata: [],
+                latestTerm: 0,
+                latestSeq: 0,
+                latestRowVersion: 0,
+                resetEpoch: 0,
+            });
+        } finally {
+            adapter.close();
+        }
+    });
+
+    it("makes a second ordered persisted query ready synchronously without rereading storage", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        await seed(adapter, [
+            { id: "three", priority: 3 },
+            { id: "one", priority: 1 },
+            { id: "two", priority: 2 },
+        ]);
+        const loadSubset = vi.spyOn(adapter, "loadSubset");
+        const items = createCollection(
+            persistedCollectionOptions<Item, string>({
+                id: "items",
+                getKey: (item) => item.id,
+                syncMode: "on-demand",
+                persistence: { adapter },
+                sync: {
+                    sync: ({ markReady }) => {
+                        markReady();
+                        return { loadSubset: () => true };
+                    },
+                },
+            })
+        );
+        items.createIndex((item) => item.priority, { indexType: BTreeIndex });
+        const createWindow = () =>
+            createLiveQueryCollection({
+                query: (q) =>
+                    q
+                        .from({ item: items })
+                        .orderBy(({ item }) => item.priority, "asc")
+                        .limit(2),
+                startSync: true,
+                gcTime: 0,
+            });
+        const first = createWindow();
+        let second: ReturnType<typeof createWindow> | undefined;
+        try {
+            await first.preload();
+            expect([...first.values()].map((item) => item.id)).toEqual(["one", "two"]);
+            const reads = loadSubset.mock.calls.length;
+            second = createWindow();
+            expect(second.status).toBe("ready");
+            expect([...second.values()].map((item) => item.id)).toEqual(["one", "two"]);
+            expect(loadSubset).toHaveBeenCalledTimes(reads);
+        } finally {
+            await second?.cleanup();
+            await first.cleanup();
+            await items.cleanup();
+            adapter.close();
+        }
+    });
+
     it("persists a local-only TanStack DB collection across instances", async () => {
         const name = databaseName();
         const firstAdapter = new IndexedDBPersistenceAdapter({
@@ -363,16 +679,12 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "high", priority: 10 },
         ]);
         await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
-        const cursorWhere = queryOptions((query) =>
-            query.where(({ item }) => gt(item.priority, 4))
-        ).where!;
+        const cursorWhere = queryOptions((query) => query.where(({ item }) => gt(item.priority, 4))).where!;
 
         const rows = await adapter.loadSubset("items", {
             cursor: {
                 whereFrom: cursorWhere,
-                whereCurrent: queryOptions((query) =>
-                    query.where(({ item }) => eq(item.priority, 4))
-                ).where!,
+                whereCurrent: queryOptions((query) => query.where(({ item }) => eq(item.priority, 4))).where!,
             },
         });
 
@@ -391,20 +703,14 @@ describe("IndexedDBPersistenceAdapter", () => {
         ]);
         await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
         await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
-        const options = queryOptions((query) =>
-            query.where(({ item }) => eq(item.status, "open"))
-        );
-        const cursorWhere = queryOptions((query) =>
-            query.where(({ item }) => gt(item.priority, 4))
-        ).where!;
+        const options = queryOptions((query) => query.where(({ item }) => eq(item.status, "open")));
+        const cursorWhere = queryOptions((query) => query.where(({ item }) => gt(item.priority, 4))).where!;
 
         const rows = await adapter.loadSubset("items", {
             ...options,
             cursor: {
                 whereFrom: cursorWhere,
-                whereCurrent: queryOptions((query) =>
-                    query.where(({ item }) => eq(item.priority, 4))
-                ).where!,
+                whereCurrent: queryOptions((query) => query.where(({ item }) => eq(item.priority, 4))).where!,
             },
         });
 
@@ -422,20 +728,14 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "closed-high", status: "closed", priority: 10 },
         ]);
         await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
-        const options = queryOptions((query) =>
-            query.where(({ item }) => eq(item.status, "open"))
-        );
-        const cursorWhere = queryOptions((query) =>
-            query.where(({ item }) => gt(item.priority, 4))
-        ).where!;
+        const options = queryOptions((query) => query.where(({ item }) => eq(item.status, "open")));
+        const cursorWhere = queryOptions((query) => query.where(({ item }) => gt(item.priority, 4))).where!;
 
         const rows = await adapter.loadSubset("items", {
             ...options,
             cursor: {
                 whereFrom: cursorWhere,
-                whereCurrent: queryOptions((query) =>
-                    query.where(({ item }) => eq(item.priority, 4))
-                ).where!,
+                whereCurrent: queryOptions((query) => query.where(({ item }) => eq(item.priority, 4))).where!,
             },
         });
 
@@ -762,6 +1062,484 @@ describe("IndexedDBPersistenceAdapter", () => {
         );
 
         expect(ids(rows)).toEqual(["closed", "open"]);
+        adapter.close();
+    });
+});
+
+describe("IndexedDB persistence lifecycle and paging", () => {
+    it("rejects local schema mismatches without changing data", async () => {
+        const name = databaseName();
+        const original = new IndexedDBPersistenceAdapter({ databaseName: name });
+        await seed(original, [{ id: "saved", priority: 1 }]);
+        const next = original.forCollection({ collectionId: "items", mode: "sync-absent", schemaVersion: 2 });
+        await expect(next.loadResumeSnapshot("items")).rejects.toThrow("Local-only data was preserved");
+        expect(ids(await original.loadSubset("items", {}))).toEqual(["saved"]);
+        original.close();
+    });
+
+    it("resets synced schemas atomically and fences old adapters", async () => {
+        const name = databaseName();
+        const original = new IndexedDBPersistenceAdapter({ databaseName: name });
+        await original.applyCommittedTx("items", {
+            ...tx("seed", 1, [{ type: "insert", key: "old", value: { id: "old", priority: 1 } }]),
+            collectionMetadataMutations: [{ type: "set", key: "cursor", value: "old" }],
+        });
+        await original.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        const next = original.forCollection({
+            collectionId: "items",
+            mode: "sync-present",
+            schemaVersion: 2,
+        });
+        const snapshot = await next.loadResumeSnapshot("items");
+        expect(snapshot).toMatchObject({
+            rows: [],
+            collectionMetadata: [],
+            resetEpoch: 1,
+            latestRowVersion: 2,
+        });
+        await expect(
+            original.applyCommittedTx(
+                "items",
+                tx("stale", 3, [{ type: "insert", key: "stale", value: { id: "stale", priority: 3 } }])
+            )
+        ).rejects.toThrow("stale IndexedDB adapter");
+        await expect(original.loadSubset("items", {})).rejects.toThrow("stale IndexedDB adapter");
+        await expect(
+            original.ensureIndex("items", "priority-index", indexSpec(["priority"]))
+        ).rejects.toThrow("stale IndexedDB adapter");
+        const reopenedOld = new IndexedDBPersistenceAdapter({ databaseName: name });
+        await expect(reopenedOld.loadSubset("items", {})).rejects.toThrow("refusing to downgrade");
+        expect(await next.pullSince("items", 1)).toMatchObject({
+            latestRowVersion: 2,
+            requiresFullReload: true,
+        });
+        reopenedOld.close();
+        original.close();
+    });
+
+    it("allows a fresh local-only collection to start at a higher schema version", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+            schemaVersion: 5,
+            schemaMismatchPolicy: "sync-absent-error",
+        });
+        expect(await adapter.loadResumeSnapshot("items")).toMatchObject({ rows: [], resetEpoch: 0 });
+        adapter.close();
+    });
+
+    it("replays row and metadata changes with Temporal values and deduplicates retries", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const instant = Temporal.Instant.from("2026-10-05T12:00:00.000000001Z");
+        await seed(adapter, [
+            { id: "a", priority: 1 },
+            { id: "b", priority: 2 },
+        ]);
+        const edit = {
+            ...tx("edit", 2, [
+                { type: "update" as const, key: "a", value: { id: "a", priority: 3, instant } },
+                { type: "delete" as const, key: "b", value: { id: "b", priority: 2 } },
+            ]),
+            rowMetadataMutations: [{ type: "set" as const, key: "a", value: { owner: "query" } }],
+            collectionMetadataMutations: [{ type: "set" as const, key: "cursor", value: instant }],
+        };
+        await adapter.applyCommittedTx("items", edit);
+        await adapter.applyCommittedTx("items", edit);
+        expect(await adapter.pullSince("items", 1)).toMatchObject({
+            latestRowVersion: 2,
+            requiresFullReload: false,
+            changedKeys: ["a"],
+            deletedKeys: ["b"],
+            deltas: [
+                {
+                    txId: "edit",
+                    latestRowVersion: 2,
+                    changedRows: [{ key: "a", value: { id: "a", priority: 3, instant } }],
+                    deletedKeys: ["b"],
+                    rowMetadataMutations: [{ type: "set", key: "a", value: { owner: "query" } }],
+                    collectionMetadataMutations: [{ type: "set", key: "cursor", value: instant }],
+                },
+            ],
+        });
+        expect(await adapter.pullSince("items", 2)).toMatchObject({
+            latestRowVersion: 2,
+            requiresFullReload: false,
+            changedKeys: [],
+            deletedKeys: [],
+            deltas: [],
+        });
+        adapter.close();
+    });
+
+    it("bounds retained history and reloads when history, truncate, or change count prevents replay", async () => {
+        const name = databaseName();
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: name,
+            appliedTxPruneMaxRows: 2,
+            pullSinceReloadThreshold: 0,
+        });
+        await seed(adapter, [{ id: "a", priority: 1 }]);
+        await adapter.applyCommittedTx("items", tx("metadata", 2, []));
+        await adapter.applyCommittedTx("items", tx("metadata-2", 3, []));
+        const database = await openDB(name, 2);
+        expect(await database.countFromIndex("transactions", "collectionId", "items")).toBe(2);
+        expect(await adapter.pullSince("items", 0)).toMatchObject({
+            latestRowVersion: 3,
+            requiresFullReload: true,
+        });
+        expect(await adapter.pullSince("items", 1)).toMatchObject({
+            latestRowVersion: 3,
+            requiresFullReload: false,
+            deltas: [{ txId: "metadata" }, { txId: "metadata-2" }],
+        });
+        await adapter.applyCommittedTx("items", { ...tx("truncate", 4, []), truncate: true });
+        expect(await adapter.pullSince("items", 3)).toMatchObject({
+            latestRowVersion: 4,
+            requiresFullReload: true,
+        });
+        await adapter.applyCommittedTx(
+            "items",
+            tx("insert", 5, [{ type: "insert", key: "b", value: { id: "b", priority: 2 } }])
+        );
+        expect(await adapter.pullSince("items", 4)).toMatchObject({
+            latestRowVersion: 5,
+            requiresFullReload: true,
+        });
+        database.close();
+        adapter.close();
+    });
+
+    it("prunes by age and handles an empty retention window", async () => {
+        const name = databaseName();
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: name,
+            appliedTxPruneMaxAgeSeconds: 10,
+        });
+        await seed(adapter, [{ id: "a", priority: 1 }]);
+        const database = await openDB(name, 2);
+        const record = (await database.getAllFromIndex("transactions", "collectionId", "items"))[0] as {
+            id: string;
+            collectionId: string;
+            rowVersion: number;
+            appliedAt: number;
+            delta: unknown;
+        };
+        await database.put("transactions", { ...record, appliedAt: Date.now() - 11000 });
+        await adapter.applyCommittedTx("items", tx("fresh", 2, []));
+        expect(await database.countFromIndex("transactions", "collectionId", "items")).toBe(1);
+        expect(await adapter.pullSince("items", 0)).toMatchObject({ requiresFullReload: true });
+        database.close();
+        adapter.close();
+        const noHistory = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+            appliedTxPruneMaxRows: 0,
+        });
+        await seed(noHistory, [{ id: "a", priority: 1 }]);
+        expect(await noHistory.pullSince("items", 0)).toMatchObject({ requiresFullReload: true });
+        expect(await noHistory.pullSince("items", 1)).toMatchObject({
+            requiresFullReload: false,
+            deltas: [],
+        });
+        noHistory.close();
+    });
+
+    it("selects metadata rows through the metadata index and retains their values", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        await adapter.applyCommittedTx("items", {
+            ...tx("seed", 1, [
+                {
+                    type: "insert",
+                    key: "owned",
+                    value: { id: "owned", priority: 1 },
+                    metadata: { owners: ["query"] },
+                    metadataChanged: true,
+                },
+                { type: "insert", key: "plain", value: { id: "plain", priority: 2 } },
+            ]),
+        });
+        const getAll = vi.spyOn(IDBIndex.prototype, "getAll");
+        try {
+            const rows = await adapter.scanRows("items", { metadataOnly: true });
+            expect(rows).toEqual([
+                { key: "owned", value: { id: "owned", priority: 1 }, metadata: { owners: ["query"] } },
+            ]);
+            expect(getAll.mock.contexts.map((instance) => (instance as IDBIndex).name)).toEqual(["metadata"]);
+        } finally {
+            getAll.mockRestore();
+        }
+        await adapter.applyCommittedTx("items", {
+            ...tx("clear", 2, []),
+            rowMetadataMutations: [{ type: "delete", key: "owned" }],
+        });
+        expect(await adapter.scanRows("items", { metadataOnly: true })).toEqual([]);
+        adapter.close();
+    });
+
+    it("stops ordered indexed reads after a page and filters before applying offset", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        await seed(
+            adapter,
+            Array.from({ length: 100 }, (_, index) => ({
+                id: `row-${index}`,
+                priority: index,
+                status: index % 2 ? "open" : "closed",
+            }))
+        );
+        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        const getAll = vi.spyOn(IDBIndex.prototype, "getAll");
+        const get = vi.spyOn(IDBObjectStore.prototype, "get");
+        try {
+            const rows = await adapter.loadSubset(
+                "items",
+                queryOptions((query) =>
+                    query
+                        .where(({ item }) => eq(item.status, "open"))
+                        .orderBy(({ item }) => item.priority, "desc")
+                        .offset(2)
+                        .limit(3)
+                )
+            );
+            expect(rows.map((row) => row.key)).toEqual(["row-95", "row-93", "row-91"]);
+            expect(
+                getAll.mock.contexts.every((instance) => (instance as IDBIndex).objectStore.name !== "rows")
+            ).toBe(true);
+            expect(
+                get.mock.contexts.filter((instance) => (instance as IDBObjectStore).name === "rows").length
+            ).toBeLessThan(15);
+            get.mockClear();
+            const tail = await adapter.loadSubset(
+                "items",
+                queryOptions((query) =>
+                    query
+                        .where(({ item }) => gt(item.priority, 90))
+                        .orderBy(({ item }) => item.priority, "asc")
+                        .limit(2)
+                )
+            );
+            expect(tail.map((row) => row.key)).toEqual(["row-91", "row-92"]);
+            expect(
+                get.mock.contexts.filter((instance) => (instance as IDBObjectStore).name === "rows").length
+            ).toBe(2);
+        } finally {
+            getAll.mockRestore();
+            get.mockRestore();
+        }
+        adapter.close();
+    });
+
+    it("falls back for mixed types, nulls, locale strings, and composite ordering", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        await seed(adapter, [
+            { id: "null", priority: 1, name: undefined },
+            { id: "z", priority: 1, name: "z" },
+            { id: "a", priority: 2, name: "a" },
+        ]);
+        await adapter.ensureIndex("items", "name-index", indexSpec(["name"]));
+        const rows = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query
+                    .orderBy(({ item }) => item.name, {
+                        direction: "desc",
+                        nulls: "last",
+                        stringSort: "locale",
+                    })
+                    .limit(2)
+            )
+        );
+        expect(rows.map((row) => row.key)).toEqual(["z", "a"]);
+        const composite = await adapter.loadSubset(
+            "items",
+            queryOptions((query) =>
+                query
+                    .orderBy(({ item }) => item.priority, "asc")
+                    .orderBy(({ item }) => item.name, { direction: "desc", nulls: "last" })
+                    .limit(2)
+            )
+        );
+        expect(composite.map((row) => row.key)).toEqual(["z", "null"]);
+        adapter.close();
+    });
+
+    it("keeps all current cursor ties while limiting the following page", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        await seed(adapter, [
+            { id: "a", priority: 2 },
+            { id: "b", priority: 2 },
+            { id: "c", priority: 3 },
+            { id: "d", priority: 4 },
+        ]);
+        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        const order = queryOptions((query) => query.orderBy(({ item }) => item.priority, "asc"));
+        const rows = await adapter.loadSubset("items", {
+            ...order,
+            limit: 1,
+            cursor: {
+                whereCurrent: queryOptions((query) => query.where(({ item }) => eq(item.priority, 2))).where!,
+                whereFrom: queryOptions((query) => query.where(({ item }) => gt(item.priority, 2))).where!,
+            },
+        });
+        expect(rows.map((row) => row.key)).toEqual(["a", "b", "c"]);
+        adapter.close();
+    });
+});
+
+describe("IndexedDB compatibility", () => {
+    it("upgrades a version-1 database without losing rows or metadata", async () => {
+        const name = databaseName();
+        const legacy = await openDB(name, 1, {
+            upgrade(database) {
+                const rows = database.createObjectStore("rows", { keyPath: "id" });
+                rows.createIndex("collectionId", "collectionId");
+                const transactions = database.createObjectStore("transactions", { keyPath: "id" });
+                transactions.createIndex("collectionId", "collectionId");
+                const metadata = database.createObjectStore("collectionMetadata", { keyPath: "id" });
+                metadata.createIndex("collectionId", "collectionId");
+                database.createObjectStore("streams", { keyPath: "collectionId" });
+                const definitions = database.createObjectStore("indexDefinitions", {
+                    keyPath: ["collectionId", "signature"],
+                });
+                definitions.createIndex("collectionId", "collectionId");
+                const entries = database.createObjectStore("indexEntries", {
+                    keyPath: ["collectionId", "signature", "valueType", "rowId"],
+                });
+                entries.createIndex("collectionId", "collectionId");
+                entries.createIndex("index", ["collectionId", "signature"]);
+                entries.createIndex("lookup", ["collectionId", "signature", "valueType", "value", "rowId"]);
+            },
+        });
+        await legacy.put("rows", {
+            id: JSON.stringify(["items", "s:owned"]),
+            collectionId: "items",
+            key: "owned",
+            value: { id: "owned", priority: 1 },
+            metadata: { owners: ["query"] },
+        });
+        await legacy.put("rows", {
+            id: JSON.stringify(["items", "s:plain"]),
+            collectionId: "items",
+            key: "plain",
+            value: { id: "plain", priority: 2 },
+        });
+        await legacy.put("streams", {
+            collectionId: "items",
+            latestTerm: 1,
+            latestSeq: 1,
+            latestRowVersion: 1,
+        });
+        await legacy.put("transactions", { id: JSON.stringify(["items", "old"]), collectionId: "items" });
+        legacy.close();
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: name });
+        expect(ids(await adapter.loadSubset("items", {}))).toEqual(["owned", "plain"]);
+        expect(await adapter.scanRows("items", { metadataOnly: true })).toEqual([
+            { key: "owned", value: { id: "owned", priority: 1 }, metadata: { owners: ["query"] } },
+        ]);
+        expect(await adapter.pullSince("items", 0)).toMatchObject({ requiresFullReload: true });
+        await adapter.applyCommittedTx(
+            "items",
+            tx("old", 1, [{ type: "update", key: "owned", value: { id: "owned", priority: 99 } }])
+        );
+        expect(
+            (await adapter.loadSubset("items", {})).find((row) => row.key === "owned")?.value.priority
+        ).toBe(1);
+        await adapter.applyCommittedTx(
+            "items",
+            tx("edit", 2, [{ type: "update", key: "owned", value: { id: "owned", priority: 3 } }])
+        );
+        expect(await adapter.pullSince("items", 1)).toMatchObject({
+            requiresFullReload: false,
+            changedKeys: ["owned"],
+        });
+        adapter.close();
+    });
+
+    it("does not confuse nested fields with top-level indexes", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        await seed(adapter, [
+            { id: "a", priority: 1, details: { priority: 10 } },
+            { id: "b", priority: 10, details: { priority: 1 } },
+        ]);
+        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        const nested = new IR.PropRef<number>(["details", "priority"]);
+        const rows = await adapter.loadSubset("items", {
+            where: new IR.Func<boolean>("eq", [nested, new IR.Value(10)]),
+            limit: 1,
+        });
+        expect(rows.map((row) => row.key)).toEqual(["a"]);
+        const ordered = await adapter.loadSubset("items", {
+            orderBy: [
+                {
+                    expression: nested,
+                    compareOptions: { direction: "desc", nulls: "last", stringSort: "lexical" },
+                },
+            ],
+            limit: 1,
+        });
+        expect(ordered.map((row) => row.key)).toEqual(["a"]);
+        adapter.close();
+    });
+});
+
+describe("IndexedDB partial updates", () => {
+    it("merges partial row updates and replays the full stored row", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        await seed(adapter, [{ id: "a", priority: 1, name: "Retained" }]);
+        await adapter.ensureIndex("items", "name-index", indexSpec(["name"]));
+        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        await adapter.applyCommittedTx("items", {
+            ...tx("patch", 2, []),
+            mutations: [{ type: "update", key: "a", value: { priority: 5 } }],
+        });
+        expect(
+            await adapter.loadSubset(
+                "items",
+                queryOptions((query) => query.where(({ item }) => eq(item.name, "Retained")))
+            )
+        ).toEqual([{ key: "a", value: { id: "a", priority: 5, name: "Retained" }, metadata: undefined }]);
+        expect(await adapter.pullSince("items", 1)).toMatchObject({
+            requiresFullReload: false,
+            deltas: [{ changedRows: [{ key: "a", value: { id: "a", priority: 5, name: "Retained" } }] }],
+        });
+        adapter.close();
+    });
+
+    it("honors metadataChanged instead of silently replacing unchanged metadata", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        await adapter.applyCommittedTx(
+            "items",
+            tx("seed", 1, [
+                {
+                    type: "insert",
+                    key: "a",
+                    value: { id: "a", priority: 1 },
+                    metadataChanged: true,
+                    metadata: { owner: "saved" },
+                },
+            ])
+        );
+        await adapter.applyCommittedTx("items", {
+            ...tx("patch", 2, []),
+            mutations: [{ type: "update", key: "a", value: { priority: 2 }, metadata: { owner: "ignored" } }],
+        });
+        expect(await adapter.scanRows("items", { metadataOnly: true })).toMatchObject([
+            { key: "a", metadata: { owner: "saved" } },
+        ]);
+        await adapter.applyCommittedTx("items", {
+            ...tx("clear", 3, []),
+            mutations: [
+                {
+                    type: "update",
+                    key: "a",
+                    value: { priority: 3 },
+                    metadataChanged: true,
+                    metadata: undefined,
+                },
+            ],
+        });
+        expect(await adapter.scanRows("items", { metadataOnly: true })).toEqual([]);
+        expect(await adapter.pullSince("items", 2)).toMatchObject({
+            requiresFullReload: false,
+            deltas: [{ rowMetadataMutations: [{ type: "delete", key: "a" }] }],
+        });
         adapter.close();
     });
 });

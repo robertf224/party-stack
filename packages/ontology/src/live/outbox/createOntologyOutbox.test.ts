@@ -63,6 +63,12 @@ class TestNetworkConnectivity implements NetworkConnectivity {
 function memoryPersistenceAdapter(): PersistenceAdapter {
     const rows = new Map<string | number, Record<string, unknown>>();
     return {
+        loadResumeSnapshot: () => Promise.resolve({
+            rows: [...rows].map(([key, value]) => ({ key, value })),
+            collectionMetadata: [],
+            latestTerm: 0, latestSeq: 0, latestRowVersion: 0,
+            resetEpoch: 0,
+        }),
         loadSubset: () =>
             Promise.resolve(
                 [...rows].map(([key, value]) => ({

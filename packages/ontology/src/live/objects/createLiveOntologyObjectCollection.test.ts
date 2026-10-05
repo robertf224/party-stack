@@ -83,6 +83,13 @@ function memoryPersistence(
     });
     return {
         adapter: {
+            loadResumeSnapshot: (collectionId) =>
+                Promise.resolve({
+                    rows: [...rows].map(([key, value]) => ({ key, value })),
+                    collectionMetadata: [],
+                    ...(positions.get(collectionId) ?? { latestTerm: 0, latestSeq: 0, latestRowVersion: 0 }),
+                    resetEpoch: 0,
+                }),
             loadSubset: () =>
                 Promise.resolve(
                     [...rows].map(([key, value]) => ({
@@ -149,6 +156,7 @@ describe("createLiveOntologyObjectCollection", () => {
                 },
             },
         ]);
+        const forCollection = vi.fn(() => persistence.adapter);
         const collection = createLiveOntologyObjectCollection({
             ...options,
             backendAdapter: backend(({ markReady }) => markReady()),
@@ -157,7 +165,7 @@ describe("createLiveOntologyObjectCollection", () => {
                 namespace: options.ontologyId,
                 blobBytes: new MemoryBlobBytesStore(),
                 coordination: options.coordination,
-                persistence: persistence.adapter,
+                persistence: { ...persistence.adapter, forCollection },
             },
             persistObjects: true,
         });
@@ -165,6 +173,11 @@ describe("createLiveOntologyObjectCollection", () => {
         await collection.preload();
 
         expect(collection.id).toBe("party-stack:user-1:ontology-1:objects:Task");
+        expect(forCollection).toHaveBeenCalledWith({
+            collectionId: collection.id,
+            mode: "sync-present",
+            schemaVersion: 1,
+        });
         expect(collection.get("persisted")).toMatchObject({
             title: "From persistence",
         });

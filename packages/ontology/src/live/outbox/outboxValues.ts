@@ -4,6 +4,11 @@ import type {
     OntologyOutboxEntry,
 } from "./types.js";
 
+// Outbox-local codec: structured-clone RPC/events lose polyfilled Temporal values,
+// and upstream SQLite persistence currently loses them too (TanStack/db#2034).
+// TODO: Stop encoding here once coordination transport and all persistence adapters
+// preserve Temporal values. Keep decoding legacy tags until stored outbox entries
+// have been drained or migrated.
 const OUTBOX_VALUE_TYPE =
     "__party_stack_outbox_value_type__";
 

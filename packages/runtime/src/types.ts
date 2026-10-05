@@ -1,5 +1,8 @@
 import type { Coordination } from "@party-stack/coordination";
-import type { PersistenceAdapter } from "@tanstack/db-sqlite-persistence-core";
+import type {
+    PersistedCollectionPersistence,
+    PersistenceAdapter,
+} from "@tanstack/db-sqlite-persistence-core";
 
 export interface BlobBytesStore {
     write(id: string, blob: Blob): Promise<void>;
@@ -34,6 +37,12 @@ export interface BrowserAuthentication {
 
 export type { PersistenceAdapter } from "@tanstack/db-sqlite-persistence-core";
 
+export type RuntimePersistenceAdapter = PersistenceAdapter & {
+    forCollection?: (
+        context: Parameters<NonNullable<PersistedCollectionPersistence["resolvePersistenceForCollection"]>>[0]
+    ) => PersistenceAdapter;
+};
+
 export interface RuntimeAdapter {
     readonly owner: string;
     readonly namespace: string;
@@ -42,7 +51,7 @@ export interface RuntimeAdapter {
     connectivity?: NetworkConnectivity;
     browserAuthentication?: BrowserAuthentication;
     secrets?: SecretStore;
-    persistence?: PersistenceAdapter;
+    persistence?: RuntimePersistenceAdapter;
     cleanup?: () => void | Promise<void>;
     destroy?: () => void | Promise<void>;
 }
