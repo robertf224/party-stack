@@ -211,7 +211,7 @@ describe("createLiveOntologyObjectCollection", () => {
                 namespace: options.ontologyId,
                 blobBytes: new MemoryBlobBytesStore(),
                 coordination: options.coordination,
-                persistence: persistence.adapter,
+                persistence,
             },
             persistObjects: true,
         });

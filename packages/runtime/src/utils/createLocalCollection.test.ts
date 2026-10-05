@@ -163,7 +163,7 @@ describe("createLocalCollection", () => {
                 owner: "test-owner",
                 namespace: "persisted",
                 blobBytes: new MemoryBlobBytesStore(),
-                persistence: adapter,
+                persistence: { adapter },
                 coordination,
             },
         });
@@ -188,11 +188,11 @@ describe("createLocalCollection", () => {
             scope: "local-collection-test",
         });
         const firstRuntime = coordinatedRuntime({
-            adapter,
+            adapter: { adapter },
             coordination,
         });
         const secondRuntime = coordinatedRuntime({
-            adapter,
+            adapter: { adapter },
             coordination,
         });
         const createItems = ({ runtime }: ReturnType<typeof coordinatedRuntime>) =>
@@ -224,11 +224,11 @@ describe("createLocalCollection", () => {
             scope: "remote-subset-test",
         });
         const first = coordinatedRuntime({
-            adapter,
+            adapter: { adapter },
             coordination,
         });
         const second = coordinatedRuntime({
-            adapter,
+            adapter: { adapter },
             coordination,
         });
         const firstCoordinator = createPersistedCollectionCoordinator(first.coordination, adapter);
@@ -286,7 +286,7 @@ describe("createLocalCollection", () => {
                 owner: "test-owner",
                 namespace: "worker",
                 blobBytes: new MemoryBlobBytesStore(),
-                persistence: adapter,
+                persistence: { adapter },
                 coordination: hostCoordination,
             },
         });
@@ -297,7 +297,7 @@ describe("createLocalCollection", () => {
                 owner: "test-owner",
                 namespace: "worker",
                 blobBytes: new MemoryBlobBytesStore(),
-                persistence: adapter,
+                persistence: { adapter },
                 coordination: clientCoordination,
             },
         });

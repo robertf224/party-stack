@@ -118,14 +118,16 @@ describe("createConnectionManager", () => {
                 runtime: {
                     ...runtime,
                     persistence: {
-                        loadSubset: () => Promise.resolve(rows),
-                        loadResumeSnapshot: () => Promise.resolve({
-                            rows, collectionMetadata: [], latestTerm: 0, latestSeq: 0, latestRowVersion: 0, resetEpoch: 0,
-                        }),
-                        applyCommittedTx,
-                        ensureIndex: () =>
-                            Promise.resolve(),
-                    } as never,
+                        adapter: {
+                            loadSubset: () => Promise.resolve(rows),
+                            loadResumeSnapshot: () => Promise.resolve({
+                                rows, collectionMetadata: [], latestTerm: 0, latestSeq: 0, latestRowVersion: 0, resetEpoch: 0,
+                            }),
+                            applyCommittedTx,
+                            ensureIndex: () =>
+                                Promise.resolve(),
+                        },
+                    },
                 },
                 adapter: () => ({
                     name: "test",

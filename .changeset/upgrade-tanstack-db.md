@@ -19,7 +19,7 @@
 
 Upgrade TanStack DB dependencies and peer requirements to DB 0.11.3, React DB 0.5.3, Query DB Collection 1.3.4, SQLite persistence core 0.4.3, and Expo/Node SQLite persistence 0.2.28.
 
-Update IndexedDB persistence and runtime coordination for the required atomic resume snapshots, remote subset lease lifecycle, and leader-side committed transactions. Custom runtime persistence adapters must implement `loadResumeSnapshot`.
+Update IndexedDB persistence and runtime coordination for the required atomic resume snapshots, remote subset lease lifecycle, and leader-side committed transactions. Runtime persistence must use the standard `PersistedCollectionPersistence` object (`{ adapter, ... }`); custom adapters must implement `loadResumeSnapshot`.
 
 Maintain only changed rows, metadata, and index entries during IndexedDB commits instead of rewriting complete collections. Reuse existing indexes and lazily rebuild legacy index summaries once. Abort failed index maintenance atomically with row writes.
 
