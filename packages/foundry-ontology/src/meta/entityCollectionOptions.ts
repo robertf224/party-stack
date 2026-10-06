@@ -1,10 +1,5 @@
 import { OntologiesV2 } from "@osdk/foundry.ontologies";
-import {
-    createCollection,
-    eq,
-    liveQueryCollectionOptions,
-    Query,
-} from "@tanstack/db";
+import { createCollection, eq, liveQueryCollectionOptions, Query } from "@tanstack/db";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
 import type { OntologyClient } from "@party-stack/foundry-client";
@@ -25,6 +20,7 @@ type MetaEntity =
 
 export interface MetaEntityStoreOpts {
     client: OntologyClient;
+    refetchInterval?: number | false;
 }
 
 export function createMetaEntityCollection(opts: MetaEntityStoreOpts) {
@@ -42,11 +38,9 @@ export function createMetaEntityCollection(opts: MetaEntityStoreOpts) {
             },
             queryKey: ["foundry", "ontology", "metadata"],
             syncMode: "eager",
+            refetchInterval: opts.refetchInterval,
             queryFn: async () => {
-                const loaded =
-                    await loadFoundryMetaOntology(
-                        opts.client
-                    );
+                const loaded = await loadFoundryMetaOntology(opts.client);
                 return [
                     ...loaded.objectTypes.map((entity) => ({
                         entityType: "ObjectType" as const,
@@ -73,44 +67,31 @@ export type MetaEntityCollection = ReturnType<typeof createMetaEntityCollection>
 
 export function objectTypeCollectionOptions(metadata: MetaEntityCollection): OntologyCollectionOptions {
     return liveQueryCollectionOptions({
-        query: new Query()
-            .from({ metadata })
-            .where(({ metadata }) => eq(metadata.entityType, "ObjectType")),
+        query: new Query().from({ metadata }).where(({ metadata }) => eq(metadata.entityType, "ObjectType")),
     }) as unknown as OntologyCollectionOptions;
 }
 
 export function valueTypeCollectionOptions(metadata: MetaEntityCollection): OntologyCollectionOptions {
     return liveQueryCollectionOptions({
-        query: new Query()
-            .from({ metadata })
-            .where(({ metadata }) => eq(metadata.entityType, "ValueType")),
+        query: new Query().from({ metadata }).where(({ metadata }) => eq(metadata.entityType, "ValueType")),
     }) as unknown as OntologyCollectionOptions;
 }
 
 export function linkTypeCollectionOptions(metadata: MetaEntityCollection): OntologyCollectionOptions {
     return liveQueryCollectionOptions({
-        query: new Query()
-            .from({ metadata })
-            .where(({ metadata }) => eq(metadata.entityType, "LinkType")),
+        query: new Query().from({ metadata }).where(({ metadata }) => eq(metadata.entityType, "LinkType")),
     }) as unknown as OntologyCollectionOptions;
 }
 
-async function loadFoundryMetaOntology(
-    client: OntologyClient
-): Promise<{
+async function loadFoundryMetaOntology(client: OntologyClient): Promise<{
     objectTypes: MetaObjectType[];
     valueTypes: MetaValueType[];
     linkTypes: MetaLinkType[];
 }> {
-    const ontology = await OntologiesV2.getFullMetadata(
-        client,
-        client.ontologyRid
-    );
+    const ontology = await OntologiesV2.getFullMetadata(client, client.ontologyRid);
     const objectTypeMetadata = Object.values(ontology.objectTypes);
 
-    const objectTypes = objectTypeMetadata.map((metadata) =>
-        convertFoundryMetaObjectType(metadata)
-    );
+    const objectTypes = objectTypeMetadata.map((metadata) => convertFoundryMetaObjectType(metadata));
     const valueTypes = Object.values(ontology.valueTypes).map(convertFoundryMetaValueType);
     const linkTypes = convertFoundryMetaLinkTypes(objectTypeMetadata);
 

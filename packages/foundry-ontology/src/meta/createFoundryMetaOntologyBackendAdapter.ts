@@ -12,6 +12,8 @@ import { queryFunctionTypeCollectionOptions } from "./queryFunctionTypeCollectio
 
 export interface CreateFoundryMetaOntologyBackendAdapterOpts {
     client: OntologyClient;
+    /** Polling interval in milliseconds, or false to disable polling. Defaults to no polling. */
+    refetchInterval?: number | false;
 }
 
 export function createFoundryMetaOntologyBackendAdapter(
@@ -19,6 +21,7 @@ export function createFoundryMetaOntologyBackendAdapter(
 ): OntologyBackendAdapter {
     const metadata = createMetaEntityCollection({
         client: opts.client,
+        refetchInterval: opts.refetchInterval,
     });
 
     return {
@@ -32,9 +35,15 @@ export function createFoundryMetaOntologyBackendAdapter(
                 case "LinkType":
                     return linkTypeCollectionOptions(metadata);
                 case "ActionType":
-                    return actionTypeCollectionOptions({ client: opts.client });
+                    return actionTypeCollectionOptions({
+                        client: opts.client,
+                        refetchInterval: opts.refetchInterval,
+                    });
                 case "QueryFunctionType":
-                    return queryFunctionTypeCollectionOptions({ client: opts.client });
+                    return queryFunctionTypeCollectionOptions({
+                        client: opts.client,
+                        refetchInterval: opts.refetchInterval,
+                    });
                 default:
                     throw new Error(`Unsupported Foundry metadata object type "${objectType}".`);
             }
