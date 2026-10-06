@@ -142,6 +142,7 @@ const coordinationCodes = new Set<CoordinationErrorCode>([
     "PROTOCOL_MISMATCH",
     "SERVICE_CLOSED",
     "SERVICE_UNAVAILABLE",
+    "INDETERMINATE",
     "TIMEOUT",
     "TRANSPORT_ERROR",
 ]);
@@ -174,6 +175,7 @@ export function deserializeError(details: SerializedError): Error {
     }
     if (
         details.code === "DISCONNECTED" ||
+        details.code === "INDETERMINATE" ||
         details.code === "TIMEOUT" ||
         details.code === "TRANSPORT_ERROR"
     ) {

@@ -13,6 +13,9 @@ export interface CoordinationRequestMessage
     readonly service: string;
     readonly method: string;
     readonly payload: unknown;
+    readonly recipientId: string;
+    readonly termId: string;
+    readonly expiresAt: number;
 }
 
 export interface CoordinationResponseMessage
@@ -39,11 +42,25 @@ export interface CoordinationEventMessage
     readonly payload: unknown;
 }
 
+export interface CoordinationLeaderQueryMessage extends ProtocolEnvelope {
+    readonly type: "leader-query";
+    readonly requestId: string;
+}
+
+export interface CoordinationLeaderMessage extends ProtocolEnvelope {
+    readonly type: "leader";
+    readonly requestId: string;
+    readonly recipientId: string;
+    readonly termId: string;
+}
+
 export type CoordinationProtocolMessage =
     | CoordinationRequestMessage
     | CoordinationResponseMessage
     | CoordinationCancelMessage
-    | CoordinationEventMessage;
+    | CoordinationEventMessage
+    | CoordinationLeaderQueryMessage
+    | CoordinationLeaderMessage;
 
 export function isRecord(
     value: unknown

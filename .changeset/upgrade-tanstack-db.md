@@ -2,6 +2,7 @@
 "@party-stack/better-auth": minor
 "@party-stack/blobs": minor
 "@party-stack/connections": minor
+"@party-stack/coordination": minor
 "@party-stack/db-indexeddb-persistence": minor
 "@party-stack/durable-object-ontology": minor
 "@party-stack/expo-runtime": minor
@@ -30,3 +31,7 @@ Enforce collection schema versions and fence stale IndexedDB adapters after rese
 Bound transaction deduplication and replay history, replay missed commits with rows and metadata, and reload when a baseline replacement, history gap, or large change set prevents incremental recovery.
 
 Use ordered IndexedDB cursors for homogeneous supported indexes and stop after a filtered page. Preserve cursor boundary ties, fall back for other ordering semantics, and select metadata-bearing rows using a dedicated index. Match nested expression paths exactly, merge partial row updates, and respect metadataChanged.
+
+Pin broadcast RPC retries to the original elected node and leadership term, discover the leader before the first request, and surface uncertain outcomes as `INDETERMINATE` instead of repeating work after takeover. Coordination wire protocol version is now 2; all communicating runtimes must use the same version. Retain replies throughout the retry window and reject new remote calls when retry retention is full. Preserve row metadata in local mutation coordination and advance cached positions only after storage succeeds.
+
+Scope remote subset acquisition IDs by collection as well as options identity, so releasing a reused query options object in one collection cannot lose another collection’s lease.

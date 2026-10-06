@@ -189,7 +189,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     private readonly server: CoordinationServiceServer<PersistenceCoordinationService> | undefined;
     private pendingRelays = 0;
     private readonly remoteSubsets = new SingleProcessCoordinator();
-    private readonly acquisitionIds = new WeakMap<LoadSubsetOptions, string>();
+    private readonly acquisitionIds = new WeakMap<LoadSubsetOptions, Map<string, string>>();
     private readonly remoteAcquisitions = new Map<
         string,
         {
@@ -310,10 +310,15 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     }
 
     requestEnsureRemoteSubset(collectionId: string, options: LoadSubsetOptions): Promise<void> {
-        let acquisitionId = this.acquisitionIds.get(options);
+        let collectionIds = this.acquisitionIds.get(options);
+        if (!collectionIds) {
+            collectionIds = new Map();
+            this.acquisitionIds.set(options, collectionIds);
+        }
+        let acquisitionId = collectionIds.get(collectionId);
         if (!acquisitionId) {
             acquisitionId = safeRandomUUID();
-            this.acquisitionIds.set(options, acquisitionId);
+            collectionIds.set(collectionId, acquisitionId);
         }
         return this.service.methods.ensureRemoteSubset({
             collectionId,
@@ -323,9 +328,11 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     }
 
     requestReleaseRemoteSubset(collectionId: string, options: LoadSubsetOptions): Promise<void> {
-        const acquisitionId = this.acquisitionIds.get(options);
+        const collectionIds = this.acquisitionIds.get(options);
+        const acquisitionId = collectionIds?.get(collectionId);
         if (!acquisitionId) return Promise.resolve();
-        this.acquisitionIds.delete(options);
+        collectionIds!.delete(collectionId);
+        if (collectionIds!.size === 0) this.acquisitionIds.delete(options);
         return this.service.methods.releaseRemoteSubset({ collectionId, options: {}, acquisitionId });
     }
 
@@ -462,7 +469,8 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
 
     private async applyMutations(input: ApplyLocalMutationsInput): Promise<ApplyLocalMutationsResponse> {
         const adapter = this.adapterForCollection(input.collectionId, input.schemaVersion);
-        const previous = this.appliedEnvelopes.get(input.envelopeId);
+        const envelopeKey = JSON.stringify([input.collectionId, input.envelopeId]);
+        const previous = this.appliedEnvelopes.get(envelopeKey);
         if (previous) {
             return {
                 ...previous,
@@ -471,20 +479,19 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
         }
 
         const position = await this.position(input.collectionId);
-        position.seq += 1;
-        position.rowVersion += 1;
+        const nextPosition = { ...position, seq: position.seq + 1, rowVersion: position.rowVersion + 1 };
         const txId = input.envelopeId;
         await adapter.applyCommittedTx(input.collectionId, {
             txId,
-            term: position.term,
-            seq: position.seq,
-            rowVersion: position.rowVersion,
-            mutations: input.mutations.map((mutation) => ({
-                type: mutation.type,
-                key: mutation.key,
-                value: mutation.value,
-            })),
+            term: nextPosition.term,
+            seq: nextPosition.seq,
+            rowVersion: nextPosition.rowVersion,
+            mutations: input.mutations.map(({ mutationId, ...mutation }) => {
+                void mutationId;
+                return mutation;
+            }),
         });
+        Object.assign(position, nextPosition);
         const committed: ProtocolEnvelope<unknown> = {
             v: 1,
             dbName: this.coordinationScope(),
@@ -507,6 +514,16 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
                 deletedKeys: input.mutations
                     .filter((mutation) => mutation.type === "delete")
                     .map((mutation) => mutation.key),
+                rowMetadataMutations: input.mutations.flatMap((mutation) =>
+                    mutation.type !== "delete" &&
+                    (mutation.metadataChanged || mutation.metadata !== undefined)
+                        ? [
+                              mutation.metadata === undefined
+                                  ? { type: "delete" as const, key: mutation.key }
+                                  : { type: "set" as const, key: mutation.key, value: mutation.metadata },
+                          ]
+                        : []
+                ),
             },
         };
         this.publishMessage({
@@ -523,7 +540,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
             latestRowVersion: position.rowVersion,
             acceptedMutationIds: input.mutations.map((mutation) => mutation.mutationId),
         };
-        this.appliedEnvelopes.set(input.envelopeId, response);
+        this.appliedEnvelopes.set(envelopeKey, response);
         if (this.appliedEnvelopes.size > MAX_DEDUPLICATION_ENTRIES) {
             const oldest = this.appliedEnvelopes.keys().next().value;
             if (oldest) {

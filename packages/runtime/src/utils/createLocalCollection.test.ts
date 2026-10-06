@@ -270,6 +270,37 @@ describe("createLocalCollection", () => {
         await coordination.close();
     });
 
+    it("keeps subset acquisitions independent across collections and identical query options", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "subset-identities" });
+        const coordinator = createPersistedCollectionCoordinator(coordination, memoryAdapter());
+        const firstLoad = vi.fn(() => Promise.resolve());
+        const secondLoad = vi.fn(() => Promise.resolve());
+        const firstUnload = vi.fn();
+        const secondUnload = vi.fn();
+        const unregisterFirst = coordinator.registerRemoteSubsetOwner("first", Object.assign(firstLoad, { unloadSubset: firstUnload, onError: vi.fn() }));
+        const unregisterSecond = coordinator.registerRemoteSubsetOwner("second", Object.assign(secondLoad, { unloadSubset: secondUnload, onError: vi.fn() }));
+        const sharedOptions = { limit: 10 };
+        const otherOptions = { limit: 10 };
+        try {
+            await coordinator.requestEnsureRemoteSubset("first", sharedOptions);
+            await coordinator.requestEnsureRemoteSubset("second", sharedOptions);
+            await coordinator.requestEnsureRemoteSubset("second", otherOptions);
+            expect(firstLoad).toHaveBeenCalledTimes(1);
+            expect(secondLoad).toHaveBeenCalledTimes(2);
+            await coordinator.requestReleaseRemoteSubset("first", sharedOptions);
+            expect(firstUnload).toHaveBeenCalledOnce();
+            expect(secondUnload).not.toHaveBeenCalled();
+            await coordinator.requestReleaseRemoteSubset("second", sharedOptions);
+            expect(secondUnload).toHaveBeenCalledTimes(1);
+            await coordinator.requestReleaseRemoteSubset("second", otherOptions);
+            expect(secondUnload).toHaveBeenCalledTimes(2);
+        } finally {
+            unregisterFirst();
+            unregisterSecond();
+            await coordination.close();
+        }
+    });
+
     it("routes client-only persistence through a SharedWorker host", async () => {
         const adapter = memoryAdapter();
         const channel = new MessageChannel();
@@ -382,6 +413,119 @@ describe("collection-scoped persistence", () => {
         await coordinator.pullSince!(collection.id, 0);
         expect(scopedPosition).not.toHaveBeenCalled();
         expect(rootPosition).toHaveBeenCalledWith(collection.id);
+        await coordination.close();
+    });
+
+    it("keeps different collection versions isolated on one shared coordinator", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "different-schemas" });
+        const root = memoryAdapter();
+        const tasksAdapter = { ...memoryAdapter(), schemaVersion: 2 };
+        const settingsAdapter = { ...memoryAdapter(), schemaVersion: 7 };
+        const rootApply = vi.spyOn(root, "applyCommittedTx");
+        const tasksApply = vi.spyOn(tasksAdapter, "applyCommittedTx");
+        const settingsApply = vi.spyOn(settingsAdapter, "applyCommittedTx");
+        const runtime = coordinatedRuntime({
+            adapter: {
+                adapter: root,
+                resolvePersistenceForCollection: ({ schemaVersion }) => ({
+                    adapter: schemaVersion === 2 ? tasksAdapter : settingsAdapter,
+                }),
+            },
+            coordination,
+        }).runtime;
+        const tasks = createLocalCollection<Item, string>({
+            name: "tasks",
+            schemaVersion: 2,
+            runtime,
+            getKey: (item) => item.id,
+        });
+        const settings = createLocalCollection<Item, string>({
+            name: "settings",
+            schemaVersion: 7,
+            runtime,
+            getKey: (item) => item.id,
+        });
+        await Promise.all([tasks.preload(), settings.preload()]);
+        await tasks.insert({ id: "one", title: "Task" }).isPersisted.promise;
+        await settings.insert({ id: "one", title: "Setting" }).isPersisted.promise;
+        expect(tasksApply).toHaveBeenCalledWith(tasks.id, expect.anything());
+        expect(settingsApply).toHaveBeenCalledWith(settings.id, expect.anything());
+        expect(rootApply).not.toHaveBeenCalled();
+        await tasks.cleanup();
+        await settings.insert({ id: "two", title: "Still active" }).isPersisted.promise;
+        expect(settings.get("two")?.title).toBe("Still active");
+        expect(createPersistedCollectionCoordinator(coordination, root)).toBe(
+            createPersistedCollectionCoordinator(coordination, root)
+        );
+        await settings.cleanup();
+        await coordination.close();
+    });
+
+    it("preserves row metadata in local mutation RPC and broadcasts", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "mutation-metadata" });
+        const adapter = memoryAdapter();
+        const apply = vi.spyOn(adapter, "applyCommittedTx");
+        const coordinator = createPersistedCollectionCoordinator(coordination, adapter);
+        const listener = vi.fn();
+        const unsubscribe = coordinator.subscribe("items", listener);
+        await coordinator.requestApplyLocalMutations!("items", [
+            {
+                mutationId: "insert",
+                type: "insert",
+                key: "one",
+                value: { id: "one" },
+                metadata: { etag: "v1" },
+                metadataChanged: true,
+            },
+        ]);
+        expect(apply).toHaveBeenCalledWith(
+            "items",
+            expect.objectContaining({
+                mutations: [
+                    {
+                        type: "insert",
+                        key: "one",
+                        value: { id: "one" },
+                        metadata: { etag: "v1" },
+                        metadataChanged: true,
+                    },
+                ],
+            })
+        );
+        const broadcast: unknown = listener.mock.calls[0]?.[0];
+        expect(broadcast).toMatchObject({
+            payload: {
+                rowMetadataMutations: [{ type: "set", key: "one", value: { etag: "v1" } }],
+            },
+        });
+        unsubscribe();
+        await coordination.close();
+    });
+
+    it("does not advance the persisted sequence or publish success when a write fails", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "failed-persistence" });
+        const adapter = memoryAdapter();
+        const write = adapter.applyCommittedTx;
+        const apply = vi
+            .spyOn(adapter, "applyCommittedTx")
+            .mockRejectedValueOnce(new Error("disk full"))
+            .mockImplementation(write);
+        const coordinator = createPersistedCollectionCoordinator(coordination, adapter);
+        const listener = vi.fn();
+        const unsubscribe = coordinator.subscribe("items", listener);
+        await expect(
+            coordinator.requestApplyLocalMutations!("items", [
+                { mutationId: "first", type: "insert", key: "one", value: { id: "one" } },
+            ])
+        ).rejects.toThrow("disk full");
+        expect(listener).not.toHaveBeenCalled();
+        await expect(
+            coordinator.requestApplyLocalMutations!("items", [
+                { mutationId: "second", type: "insert", key: "two", value: { id: "two" } },
+            ])
+        ).resolves.toMatchObject({ seq: 1, latestRowVersion: 1 });
+        expect(apply).toHaveBeenCalledTimes(2);
+        unsubscribe();
         await coordination.close();
     });
 
