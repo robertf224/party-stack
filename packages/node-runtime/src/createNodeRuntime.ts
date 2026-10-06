@@ -39,7 +39,7 @@ export function createNodeRuntimeWithOptions(options: CreateNodeRuntimeOptions):
         });
 
         const database = new Database(join(directory, "collections.sqlite"));
-        const { adapter: persistence } = createNodeSQLitePersistence({
+        const persistence = createNodeSQLitePersistence({
             database,
         });
         const coordination = new SingleProcessCoordination({

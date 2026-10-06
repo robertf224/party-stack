@@ -4,6 +4,7 @@ import {
     SharedWorkerCoordinationHost,
     type CoordinationMessagePort,
 } from "@party-stack/coordination/shared-worker";
+import { SingleProcessCoordinator } from "@tanstack/db-sqlite-persistence-core";
 import { describe, expect, it, vi } from "vitest";
 import { createPersistedCollectionCoordinator } from "../coordinator/createPersistedCollectionCoordinator.js";
 import { MemoryBlobBytesStore } from "../memory/MemoryBlobBytesStore.js";
@@ -164,7 +165,7 @@ describe("createLocalCollection", () => {
                 owner: "test-owner",
                 namespace: "persisted",
                 blobBytes: new MemoryBlobBytesStore(),
-                persistence: adapter,
+                persistence: { adapter },
                 coordination,
             },
         });
@@ -189,11 +190,11 @@ describe("createLocalCollection", () => {
             scope: "local-collection-test",
         });
         const firstRuntime = coordinatedRuntime({
-            adapter,
+            adapter: { adapter },
             coordination,
         });
         const secondRuntime = coordinatedRuntime({
-            adapter,
+            adapter: { adapter },
             coordination,
         });
         const createItems = ({ runtime }: ReturnType<typeof coordinatedRuntime>) =>
@@ -225,11 +226,11 @@ describe("createLocalCollection", () => {
             scope: "remote-subset-test",
         });
         const first = coordinatedRuntime({
-            adapter,
+            adapter: { adapter },
             coordination,
         });
         const second = coordinatedRuntime({
-            adapter,
+            adapter: { adapter },
             coordination,
         });
         const firstCoordinator = createPersistedCollectionCoordinator(first.coordination, adapter);
@@ -360,7 +361,7 @@ describe("createLocalCollection", () => {
                 owner: "test-owner",
                 namespace: "worker",
                 blobBytes: new MemoryBlobBytesStore(),
-                persistence: adapter,
+                persistence: { adapter },
                 coordination: hostCoordination,
             },
         });
@@ -371,7 +372,7 @@ describe("createLocalCollection", () => {
                 owner: "test-owner",
                 namespace: "worker",
                 blobBytes: new MemoryBlobBytesStore(),
-                persistence: adapter,
+                persistence: { adapter },
                 coordination: clientCoordination,
             },
         });
@@ -411,7 +412,121 @@ describe("createLocalCollection", () => {
     });
 });
 
-describe("persistence coordination", () => {
+describe("collection-scoped persistence", () => {
+    it("forwards local mode and schema and routes writes through the scoped adapter", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "scoped-persistence" });
+        const scoped = { ...memoryAdapter(), schemaVersion: 2 };
+        const apply = vi.spyOn(scoped, "applyCommittedTx");
+        const root = memoryAdapter();
+        const coordinator = createPersistedCollectionCoordinator(coordination, root);
+        const registerAdapter = vi.spyOn(coordinator, "setAdapterForCollection");
+        const scopedPosition = vi.spyOn(scoped, "getStreamPosition");
+        const rootPosition = vi.spyOn(root, "getStreamPosition");
+        const defaultCoordinator = new SingleProcessCoordinator();
+        const defaultApply = vi.spyOn(defaultCoordinator, "requestApplyCommittedTx");
+        const resolvePersistenceForCollection = vi.fn(() => ({
+            adapter: scoped,
+            coordinator: defaultCoordinator,
+        }));
+        const rootApply = vi.spyOn(root, "applyCommittedTx");
+        const collection = createLocalCollection<Item, string>({
+            name: "scoped",
+            schemaVersion: 2,
+            getKey: (item) => item.id,
+            runtime: coordinatedRuntime({
+                adapter: { adapter: root, resolvePersistenceForCollection },
+                coordination,
+            }).runtime,
+        });
+        await collection.preload();
+        expect(registerAdapter).toHaveBeenCalledExactlyOnceWith(collection.id, scoped);
+        expect(resolvePersistenceForCollection).toHaveBeenCalledWith({
+            collectionId: collection.id,
+            mode: "sync-absent",
+            schemaVersion: 2,
+        });
+        await collection.insert({ id: "one", title: "Scoped" }).isPersisted.promise;
+        expect(apply).toHaveBeenCalled();
+        expect(rootApply).not.toHaveBeenCalled();
+        expect(defaultApply).not.toHaveBeenCalled();
+        await collection.cleanup();
+        scopedPosition.mockClear();
+        rootPosition.mockClear();
+        await coordinator.pullSince!(collection.id, 0);
+        expect(scopedPosition).not.toHaveBeenCalled();
+        expect(rootPosition).toHaveBeenCalledWith(collection.id);
+        await coordination.close();
+    });
+
+    it("preserves mode-only resolvers while overriding their coordinator", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "mode-only-persistence" });
+        const root = memoryAdapter();
+        const selected = memoryAdapter();
+        const rootApply = vi.spyOn(root, "applyCommittedTx");
+        const apply = vi.spyOn(selected, "applyCommittedTx");
+        const resolvePersistenceForMode = vi.fn(() => ({ adapter: selected, coordinator: new SingleProcessCoordinator() }));
+        const collection = createLocalCollection<Item, string>({
+            name: "mode-only",
+            runtime: coordinatedRuntime({ adapter: { adapter: root, resolvePersistenceForMode }, coordination }).runtime,
+            getKey: (item) => item.id,
+        });
+        try {
+            await collection.preload();
+            await collection.insert({ id: "one", title: "Selected" }).isPersisted.promise;
+            expect(resolvePersistenceForMode).toHaveBeenCalledWith("sync-absent");
+            expect(apply).toHaveBeenCalledWith(collection.id, expect.anything());
+            expect(rootApply).not.toHaveBeenCalled();
+        } finally {
+            await collection.cleanup();
+            await coordination.close();
+        }
+    });
+
+    it("keeps different collection versions isolated on one shared coordinator", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "different-schemas" });
+        const root = memoryAdapter();
+        const tasksAdapter = { ...memoryAdapter(), schemaVersion: 2 };
+        const settingsAdapter = { ...memoryAdapter(), schemaVersion: 7 };
+        const rootApply = vi.spyOn(root, "applyCommittedTx");
+        const tasksApply = vi.spyOn(tasksAdapter, "applyCommittedTx");
+        const settingsApply = vi.spyOn(settingsAdapter, "applyCommittedTx");
+        const runtime = coordinatedRuntime({
+            adapter: {
+                adapter: root,
+                resolvePersistenceForCollection: ({ schemaVersion }) => ({
+                    adapter: schemaVersion === 2 ? tasksAdapter : settingsAdapter,
+                }),
+            },
+            coordination,
+        }).runtime;
+        const tasks = createLocalCollection<Item, string>({
+            name: "tasks",
+            schemaVersion: 2,
+            runtime,
+            getKey: (item) => item.id,
+        });
+        const settings = createLocalCollection<Item, string>({
+            name: "settings",
+            schemaVersion: 7,
+            runtime,
+            getKey: (item) => item.id,
+        });
+        await Promise.all([tasks.preload(), settings.preload()]);
+        await tasks.insert({ id: "one", title: "Task" }).isPersisted.promise;
+        await settings.insert({ id: "one", title: "Setting" }).isPersisted.promise;
+        expect(tasksApply).toHaveBeenCalledWith(tasks.id, expect.anything());
+        expect(settingsApply).toHaveBeenCalledWith(settings.id, expect.anything());
+        expect(rootApply).not.toHaveBeenCalled();
+        await tasks.cleanup();
+        await settings.insert({ id: "two", title: "Still active" }).isPersisted.promise;
+        expect(settings.get("two")?.title).toBe("Still active");
+        expect(createPersistedCollectionCoordinator(coordination, root)).toBe(
+            createPersistedCollectionCoordinator(coordination, root)
+        );
+        await settings.cleanup();
+        await coordination.close();
+    });
+
     it("preserves row metadata in local mutation RPC and broadcasts", async () => {
         const coordination = new SingleProcessCoordination({ scope: "mutation-metadata" });
         const adapter = memoryAdapter();
@@ -480,29 +595,42 @@ describe("persistence coordination", () => {
         await coordination.close();
     });
 
-    it("releases cached positions after the last subscription and reloads on reopening", async () => {
-        const coordination = new SingleProcessCoordination({ scope: "position-cleanup" });
-        const adapter = memoryAdapter();
-        const coordinator = createPersistedCollectionCoordinator(coordination, adapter);
-        const positions = Reflect.get(coordinator, "positions") as Map<string, unknown>;
+    it("keeps a scoped adapter until its last subscription closes and supports reopening", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "scoped-cleanup" });
+        const root = memoryAdapter();
+        const rootPosition = vi.spyOn(root, "getStreamPosition");
+        const scoped = memoryAdapter();
+        const scopedPosition = vi.spyOn(scoped, "getStreamPosition");
+        const coordinator = createPersistedCollectionCoordinator(coordination, root);
+        coordinator.setAdapterForCollection!("items", scoped);
         const first = coordinator.subscribe("items", () => {});
         const second = coordinator.subscribe("items", () => {});
-        await coordinator.requestApplyLocalMutations!("items", [{ mutationId: "one", type: "insert", key: "one", value: { id: "one" } }]);
-        expect(positions.has("items")).toBe(true);
         first();
         first();
-        expect(positions.has("items")).toBe(true);
+        await coordinator.pullSince!("items", 0);
+        expect(scopedPosition).toHaveBeenCalled();
+        expect(rootPosition).not.toHaveBeenCalled();
         second();
-        expect(positions.has("items")).toBe(false);
+        expect((Reflect.get(coordinator, "collectionAdapters") as Map<string, unknown>).size).toBe(0);
+        expect((Reflect.get(coordinator, "positions") as Map<string, unknown>).size).toBe(0);
+        scopedPosition.mockClear();
+        await coordinator.pullSince!("items", 0);
+        expect(scopedPosition).not.toHaveBeenCalled();
+        expect(rootPosition).toHaveBeenCalled();
+        const reopened = memoryAdapter();
+        const reopenedPosition = vi.spyOn(reopened, "getStreamPosition");
+        coordinator.setAdapterForCollection!("items", reopened);
         const close = coordinator.subscribe("items", () => {});
-        await expect(coordinator.requestApplyLocalMutations!("items", [{ mutationId: "two", type: "insert", key: "two", value: { id: "two" } }])).resolves.toMatchObject({ seq: 2 });
+        await coordinator.pullSince!("items", 0);
+        expect(reopenedPosition).toHaveBeenCalled();
         close();
-        expect(positions.size).toBe(0);
         await coordination.close();
     });
 
-    it("delegates pullSince to the runtime adapter and preserves its atomic stream position", async () => {
+    it("routes pullSince to the scoped adapter and preserves its atomic stream position", async () => {
         const coordination = new SingleProcessCoordination({ scope: "scoped-replay" });
+        const root = memoryAdapter();
+        const coordinator = createPersistedCollectionCoordinator(coordination, root);
         const pullSince = vi.fn(() =>
             Promise.resolve({
                 latestTerm: 5,
@@ -514,8 +642,8 @@ describe("persistence coordination", () => {
                 deltas: [],
             })
         );
-        const adapter = { ...memoryAdapter(), pullSince };
-        const coordinator = createPersistedCollectionCoordinator(coordination, adapter);
+        const scoped = { ...memoryAdapter(), pullSince };
+        coordinator.setAdapterForCollection!("items", scoped);
         expect(await coordinator.pullSince!("items", 8)).toMatchObject({
             latestTerm: 5,
             latestSeq: 7,
@@ -525,5 +653,91 @@ describe("persistence coordination", () => {
         });
         expect(pullSince).toHaveBeenCalledWith("items", 8);
         await coordination.close();
+    });
+});
+
+describe("worker schema fencing", () => {
+    it("uses registered collection versions instead of the default adapter for worker RPCs", async () => {
+        const channel = new MessageChannel();
+        const hostCoordination = new SharedWorkerCoordinationHost({ scope: "resolved-worker-schema" });
+        const disconnect = hostCoordination.connect(channel.port1 as unknown as CoordinationMessagePort);
+        const clientCoordination = new SharedWorkerCoordinationClient({ scope: "resolved-worker-schema", worker: channel.port2 as unknown as CoordinationMessagePort });
+        const root = { ...memoryAdapter(), schemaVersion: 1 };
+        const selected = { ...memoryAdapter(), schemaVersion: 2 };
+        const apply = vi.spyOn(selected, "applyCommittedTx");
+        const ensure = vi.spyOn(selected, "ensureIndex");
+        const host = createPersistedCollectionCoordinator(hostCoordination, root);
+        const client = createPersistedCollectionCoordinator(clientCoordination, root);
+        host.setAdapterForCollection!("items", selected);
+        client.setAdapterForCollection!("items", selected);
+        const unsubscribeHost = host.subscribe("items", () => {});
+        const unsubscribeClient = client.subscribe("items", () => {});
+        try {
+            await expect(client.requestApplyCommittedTx("items", { txId: "resolved", term: 1, seq: 1, rowVersion: 1, mutations: [] })).resolves.toMatchObject({ ok: true });
+            await expect(client.requestEnsurePersistedIndex("items", "resolved-index", { expressionSql: [] })).resolves.toBeUndefined();
+            expect(apply).toHaveBeenCalledOnce();
+            expect(ensure).toHaveBeenCalledOnce();
+        } finally {
+            unsubscribeClient();
+            unsubscribeHost();
+            await clientCoordination.close();
+            disconnect();
+            await hostCoordination.close();
+        }
+    });
+
+    it("rejects stale-schema worker writes and index requests", async () => {
+        const channel = new MessageChannel();
+        const hostCoordination = new SharedWorkerCoordinationHost({ scope: "schema-fencing" });
+        const disconnect = hostCoordination.connect(channel.port1 as unknown as CoordinationMessagePort);
+        const clientCoordination = new SharedWorkerCoordinationClient({
+            scope: "schema-fencing",
+            worker: channel.port2 as unknown as CoordinationMessagePort,
+        });
+        const current = { ...memoryAdapter(), schemaVersion: 2 };
+        const stale = { ...memoryAdapter(), schemaVersion: 1 };
+        const apply = vi.spyOn(current, "applyCommittedTx");
+        const ensure = vi.spyOn(current, "ensureIndex");
+        const host = createPersistedCollectionCoordinator(hostCoordination, current);
+        const client = createPersistedCollectionCoordinator(clientCoordination, stale);
+        host.setAdapterForCollection!("items", current);
+        client.setAdapterForCollection!("items", stale);
+        try {
+            await expect(
+                client.requestApplyLocalMutations!("items", [
+                    { mutationId: "old-insert", type: "insert", key: "one", value: { id: "one" } },
+                ])
+            ).rejects.toThrow("schema mismatch");
+            await expect(
+                client.requestApplyCommittedTx(
+                    "items",
+                    { txId: "stale", term: 1, seq: 1, rowVersion: 1, mutations: [] },
+                    stale
+                )
+            ).rejects.toThrow("schema mismatch");
+            await expect(
+                client.requestEnsurePersistedIndex(
+                    "items",
+                    "index",
+                    { expressionSql: [JSON.stringify({ type: "ref", path: ["id"] })] },
+                    stale
+                )
+            ).rejects.toThrow("schema mismatch");
+            // SQLite scheduling scopes expose storage methods without schema fields.
+            // The registered adapter must still supply the RPC's expected version.
+            const hydrationAdapter = { ...stale, schemaVersion: undefined };
+            await expect(client.requestApplyCommittedTx(
+                "items", { txId: "stale-scoped", term: 1, seq: 2, rowVersion: 2, mutations: [] }, hydrationAdapter
+            )).rejects.toThrow("schema mismatch");
+            await expect(client.requestEnsurePersistedIndex(
+                "items", "scoped-index", { expressionSql: [] }, hydrationAdapter
+            )).rejects.toThrow("schema mismatch");
+            expect(apply).not.toHaveBeenCalled();
+            expect(ensure).not.toHaveBeenCalled();
+        } finally {
+            await clientCoordination.close();
+            disconnect();
+            await hostCoordination.close();
+        }
     });
 });

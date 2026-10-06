@@ -19,7 +19,7 @@ export const createExpoRuntime = defineRuntime(async (
         openDatabaseAsync(`${name}.db`),
         ExpoNetworkConnectivity.create(),
     ]);
-    const { adapter: persistence } = createExpoSQLitePersistence({
+    const persistence = createExpoSQLitePersistence({
         database: database as unknown as ExpoSQLiteDatabaseLike,
     });
     const coordination =

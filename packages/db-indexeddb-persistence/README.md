@@ -1,24 +1,38 @@
 # IndexedDB persistence
 
-`IndexedDBPersistenceAdapter` works independently of the Party Stack runtime.
-Pass it to TanStack DB's `persistedCollectionOptions`:
+`createIndexedDBPersistence` provides TanStack's standard persistence resolver
+interface and works independently of Party Stack:
 
 ```ts
-import { IndexedDBPersistenceAdapter } from "@party-stack/db-indexeddb-persistence";
+import { createIndexedDBPersistence } from "@party-stack/db-indexeddb-persistence";
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
 
-const adapter = new IndexedDBPersistenceAdapter({ databaseName: "my-app" });
+const persistence = createIndexedDBPersistence({ databaseName: "my-app" });
 const options = persistedCollectionOptions({
     id: "tasks",
+    schemaVersion: 2,
     getKey: (task: { id: string }) => task.id,
-    persistence: { adapter },
+    persistence,
 });
 ```
 
-Clean up collections when finished, and call `adapter.close()` when the database
-lifetime ends. The adapter has one configured schema version; it does not resolve
-versions from individual collection options. Per-collection schema selection in
-Party Stack runtimes is deferred.
+Each collection resolution creates an adapter with its requested schema version
+and mismatch policy over one shared connection. There is no retained adapter cache
+by version, policy, or collection ID. Synced collections default to resetting
+incompatible caches; local-only collections preserve incompatible data and throw.
+Explicit `schemaMismatchPolicy` overrides those defaults; `"throw"` aliases
+`"sync-absent-error"`. Downgrades and stale adapters are rejected.
+
+A supplied `coordinator` is preserved. Otherwise TanStack supplies its default
+collection-local coordinator. No Party Stack imports or hooks are required.
+
+Clean up collections and drop their references when finished so their adapters and
+bookkeeping can be collected. Call `persistence.close()` at the end of the shared
+database lifetime; it closes the connection and prevents all adapter views from
+reopening it. Closing an individual view leaves other views usable. The factory
+retains only its required default adapter. An explicitly supplied shared coordinator
+owns its own registration cleanup. Direct `new IndexedDBPersistenceAdapter(...)`
+usage remains available and owns its own connection.
 
 The IndexedDB database upgrades from version 1 to version 2 to add metadata and
 transaction-version indexes. This migration preserves existing rows, metadata,

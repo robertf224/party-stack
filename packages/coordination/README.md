@@ -52,7 +52,7 @@ makes no parity claim for those cases.
 ## Collection and runtime lifetimes
 
 Call `collection.cleanup()` when a dynamic collection is no longer needed. The
-runtime shim removes its cached stream position after
+runtime shim removes its adapter binding and cached stream position after
 its last subscriber closes. Host-side positions are additionally bounded at 128
 entries for client-only collections with no local subscription. Evicted positions
 are restored from durable stream state (or an atomic resume snapshot). Subset owner unregistering unloads outstanding leases;
@@ -70,10 +70,21 @@ schema. Each operation captures its epoch so concurrent cache eviction cannot
 invalidate that operation. Adapter close clears this bookkeeping and closes the
 connection, including when close happens during database opening.
 
-Runtime persistence remains a `PersistenceAdapter`, shared by the runtime's
-collections. The shim uses that adapter and the runtime's generic coordination
-service. Per-collection schema selection and adapter ownership are deferred.
+Runtime persistence uses TanStack's `PersistedCollectionPersistence` object.
+The runtime retains the factory's standard collection/mode resolvers. A small
+wrapper replaces factory coordinators with one cached Party Stack shim, and
+TanStack registers each selected adapter through `setAdapterForCollection`.
+All versions use the same generic coordination service. Worker RPCs include the
+requesting adapter's version so a mismatched host cannot silently use its adapter.
+
+Node and Expo factories cache adapters by schema version and mismatch policy.
+IndexedDB creates fresh collection adapters over one factory-owned connection,
+without retaining historical adapter caches. SQLite factory adapter caches live
+until runtime shutdown; upstream SQLite adapters also retain collection table
+mappings. Collection cleanup releases shim bindings, but does not guarantee release
+of all upstream SQLite bookkeeping for historical IDs.
 
 Call collection cleanup and drop collection references when they are no longer
 needed. Runtime cleanup closes the shared database. Collection cleanup alone does
-not close a database still used by other collections.
+not close a database still used by other collections. Live ontology reopening and
+application migrations are separate future work.
