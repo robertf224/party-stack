@@ -29,6 +29,7 @@ import type {
 const PERSISTENCE_SERVICE = "party-stack.persistence.v1";
 const MAX_DEDUPLICATION_ENTRIES = 1_000;
 const MAX_PENDING_RELAYS = 1_000;
+const MAX_COLLECTION_POSITIONS = 128;
 
 interface CollectionPosition {
     term: number;
@@ -206,7 +207,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
         this.server = isCoordinationHost(coordination)
             ? coordination.serve<PersistenceCoordinationService>(PERSISTENCE_SERVICE, {
                   ensureLeadership: () => Promise.resolve(),
-                  ensureRemoteSubset: (input) => {
+                  ensureRemoteSubset: async (input) => {
                       let options = this.remoteAcquisitions.get(input.acquisitionId)?.options;
                       if (!options) {
                           options = input.options;
@@ -215,7 +216,18 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
                               options,
                           });
                       }
-                      return this.remoteSubsets.requestEnsureRemoteSubset(input.collectionId, options);
+                      try {
+                          await this.remoteSubsets.requestEnsureRemoteSubset(input.collectionId, options);
+                      } catch (error) {
+                          // Owner invocation transfers a lease even if loading fails.
+                          // Release it before dropping our strong reference to its options.
+                          if (this.remoteAcquisitions.get(input.acquisitionId)?.options === options) {
+                              this.remoteAcquisitions.delete(input.acquisitionId);
+                              await this.remoteSubsets.requestReleaseRemoteSubset(input.collectionId, options)
+                                  .catch(() => undefined);
+                          }
+                          throw error;
+                      }
                   },
                   releaseRemoteSubset: (input) => {
                       const options = this.remoteAcquisitions.get(input.acquisitionId)?.options;
@@ -455,15 +467,26 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     private async position(collectionId: string): Promise<CollectionPosition> {
         let position = this.positions.get(collectionId);
         if (!position) {
+            const adapter = this.adapterForCollection(collectionId);
             position = Promise.resolve(
-                this.adapterForCollection(collectionId).getStreamPosition?.(collectionId)
+                adapter.getStreamPosition
+                    ? adapter.getStreamPosition(collectionId)
+                    : adapter.loadResumeSnapshot(collectionId, { includeRows: false })
             ).then((current) => ({
                 term: (current?.latestTerm ?? 0) + 1,
                 seq: current?.latestSeq ?? 0,
                 rowVersion: current?.latestRowVersion ?? 0,
             }));
-            this.positions.set(collectionId, position);
         }
+        this.positions.delete(collectionId);
+        this.positions.set(collectionId, position);
+        while (this.positions.size > MAX_COLLECTION_POSITIONS) {
+            const oldest = this.positions.keys().next().value;
+            if (oldest !== undefined) this.positions.delete(oldest);
+        }
+        void position.catch(() => {
+            if (this.positions.get(collectionId) === position) this.positions.delete(collectionId);
+        });
         return position;
     }
 

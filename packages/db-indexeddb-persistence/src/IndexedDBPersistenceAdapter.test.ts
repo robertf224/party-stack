@@ -1067,6 +1067,32 @@ describe("IndexedDBPersistenceAdapter", () => {
 });
 
 describe("IndexedDB persistence lifecycle and paging", () => {
+    it("clears collection initialization state on close and cannot repopulate it while opening", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        for (let index = 0; index < 20; index++) await adapter.loadResumeSnapshot(`dynamic-${index}`);
+        const initialized = Reflect.get(adapter, "initialized") as Map<string, unknown>;
+        expect(initialized.size).toBe(20);
+        adapter.close();
+        expect(initialized.size).toBe(0);
+        const opening = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const load = opening.loadResumeSnapshot("pending");
+        opening.close();
+        await expect(load).rejects.toThrow("closed");
+        expect((Reflect.get(opening, "initialized") as Map<string, unknown>).size).toBe(0);
+    });
+
+    it("bounds dynamic collection initialization state while preserving concurrent operations and persisted data", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        try {
+            await adapter.applyCommittedTx("saved", tx("seed", 1, [{ type: "insert", key: "one", value: { id: "one", priority: 1 } }]));
+            await Promise.all(Array.from({ length: 160 }, (_, index) => adapter.loadResumeSnapshot(`dynamic-${index}`)));
+            expect((Reflect.get(adapter, "initialized") as Map<string, unknown>).size).toBeLessThanOrEqual(128);
+            expect((await adapter.loadResumeSnapshot("saved")).rows).toHaveLength(1);
+        } finally {
+            adapter.close();
+        }
+    });
+
     it("rejects local schema mismatches without changing data", async () => {
         const name = databaseName();
         const original = new IndexedDBPersistenceAdapter({ databaseName: name });

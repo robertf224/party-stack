@@ -97,6 +97,7 @@ export class LockBroadcastCoordination
     private readonly pendingSenders = new Map<string, string>();
     private readonly incoming = new Map<string, IncomingRequest>();
     private readonly responses = new Map<string, CachedResponse>();
+    private responsePruneTimer: ReturnType<typeof setTimeout> | undefined;
     private readonly leadershipWaiters = new Set<Deferred<LeadershipTerm>>();
     private readonly task: Task<void>;
 
@@ -256,6 +257,8 @@ export class LockBroadcastCoordination
             );
             yield* until(this.core.close());
             this.channel = undefined;
+            this.clearResponses();
+            this.clearEventListeners();
             this.rejectPending(closeError);
             this.rejectLeadershipWaiters(closeError);
             this.rootScope.reject(closeError);
@@ -700,6 +703,7 @@ export class LockBroadcastCoordination
             expiresAt: Math.max(Date.now() + this.responseCacheMs, request.expiresAt),
         });
         this.pruneResponses();
+        this.scheduleResponsePruning();
         this.publish(response);
     }
 
@@ -831,6 +835,7 @@ export class LockBroadcastCoordination
         }
         await Promise.allSettled(completions);
         if (this.term === term) {
+            this.clearResponses();
             this.term = undefined;
         }
     }
@@ -865,6 +870,22 @@ export class LockBroadcastCoordination
             waiter.reject(error);
         }
         this.leadershipWaiters.clear();
+    }
+
+    private clearResponses(): void {
+        clearTimeout(this.responsePruneTimer);
+        this.responsePruneTimer = undefined;
+        this.responses.clear();
+    }
+
+    private scheduleResponsePruning(): void {
+        if (this.responsePruneTimer !== undefined || this.responses.size === 0 || this.closed) return;
+        const nextExpiry = Math.min(...[...this.responses.values()].map((cached) => cached.expiresAt));
+        this.responsePruneTimer = setTimeout(() => {
+            this.responsePruneTimer = undefined;
+            this.pruneResponses();
+            this.scheduleResponsePruning();
+        }, Math.max(1, Math.min(2_147_483_647, nextExpiry - Date.now())));
     }
 
     private pruneResponses(): void {

@@ -301,6 +301,48 @@ describe("createLocalCollection", () => {
         }
     });
 
+    it("releases failed subset leases and permits subsequent loads", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "failed-subsets" });
+        const coordinator = createPersistedCollectionCoordinator(coordination, memoryAdapter());
+        const load = vi.fn<() => Promise<void>>(() => Promise.reject(new Error("load failed")));
+        const unloadSubset = vi.fn();
+        const onError = vi.fn();
+        const unregister = coordinator.registerRemoteSubsetOwner("items", Object.assign(load, { unloadSubset, onError }));
+        try {
+            for (let index = 0; index < 20; index++) {
+                await expect(coordinator.requestEnsureRemoteSubset("items", { limit: index + 1 })).rejects.toThrow("load failed");
+            }
+            expect(unloadSubset).toHaveBeenCalledTimes(20);
+            expect(onError).toHaveBeenCalledTimes(20);
+            expect((Reflect.get(coordinator, "remoteAcquisitions") as Map<string, unknown>).size).toBe(0);
+            load.mockImplementation(() => Promise.resolve());
+            const options = { limit: 50 };
+            await coordinator.requestEnsureRemoteSubset("items", options);
+            await coordinator.requestReleaseRemoteSubset("items", options);
+            expect(unloadSubset).toHaveBeenCalledTimes(21);
+        } finally {
+            unregister();
+            await coordination.close();
+        }
+    });
+
+    it("bounds host positions for client-only collections and reloads evicted positions from durable storage", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "dynamic-host-positions" });
+        const adapter = { ...memoryAdapter(), getStreamPosition: undefined };
+        const apply = vi.spyOn(adapter, "applyCommittedTx");
+        const coordinator = createPersistedCollectionCoordinator(coordination, adapter);
+        try {
+            for (let index = 0; index < 160; index++) {
+                await coordinator.requestApplyLocalMutations!(`client-${index}`, [{ mutationId: "one", type: "insert", key: "one", value: { id: "one" } }]);
+            }
+            expect((Reflect.get(coordinator, "positions") as Map<string, unknown>).size).toBeLessThanOrEqual(128);
+            await coordinator.requestApplyLocalMutations!("client-0", [{ mutationId: "two", type: "insert", key: "two", value: { id: "two" } }]);
+            expect(apply).toHaveBeenLastCalledWith("client-0", expect.objectContaining({ seq: 2, rowVersion: 2 }));
+        } finally {
+            await coordination.close();
+        }
+    });
+
     it("routes client-only persistence through a SharedWorker host", async () => {
         const adapter = memoryAdapter();
         const channel = new MessageChannel();

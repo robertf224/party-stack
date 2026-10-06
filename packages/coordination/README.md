@@ -52,3 +52,35 @@ plus SharedWorker tests using MessageChannel. They do not establish real browser
 crash recovery or SQLite/OPFS behavior. Cold-hydration scheduling and replaying live
 subset leases across broadcast leader takeover need a separate audit; this change
 makes no parity claim for those cases.
+
+## Collection and runtime lifetimes
+
+Call `collection.cleanup()` when a dynamic collection is no longer needed. The
+runtime shim removes its adapter registration and cached stream position after
+its last subscriber closes. Host-side positions are additionally bounded at 128
+entries for client-only collections with no local subscription. Evicted positions
+are restored from durable stream state (or an atomic resume snapshot). Subset owner unregistering unloads outstanding leases;
+failed subset loads are also explicitly released. Mutation and relay histories
+are bounded at 1,000 entries each, rather than cleared on collection unsubscribe,
+so response-loss deduplication remains safe.
+
+Broadcast replies expire while idle. Closing coordination clears cached replies,
+event listeners, service clients, pending requests, and leadership waiters. Handlers
+must cooperate with cancellation and finish cleanup for shutdown to complete.
+
+IndexedDB initialization bookkeeping retains at most 128 collection IDs per
+adapter. Eviction does not delete persisted data; the next access revalidates the
+schema. Each operation captures its epoch so concurrent cache eviction cannot
+invalidate that operation. Adapter close clears this bookkeeping and closes the
+connection, including when close happens during database opening.
+
+The IndexedDB factory retains adapters by schema version and mismatch policy until
+`persistence.close()` (called by web runtime close). This cache is not bounded by
+collection count, but also has no automatic eviction for distinct schema versions.
+Do not assume collection cleanup closes these shared connections. Standalone use
+of upstream `SingleProcessCoordinator` additionally retains adapter registrations:
+its current `subscribe()` returns a no-op unsubscribe. The Party runtime shim
+cleans its own registrations; it does not use that upstream registration map.
+These remaining factory/upstream lifetimes need a coordinated adapter-release API
+if independently releasing schema variants while the factory stays alive becomes
+necessary. Closing an adapter still in use by another collection would be unsafe.

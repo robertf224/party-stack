@@ -196,6 +196,45 @@ function serve(coordination: LockBroadcastCoordination) {
 }
 
 describe("LockBroadcastCoordination", () => {
+    it("releases cached payloads, clients, and listeners when closed", async () => {
+        const { first, second } = createPair("close-retention");
+        serve(first);
+        serve(second);
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
+        const leader = first.isLeader ? first : second;
+        const follower = first.isLeader ? second : first;
+        leader.service<TestService>("test.v1").events.subscribe("changed", () => {});
+        await follower.service<TestService>("test.v1").methods.double({ value: 3 });
+        const retained = (key: string) => Reflect.get(leader, key) as Map<unknown, unknown>;
+        expect(retained("responses").size).toBe(1);
+        expect(retained("listeners").size).toBe(1);
+        await leader.close();
+        for (const key of ["responses", "listeners", "clients", "pending", "routes", "pendingSenders", "incoming", "leadershipWaiters"]) {
+            expect(retained(key).size, key).toBe(0);
+        }
+        await leader.close();
+        await follower.close();
+    });
+
+    it("expires reply payloads while idle without requiring another request", async () => {
+        const options = { scope: "idle-retention", requestTimeoutMs: 10, requestAttempts: 2, responseCacheMs: 1 };
+        const first = new LockBroadcastCoordination(options);
+        const second = new LockBroadcastCoordination(options);
+        serve(first);
+        serve(second);
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
+        const leader = first.isLeader ? first : second;
+        const follower = first.isLeader ? second : first;
+        try {
+            await follower.service<TestService>("test.v1").methods.double({ value: 3 });
+            await vi.waitFor(() => expect((Reflect.get(leader, "responses") as Map<string, unknown>).size).toBe(0));
+            expect(Reflect.get(leader, "responsePruneTimer")).toBeUndefined();
+        } finally {
+            await first.close();
+            await second.close();
+        }
+    });
+
     it("routes follower calls to the leader and fans out events", async () => {
         const { first, second } = createPair("routing");
         const firstServer = serve(first);

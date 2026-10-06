@@ -730,16 +730,27 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         }
     }
 
-    private async collectionDatabase(collectionId: string): Promise<IDBPDatabase<IndexedDBPersistenceDB>> {
+    private async collectionDatabase(collectionId: string): Promise<{ database: IDBPDatabase<IndexedDBPersistenceDB>; epoch: number }> {
         const database = await this.database();
+        if (this.closed) throw new Error("IndexedDB persistence adapter is closed.");
         let initialized = this.initialized.get(collectionId);
         if (!initialized) {
             initialized = this.initializeCollection(database, collectionId);
             this.initialized.set(collectionId, initialized);
-            void initialized.catch(() => this.initialized.delete(collectionId));
+            void initialized.catch(() => {
+                if (this.initialized.get(collectionId) === initialized) this.initialized.delete(collectionId);
+            });
         }
-        await initialized;
-        return database;
+        // Bound per-collection bookkeeping for long-lived adapters serving dynamic IDs.
+        // Operations capture their epoch so eviction cannot invalidate an in-flight transaction.
+        this.initialized.delete(collectionId);
+        this.initialized.set(collectionId, initialized);
+        while (this.initialized.size > 128) {
+            const oldest = this.initialized.keys().next().value;
+            if (oldest !== undefined) this.initialized.delete(oldest);
+        }
+        const epoch = await initialized;
+        return { database, epoch };
     }
 
     private async initializeCollection(
@@ -840,8 +851,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         }
     }
 
-    private async assertSchema(stream: StreamRecord | undefined, collectionId: string): Promise<void> {
-        const epoch = await this.initialized.get(collectionId);
+    private assertSchema(stream: StreamRecord | undefined, collectionId: string, epoch: number): void {
         if (stream?.schemaVersion !== this.schemaVersion || (stream.resetEpoch ?? 0) !== epoch) {
             throw new Error(
                 `Collection "${collectionId}" was reset or migrated by another adapter. Refusing access through a stale IndexedDB adapter.`
@@ -853,7 +863,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         collectionId: string,
         context?: { requiredIndexSignatures?: ReadonlyArray<string>; includeRows?: boolean }
     ): ReturnType<PersistenceAdapter["loadResumeSnapshot"]> {
-        const database = await this.collectionDatabase(collectionId);
+        const { database, epoch } = await this.collectionDatabase(collectionId);
         // Read data and its cursor together so a concurrent commit cannot make
         // the resume position newer than the rows restored from this snapshot.
         const transaction = database.transaction([ROWS, COLLECTION_METADATA, STREAMS], "readonly");
@@ -864,7 +874,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             transaction.objectStore(COLLECTION_METADATA).index(BY_COLLECTION).getAll(collectionId),
             transaction.objectStore(STREAMS).get(collectionId),
         ]);
-        await this.assertSchema(stream, collectionId);
+        this.assertSchema(stream, collectionId, epoch);
         await transaction.done;
         return {
             rows: rows.map(({ key, value, metadata }) => ({
@@ -907,12 +917,12 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             );
             return orderRows([...merged.values()], options.orderBy).rows;
         }
-        const database = await this.collectionDatabase(collectionId);
+        const { database, epoch } = await this.collectionDatabase(collectionId);
         const transaction = database.transaction(
             [ROWS, INDEX_DEFINITIONS, INDEX_ENTRIES, STREAMS],
             "readonly"
         );
-        await this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId);
+        this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
         const definitions = await transaction
             .objectStore(INDEX_DEFINITIONS)
             .index(BY_COLLECTION)
@@ -1109,13 +1119,13 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
     }
 
     async applyCommittedTx(collectionId: string, committed: PersistedTx): Promise<void> {
-        const database = await this.collectionDatabase(collectionId);
+        const { database, epoch } = await this.collectionDatabase(collectionId);
         const transaction = database.transaction(
             [ROWS, TRANSACTIONS, COLLECTION_METADATA, STREAMS, INDEX_DEFINITIONS, INDEX_ENTRIES],
             "readwrite"
         );
         try {
-            await this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId);
+            this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
             const transactionId = id(collectionId, committed.txId);
             const previous = await transaction.objectStore(TRANSACTIONS).get(transactionId);
             if (previous) {
@@ -1346,9 +1356,9 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
     }
 
     async loadCollectionMetadata(collectionId: string): Promise<Array<{ key: string; value: unknown }>> {
-        const database = await this.collectionDatabase(collectionId);
+        const { database, epoch } = await this.collectionDatabase(collectionId);
         const transaction = database.transaction([COLLECTION_METADATA, STREAMS], "readonly");
-        await this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId);
+        this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
         const records = await transaction
             .objectStore(COLLECTION_METADATA)
             .index(BY_COLLECTION)
@@ -1362,9 +1372,9 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
 
     async scanRows(collectionId: string, options?: PersistedRowScanOptions): Promise<PersistedRow[]> {
         if (!options?.metadataOnly) return this.loadSubset(collectionId, {});
-        const database = await this.collectionDatabase(collectionId);
+        const { database, epoch } = await this.collectionDatabase(collectionId);
         const transaction = database.transaction([ROWS, STREAMS], "readonly");
-        await this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId);
+        this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
         const rows = await transaction.objectStore(ROWS).index(BY_METADATA).getAll([collectionId, 1]);
         await transaction.done;
         return rows.map(({ key, value, metadata }) => ({
@@ -1378,10 +1388,10 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         collectionId: string,
         fromRowVersion: number
     ): Promise<PersistencePullSinceResult & { latestTerm: number; latestSeq: number }> {
-        const database = await this.collectionDatabase(collectionId);
+        const { database, epoch } = await this.collectionDatabase(collectionId);
         const transaction = database.transaction([TRANSACTIONS, STREAMS], "readonly");
         const stream = await transaction.objectStore(STREAMS).get(collectionId);
-        await this.assertSchema(stream, collectionId);
+        this.assertSchema(stream, collectionId, epoch);
         const latestRowVersion = stream!.latestRowVersion;
         const generation = { latestRowVersion, latestTerm: stream!.latestTerm, latestSeq: stream!.latestSeq };
         const reload = { ...generation, requiresFullReload: true as const };
@@ -1443,14 +1453,14 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
     }
 
     async ensureIndex(collectionId: string, signature: string, spec: PersistedIndexSpec): Promise<void> {
-        const database = await this.collectionDatabase(collectionId);
+        const { database, epoch } = await this.collectionDatabase(collectionId);
         const expression = parseIndexExpression(spec);
         const transaction = database.transaction(
             [ROWS, INDEX_DEFINITIONS, INDEX_ENTRIES, STREAMS],
             "readwrite"
         );
         try {
-            await this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId);
+            this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
             const existing = await transaction.objectStore(INDEX_DEFINITIONS).get([collectionId, signature]);
             if (
                 existing &&
@@ -1493,9 +1503,9 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
     }
 
     async markIndexRemoved(collectionId: string, signature: string): Promise<void> {
-        const database = await this.collectionDatabase(collectionId);
+        const { database, epoch } = await this.collectionDatabase(collectionId);
         const transaction = database.transaction([INDEX_DEFINITIONS, INDEX_ENTRIES, STREAMS], "readwrite");
-        await this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId);
+        this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
         await transaction.objectStore(INDEX_DEFINITIONS).delete([collectionId, signature]);
         const entryStore = transaction.objectStore(INDEX_ENTRIES);
         const keys = await entryStore.index(BY_INDEX).getAllKeys([collectionId, signature]);
@@ -1504,9 +1514,9 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
     }
 
     async getStreamPosition(collectionId: string): Promise<StreamRecord> {
-        const database = await this.collectionDatabase(collectionId);
+        const { database, epoch } = await this.collectionDatabase(collectionId);
         const stream = await database.get(STREAMS, collectionId);
-        await this.assertSchema(stream, collectionId);
+        this.assertSchema(stream, collectionId, epoch);
         return (
             stream ?? {
                 collectionId,
@@ -1519,7 +1529,8 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
 
     close(): void {
         this.closed = true;
-        void this.databasePromise?.then((database) => database.close());
+        this.initialized.clear();
+        void this.databasePromise?.then((database) => database.close(), () => undefined);
         this.databasePromise = undefined;
     }
 
