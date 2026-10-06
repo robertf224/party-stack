@@ -708,13 +708,16 @@ function orderRows(
 }
 
 export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
-    private databasePromise?: Promise<IDBPDatabase<IndexedDBPersistenceDB>>;
+    private readonly connection: IndexedDBConnection;
+    private readonly ownsConnection: boolean;
     private closed = false;
 
     private readonly initialized = new Map<string, Promise<number>>();
     readonly schemaVersion: number;
 
-    constructor(private readonly options: IndexedDBPersistenceAdapterOptions) {
+    constructor(private readonly options: IndexedDBPersistenceAdapterOptions, connection?: IndexedDBConnection) {
+        this.ownsConnection = connection === undefined;
+        this.connection = connection ?? new IndexedDBConnection(options);
         this.schemaVersion = options.schemaVersion ?? 1;
         for (const [name, value] of Object.entries({
             schemaVersion: this.schemaVersion,
@@ -732,7 +735,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
 
     private async collectionDatabase(collectionId: string): Promise<{ database: IDBPDatabase<IndexedDBPersistenceDB>; epoch: number }> {
         const database = await this.database();
-        if (this.closed) throw new Error("IndexedDB persistence adapter is closed.");
+        if (this.closed || this.connection.closed) throw new Error("IndexedDB persistence adapter is closed.");
         let initialized = this.initialized.get(collectionId);
         if (!initialized) {
             initialized = this.initializeCollection(database, collectionId);
@@ -1530,11 +1533,29 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
     close(): void {
         this.closed = true;
         this.initialized.clear();
+        if (this.ownsConnection) this.connection.close();
+    }
+
+    private database(): Promise<IDBPDatabase<IndexedDBPersistenceDB>> {
+        if (this.closed) return Promise.reject(new Error("IndexedDB persistence adapter is closed."));
+        return this.connection.database();
+    }
+}
+
+/** Internal database lifetime shared by collection adapters from one factory. */
+export class IndexedDBConnection {
+    private databasePromise?: Promise<IDBPDatabase<IndexedDBPersistenceDB>>;
+    closed = false;
+
+    constructor(private readonly options: Pick<IndexedDBPersistenceAdapterOptions, "databaseName" | "onBlocked" | "onVersionChange">) {}
+
+    close(): void {
+        this.closed = true;
         void this.databasePromise?.then((database) => database.close(), () => undefined);
         this.databasePromise = undefined;
     }
 
-    private database(): Promise<IDBPDatabase<IndexedDBPersistenceDB>> {
+    database(): Promise<IDBPDatabase<IndexedDBPersistenceDB>> {
         if (this.closed) {
             return Promise.reject(new Error("IndexedDB persistence adapter is closed."));
         }

@@ -1,5 +1,4 @@
-import { SingleProcessCoordinator } from "@tanstack/db-sqlite-persistence-core";
-import { IndexedDBPersistenceAdapter } from "./IndexedDBPersistenceAdapter.js";
+import { IndexedDBConnection, IndexedDBPersistenceAdapter } from "./IndexedDBPersistenceAdapter.js";
 import type { IndexedDBPersistenceAdapterOptions } from "./IndexedDBPersistenceAdapter.js";
 import type {
     PersistedCollectionCoordinator,
@@ -23,8 +22,8 @@ export type IndexedDBPersistenceOptions = Omit<
 export function createIndexedDBPersistence(
     options: IndexedDBPersistenceOptions
 ): PersistedCollectionPersistence & { close: () => void } {
-    const { coordinator = new SingleProcessCoordinator(), schemaMismatchPolicy, ...baseOptions } = options;
-    const adapters = new Map<string, IndexedDBPersistenceAdapter>();
+    const { coordinator, schemaMismatchPolicy, ...baseOptions } = options;
+    const connection = new IndexedDBConnection(baseOptions);
     let closed = false;
     const resolve = (
         mode: PersistedCollectionMode,
@@ -36,26 +35,24 @@ export function createIndexedDBPersistence(
                 ? "sync-absent-error"
                 : (schemaMismatchPolicy ??
                   (mode === "sync-present" ? "sync-present-reset" : "sync-absent-error"));
-        const key = JSON.stringify([policy, schemaVersion ?? 1]);
-        let adapter = adapters.get(key);
-        if (!adapter) {
-            adapter = new IndexedDBPersistenceAdapter({
-                ...baseOptions,
-                schemaVersion,
-                schemaMismatchPolicy: policy,
-            });
-            adapters.set(key, adapter);
-        }
-        return { adapter, coordinator };
+        const adapter = new IndexedDBPersistenceAdapter({
+            ...baseOptions,
+            schemaVersion,
+            schemaMismatchPolicy: policy,
+        }, connection);
+        // Without a supplied coordinator, TanStack creates a collection-local default.
+        return { adapter, ...(coordinator ? { coordinator } : {}) };
     };
+    const root = resolve("sync-absent");
+    const rootAdapter = root.adapter as IndexedDBPersistenceAdapter;
     return {
-        ...resolve("sync-absent"),
+        ...root,
         resolvePersistenceForCollection: ({ mode, schemaVersion }) => resolve(mode, schemaVersion),
         resolvePersistenceForMode: (mode) => resolve(mode),
         close: () => {
             closed = true;
-            for (const adapter of adapters.values()) adapter.close();
-            adapters.clear();
+            rootAdapter.close();
+            connection.close();
         },
     };
 }

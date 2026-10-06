@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 import { createCollection } from "@tanstack/db";
 import { persistedCollectionOptions, SingleProcessCoordinator } from "@tanstack/db-sqlite-persistence-core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createIndexedDBPersistence } from "./index.js";
 
 const databaseName = () => `factory-${crypto.randomUUID()}`;
@@ -33,12 +33,12 @@ describe("createIndexedDBPersistence", () => {
         second.persistence.close();
     });
 
-    it("shares coordinator and caches adapters by policy and schema rather than collection ID", () => {
+    it("creates independent collection adapters while preserving a supplied coordinator", () => {
         const coordinator = new SingleProcessCoordinator();
         const persistence = createIndexedDBPersistence({ databaseName: databaseName(), coordinator });
         const resolve = persistence.resolvePersistenceForCollection!;
         const first = resolve({ collectionId: "a", mode: "sync-absent", schemaVersion: 2 });
-        expect(resolve({ collectionId: "b", mode: "sync-absent", schemaVersion: 2 }).adapter).toBe(
+        expect(resolve({ collectionId: "b", mode: "sync-absent", schemaVersion: 2 }).adapter).not.toBe(
             first.adapter
         );
         expect(resolve({ collectionId: "a", mode: "sync-present", schemaVersion: 2 }).adapter).not.toBe(
@@ -48,9 +48,37 @@ describe("createIndexedDBPersistence", () => {
             first.adapter
         );
         expect(first.coordinator).toBe(coordinator);
-        expect(persistence.resolvePersistenceForMode!("sync-absent").adapter).toBe(persistence.adapter);
+        expect(persistence.resolvePersistenceForMode!("sync-absent").adapter).not.toBe(persistence.adapter);
         persistence.close();
         expect(() => resolve({ collectionId: "a", mode: "sync-absent" })).toThrow("closed");
+    });
+
+    it("shares one connection across independent schemas, allows closing one view, and closes all views with the factory", async () => {
+        const open = vi.spyOn(indexedDB, "open");
+        const persistence = createIndexedDBPersistence({ databaseName: databaseName() });
+        const resolve = persistence.resolvePersistenceForCollection!;
+        const first = resolve({ collectionId: "first", mode: "sync-absent", schemaVersion: 2 }).adapter;
+        const second = resolve({ collectionId: "second", mode: "sync-absent", schemaVersion: 7 }).adapter;
+        try {
+            await Promise.all([first.loadResumeSnapshot("first"), second.loadResumeSnapshot("second")]);
+            expect(open).toHaveBeenCalledOnce();
+            (first as import("./IndexedDBPersistenceAdapter.js").IndexedDBPersistenceAdapter).close();
+            await expect(first.loadResumeSnapshot("first")).rejects.toThrow("closed");
+            await expect(second.loadResumeSnapshot("second")).resolves.toMatchObject({ rows: [] });
+            persistence.close();
+            await expect(second.loadResumeSnapshot("second")).rejects.toThrow("closed");
+        } finally {
+            persistence.close();
+            open.mockRestore();
+        }
+    });
+
+    it("closes a pending shared connection before collection initialization can start", async () => {
+        const persistence = createIndexedDBPersistence({ databaseName: databaseName() });
+        const view = persistence.resolvePersistenceForCollection!({ collectionId: "pending", mode: "sync-absent", schemaVersion: 2 });
+        const load = view.adapter.loadResumeSnapshot("pending");
+        persistence.close();
+        await expect(load).rejects.toThrow("closed");
     });
 
     it.each([undefined, "throw"] as const)(

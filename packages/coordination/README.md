@@ -74,13 +74,24 @@ schema. Each operation captures its epoch so concurrent cache eviction cannot
 invalidate that operation. Adapter close clears this bookkeeping and closes the
 connection, including when close happens during database opening.
 
-The IndexedDB factory retains adapters by schema version and mismatch policy until
-`persistence.close()` (called by web runtime close). This cache is not bounded by
-collection count, but also has no automatic eviction for distinct schema versions.
-Do not assume collection cleanup closes these shared connections. Standalone use
-of upstream `SingleProcessCoordinator` additionally retains adapter registrations:
-its current `subscribe()` returns a no-op unsubscribe. The Party runtime shim
-cleans its own registrations; it does not use that upstream registration map.
-These remaining factory/upstream lifetimes need a coordinated adapter-release API
-if independently releasing schema variants while the factory stays alive becomes
-necessary. Closing an adapter still in use by another collection would be unsafe.
+Runtime persistence remains a standard `PersistedCollectionPersistence` object,
+with a default adapter for coordinator identity and a small resolver that creates
+collection-owned adapters. Adapters are not cached globally by version or policy.
+All collection versions still share the runtime's generic coordination service.
+
+Expo adapters share one public SQLite driver and its operation queue. Node's
+public factory creates collection-local drivers whose execution state is shared
+by database identity. Both use upstream SQLite storage code and independent
+collection schema checks. Reopening a collection repeats some initialization;
+retaining adapters just to avoid that work is intentionally avoided.
+
+IndexedDB collection adapters share one factory-owned connection. Individual view
+close does not close another view's connection; factory close rejects access from
+all views and prevents reopening. With no custom coordinator supplied, TanStack
+creates its collection-local default, avoiding a factory-wide default coordinator
+registration map. An explicitly supplied shared coordinator owns its registration
+lifetime. No Party runtime imports or hooks are required for standalone IndexedDB.
+
+Call collection cleanup and drop collection references to allow their adapters and
+bookkeeping to be garbage-collected. Runtime cleanup closes the shared database.
+Collection cleanup alone does not close a database still used by other collections.

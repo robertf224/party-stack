@@ -15,7 +15,7 @@ const options = persistedCollectionOptions({
 });
 ```
 
-The factory supplies a `SingleProcessCoordinator` by default and accepts a custom `coordinator`. Its standard `resolvePersistenceForCollection` and legacy `resolvePersistenceForMode` callbacks select and cache adapters by schema version and mismatch policy. After collections are cleaned up, call `persistence.close()` to close all IndexedDB connections.
+The factory accepts a custom `coordinator`; otherwise TanStack supplies a collection-local `SingleProcessCoordinator`. Its standard resolver callbacks create collection-owned adapters with independent schema versions and mismatch policies, sharing one factory-owned IndexedDB connection. There is no retained cache of adapters by schema version or collection ID. Clean up collections and drop their references when finished. Call `persistence.close()` when the shared persistence lifetime ends; this closes the shared connection and prevents all adapter views from reopening it. Closing an individual adapter view leaves the other views usable. An explicitly supplied shared coordinator owns its own registration cleanup.
 
 ## Schema changes
 

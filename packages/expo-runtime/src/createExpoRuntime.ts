@@ -1,11 +1,11 @@
 import { SingleProcessCoordination } from "@party-stack/coordination";
 import { defineRuntime } from "@party-stack/runtime";
 import {
-    createExpoSQLitePersistence,
     type ExpoSQLiteDatabaseLike,
 } from "@tanstack/expo-db-sqlite-persistence";
 import { deleteDatabaseAsync, openDatabaseAsync } from "expo-sqlite";
 import { createExpoBrowserAuthentication } from "./createExpoBrowserAuthentication.js";
+import { createExpoCollectionPersistence } from "./createExpoCollectionPersistence.js";
 import { ExpoFileSystemBlobBytesStore } from "./ExpoFileSystemBlobBytesStore.js";
 import { ExpoNetworkConnectivity } from "./ExpoNetworkConnectivity.js";
 import { ExpoSecretStore } from "./ExpoSecretStore.js";
@@ -19,9 +19,7 @@ export const createExpoRuntime = defineRuntime(async (
         openDatabaseAsync(`${name}.db`),
         ExpoNetworkConnectivity.create(),
     ]);
-    const persistence = createExpoSQLitePersistence({
-        database: database as unknown as ExpoSQLiteDatabaseLike,
-    });
+    const persistence = createExpoCollectionPersistence(database as unknown as ExpoSQLiteDatabaseLike);
     const coordination =
         new SingleProcessCoordination({
             scope: name,

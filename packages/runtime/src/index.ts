@@ -47,3 +47,5 @@ export type {
     CoordinationTaskContext,
     LockBroadcastCoordinationOptions,
 } from "@party-stack/coordination";
+
+export { createCollectionAdapterPersistence } from "./utils/createCollectionAdapterPersistence.js";
