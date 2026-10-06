@@ -154,6 +154,52 @@ describe("Foundry action execution time overrides", () => {
     });
 });
 
+describe("Foundry action API names", () => {
+    it.each([
+        [
+            "createWarrantySubmissionForBBStreamline",
+            "create-warranty-submission-for-b-b-streamline",
+        ],
+        [
+            "com.palantirfoundry.valinorEnterprises.streamline.completeTask",
+            "com.palantirfoundry.valinor-enterprises.streamline.complete-task",
+        ],
+    ])("applies %s using the exact reversible API name", async (name, apiName) => {
+        ontologyMocks.applyWithOverrides.mockResolvedValue({
+            operationId: "operation-1",
+            validation: { result: "VALID" },
+            edits: {
+                type: "edits",
+                edits: [],
+            },
+        });
+        const adapter = createFoundryOntologyBackendAdapter({
+            client: {
+                ontologyRid: "ri.ontology.main.1",
+            } as OntologyClient,
+            ir: {
+                types: [],
+                objectTypes: [],
+                linkTypes: [],
+                actionTypes: [
+                    {
+                        name,
+                        displayName: "Action",
+                        parameters: [],
+                        logic: [],
+                    },
+                ],
+                queryFunctionTypes: [],
+            },
+            live: false,
+        });
+
+        await adapter.applyAction(name, {}, { objects: {} });
+
+        expect(ontologyMocks.applyWithOverrides.mock.calls[0]?.[2]).toBe(apiName);
+    });
+});
+
 describe("Foundry live behavior", () => {
     const ir = {
         types: [],

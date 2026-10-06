@@ -31,6 +31,23 @@ describe("convertActionTypeLoadSubsetFilter", () => {
         });
     });
 
+    it("preserves single-letter word boundaries in exact apiName predicates", () => {
+        const filter = convertActionTypeLoadSubsetFilter(
+            eq(
+                new IR.PropRef<string>(["name"]),
+                "createWarrantySubmissionForBBStreamline"
+            )
+        );
+
+        expect(filter).toEqual({
+            type: "actionTypeApiName",
+            value: {
+                type: "exact",
+                value: "create-warranty-submission-for-b-b-streamline",
+            },
+        });
+    });
+
     it("converts name inArray to an or of exact apiName predicates", () => {
         const filter = convertActionTypeLoadSubsetFilter(
             inArray(new IR.PropRef<string>(["name"]), ["createTask", "completeTask"])
