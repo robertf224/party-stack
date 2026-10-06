@@ -13,12 +13,12 @@ const ir: OntologyIR = {
 
 describe("createFoundryOntologyRoute", () => {
     it.each([30_000, false, undefined] as const)(
-        "forwards metadata refetch interval %s through route configuration",
-        async (refetchInterval) => {
+        "forwards metaRefetchInterval %s through route configuration",
+        async (metaRefetchInterval) => {
             const createAdapter = vi.spyOn(metaAdapter, "createFoundryMetaOntologyBackendAdapter");
             const route = createFoundryOntologyRoute({
                 ontologyId: "ri.ontology.main",
-                ...(refetchInterval === undefined ? {} : { refetchInterval }),
+                ...(metaRefetchInterval === undefined ? {} : { metaRefetchInterval }),
             })("https://foundry.example");
 
             try {
@@ -38,7 +38,7 @@ describe("createFoundryOntologyRoute", () => {
                     expect(createAdapter).toHaveBeenCalledOnce();
                     const adapterOptions = createAdapter.mock.calls[0]?.[0];
                     expect(adapterOptions?.client.ontologyRid).toBe("ri.ontology.main");
-                    expect(adapterOptions?.refetchInterval).toBe(refetchInterval);
+                    expect(adapterOptions?.refetchInterval).toBe(metaRefetchInterval);
                 } finally {
                     await backend.cleanup?.();
                 }

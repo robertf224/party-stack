@@ -4,12 +4,12 @@ Foundry adapter and metadata conversion for Party Stack LiveOntology.
 
 ## Metadata polling
 
-Set `refetchInterval` on a metadata-only route included in your Foundry installation:
+Set `metaRefetchInterval` on a metadata-only route included in your Foundry installation:
 
 ```ts
 createFoundryOntologyRoute({
     ontologyId: "ri.ontology.main.ontology.example",
-    refetchInterval: 30_000,
+    metaRefetchInterval: 30_000,
 });
 ```
 
