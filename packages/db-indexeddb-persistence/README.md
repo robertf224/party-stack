@@ -1,29 +1,30 @@
 # IndexedDB persistence
 
-`createIndexedDBPersistence` follows TanStack DB's SQLite persistence factory API and works independently of the Party Stack runtime. Pass its result directly to `persistedCollectionOptions`:
+`IndexedDBPersistenceAdapter` works independently of the Party Stack runtime.
+Pass it to TanStack DB's `persistedCollectionOptions`:
 
 ```ts
-import { createIndexedDBPersistence } from "@party-stack/db-indexeddb-persistence";
+import { IndexedDBPersistenceAdapter } from "@party-stack/db-indexeddb-persistence";
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
 
-const persistence = createIndexedDBPersistence({ databaseName: "my-app" });
+const adapter = new IndexedDBPersistenceAdapter({ databaseName: "my-app" });
 const options = persistedCollectionOptions({
     id: "tasks",
-    schemaVersion: 1,
     getKey: (task: { id: string }) => task.id,
-    persistence,
+    persistence: { adapter },
 });
 ```
 
-The factory accepts a custom `coordinator`; otherwise TanStack supplies a collection-local `SingleProcessCoordinator`. Its standard resolver callbacks create collection-owned adapters with independent schema versions and mismatch policies, sharing one factory-owned IndexedDB connection. There is no retained cache of adapters by schema version or collection ID. Clean up collections and drop their references when finished. Call `persistence.close()` when the shared persistence lifetime ends; this closes the shared connection and prevents all adapter views from reopening it. Closing an individual adapter view leaves the other views usable. An explicitly supplied shared coordinator owns its own registration cleanup.
+Clean up collections when finished, and call `adapter.close()` when the database
+lifetime ends. The adapter has one configured schema version; it does not resolve
+versions from individual collection options. Per-collection schema selection in
+Party Stack runtimes is deferred.
 
-## Schema changes
-
-Synced collections reset their refetchable cache on a schema mismatch. Local-only collections reject the mismatch and preserve their data; migrate that data before increasing their schema version, or explicitly opt into `schemaMismatchPolicy: "reset"` when discarding it is intended. Downgrades are rejected. Reads and writes check both schema version and reset epoch inside their IndexedDB transaction, so an adapter opened before a reset cannot continue accessing the old generation.
-
-As with SQLite, the factory defaults to preserving local-only data, and resolves synced collections to the cache reset policy. An explicit `schemaMismatchPolicy` overrides this choice; `"throw"` is an alias for `"sync-absent-error"`. The lower-level `IndexedDBPersistenceAdapter` remains available for direct use with explicit schema options.
-
-The IndexedDB database itself upgrades from version 1 to version 2 to add metadata and transaction-version indexes. This migration preserves existing rows, metadata, collection positions, and persisted indexes. Legacy transaction ID records remain available for deduplication within the retained window, but lack replay data; requests for unavailable old history require a full reload.
+The IndexedDB database upgrades from version 1 to version 2 to add metadata and
+transaction-version indexes. This migration preserves existing rows, metadata,
+collection positions, and persisted indexes. Legacy transaction ID records remain
+available for deduplication within the retained window, but lack replay data;
+requests for unavailable old history require a full reload.
 
 ## Bounded recovery history
 

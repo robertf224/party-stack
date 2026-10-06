@@ -1,7 +1,6 @@
 export { createPersistedCollectionCoordinator } from "./coordinator/index.js";
 export { createDefaultRuntime } from "./utils/createDefaultRuntime.js";
 export { defineRuntime } from "./utils/defineRuntime.js";
-export { createCollectionPersistence } from "./utils/createCollectionPersistence.js";
 export { createLocalCollection } from "./utils/createLocalCollection.js";
 export { MemoryBlobBytesStore } from "./memory/MemoryBlobBytesStore.js";
 export { BrowserAuthenticationCancelledError } from "./utils/BrowserAuthenticationCancelledError.js";
@@ -47,5 +46,3 @@ export type {
     CoordinationTaskContext,
     LockBroadcastCoordinationOptions,
 } from "@party-stack/coordination";
-
-export { createCollectionAdapterPersistence } from "./utils/createCollectionAdapterPersistence.js";

@@ -29,10 +29,6 @@ version.
 
 ## TanStack audit references
 
-- [Issue #1753](https://github.com/TanStack/db/issues/1753) documented a single
-  adapter slot being overwritten by per-collection schema resolvers. Our runtime
-  registers adapters per collection on one cached shim. A regression opens schema
-  2 and schema 7 collections together and verifies writes reach their own adapters.
 - [PR #1845](https://github.com/TanStack/db/pull/1845) introduced complete committed
   transaction routing, exact subset leases, durability errors, and retries limited
   to the original known leader and term. Our regression coverage includes lost
@@ -42,8 +38,8 @@ version.
   collection cannot remove another collection’s lease for the same options object.
 - [PR #1868](https://github.com/TanStack/db/pull/1868) covers hydration fairness,
   replay/coalescing, per-collection deduplication, and coordinator lifecycle cleanup.
-  We scope mutation envelope deduplication by collection and release collection
-  adapters and cached positions after the last subscription closes.
+  We scope mutation envelope deduplication by collection and release cached collection
+  positions after the last subscription closes.
 - [PR #1899](https://github.com/TanStack/db/pull/1899) fixes first-write startup
   routing. We exercise RPC immediately after construction, before election settles.
 
@@ -56,7 +52,7 @@ makes no parity claim for those cases.
 ## Collection and runtime lifetimes
 
 Call `collection.cleanup()` when a dynamic collection is no longer needed. The
-runtime shim removes its adapter registration and cached stream position after
+runtime shim removes its cached stream position after
 its last subscriber closes. Host-side positions are additionally bounded at 128
 entries for client-only collections with no local subscription. Evicted positions
 are restored from durable stream state (or an atomic resume snapshot). Subset owner unregistering unloads outstanding leases;
@@ -74,24 +70,10 @@ schema. Each operation captures its epoch so concurrent cache eviction cannot
 invalidate that operation. Adapter close clears this bookkeeping and closes the
 connection, including when close happens during database opening.
 
-Runtime persistence remains a standard `PersistedCollectionPersistence` object,
-with a default adapter for coordinator identity and a small resolver that creates
-collection-owned adapters. Adapters are not cached globally by version or policy.
-All collection versions still share the runtime's generic coordination service.
+Runtime persistence remains a `PersistenceAdapter`, shared by the runtime's
+collections. The shim uses that adapter and the runtime's generic coordination
+service. Per-collection schema selection and adapter ownership are deferred.
 
-Expo adapters share one public SQLite driver and its operation queue. Node's
-public factory creates collection-local drivers whose execution state is shared
-by database identity. Both use upstream SQLite storage code and independent
-collection schema checks. Reopening a collection repeats some initialization;
-retaining adapters just to avoid that work is intentionally avoided.
-
-IndexedDB collection adapters share one factory-owned connection. Individual view
-close does not close another view's connection; factory close rejects access from
-all views and prevents reopening. With no custom coordinator supplied, TanStack
-creates its collection-local default, avoiding a factory-wide default coordinator
-registration map. An explicitly supplied shared coordinator owns its registration
-lifetime. No Party runtime imports or hooks are required for standalone IndexedDB.
-
-Call collection cleanup and drop collection references to allow their adapters and
-bookkeeping to be garbage-collected. Runtime cleanup closes the shared database.
-Collection cleanup alone does not close a database still used by other collections.
+Call collection cleanup and drop collection references when they are no longer
+needed. Runtime cleanup closes the shared database. Collection cleanup alone does
+not close a database still used by other collections.

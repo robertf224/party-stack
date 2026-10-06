@@ -48,20 +48,17 @@ interface EnsureRemoteSubsetInput {
 }
 
 interface ApplyCommittedTxInput {
-    schemaVersion?: number;
     collectionId: string;
     tx: PersistedTx;
 }
 
 interface EnsurePersistedIndexInput {
-    schemaVersion?: number;
     collectionId: string;
     signature: string;
     spec: PersistedIndexSpec;
 }
 
 interface ApplyLocalMutationsInput {
-    schemaVersion?: number;
     collectionId: string;
     rpcId: string;
     envelopeId: string;
@@ -69,7 +66,6 @@ interface ApplyLocalMutationsInput {
 }
 
 interface PullSinceInput {
-    schemaVersion?: number;
     collectionId: string;
     rpcId: string;
     fromRowVersion: number;
@@ -160,29 +156,8 @@ export function createPersistedCollectionCoordinator(
 
 class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     private readonly nodeId = safeRandomUUID();
-    private readonly collectionAdapters = new Map<string, AdapterWithPullSince>();
     private readonly collectionSubscriptions = new Map<string, number>();
 
-    setAdapterForCollection(collectionId: string, adapter: HydrationPersistenceAdapter): void {
-        this.collectionAdapters.set(collectionId, adapter);
-        this.positions.delete(collectionId);
-    }
-
-    private adapterForCollection(collectionId: string, schemaVersion?: number): AdapterWithPullSince {
-        const adapter = this.collectionAdapters.get(collectionId) ?? this.adapter;
-        if (schemaVersion !== undefined && this.schemaVersion(adapter) !== schemaVersion) {
-            throw new Error(
-                `Persistence schema mismatch for collection "${collectionId}". Reload the coordination host before writing through another schema version.`
-            );
-        }
-        return adapter;
-    }
-
-    private schemaVersion(adapter: PersistenceAdapter): number | undefined {
-        return "schemaVersion" in adapter && typeof adapter.schemaVersion === "number"
-            ? adapter.schemaVersion
-            : undefined;
-    }
     private readonly positions = new Map<string, Promise<CollectionPosition>>();
     private readonly appliedEnvelopes = new Map<string, Extract<ApplyLocalMutationsResponse, { ok: true }>>();
     private readonly relayedMessages = new Set<string>();
@@ -238,7 +213,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
                   },
                   applyCommittedTx: (input) => this.applyCommittedTx(input),
                   ensurePersistedIndex: (input) =>
-                      this.adapterForCollection(input.collectionId, input.schemaVersion).ensureIndex(
+                      this.adapter.ensureIndex(
                           input.collectionId,
                           input.signature,
                           input.spec
@@ -276,7 +251,6 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
                     this.collectionSubscriptions.set(collectionId, remaining);
                 } else {
                     this.collectionSubscriptions.delete(collectionId);
-                    this.collectionAdapters.delete(collectionId);
                     this.positions.delete(collectionId);
                 }
             }
@@ -371,16 +345,15 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
             : this.service.methods.applyCommittedTx({
                   collectionId,
                   tx,
-                  schemaVersion: this.schemaVersion(scopedAdapter ?? this.adapterForCollection(collectionId)),
               });
     }
 
     private async applyCommittedTx(
-        { collectionId, tx, schemaVersion }: ApplyCommittedTxInput,
+        { collectionId, tx }: ApplyCommittedTxInput,
         scopedAdapter?: HydrationPersistenceAdapter
     ): Promise<ApplyCommittedTxResponse> {
         try {
-            await (scopedAdapter ?? this.adapterForCollection(collectionId, schemaVersion)).applyCommittedTx(
+            await (scopedAdapter ?? this.adapter).applyCommittedTx(
                 collectionId,
                 tx
             );
@@ -408,7 +381,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
         if (this.isLeader()) {
             return localEnsureCompleted
                 ? Promise.resolve()
-                : (scopedAdapter ?? this.adapterForCollection(collectionId)).ensureIndex(
+                : (scopedAdapter ?? this.adapter).ensureIndex(
                       collectionId,
                       signature,
                       spec
@@ -418,7 +391,6 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
             collectionId,
             signature,
             spec,
-            schemaVersion: this.schemaVersion(scopedAdapter ?? this.adapterForCollection(collectionId)),
         });
     }
 
@@ -430,7 +402,6 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
             collectionId,
             rpcId: safeRandomUUID(),
             envelopeId: safeRandomUUID(),
-            schemaVersion: this.schemaVersion(this.adapterForCollection(collectionId)),
             mutations,
         });
     }
@@ -440,7 +411,6 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
             collectionId,
             rpcId: safeRandomUUID(),
             fromRowVersion,
-            schemaVersion: this.schemaVersion(this.adapterForCollection(collectionId)),
         });
     }
 
@@ -467,7 +437,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     private async position(collectionId: string): Promise<CollectionPosition> {
         let position = this.positions.get(collectionId);
         if (!position) {
-            const adapter = this.adapterForCollection(collectionId);
+            const adapter = this.adapter;
             position = Promise.resolve(
                 adapter.getStreamPosition
                     ? adapter.getStreamPosition(collectionId)
@@ -491,7 +461,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     }
 
     private async applyMutations(input: ApplyLocalMutationsInput): Promise<ApplyLocalMutationsResponse> {
-        const adapter = this.adapterForCollection(input.collectionId, input.schemaVersion);
+        const adapter = this.adapter;
         const envelopeKey = JSON.stringify([input.collectionId, input.envelopeId]);
         const previous = this.appliedEnvelopes.get(envelopeKey);
         if (previous) {
@@ -574,7 +544,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     }
 
     private async handlePullSince(input: PullSinceInput): Promise<PullSinceResponse> {
-        const adapter = this.adapterForCollection(input.collectionId, input.schemaVersion);
+        const adapter = this.adapter;
         const current = await adapter.getStreamPosition?.(input.collectionId);
         const position = current
             ? { term: current.latestTerm, seq: current.latestSeq, rowVersion: current.latestRowVersion }

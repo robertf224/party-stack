@@ -20,13 +20,13 @@
 
 Upgrade TanStack DB dependencies and peer requirements to DB 0.11.3, React DB 0.5.3, Query DB Collection 1.3.4, SQLite persistence core 0.4.3, and Expo/Node SQLite persistence 0.2.28.
 
-Update IndexedDB persistence and runtime coordination for the required atomic resume snapshots, remote subset lease lifecycle, and leader-side committed transactions. Runtime persistence must use the standard `PersistedCollectionPersistence` object (`{ adapter, ... }`); custom adapters must implement `loadResumeSnapshot`.
+Update IndexedDB persistence and runtime coordination for the required atomic resume snapshots, remote subset lease lifecycle, and leader-side committed transactions. The runtime persistence interface remains a `PersistenceAdapter`; custom adapters must implement the new required `loadResumeSnapshot` method.
 
 Maintain only changed rows, metadata, and index entries during IndexedDB commits instead of rewriting complete collections. Reuse existing indexes and lazily rebuild legacy index summaries once. Abort failed index maintenance atomically with row writes.
 
 Preserve nanosecond precision for Instant range indexes and chronological PlainDate ordering across negative and extended years. Older index encodings fall back to scans until rebuilt.
 
-Enforce collection schema versions and fence stale IndexedDB adapters after resets. Expose a standalone `createIndexedDBPersistence` factory matching TanStack SQLite's collection resolvers and schema mismatch policies. Web, Node, and Expo runtimes preserve those standard resolvers, protecting incompatible local-only data and resetting refetchable synced caches. Upgrade existing IndexedDB databases without discarding rows. Release collection adapter registrations and cached coordinator positions when the last collection subscription closes.
+Retain adapter-level schema mismatch checks and stale-adapter fencing in IndexedDB. Runtime per-collection schema resolution is deferred. Upgrade existing IndexedDB databases without discarding rows. Release cached coordinator positions when the last collection subscription closes.
 
 Bound transaction deduplication and replay history, replay missed commits with rows and metadata, and reload when a baseline replacement, history gap, or large change set prevents incremental recovery.
 
@@ -39,5 +39,3 @@ Scope remote subset acquisition IDs by collection as well as options identity, s
 Release broadcast reply payloads when their retention window expires while idle, and clear reply, client, and listener caches on shutdown. Bound IndexedDB initialization bookkeeping to 128 collection IDs while capturing each operation’s schema epoch, clear it on close, and handle close during database opening. Release failed remote subset leases and their retained options before reporting the original load failure.
 
 Bound host-side collection position caches for client-only collections and restore evicted positions from durable stream state, falling back to an atomic resume snapshot when `getStreamPosition` is absent. Remove rejected position initialization promises so subsequent attempts can recover.
-
-Create collection-owned persistence adapters instead of retaining adapters by schema version and mismatch policy. Keep the standard persistence resolver on runtimes and shared generic coordination. Expo uses one public SQLite driver, Node shares execution state by database identity, and IndexedDB adapter views share one factory-owned connection. Individual IndexedDB view closure leaves other collections usable; factory closure prevents all views from reopening the connection. Standalone IndexedDB defaults to TanStack’s collection-local coordinator instead of keeping a global default registration map.

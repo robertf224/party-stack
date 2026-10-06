@@ -107,7 +107,7 @@ function coordinatedOutboxRuntime(options: {
         namespace: "outbox-test",
         blobBytes: new MemoryBlobBytesStore(),
         connectivity: options.connectivity,
-        persistence: { adapter: options.adapter },
+        persistence: options.adapter,
         coordination: options.coordination,
     };
     return {
@@ -861,7 +861,7 @@ describe("createOntologyOutbox", () => {
                         new TestNetworkConnectivity(
                             false
                         ),
-                    persistence: { adapter },
+                    persistence: adapter,
                 },
                 "interrupted-recovery-discard"
             );
@@ -920,7 +920,7 @@ describe("createOntologyOutbox", () => {
                         new MemoryBlobBytesStore(),
                     connectivity:
                         connectivity,
-                    persistence: { adapter },
+                    persistence: adapter,
                 },
                 "failed-recovery-retry"
             );
@@ -982,7 +982,7 @@ describe("createOntologyOutbox", () => {
                     blobBytes:
                         new MemoryBlobBytesStore(),
                     connectivity,
-                    persistence: { adapter },
+                    persistence: adapter,
                 },
                 "projection-restart"
             );
@@ -1033,7 +1033,7 @@ describe("createOntologyOutbox", () => {
             namespace: "client-only",
             blobBytes: new MemoryBlobBytesStore(),
             connectivity: new TestNetworkConnectivity(false),
-            persistence: { adapter },
+            persistence: adapter,
             coordination: hostCoordination,
         };
         const clientRuntime: RuntimeAdapter = {
@@ -1041,7 +1041,7 @@ describe("createOntologyOutbox", () => {
             namespace: "client-only",
             blobBytes: new MemoryBlobBytesStore(),
             connectivity: new TestNetworkConnectivity(false),
-            persistence: { adapter },
+            persistence: adapter,
             coordination: clientCoordination,
         };
         const host = createOntologyOutbox({

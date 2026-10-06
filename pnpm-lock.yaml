@@ -1002,9 +1002,6 @@ importers:
       '@party-stack/runtime':
         specifier: workspace:*
         version: link:../runtime
-      '@tanstack/db-sqlite-persistence-core':
-        specifier: 0.4.3
-        version: 0.4.3(typescript@5.8.3)
       '@tanstack/expo-db-sqlite-persistence':
         specifier: 0.2.28
         version: 0.2.28(expo-sqlite@55.0.15(expo@55.0.23(@babel/core@7.29.7)(@expo/dom-webview@55.0.6)(react-dom@19.2.0(react@19.2.0))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0)(typescript@5.8.3))(react-native@0.85.3(@babel/core@7.29.7)(@types/react@19.2.6)(react@19.2.0))(react@19.2.0))(typescript@5.8.3)

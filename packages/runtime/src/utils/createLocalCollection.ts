@@ -1,6 +1,6 @@
 import { createCollection, localOnlyCollectionOptions, type Collection } from "@tanstack/db";
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
-import { createCollectionPersistence } from "./createCollectionPersistence.js";
+import { createPersistedCollectionCoordinator } from "../coordinator/createPersistedCollectionCoordinator.js";
 import type { RuntimeAdapter } from "../types.js";
 
 export function createLocalCollection<T extends object, TKey extends string | number>(options: {
@@ -20,7 +20,13 @@ export function createLocalCollection<T extends object, TKey extends string | nu
             ? persistedCollectionOptions<T, TKey>({
                   ...collectionOptions,
                   schemaVersion: options.schemaVersion,
-                  persistence: createCollectionPersistence(options.runtime.coordination, persistence),
+                  persistence: {
+                      adapter: persistence,
+                      coordinator: createPersistedCollectionCoordinator(
+                          options.runtime.coordination,
+                          persistence
+                      ),
+                  },
               })
             : localOnlyCollectionOptions<T, TKey>(collectionOptions)
     );

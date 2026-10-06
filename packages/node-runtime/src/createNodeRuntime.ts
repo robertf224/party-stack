@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { SingleProcessCoordination } from "@party-stack/coordination";
-import { createCollectionAdapterPersistence, defineRuntime, type RuntimeAdapterProvider } from "@party-stack/runtime";
+import { defineRuntime, type RuntimeAdapterProvider } from "@party-stack/runtime";
 import { createNodeSQLitePersistence } from "@tanstack/node-db-sqlite-persistence";
 import Database from "better-sqlite3";
 import { createNodeBrowserAuthentication } from "./createNodeBrowserAuthentication.js";
@@ -39,11 +39,8 @@ export function createNodeRuntimeWithOptions(options: CreateNodeRuntimeOptions):
         });
 
         const database = new Database(join(directory, "collections.sqlite"));
-        // Node's public factory creates drivers whose transaction queue is shared
-        // by database identity. Keep only each collection's selected adapter.
-        const persistence = createCollectionAdapterPersistence((context) => {
-            const factory = createNodeSQLitePersistence({ database });
-            return factory.resolvePersistenceForCollection!(context).adapter;
+        const { adapter: persistence } = createNodeSQLitePersistence({
+            database,
         });
         const coordination = new SingleProcessCoordination({
             scope,
