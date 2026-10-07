@@ -1,5 +1,11 @@
 # @party-stack/foundry-ontology
 
+## 0.17.0
+
+### Minor Changes
+
+- b792b73: Add an optional `refetchInterval` to the Foundry meta ontology backend adapter and expose it as `metaRefetchInterval` on metadata-only ontology routes. Forward the interval to the shared metadata, action type, and query function type query collections. Set an interval in milliseconds to poll for metadata updates, or `false` to disable polling. Route configuration applies when the installation opens the meta ontology through `openMetaOntology`.
+
 ## 0.16.2
 
 ### Patch Changes
