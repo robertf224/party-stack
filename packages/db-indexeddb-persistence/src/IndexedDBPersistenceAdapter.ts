@@ -13,7 +13,7 @@ import { Temporal } from "temporal-polyfill";
 import type { LoadSubsetOptions } from "@tanstack/db";
 
 type PersistedRow = Awaited<ReturnType<PersistenceAdapter["loadSubset"]>>[number];
-type IndexValue = string | number | Date;
+type IndexValue = string | number | Date | [number, number, string];
 type IndexValueType =
     | "bigint"
     | "boolean"
@@ -40,7 +40,7 @@ const BY_METADATA = "metadata";
 const BY_VERSION = "version";
 const BY_LOOKUP = "lookup";
 const INDEX_BATCH_SIZE = 300;
-const INDEX_ENCODING_VERSION = 2;
+const INDEX_ENCODING_VERSION = 3;
 
 interface RowRecord extends PersistedRow {
     hasMetadata?: number;
@@ -262,6 +262,23 @@ function decodePersistedValue(value: unknown, seen = new WeakMap<object, unknown
     return mapPersistedContainer(value, seen, decodePersistedValue);
 }
 
+function hasCurrentIndexEncoding(definition: IndexDefinitionRecord): boolean {
+    return definition.encodingVersion === INDEX_ENCODING_VERSION ||
+        // Version 3 changes only bigint keys. Reuse other version 2 indexes.
+        (definition.encodingVersion === 2 && !definition.valueTypes.includes("bigint"));
+}
+
+function encodeBigIntIndexValue(value: bigint): [number, number, string] {
+    const negative = value < 0n;
+    const digits = (negative ? -value : value).toString();
+    // IndexedDB compares compound keys lexicographically. Positives sort by
+    // digit count then digits; negatives reverse both. Only the digit count is
+    // a number, so values of arbitrary precision never lose magnitude bits.
+    return negative
+        ? [0, -digits.length, digits.replace(/\d/g, (digit) => String(9 - Number(digit)))]
+        : [1, digits.length, digits];
+}
+
 function encodeIndexValue(value: unknown): EncodedIndexValue | undefined {
     const tag = temporalTag(value);
     if (tag === "Temporal.PlainDate") {
@@ -297,7 +314,7 @@ function encodeIndexValue(value: unknown): EncodedIndexValue | undefined {
         return { type: "number", value };
     }
     if (typeof value === "bigint") {
-        return { type: "bigint", value: value.toString() };
+        return { type: "bigint", value: encodeBigIntIndexValue(value) };
     }
     if (typeof value === "boolean") {
         return { type: "boolean", value: value ? 1 : 0 };
@@ -442,7 +459,7 @@ function boundedRange(
     const keyStart: [string, string, IndexValueType, IndexValue, string] = [...prefix, encoded.value, ""];
     const keyEnd: [string, string, IndexValueType, IndexValue, IDBValidKey] = [...prefix, encoded.value, []];
     const minimum: [string, string, IndexValueType, IndexValue, string] = [...prefix, -Infinity, ""];
-    const maximum: [string, string, IndexValueType, IDBValidKey, IDBValidKey] = [...prefix, [], []];
+    const maximum: [string, string, IndexValueType, IDBValidKey, IDBValidKey] = [...prefix, [[]], []];
     switch (operator) {
         case "gt":
             return IDBKeyRange.bound(keyEnd, maximum);
@@ -485,7 +502,7 @@ function rangeAfter(range: IDBKeyRange, entry: IndexEntryRecord): IDBKeyRange | 
 function compatibleRangeType(definition: IndexDefinitionRecord, valueType: IndexValueType): boolean {
     if (
         definition.hasUnsupportedValues ||
-        ["bigint", "nan", "null", "string-ci", "undefined"].includes(valueType)
+        ["nan", "null", "string-ci", "undefined"].includes(valueType)
     ) {
         return false;
     }
@@ -701,8 +718,8 @@ function compareOrderValues(
             options.stringSort === "locale" ? options.locale : undefined,
             options.stringSort === "locale" ? options.localeOptions : undefined
         );
-    else if (a.type === b.type && a.type !== "bigint")
-        comparison = a.value < b.value ? -1 : a.value > b.value ? 1 : 0;
+    else if (a.type === b.type)
+        comparison = indexedDB.cmp(a.value, b.value);
     else
         comparison =
             (left as string | number | bigint | boolean) < (right as string | number | bigint | boolean)
@@ -973,10 +990,10 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             .objectStore(INDEX_DEFINITIONS)
             .index(BY_COLLECTION)
             .getAll(collectionId);
-        // Older Temporal encodings can omit valid range candidates. Ignore
-        // those indexes until ensureIndex or a write rebuilds them.
+        // Older Temporal/bigint encodings can omit valid candidates. Ignore
+        // incompatible indexes until ensureIndex or a write rebuilds them.
         const plan = selectIndexPlan(
-            definitions.filter((definition) => definition.encodingVersion === INDEX_ENCODING_VERSION),
+            definitions.filter(hasCurrentIndexEncoding),
             options
         );
 
@@ -986,11 +1003,12 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             definitions.find((definition) => {
                 const types = definition.valueTypes.filter((type) => type !== "string-ci");
                 return (
-                    definition.encodingVersion === INDEX_ENCODING_VERSION &&
+                    hasCurrentIndexEncoding(definition) &&
                     !definition.hasUnsupportedValues &&
                     types.length === 1 &&
                     [
                         "number",
+                        "bigint",
                         "boolean",
                         "date",
                         "temporal-instant",
@@ -1021,7 +1039,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
                 findOrderedRange(plan) ??
                 IDBKeyRange.bound(
                     [collectionId, orderedDefinition.signature, type],
-                    [collectionId, orderedDefinition.signature, type, []]
+                    [collectionId, orderedDefinition.signature, type, [[]]]
                 );
             const predicate = options.where ? compileSingleRowExpression(options.where) : undefined;
             const limit = options.limit === undefined ? Infinity : Math.max(0, Math.trunc(options.limit));
@@ -1277,7 +1295,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
                 } else if (
                     definition.valueTypeCounts &&
                     definition.unsupportedValueCount !== undefined &&
-                    definition.encodingVersion === INDEX_ENCODING_VERSION
+                    hasCurrentIndexEncoding(definition)
                 ) {
                     const counts = { ...definition.valueTypeCounts };
                     for (const type of new Set([
@@ -1308,6 +1326,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
                     await Promise.all(after.entries.map((entry) => indexEntryStore.put(entry)));
                     await definitionStore.put({
                         ...definition,
+                        encodingVersion: INDEX_ENCODING_VERSION,
                         valueTypeCounts: counts,
                         unsupportedValueCount,
                         valueTypes: Object.keys(counts) as IndexValueType[],
@@ -1513,7 +1532,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
                 JSON.stringify(existing.expression) === JSON.stringify(expression) &&
                 existing.valueTypeCounts &&
                 existing.unsupportedValueCount !== undefined &&
-                existing.encodingVersion === INDEX_ENCODING_VERSION
+                hasCurrentIndexEncoding(existing)
             ) {
                 await transaction.done;
                 return;

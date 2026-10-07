@@ -52,9 +52,13 @@ cycles and shared references are preserved using per-operation graph bookkeeping
 IndexedDB natively preserves bigint, Date, undefined, NaN, and positive/negative
 Infinity, so these values need no JSON tags. It can preserve bigint beyond SQLite's
 signed 64-bit limit; applications using both adapters must respect SQLite's limit.
-Bigint equality can use a persisted index. Bigint range predicates and ordered pages
-use numeric filtering/sorting over loaded candidates, because decimal index strings
-are not numerically ordered. Filter-only reads may return a superset as described below.
+Bigint equality and ranges use persisted indexes. Homogeneous bigint ordering uses
+ordered cursors and stops after the requested filtered page. Compound keys encode
+sign, digit count, and digits without converting the magnitude to a number.
+Bigint indexes using encoding version 2 fall back to scans until index acquisition
+or a row write rebuilds them once; other indexes with that encoding version remain
+usable without rebuilding. The IndexedDB database schema version remains 2.
+Filter-only reads may return a superset as described below.
 Maps, Sets, buffers, and other native cloneable values are additional IndexedDB
 capabilities; SQLite's recursive JSON codec does not generally preserve these types.
 
@@ -74,7 +78,7 @@ Transaction IDs are deduplicated within that retained window. `pullSince` reads 
 
 The mini planner selects candidates using equality, range, AND/OR, and supported string-prefix indexes. Filter-only reads may return a candidate superset for TanStack DB to finish filtering.
 
-A single ordered expression can use an IndexedDB cursor when its index has one homogeneous supported type: number, boolean, Date, Temporal.Instant, Temporal.PlainDate, or lexically sorted string. The adapter evaluates residual filters before counting offset and limit, sorts tied rows by encoded key, and stops after the requested page. Cursor requests include all rows at the current boundary plus the limited following page.
+A single ordered expression can use an IndexedDB cursor when its index has one homogeneous supported type: number, bigint, boolean, Date, Temporal.Instant, Temporal.PlainDate, or lexically sorted string. The adapter evaluates residual filters before counting offset and limit, sorts tied rows by encoded key, and stops after the requested page. Cursor requests include all rows at the current boundary plus the limited following page.
 
 Mixed/nullish types, locale/custom string sorting, and multiple sort expressions use candidate loading and in-memory filtering, sorting, and pagination. Unsupported object-identity ordering keeps the full source available to the live query rather than returning a potentially incorrect finite page.
 
