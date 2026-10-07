@@ -113,7 +113,7 @@ export function decodeCoordinationValue(value: unknown, seen = new WeakMap<objec
 }
 
 /** Clone a service value with the same Temporal support as remote coordination. */
-export function cloneCoordinationValue<T>(value: T): T {
+export function cloneValue<T>(value: T): T {
     return decodeCoordinationValue(structuredClone(encodeCoordinationValue(value))) as T;
 }
 

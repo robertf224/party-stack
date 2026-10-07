@@ -1,6 +1,6 @@
 import { Temporal } from "temporal-polyfill";
 import { describe, expect, it } from "vitest";
-import { cloneCoordinationValue } from "./valueCodec.js";
+import { cloneValue } from "./valueCodec.js";
 
 describe("coordination value codec", () => {
     it("preserves every Temporal kind without global constructor registration", () => {
@@ -14,7 +14,7 @@ describe("coordination value codec", () => {
             Temporal.ZonedDateTime.from("2026-10-07T12:00:00+00:00[UTC]"),
             Temporal.Duration.from("P1D"),
         ];
-        const cloned = cloneCoordinationValue(values);
+        const cloned = cloneValue(values);
         for (const [index, value] of values.entries()) {
             expect(Object.getPrototypeOf(cloned[index])).toBe(Object.getPrototypeOf(value));
             expect(String(cloned[index])).toBe(value.toString());
@@ -36,7 +36,7 @@ describe("coordination value codec", () => {
             dangerousKeys: JSON.parse('{"__proto__":{"polluted":true}}') as unknown,
         };
         source.self = source;
-        const cloned = cloneCoordinationValue(source);
+        const cloned = cloneValue(source);
         expect(cloned).not.toBe(source);
         expect(cloned.self).toBe(cloned);
         expect(cloned.alias).toBe(cloned.instant);

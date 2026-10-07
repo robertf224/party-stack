@@ -1,4 +1,4 @@
-import { cloneCoordinationValue } from "@party-stack/coordination";
+import { cloneValue } from "@party-stack/coordination";
 import {
     createLocalCollection,
     isCoordinationHost,
@@ -309,7 +309,7 @@ export function useOntologyOutbox(
                     if (!current) {
                         throw new Error(`Outbox entry "${id}" was not found in this context.`);
                     }
-                    const request = cloneCoordinationValue(decodeOutboxRequest(current.request));
+                    const request = cloneValue(decodeOutboxRequest(current.request));
                     update(request);
                     const entry = await service.methods.edit({
                         id,

@@ -38,7 +38,7 @@ structured-clone behavior. Arrays, records, Maps, and Sets are traversed; cycles
 shared references, and sparse arrays survive. Record envelopes prevent application
 fields from colliding with codec tags. Graph bookkeeping is scoped to each operation.
 
-`cloneCoordinationValue(value)` makes a detached copy with the same value support,
+`cloneValue(value)` makes a detached copy with the same value support,
 for local editing. Single-process calls still use their existing direct-call behavior.
 New outbox writes use raw Temporal parameters; only decoding older outbox tags remains.
 SQLite persistence requires registered Temporal constructors; Node and Expo install
