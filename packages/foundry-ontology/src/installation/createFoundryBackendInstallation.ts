@@ -48,12 +48,17 @@ function createConnectionOntologyClient(baseUrl: string, ontologyId: string, egr
     });
 }
 
-function configureFoundryMeta(baseUrl: string, options: ConfigureOntologyOptions): OntologyConfiguration {
+function configureFoundryMeta(
+    baseUrl: string,
+    options: ConfigureOntologyOptions,
+    metaRefetchInterval?: number | false
+): OntologyConfiguration {
     const client = createConnectionOntologyClient(baseUrl, options.ontologyId, options.egress);
     return createMetaOntologyConfiguration({
         backend: () =>
             createFoundryMetaOntologyBackendAdapter({
                 client,
+                refetchInterval: metaRefetchInterval,
             }),
     });
 }
@@ -65,6 +70,8 @@ export function createFoundryOntologyRoute(options: {
     live?: boolean;
     persistObjects?: boolean;
     writes?: LiveOntologyWrites;
+    /** Metadata polling interval in milliseconds, or false to disable. Only applies when IR is omitted. */
+    metaRefetchInterval?: number | false;
 }): FoundryOntologyRoute {
     return (baseUrl) => {
         const route: OntologyRoute = {
@@ -89,7 +96,8 @@ export function createFoundryOntologyRoute(options: {
                 };
             };
         } else {
-            route.configureMeta = (configureOptions) => configureFoundryMeta(baseUrl, configureOptions);
+            route.configureMeta = (configureOptions) =>
+                configureFoundryMeta(baseUrl, configureOptions, options.metaRefetchInterval);
         }
         return route;
     };

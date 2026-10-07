@@ -10,6 +10,7 @@ import type { QueryTypeV2 } from "@osdk/foundry.ontologies";
 
 export interface QueryFunctionTypeCollectionOpts {
     client: OntologyClient;
+    refetchInterval?: number | false;
     queryClient?: QueryClient;
 }
 
@@ -28,20 +29,24 @@ async function listQueryFunctionTypes(opts: QueryFunctionTypeCollectionOpts): Pr
     );
 }
 
-async function getQueryFunctionTypes(opts: QueryFunctionTypeCollectionOpts, names: string[]): Promise<QueryTypeV2[]> {
+async function getQueryFunctionTypes(
+    opts: QueryFunctionTypeCollectionOpts,
+    names: string[]
+): Promise<QueryTypeV2[]> {
     const uniqueNames = Array.from(new Set(names));
     if (uniqueNames.length === 0) return [];
-    return Promise.all(
-        uniqueNames.map((name) => QueryTypes.get(opts.client, opts.client.ontologyRid, name))
-    );
+    return Promise.all(uniqueNames.map((name) => QueryTypes.get(opts.client, opts.client.ontologyRid, name)));
 }
 
-export function queryFunctionTypeCollectionOptions(opts: QueryFunctionTypeCollectionOpts): OntologyCollectionOptions {
+export function queryFunctionTypeCollectionOptions(
+    opts: QueryFunctionTypeCollectionOpts
+): OntologyCollectionOptions {
     return queryCollectionOptions<QueryFunctionTypeDef>({
         queryClient: opts.queryClient ?? new QueryClient(),
         getKey: (row: { name: string }) => row.name,
         queryKey: ["foundry", "ontology", "queryFunctionTypes"],
         syncMode: "on-demand",
+        refetchInterval: opts.refetchInterval,
         queryFn: async (ctx): Promise<QueryFunctionTypeDef[]> => {
             const query = convertQueryFunctionTypeQuery(ctx.meta?.loadSubsetOptions);
             const queryFunctionTypes =

@@ -19,6 +19,7 @@ import type { LoadSubsetOptions } from "@tanstack/db";
 
 export interface ActionTypeCollectionOpts {
     client: OntologyClient;
+    refetchInterval?: number | false;
     queryClient?: QueryClient;
 }
 
@@ -67,13 +68,9 @@ async function loadActionTypesFullMetadata(
     actionTypes: ActionTypeV2[]
 ): Promise<ActionTypeFullMetadata[]> {
     const declarativeActionTypes = actionTypes.filter(
-        (actionType) =>
-            !isNotDeclarativeActionType(actionType)
+        (actionType) => !isNotDeclarativeActionType(actionType)
     );
-    const fullMetadataByApiName = new Map<
-        string,
-        ActionTypeFullMetadata
-    >();
+    const fullMetadataByApiName = new Map<string, ActionTypeFullMetadata>();
     const fullMetadata = await AsyncIterable.toArray(
         AsyncIterable.fromBatches(
             declarativeActionTypes,
@@ -83,12 +80,9 @@ async function loadActionTypesFullMetadata(
                         client,
                         client.ontologyRid,
                         {
-                            requests: batch.map(
-                                (actionType) => ({
-                                    actionType:
-                                        actionType.apiName,
-                                })
-                            ),
+                            requests: batch.map((actionType) => ({
+                                actionType: actionType.apiName,
+                            })),
                         },
                         { preview: true }
                     )
@@ -97,17 +91,12 @@ async function loadActionTypesFullMetadata(
         )
     );
     for (const metadata of fullMetadata) {
-        fullMetadataByApiName.set(
-            metadata.actionType.apiName,
-            metadata
-        );
+        fullMetadataByApiName.set(metadata.actionType.apiName, metadata);
     }
 
     return actionTypes.map(
         (actionType) =>
-            fullMetadataByApiName.get(
-                actionType.apiName
-            ) ?? {
+            fullMetadataByApiName.get(actionType.apiName) ?? {
                 actionType,
                 fullLogicRules: [],
             }
@@ -120,29 +109,16 @@ export function actionTypeCollectionOptions(opts: ActionTypeCollectionOpts): Ont
         getKey: (row) => row.name,
         queryKey: ["foundry", "ontology", "actionTypes"],
         syncMode: "on-demand",
+        refetchInterval: opts.refetchInterval,
         queryFn: async (ctx) => {
-            const actionTypes = await searchActionTypes(
+            const actionTypes = await searchActionTypes(opts.client, ctx.meta?.loadSubsetOptions);
+            const actionTypeMetadata = await loadActionTypesFullMetadata(opts.client, actionTypes);
+            const omsMetadata = await loadActionTypeOmsMetadata(
                 opts.client,
-                ctx.meta?.loadSubsetOptions
+                actionTypeMetadata.map((metadata) => metadata.actionType.rid)
             );
-            const actionTypeMetadata =
-                await loadActionTypesFullMetadata(
-                    opts.client,
-                    actionTypes
-                );
-            const omsMetadata =
-                await loadActionTypeOmsMetadata(
-                    opts.client,
-                    actionTypeMetadata.map(
-                        (metadata) =>
-                            metadata.actionType.rid
-                    )
-                );
             return actionTypeMetadata.map((metadata) =>
-                convertFoundryMetaActionType(
-                    metadata,
-                    omsMetadata.get(metadata.actionType.rid)
-                )
+                convertFoundryMetaActionType(metadata, omsMetadata.get(metadata.actionType.rid))
             );
         },
     }) as unknown as OntologyCollectionOptions;
