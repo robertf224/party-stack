@@ -40,6 +40,24 @@ collection positions, and persisted indexes. Legacy transaction ID records remai
 available for deduplication within the retained window, but lack replay data;
 requests for unavailable old history require a full reload.
 
+## Persisted values
+
+Rows, row metadata, collection metadata, and replay preserve `Temporal.Instant`
+and `Temporal.PlainDate`, including nested arrays, records, Maps, and Sets.
+Unsupported Temporal kinds throw during the write instead of losing their state,
+matching SQLite core 0.4.5's supported Temporal kinds. Storage tags in ordinary
+application records are escaped; existing Temporal tags remain readable. Cloneable
+cycles and shared references are preserved using per-operation graph bookkeeping.
+
+IndexedDB natively preserves bigint, Date, undefined, NaN, and positive/negative
+Infinity, so these values need no JSON tags. It can preserve bigint beyond SQLite's
+signed 64-bit limit; applications using both adapters must respect SQLite's limit.
+Bigint equality can use a persisted index. Bigint range predicates and ordered pages
+use numeric filtering/sorting over loaded candidates, because decimal index strings
+are not numerically ordered. Filter-only reads may return a superset as described below.
+Maps, Sets, buffers, and other native cloneable values are additional IndexedDB
+capabilities; SQLite's recursive JSON codec does not generally preserve these types.
+
 ## Bounded recovery history
 
 Options follow the upstream SQLite defaults:

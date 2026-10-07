@@ -28,3 +28,4 @@ export {
 } from "./contracts.js";
 export { LockBroadcastCoordination } from "./LockBroadcastCoordination.js";
 export { SingleProcessCoordination } from "./SingleProcessCoordination.js";
+export { cloneCoordinationValue } from "./valueCodec.js";

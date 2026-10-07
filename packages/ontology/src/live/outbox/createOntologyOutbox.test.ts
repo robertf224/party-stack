@@ -4,6 +4,7 @@ import {
     createConnectionMonitor,
     type ConnectionEgressHandlers,
 } from "@party-stack/connections";
+import { SharedWorkerCoordinationClient, SharedWorkerCoordinationHost } from "@party-stack/coordination/shared-worker";
 import {
     type CoordinationCallOptions,
     type CoordinationClient,
@@ -395,16 +396,22 @@ describe("createOntologyOutbox", () => {
     it("edits and removes queued work", async () => {
         const { connectivity, outbox } = setup(false);
         await outbox.ready;
+        const instant = Temporal.Instant.from("2026-10-07T12:00:00.123456789Z");
+        const date = Temporal.PlainDate.from("2026-10-07");
         const action = await outbox.enqueue({
             actionTypeName: "createTask",
-            parameters: { title: "Before" },
+            parameters: { title: "Before", instant, dates: [date] },
         });
 
         await outbox.edit(action.entry.id, (request) => {
+            expect(request.parameters.instant).toBeInstanceOf(Temporal.Instant);
+            expect((request.parameters.dates as unknown[])[0]).toBeInstanceOf(Temporal.PlainDate);
             request.parameters.title = "After";
         });
         expect(outbox.collection.get(action.entry.id)?.request.parameters.title).toBe("After");
 
+        expect(action.entry.request.parameters.title).toBe("Before");
+        expect(String(outbox.collection.get(action.entry.id)?.request.parameters.instant)).toBe(instant.toString());
         await outbox.remove(action.entry.id);
         await expect(action.completed).rejects.toThrow("removed");
         expect(outbox.collection.has(action.entry.id)).toBe(false);
@@ -1242,9 +1249,12 @@ describe("createOntologyOutbox", () => {
     it("preserves Temporal parameters across coordinated contexts", async () => {
         const adapter = memoryPersistenceAdapter();
         const hostCoordination =
-            new SingleProcessCoordination({
+            new SharedWorkerCoordinationHost({
                 scope: "temporal",
             });
+        const channel = new MessageChannel();
+        hostCoordination.connect(channel.port1);
+        const clientCoordination = new SharedWorkerCoordinationClient({ scope: "temporal", worker: { port: channel.port2 } });
         const firstRuntime = coordinatedOutboxRuntime({
             adapter,
             coordination: hostCoordination,
@@ -1254,7 +1264,7 @@ describe("createOntologyOutbox", () => {
         const secondRuntime = coordinatedOutboxRuntime({
             adapter,
             coordination:
-                clientView(hostCoordination),
+                clientCoordination,
             connectivity:
                 new TestNetworkConnectivity(true),
         });
@@ -1295,8 +1305,11 @@ describe("createOntologyOutbox", () => {
         expect(String(observed)).toBe(
             "2026-07-27T12:00:00Z"
         );
+        expect(action.entry.request.parameters.__now).toBeInstanceOf(Temporal.Instant);
+        expect(action.entry.request.parameters).not.toHaveProperty("__party_stack_outbox_value_type__");
         await first.cleanup();
         await second.cleanup();
+        await clientCoordination.close();
         await hostCoordination.close();
     });
 

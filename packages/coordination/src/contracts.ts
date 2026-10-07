@@ -1,4 +1,4 @@
-export const COORDINATION_PROTOCOL_VERSION = 2 as const;
+export const COORDINATION_PROTOCOL_VERSION = 3 as const;
 
 export interface CoordinationService {
     methods: Record<

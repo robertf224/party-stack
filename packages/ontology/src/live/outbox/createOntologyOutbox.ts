@@ -1,3 +1,4 @@
+import { cloneCoordinationValue } from "@party-stack/coordination";
 import {
     createLocalCollection,
     isCoordinationHost,
@@ -21,7 +22,7 @@ import {
 import type { ConnectionMonitor } from "@party-stack/connections";
 import { runOutboxLeader, type OutboxLeaderOptions } from "./leaderExecutor.js";
 import { serveOntologyOutbox } from "./outboxService.js";
-import { decodeOutboxEntry, decodeOutboxRequest, encodeOutboxRequest } from "./outboxValues.js";
+import { decodeOutboxEntry, decodeOutboxRequest } from "./outboxValues.js";
 import { OutboxProjectionManager, type OutboxProjection } from "./projectionManager.js";
 import { OntologyOutboxRepository } from "./repository.js";
 import {
@@ -269,10 +270,10 @@ export function useOntologyOutbox(
                     const proposed: OntologyOutboxEntry = {
                         id: crypto.randomUUID(),
                         sequence: 0,
-                        request: encodeOutboxRequest({
+                        request: {
                             ...request,
                             idempotencyKey: request.idempotencyKey ?? crypto.randomUUID(),
-                        }),
+                        },
                         visibility: enqueueOptions?.visibility ?? "confirmed",
                         status: "queued",
                         createdAt: timestamp,
@@ -308,11 +309,11 @@ export function useOntologyOutbox(
                     if (!current) {
                         throw new Error(`Outbox entry "${id}" was not found in this context.`);
                     }
-                    const request = structuredClone(decodeOutboxRequest(current.request));
+                    const request = cloneCoordinationValue(decodeOutboxRequest(current.request));
                     update(request);
                     const entry = await service.methods.edit({
                         id,
-                        request: encodeOutboxRequest(request),
+                        request,
                     });
                     await projections.ensure(entry);
                     return decodeOutboxEntry(entry);

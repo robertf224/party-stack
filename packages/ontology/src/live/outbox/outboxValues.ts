@@ -4,20 +4,11 @@ import type {
     OntologyOutboxEntry,
 } from "./types.js";
 
-// Outbox-local transport codec: structured-clone RPC/events lose polyfilled
-// Temporal values. SQLite persistence supports them directly as of core 0.4.5,
-// but that does not protect coordination messages.
-// TODO: Stop encoding here once coordination transport preserves Temporal values.
-// Keep decoding legacy tags until stored outbox entries have been drained or migrated.
+// Legacy decoder only: older outbox entries tagged Temporal parameters before
+// coordination transport supported them. New writes store raw Temporal values.
+// Retain this until old durable entries have been drained or migrated.
 const OUTBOX_VALUE_TYPE =
     "__party_stack_outbox_value_type__";
-
-interface EncodedTemporalValue {
-    [OUTBOX_VALUE_TYPE]:
-        | "Temporal.Instant"
-        | "Temporal.PlainDate";
-    value: string;
-}
 
 function isPlainObject(
     value: unknown
@@ -37,44 +28,32 @@ function isPlainObject(
     );
 }
 
-export function encodeOutboxValue(
-    value: unknown
-): unknown {
-    if (value instanceof Temporal.Instant) {
-        return {
-            [OUTBOX_VALUE_TYPE]:
-                "Temporal.Instant",
-            value: value.toString(),
-        } satisfies EncodedTemporalValue;
-    }
-    if (value instanceof Temporal.PlainDate) {
-        return {
-            [OUTBOX_VALUE_TYPE]:
-                "Temporal.PlainDate",
-            value: value.toString(),
-        } satisfies EncodedTemporalValue;
-    }
-    if (Array.isArray(value)) {
-        return value.map(encodeOutboxValue);
-    }
-    if (isPlainObject(value)) {
-        return Object.fromEntries(
-            Object.entries(value).map(
-                ([key, entry]) => [
-                    key,
-                    encodeOutboxValue(entry),
-                ]
-            )
-        );
-    }
-    return value;
-}
-
 export function decodeOutboxValue(
-    value: unknown
+    value: unknown,
+    seen = new WeakMap<object, unknown>()
 ): unknown {
+    if (typeof value !== "object" || value === null) return value;
+    if (seen.has(value)) return seen.get(value);
     if (Array.isArray(value)) {
-        return value.map(decodeOutboxValue);
+        const decoded: unknown[] = [];
+        seen.set(value, decoded);
+        decoded.length = value.length;
+        for (const key of Object.keys(value)) Object.defineProperty(decoded, key, {
+            value: decodeOutboxValue(Reflect.get(value, key), seen), enumerable: true, writable: true, configurable: true,
+        });
+        return decoded;
+    }
+    if (value instanceof Map) {
+        const decoded = new Map<unknown, unknown>();
+        seen.set(value, decoded);
+        for (const [key, entry] of value) decoded.set(decodeOutboxValue(key, seen), decodeOutboxValue(entry, seen));
+        return decoded;
+    }
+    if (value instanceof Set) {
+        const decoded = new Set<unknown>();
+        seen.set(value, decoded);
+        for (const entry of value) decoded.add(decodeOutboxValue(entry, seen));
+        return decoded;
     }
     if (!isPlainObject(value)) {
         return value;
@@ -84,34 +63,25 @@ export function decodeOutboxValue(
             "Temporal.Instant" &&
         typeof value.value === "string"
     ) {
-        return Temporal.Instant.from(value.value);
+        const decoded = Temporal.Instant.from(value.value);
+        seen.set(value, decoded);
+        return decoded;
     }
     if (
         value[OUTBOX_VALUE_TYPE] ===
             "Temporal.PlainDate" &&
         typeof value.value === "string"
     ) {
-        return Temporal.PlainDate.from(
-            value.value
-        );
+        const decoded = Temporal.PlainDate.from(value.value);
+        seen.set(value, decoded);
+        return decoded;
     }
-    return Object.fromEntries(
-        Object.entries(value).map(([key, entry]) => [
-            key,
-            decodeOutboxValue(entry),
-        ])
-    );
-}
-
-export function encodeOutboxRequest(
-    request: OntologyActionRequest
-): OntologyActionRequest {
-    return {
-        ...request,
-        parameters: encodeOutboxValue(
-            request.parameters
-        ) as Record<string, unknown>,
-    };
+    const decoded: Record<string, unknown> = {};
+    seen.set(value, decoded);
+    for (const [key, entry] of Object.entries(value)) Object.defineProperty(decoded, key, {
+        value: decodeOutboxValue(entry, seen), enumerable: true, writable: true, configurable: true,
+    });
+    return decoded;
 }
 
 export function decodeOutboxRequest(

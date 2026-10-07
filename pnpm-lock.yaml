@@ -891,6 +891,9 @@ importers:
       effection:
         specifier: ^4.0.2
         version: 4.0.2
+      temporal-polyfill:
+        specifier: ^0.3.0
+        version: 0.3.0
     devDependencies:
       '@bobbyfidz/universal-build-config':
         specifier: ^0.1.1
@@ -1441,6 +1444,9 @@ importers:
       '@party-stack/connections':
         specifier: workspace:*
         version: link:../connections
+      '@party-stack/coordination':
+        specifier: workspace:*
+        version: link:../coordination
       '@party-stack/errors':
         specifier: workspace:*
         version: link:../errors

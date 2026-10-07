@@ -39,6 +39,7 @@
         "@next/env": "^16.1.6",
         "@party-stack/blobs": "workspace:*",
         "@party-stack/connections": "workspace:*",
+        "@party-stack/coordination": "workspace:*",
         "@party-stack/errors": "workspace:*",
         "@party-stack/icons": "workspace:^",
         "@party-stack/node-runtime": "workspace:^",

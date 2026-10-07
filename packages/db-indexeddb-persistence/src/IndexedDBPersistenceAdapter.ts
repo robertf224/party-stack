@@ -173,50 +173,93 @@ function temporalTag(value: unknown): string | undefined {
     return typeof tag === "string" ? tag : undefined;
 }
 
-function encodePersistedValue(value: unknown): unknown {
-    const tag = temporalTag(value);
-    if (tag === "Temporal.Instant" || tag === "Temporal.PlainDate") {
-        return {
-            [PERSISTED_TYPE]: tag,
-            value: String(value),
-        } satisfies PersistedTemporalValue;
-    }
+// IndexedDB natively preserves bigint, Date, non-finite numbers, and undefined.
+// Only Temporal needs tagging. Walk cloneable containers and escape tag-shaped
+// application records; the graph map belongs to one operation, not the adapter.
+function mapPersistedContainer(
+    value: object,
+    seen: WeakMap<object, unknown>,
+    visit: (entry: unknown, seen: WeakMap<object, unknown>) => unknown,
+    target?: Record<string, unknown>
+): unknown {
     if (Array.isArray(value)) {
-        return value.map(encodePersistedValue);
+        const mapped: unknown[] = [];
+        seen.set(value, mapped);
+        mapped.length = value.length;
+        for (const key of Object.keys(value)) Object.defineProperty(mapped, key, {
+            value: visit(Reflect.get(value, key), seen), enumerable: true, writable: true, configurable: true,
+        });
+        return mapped;
     }
-    if (typeof value === "object" && value !== null) {
-        const prototype = Object.getPrototypeOf(value) as unknown;
-        if (prototype === Object.prototype || prototype === null) {
-            return Object.fromEntries(
-                Object.entries(value).map(([key, entry]) => [key, encodePersistedValue(entry)])
-            );
-        }
+    if (value instanceof Map) {
+        const mapped = new Map<unknown, unknown>();
+        seen.set(value, mapped);
+        for (const [key, entry] of value) mapped.set(visit(key, seen), visit(entry, seen));
+        return mapped;
+    }
+    if (value instanceof Set) {
+        const mapped = new Set<unknown>();
+        seen.set(value, mapped);
+        for (const entry of value) mapped.add(visit(entry, seen));
+        return mapped;
+    }
+    const prototype = Object.getPrototypeOf(value) as unknown;
+    if (prototype === Object.prototype || prototype === null) {
+        const mapped = target ?? {};
+        if (!seen.has(value)) seen.set(value, mapped);
+        for (const [key, entry] of Object.entries(value)) Object.defineProperty(mapped, key, {
+            value: visit(entry, seen), enumerable: true, writable: true, configurable: true,
+        });
+        return mapped;
     }
     return value;
 }
 
-function decodePersistedValue(value: unknown): unknown {
-    if (typeof value === "object" && value !== null && PERSISTED_TYPE in value && "value" in value) {
-        const persisted = value as PersistedTemporalValue;
-        if (persisted[PERSISTED_TYPE] === "Temporal.Instant") {
-            return Temporal.Instant.from(persisted.value);
+function encodePersistedValue(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
+    if (typeof value !== "object" || value === null) return value;
+    if (seen.has(value)) return seen.get(value);
+    const tag = temporalTag(value);
+    const prototype = Object.getPrototypeOf(value) as unknown;
+    if (prototype !== Object.prototype && prototype !== null && tag?.startsWith("Temporal.")) {
+        if (tag !== "Temporal.Instant" && tag !== "Temporal.PlainDate")
+            throw new TypeError(`Unsupported ${tag} value for IndexedDB persistence`);
+        const constructor = tag === "Temporal.Instant" ? Temporal.Instant : Temporal.PlainDate;
+        const encoded = {
+            [PERSISTED_TYPE]: tag,
+            value: constructor.prototype.toString.call(value),
+        } satisfies PersistedTemporalValue;
+        seen.set(value, encoded);
+        return encoded;
+    }
+    if ((prototype === Object.prototype || prototype === null) && PERSISTED_TYPE in value) {
+        const entries: Record<string, unknown> = {};
+        const encoded = { [PERSISTED_TYPE]: "record", value: entries };
+        seen.set(value, encoded);
+        mapPersistedContainer(value, seen, encodePersistedValue, entries);
+        return encoded;
+    }
+    return mapPersistedContainer(value, seen, encodePersistedValue);
+}
+
+function decodePersistedValue(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
+    if (typeof value !== "object" || value === null) return value;
+    if (seen.has(value)) return seen.get(value);
+    if (PERSISTED_TYPE in value && "value" in value) {
+        const persisted = value as Record<string, unknown>;
+        const tag = persisted[PERSISTED_TYPE];
+        if ((tag === "Temporal.Instant" || tag === "Temporal.PlainDate") && typeof persisted.value === "string") {
+            const decoded = tag === "Temporal.Instant"
+                ? Temporal.Instant.from(persisted.value) : Temporal.PlainDate.from(persisted.value);
+            seen.set(value, decoded);
+            return decoded;
         }
-        if (persisted[PERSISTED_TYPE] === "Temporal.PlainDate") {
-            return Temporal.PlainDate.from(persisted.value);
+        if (tag === "record" && typeof persisted.value === "object" && persisted.value !== null) {
+            const decoded: Record<string, unknown> = {};
+            seen.set(value, decoded);
+            return mapPersistedContainer(persisted.value, seen, decodePersistedValue, decoded);
         }
     }
-    if (Array.isArray(value)) {
-        return value.map(decodePersistedValue);
-    }
-    if (typeof value === "object" && value !== null) {
-        const prototype = Object.getPrototypeOf(value) as unknown;
-        if (prototype === Object.prototype || prototype === null) {
-            return Object.fromEntries(
-                Object.entries(value).map(([key, entry]) => [key, decodePersistedValue(entry)])
-            );
-        }
-    }
-    return value;
+    return mapPersistedContainer(value, seen, decodePersistedValue);
 }
 
 function encodeIndexValue(value: unknown): EncodedIndexValue | undefined {

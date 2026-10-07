@@ -50,6 +50,7 @@ import {
     type CoordinationLeaderMessage,
     type CoordinationResponseMessage,
 } from "./protocol.js";
+import { encodeCoordinationMessage, decodeCoordinationMessage } from "./valueCodec.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 2_000;
 const DEFAULT_REQUEST_ATTEMPTS = 3;
@@ -272,7 +273,7 @@ export class LockBroadcastCoordination
         >
     ): Operation<void> {
         for (const event of yield* each(messages)) {
-            this.onMessage(event.data);
+            this.onMessage(decodeCoordinationMessage(event.data));
             yield* each.next();
         }
     }
@@ -776,7 +777,7 @@ export class LockBroadcastCoordination
     private publish(message: object): void {
         if (this.closed) return;
         try {
-            this.channel?.postMessage(message);
+            this.channel?.postMessage(encodeCoordinationMessage(message));
         } catch (error) {
             this.fail(
                 new CoordinationTransportError("Coordination broadcast failed.", "TRANSPORT_ERROR", {

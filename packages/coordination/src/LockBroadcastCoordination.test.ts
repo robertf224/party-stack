@@ -1,3 +1,4 @@
+import { Temporal } from "temporal-polyfill";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LockBroadcastCoordination } from "./index.js";
 
@@ -196,6 +197,42 @@ function serve(coordination: LockBroadcastCoordination) {
 }
 
 describe("LockBroadcastCoordination", () => {
+    it("preserves Temporal requests, responses, and events across structured clone", async () => {
+        type TemporalPayload = { instant: Temporal.Instant; dates: Temporal.PlainDate[]; bigint: bigint };
+        type TemporalService = { methods: { echo(value: TemporalPayload): Promise<TemporalPayload> }; events: { changed: TemporalPayload } };
+        const { first, second } = createPair("temporal");
+        const handlers = { echo: (value: TemporalPayload) => {
+            expect(value.instant).toBeInstanceOf(Temporal.Instant);
+            expect(value.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+            return value;
+        } };
+        const firstServer = first.serve<TemporalService>("temporal", handlers);
+        const secondServer = second.serve<TemporalService>("temporal", handlers);
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
+        const server = first.isLeader ? firstServer : secondServer;
+        const service = (first.isLeader ? second : first).service<TemporalService>("temporal");
+        const payload = { instant: Temporal.Instant.from("2026-10-07T12:00:00.123456789Z"), dates: [Temporal.PlainDate.from("2026-10-07")], bigint: 2n ** 100n };
+        const listener = vi.fn();
+        service.events.subscribe("changed", listener);
+        try {
+            const result = await service.methods.echo(payload);
+            expect(result.instant).toBeInstanceOf(Temporal.Instant);
+            expect(result.instant.epochNanoseconds).toBe(payload.instant.epochNanoseconds);
+            expect(result.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+            expect(result.dates[0]?.toString()).toBe("2026-10-07");
+            expect(result.bigint).toBe(payload.bigint);
+            server.events.publish("changed", payload);
+            await vi.waitFor(() => expect(listener).toHaveBeenCalled());
+            const event = listener.mock.calls[0]?.[0] as TemporalPayload;
+            expect(event.instant).toBeInstanceOf(Temporal.Instant);
+            expect(event.instant.epochNanoseconds).toBe(payload.instant.epochNanoseconds);
+            expect(event.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+        } finally {
+            await first.close();
+            await second.close();
+        }
+    });
+
     it("releases cached payloads, clients, and listeners when closed", async () => {
         const { first, second } = createPair("close-retention");
         serve(first);

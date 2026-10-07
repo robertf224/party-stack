@@ -126,6 +126,96 @@ function ids(rows: Array<{ value: Record<string, unknown> }>): string[] {
 }
 
 describe("IndexedDBPersistenceAdapter", () => {
+    it.each([false, true])("preserves bigint queries and numeric pagination (indexed=%s)", async (indexed) => {
+        const name = databaseName();
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: name });
+        const values = [-9_223_372_036_854_775_808n, -10n, -2n, 0n, 2n, 10n, 9_223_372_036_854_775_807n];
+        try {
+            await seed(adapter, values.map((mixed, priority) => ({ id: String(priority), priority, mixed })));
+            if (indexed) await adapter.ensureIndex("items", "bigint", indexSpec(["mixed"]));
+            expect(ids(await adapter.loadSubset("items", queryOptions(
+                (query) => query.where(({ item }) => eq(item.mixed, 10n)).limit(100)
+            )))).toEqual(["5"]);
+            expect(ids(await adapter.loadSubset("items", queryOptions(
+                (query) => query.where(({ item }) => gt(item.mixed, 2n)).limit(100)
+            )))).toEqual(["5", "6"]);
+            expect((await adapter.loadSubset("items", queryOptions((query) => query.orderBy(({ item }) => item.mixed, "asc").offset(1).limit(3)))).map((row) => row.value.mixed)).toEqual([-10n, -2n, 0n]);
+            expect((await adapter.loadSubset("items", queryOptions((query) => query.orderBy(({ item }) => item.mixed, "desc").limit(3)))).map((row) => row.value.mixed)).toEqual([values[6], 10n, 2n]);
+        } finally {
+            adapter.close();
+        }
+        const reopened = new IndexedDBPersistenceAdapter({ databaseName: name });
+        try {
+            expect((await reopened.loadResumeSnapshot("items")).rows.map((row) => row.value.mixed)).toEqual(values);
+        } finally {
+            reopened.close();
+        }
+    });
+
+    it("preserves native values and nested Temporal containers through storage, metadata, and replay", async () => {
+        const name = databaseName();
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: name });
+        const instant = Temporal.Instant.from("2026-10-07T12:00:00.123456789Z");
+        const date = Temporal.PlainDate.from("2026-10-07");
+        const collision = { __party_stack_runtime_persisted_type__: "Temporal.Instant", value: "ordinary data" };
+        const cycle: Record<string, unknown> = { instant };
+        cycle.self = cycle;
+        const payload = {
+            bigint: 2n ** 100n, date: new Date("2026-10-07T00:00:00Z"),
+            nan: NaN, infinity: Infinity, negativeInfinity: -Infinity, undefined,
+            map: new Map([[instant, new Set([date])]]), collision, cycle,
+        };
+        try {
+            await adapter.applyCommittedTx("items", {
+                ...tx("values", 1, [{ type: "insert", key: "one", value: { id: "one", priority: 1, mixed: payload }, metadata: payload, metadataChanged: true }]),
+                collectionMetadataMutations: [{ type: "set", key: "values", value: payload }],
+            });
+        } finally {
+            adapter.close();
+        }
+        const reopened = new IndexedDBPersistenceAdapter({ databaseName: name });
+        const check = (value: unknown) => {
+            const restored = value as typeof payload;
+            for (const key of ["bigint", "date", "nan", "infinity", "negativeInfinity", "undefined", "collision"] as const) expect(restored[key]).toEqual(payload[key]);
+            const [key, entries] = [...restored.map.entries()][0]!;
+            expect(key).toBeInstanceOf(Temporal.Instant);
+            expect(key.epochNanoseconds).toBe(instant.epochNanoseconds);
+            const restoredDate = [...entries][0]!;
+            expect(restoredDate).toBeInstanceOf(Temporal.PlainDate);
+            expect(restoredDate.toString()).toBe(date.toString());
+            expect(restored.cycle.self).toBe(restored.cycle);
+            expect(restored.cycle.instant).toBeInstanceOf(Temporal.Instant);
+        };
+        try {
+            const snapshot = await reopened.loadResumeSnapshot("items");
+            check(snapshot.rows[0]?.value.mixed);
+            check(snapshot.rows[0]?.metadata);
+            check(snapshot.collectionMetadata[0]?.value);
+            const replay = await reopened.pullSince("items", 0);
+            expect(replay.requiresFullReload).toBe(false);
+            if (!replay.requiresFullReload) {
+                check(replay.deltas?.[0]?.changedRows[0]?.value.mixed);
+                const metadata = replay.deltas?.[0]?.rowMetadataMutations[0];
+                check(metadata?.type === "set" ? metadata.value : undefined);
+                const collectionMetadata = replay.deltas?.[0]?.collectionMetadataMutations[0];
+                check(collectionMetadata?.type === "set" ? collectionMetadata.value : undefined);
+            }
+        } finally {
+            reopened.close();
+        }
+    });
+
+    it("rejects unsupported Temporal kinds atomically instead of silently storing empty objects", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        try {
+            await expect(seed(adapter, [{ id: "one", priority: 1, mixed: Temporal.PlainDateTime.from("2026-10-07T12:00:00") }])).rejects.toThrow("Unsupported Temporal.PlainDateTime");
+            expect((await adapter.loadResumeSnapshot("items")).rows).toEqual([]);
+            expect((await adapter.loadResumeSnapshot("items")).latestRowVersion).toBe(0);
+        } finally {
+            adapter.close();
+        }
+    });
+
     it("rebuilds legacy index encodings once and avoids using them before migration", async () => {
         const name = databaseName();
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: name });

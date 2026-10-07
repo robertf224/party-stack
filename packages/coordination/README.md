@@ -24,8 +24,29 @@ requests keep their replay protection. The default completed-response retention 
 30 seconds, so sustained remote throughput can encounter this limit. Local calls
 do not occupy it.
 
-The wire protocol is version 2. Coordinating tabs and workers must use the same
+The wire protocol is version 3. Coordinating tabs and workers must use the same
 version.
+
+## Value transport
+
+BroadcastChannel and SharedWorker requests, successful responses, and events use
+one Temporal-aware codec. Routing and handshake fields remain visible for protocol
+mismatch handling. The codec revives all eight Temporal kinds using the bundled
+polyfill, without requiring global constructor registration. Native cloneable values
+(bigint, Date, Blob, buffers, typed arrays, and non-finite numbers) retain normal
+structured-clone behavior. Arrays, records, Maps, and Sets are traversed; cycles,
+shared references, and sparse arrays survive. Record envelopes prevent application
+fields from colliding with codec tags. Graph bookkeeping is scoped to each operation.
+
+`cloneCoordinationValue(value)` makes a detached copy with the same value support,
+for local editing. Single-process calls still use their existing direct-call behavior.
+New outbox writes use raw Temporal parameters; only decoding older outbox tags remains.
+SQLite persistence requires registered Temporal constructors; Node and Expo install
+those separately. Standalone IndexedDB persistence retains its own storage codec.
+
+TanStack core 0.4.5 still rejects Temporal query literals in its remote-subset
+options validator, before transport runs. This separate upstream restriction is
+not relaxed by the codec; raw Temporal row/metadata transport is supported.
 
 ## TanStack audit references
 

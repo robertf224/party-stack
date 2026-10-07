@@ -33,6 +33,7 @@ import {
     type Deferred,
 } from "../internal.js";
 import { isRecord } from "../protocol.js";
+import { encodeCoordinationMessage, decodeCoordinationMessage } from "../valueCodec.js";
 import type {
     CoordinationMessagePort,
     SharedWorkerCoordinationClientOptions,
@@ -243,7 +244,7 @@ export class SharedWorkerCoordinationClient extends BaseCoordination {
                 )
             ));
             for (const event of yield* each(resource)) {
-                this.onMessage(event.data);
+                this.onMessage(decodeCoordinationMessage(event.data));
                 yield* each.next();
             }
             throw new CoordinationTransportError(
@@ -394,7 +395,7 @@ export class SharedWorkerCoordinationClient extends BaseCoordination {
             );
         }
         try {
-            this.port.postMessage(message);
+            this.port.postMessage(encodeCoordinationMessage(message));
         } catch (error) {
             throw new CoordinationTransportError(
                 "Failed to send a SharedWorker coordination message.",
