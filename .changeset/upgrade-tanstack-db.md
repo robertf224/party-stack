@@ -18,7 +18,7 @@
 "@party-stack/web-runtime": minor
 ---
 
-Upgrade TanStack DB dependencies and peer requirements to DB 0.11.3, React DB 0.5.3, Query DB Collection 1.3.4, SQLite persistence core 0.4.3, and Expo/Node SQLite persistence 0.2.28.
+Upgrade TanStack DB dependencies and peer requirements to DB 0.12.1, React DB 0.5.5, Query DB Collection 1.4.0, SQLite persistence core 0.4.5, and Expo/Node SQLite persistence 0.2.30. Register Temporal constructors in Node and Expo so upstream SQLite serialization preserves Instant and PlainDate values, including nested values, metadata, and replay. Retain the outbox transport codec and IndexedDB storage codec, which protect separate structured-clone boundaries.
 
 Update IndexedDB persistence and runtime coordination for the required atomic resume snapshots, remote subset lease lifecycle, and leader-side committed transactions. Runtime persistence now uses `PersistedCollectionPersistence` (`{ adapter, ... }`), preserving standard collection and mode resolvers while supplying Party Stack’s shared coordinator. Custom adapters must implement `loadResumeSnapshot`.
 

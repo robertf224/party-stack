@@ -191,7 +191,7 @@ describe("createLiveOntologyObjectCollection", () => {
         const collection = createLiveOntologyObjectCollection({
             ...options,
             backendAdapter: backend(({ begin, write, commit, markError, markReady }) => {
-                begin({ immediate: true });
+                begin();
                 write({
                     type: "insert",
                     value: {

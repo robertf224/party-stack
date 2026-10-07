@@ -1,3 +1,5 @@
+// SQLite persistence revives Temporal values through the registered global constructors.
+import "temporal-polyfill/global";
 import { createHash } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";

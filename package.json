@@ -19,7 +19,7 @@
     },
     "pnpm": {
         "overrides": {
-            "@tanstack/db": "0.11.3",
+            "@tanstack/db": "0.12.1",
             "@types/node": "24.10.1"
         }
     },
