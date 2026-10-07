@@ -17,6 +17,9 @@ ownership and bounded retention; it is not the interface being implemented in th
 PR. Live migrations, installation-level ontology reopening, application data
 migrations, and backend-derived object versions are also future work.
 
+Installation-owned replacement and UI handoff are described separately in
+[Ontology sessions and reopening](../2026-10-07-installation-ontology-reopening/README.md).
+
 This complements [Standalone coordination](../2026-07-26-coordination/README.md).
 Persistence, outbox, and blobs continue using one generic coordination system.
 This proposal does not introduce a separate persistence election or transport.
