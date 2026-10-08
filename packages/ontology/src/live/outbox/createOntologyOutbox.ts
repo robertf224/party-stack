@@ -22,7 +22,6 @@ import {
 import type { ConnectionMonitor } from "@party-stack/connections";
 import { runOutboxLeader, type OutboxLeaderOptions } from "./leaderExecutor.js";
 import { serveOntologyOutbox } from "./outboxService.js";
-import { decodeOutboxEntry, decodeOutboxRequest } from "./outboxValues.js";
 import { OutboxProjectionManager, type OutboxProjection } from "./projectionManager.js";
 import { OntologyOutboxRepository } from "./repository.js";
 import {
@@ -123,7 +122,7 @@ export function useOntologyOutbox(
             options.runtime.coordination.service<OutboxCoordinationService>(OUTBOX_COORDINATION_SERVICE);
         const wake = createSignal<void>();
         const projections = new OutboxProjectionManager(
-            options.project ? async (entry) => options.project?.(decodeOutboxEntry(entry)) : undefined
+            options.project ? async (entry) => options.project?.(entry) : undefined
         );
         const completions = new Map<string, Deferred<unknown>>();
         const lifetime: {
@@ -226,7 +225,7 @@ export function useOntologyOutbox(
                         "Outbox maxRetries"
                     ),
                     retryDelayMs: DEFAULT_RETRY_DELAY_MS,
-                    execute: (entry) => options.execute(decodeOutboxEntry(entry)),
+                    execute: (entry) => options.execute(entry),
                     connection: options.connection,
                 };
                 lifetime.leaderTask = yield* spawn(function* () {
@@ -300,7 +299,7 @@ export function useOntologyOutbox(
                     await projections.ensure(entry);
 
                     return {
-                        entry: decodeOutboxEntry(entry),
+                        entry,
                         completed: completion.promise,
                     } as EnqueuedOntologyAction<Result>;
                 },
@@ -309,14 +308,14 @@ export function useOntologyOutbox(
                     if (!current) {
                         throw new Error(`Outbox entry "${id}" was not found in this context.`);
                     }
-                    const request = cloneValue(decodeOutboxRequest(current.request));
+                    const request = cloneValue(current.request);
                     update(request);
                     const entry = await service.methods.edit({
                         id,
                         request,
                     });
                     await projections.ensure(entry);
-                    return decodeOutboxEntry(entry);
+                    return entry;
                 },
                 async remove(id) {
                     await service.methods.remove({ id });

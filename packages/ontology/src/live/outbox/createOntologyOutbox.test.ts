@@ -1269,11 +1269,13 @@ describe("createOntologyOutbox", () => {
                 new TestNetworkConnectivity(true),
         });
         let observed: unknown;
+        let observedRecord: unknown;
         const execute = (
             entry: OntologyOutboxEntry
         ) => {
             observed =
                 entry.request.parameters.__now;
+            observedRecord = entry.request.parameters.record;
             return Promise.resolve("done");
         };
         const create = ({
@@ -1293,7 +1295,7 @@ describe("createOntologyOutbox", () => {
 
         const action = await origin.enqueue({
             actionTypeName: "createTask",
-            parameters: { __now: instant },
+            parameters: { __now: instant, record: { __party_stack_outbox_value_type__: "Temporal.Instant", value: "ordinary application data" } },
         });
 
         await expect(action.completed).resolves.toBe(
@@ -1305,6 +1307,8 @@ describe("createOntologyOutbox", () => {
         expect(String(observed)).toBe(
             "2026-07-27T12:00:00Z"
         );
+        expect(observedRecord).toEqual({ __party_stack_outbox_value_type__: "Temporal.Instant", value: "ordinary application data" });
+        expect(action.entry.request.parameters.record).toEqual(observedRecord);
         expect(action.entry.request.parameters.__now).toBeInstanceOf(Temporal.Instant);
         expect(action.entry.request.parameters).not.toHaveProperty("__party_stack_outbox_value_type__");
         await first.cleanup();

@@ -40,7 +40,7 @@ fields from colliding with codec tags. Graph bookkeeping is scoped to each opera
 
 `cloneValue(value)` makes a detached copy with the same value support,
 for local editing. Single-process calls still use their existing direct-call behavior.
-New outbox writes use raw Temporal parameters; only decoding older outbox tags remains.
+Outbox entries use raw Temporal parameters, with serialization handled by persistence and coordination transport.
 SQLite persistence requires registered Temporal constructors; Node and Expo install
 those separately. Standalone IndexedDB persistence retains its own storage codec.
 
