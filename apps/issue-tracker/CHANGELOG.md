@@ -1,5 +1,19 @@
 # @party-stack/issue-tracker
 
+## 0.2.22
+
+### Patch Changes
+
+- Updated dependencies [e81553c]
+    - @party-stack/better-auth@0.3.0
+    - @party-stack/connections@0.3.0
+    - @party-stack/foundry-ontology@0.18.0
+    - @party-stack/ontology@0.19.0
+    - @party-stack/ontology-devtools@0.6.0
+    - @party-stack/remote-ontology@0.10.0
+    - @party-stack/sqlite-ontology@0.7.0
+    - @party-stack/web-runtime@0.4.0
+
 ## 0.2.21
 
 ### Patch Changes
