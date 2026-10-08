@@ -107,6 +107,10 @@ describe("createConnectionManager", () => {
         const applyCommittedTx = vi.fn(() =>
             Promise.resolve()
         );
+        const rows = [{
+            key: "user-1",
+            value: { userId: "user-1", state: { status: "needs-auth", error: "Session expired." } },
+        }];
         const manager =
             await createConnectionManager({
                 installationId:
@@ -114,25 +118,16 @@ describe("createConnectionManager", () => {
                 runtime: {
                     ...runtime,
                     persistence: {
-                        loadSubset: () =>
-                            Promise.resolve([
-                                {
-                                    key: "user-1",
-                                    value: {
-                                        userId:
-                                            "user-1",
-                                        state: {
-                                            status:
-                                                "needs-auth",
-                                            error: "Session expired.",
-                                        },
-                                    },
-                                },
-                            ]),
-                        applyCommittedTx,
-                        ensureIndex: () =>
-                            Promise.resolve(),
-                    } as never,
+                        adapter: {
+                            loadSubset: () => Promise.resolve(rows),
+                            loadResumeSnapshot: () => Promise.resolve({
+                                rows, collectionMetadata: [], latestTerm: 0, latestSeq: 0, latestRowVersion: 0, resetEpoch: 0,
+                            }),
+                            applyCommittedTx,
+                            ensureIndex: () =>
+                                Promise.resolve(),
+                        },
+                    },
                 },
                 adapter: () => ({
                     name: "test",

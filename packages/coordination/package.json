@@ -21,7 +21,8 @@
         "test": "vitest run"
     },
     "dependencies": {
-        "effection": "^4.0.2"
+        "effection": "^4.0.2",
+        "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",

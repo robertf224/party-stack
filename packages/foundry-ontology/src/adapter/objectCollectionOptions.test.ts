@@ -117,6 +117,7 @@ function createSyncHarness(
         markError: vi.fn(),
         markReady: vi.fn(),
         metadata: {
+            persistence: null,
             collection: {
                 get: (key: string) =>
                     pendingTransaction?.collectionMetadata.get(key) ?? collectionMetadata.get(key),

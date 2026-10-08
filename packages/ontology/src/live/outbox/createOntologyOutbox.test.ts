@@ -4,6 +4,7 @@ import {
     createConnectionMonitor,
     type ConnectionEgressHandlers,
 } from "@party-stack/connections";
+import { SharedWorkerCoordinationClient, SharedWorkerCoordinationHost } from "@party-stack/coordination/shared-worker";
 import {
     type CoordinationCallOptions,
     type CoordinationClient,
@@ -63,6 +64,12 @@ class TestNetworkConnectivity implements NetworkConnectivity {
 function memoryPersistenceAdapter(): PersistenceAdapter {
     const rows = new Map<string | number, Record<string, unknown>>();
     return {
+        loadResumeSnapshot: () => Promise.resolve({
+            rows: [...rows].map(([key, value]) => ({ key, value })),
+            collectionMetadata: [],
+            latestTerm: 0, latestSeq: 0, latestRowVersion: 0,
+            resetEpoch: 0,
+        }),
         loadSubset: () =>
             Promise.resolve(
                 [...rows].map(([key, value]) => ({
@@ -101,7 +108,7 @@ function coordinatedOutboxRuntime(options: {
         namespace: "outbox-test",
         blobBytes: new MemoryBlobBytesStore(),
         connectivity: options.connectivity,
-        persistence: options.adapter,
+        persistence: { adapter: options.adapter },
         coordination: options.coordination,
     };
     return {
@@ -389,16 +396,22 @@ describe("createOntologyOutbox", () => {
     it("edits and removes queued work", async () => {
         const { connectivity, outbox } = setup(false);
         await outbox.ready;
+        const instant = Temporal.Instant.from("2026-10-07T12:00:00.123456789Z");
+        const date = Temporal.PlainDate.from("2026-10-07");
         const action = await outbox.enqueue({
             actionTypeName: "createTask",
-            parameters: { title: "Before" },
+            parameters: { title: "Before", instant, dates: [date] },
         });
 
         await outbox.edit(action.entry.id, (request) => {
+            expect(request.parameters.instant).toBeInstanceOf(Temporal.Instant);
+            expect((request.parameters.dates as unknown[])[0]).toBeInstanceOf(Temporal.PlainDate);
             request.parameters.title = "After";
         });
         expect(outbox.collection.get(action.entry.id)?.request.parameters.title).toBe("After");
 
+        expect(action.entry.request.parameters.title).toBe("Before");
+        expect(String(outbox.collection.get(action.entry.id)?.request.parameters.instant)).toBe(instant.toString());
         await outbox.remove(action.entry.id);
         await expect(action.completed).rejects.toThrow("removed");
         expect(outbox.collection.has(action.entry.id)).toBe(false);
@@ -855,7 +868,7 @@ describe("createOntologyOutbox", () => {
                         new TestNetworkConnectivity(
                             false
                         ),
-                    persistence: adapter,
+                    persistence: { adapter },
                 },
                 "interrupted-recovery-discard"
             );
@@ -914,7 +927,7 @@ describe("createOntologyOutbox", () => {
                         new MemoryBlobBytesStore(),
                     connectivity:
                         connectivity,
-                    persistence: adapter,
+                    persistence: { adapter },
                 },
                 "failed-recovery-retry"
             );
@@ -976,7 +989,7 @@ describe("createOntologyOutbox", () => {
                     blobBytes:
                         new MemoryBlobBytesStore(),
                     connectivity,
-                    persistence: adapter,
+                    persistence: { adapter },
                 },
                 "projection-restart"
             );
@@ -1027,7 +1040,7 @@ describe("createOntologyOutbox", () => {
             namespace: "client-only",
             blobBytes: new MemoryBlobBytesStore(),
             connectivity: new TestNetworkConnectivity(false),
-            persistence: adapter,
+            persistence: { adapter },
             coordination: hostCoordination,
         };
         const clientRuntime: RuntimeAdapter = {
@@ -1035,7 +1048,7 @@ describe("createOntologyOutbox", () => {
             namespace: "client-only",
             blobBytes: new MemoryBlobBytesStore(),
             connectivity: new TestNetworkConnectivity(false),
-            persistence: adapter,
+            persistence: { adapter },
             coordination: clientCoordination,
         };
         const host = createOntologyOutbox({
@@ -1236,9 +1249,12 @@ describe("createOntologyOutbox", () => {
     it("preserves Temporal parameters across coordinated contexts", async () => {
         const adapter = memoryPersistenceAdapter();
         const hostCoordination =
-            new SingleProcessCoordination({
+            new SharedWorkerCoordinationHost({
                 scope: "temporal",
             });
+        const channel = new MessageChannel();
+        hostCoordination.connect(channel.port1);
+        const clientCoordination = new SharedWorkerCoordinationClient({ scope: "temporal", worker: { port: channel.port2 } });
         const firstRuntime = coordinatedOutboxRuntime({
             adapter,
             coordination: hostCoordination,
@@ -1248,16 +1264,18 @@ describe("createOntologyOutbox", () => {
         const secondRuntime = coordinatedOutboxRuntime({
             adapter,
             coordination:
-                clientView(hostCoordination),
+                clientCoordination,
             connectivity:
                 new TestNetworkConnectivity(true),
         });
         let observed: unknown;
+        let observedRecord: unknown;
         const execute = (
             entry: OntologyOutboxEntry
         ) => {
             observed =
                 entry.request.parameters.__now;
+            observedRecord = entry.request.parameters.record;
             return Promise.resolve("done");
         };
         const create = ({
@@ -1277,7 +1295,7 @@ describe("createOntologyOutbox", () => {
 
         const action = await origin.enqueue({
             actionTypeName: "createTask",
-            parameters: { __now: instant },
+            parameters: { __now: instant, record: { __party_stack_outbox_value_type__: "Temporal.Instant", value: "ordinary application data" } },
         });
 
         await expect(action.completed).resolves.toBe(
@@ -1289,8 +1307,13 @@ describe("createOntologyOutbox", () => {
         expect(String(observed)).toBe(
             "2026-07-27T12:00:00Z"
         );
+        expect(observedRecord).toEqual({ __party_stack_outbox_value_type__: "Temporal.Instant", value: "ordinary application data" });
+        expect(action.entry.request.parameters.record).toEqual(observedRecord);
+        expect(action.entry.request.parameters.__now).toBeInstanceOf(Temporal.Instant);
+        expect(action.entry.request.parameters).not.toHaveProperty("__party_stack_outbox_value_type__");
         await first.cleanup();
         await second.cleanup();
+        await clientCoordination.close();
         await hostCoordination.close();
     });
 

@@ -1,3 +1,5 @@
+// SQLite persistence revives Temporal values through the registered global constructors.
+import "temporal-polyfill/global";
 import { SingleProcessCoordination } from "@party-stack/coordination";
 import { defineRuntime } from "@party-stack/runtime";
 import {
@@ -19,7 +21,7 @@ export const createExpoRuntime = defineRuntime(async (
         openDatabaseAsync(`${name}.db`),
         ExpoNetworkConnectivity.create(),
     ]);
-    const { adapter: persistence } = createExpoSQLitePersistence({
+    const persistence = createExpoSQLitePersistence({
         database: database as unknown as ExpoSQLiteDatabaseLike,
     });
     const coordination =

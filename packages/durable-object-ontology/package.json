@@ -25,7 +25,7 @@
         "@bobbyfidz/universal-build-config": "^0.1.1",
         "@cloudflare/vitest-plugin": "^1.1.1",
         "@cloudflare/workers-types": "^5.20260827.1",
-        "@tanstack/db": "0.9.2",
+        "@tanstack/db": "0.12.1",
         "esbuild": "^0.28.1",
         "eslint": "^9.25.0",
         "typescript": "~5.8.3",
@@ -33,6 +33,6 @@
         "wrangler": "^4.127.0"
     },
     "peerDependencies": {
-        "@tanstack/db": "0.9.2"
+        "@tanstack/db": "0.12.1"
     }
 }

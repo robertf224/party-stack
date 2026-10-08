@@ -1,3 +1,4 @@
+import { Temporal } from "temporal-polyfill";
 import { describe, expect, it, vi } from "vitest";
 import { SharedWorkerCoordinationClient } from "./SharedWorkerCoordinationClient.js";
 import { SharedWorkerCoordinationHost } from "./SharedWorkerCoordinationHost.js";
@@ -29,9 +30,10 @@ class TestMessagePort implements CoordinationMessagePort {
         if (this.closed) throw new Error("Port is closed.");
         const peer = this.peer;
         if (!peer) throw new Error("Port is not connected.");
+        const cloned = structuredClone(message);
         queueMicrotask(() => {
             if (!peer.closed) {
-                peer.dispatch("message", { data: message });
+                peer.dispatch("message", { data: cloned });
             }
         });
     }
@@ -106,6 +108,43 @@ function serve(host: SharedWorkerCoordinationHost) {
 }
 
 describe("SharedWorker coordination", () => {
+    it("preserves Temporal and bigint requests, responses, and events across structured clone", async () => {
+        type TemporalPayload = { instant: Temporal.Instant; dates: Temporal.PlainDate[]; bigint: bigint };
+        type TemporalService = { methods: { echo(value: TemporalPayload): Promise<TemporalPayload> }; events: { changed: TemporalPayload } };
+        const host = new SharedWorkerCoordinationHost({ scope: "temporal" });
+        const channel = messageChannel();
+        host.connect(channel.port1);
+        const client = new SharedWorkerCoordinationClient({ scope: "temporal", worker: { port: channel.port2 } });
+        const server = host.serve<TemporalService>("temporal", { echo: (value) => {
+            expect(value.instant).toBeInstanceOf(Temporal.Instant);
+            expect(value.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+            expect(value.bigint).toBe(2n ** 100n);
+            return value;
+        } });
+        const service = client.service<TemporalService>("temporal");
+        const payload = { instant: Temporal.Instant.from("2026-10-07T12:00:00.123456789Z"), dates: [Temporal.PlainDate.from("2026-10-07")], bigint: 2n ** 100n };
+        const listener = vi.fn();
+        service.events.subscribe("changed", listener);
+        try {
+            const result = await service.methods.echo(payload);
+            expect(result.instant).toBeInstanceOf(Temporal.Instant);
+            expect(result.instant.epochNanoseconds).toBe(payload.instant.epochNanoseconds);
+            expect(result.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+            expect(result.dates[0]?.toString()).toBe("2026-10-07");
+            expect(result.bigint).toBe(payload.bigint);
+            server.events.publish("changed", payload);
+            await vi.waitFor(() => expect(listener).toHaveBeenCalled());
+            const event = listener.mock.calls[0]?.[0] as TemporalPayload;
+            expect(event.instant).toBeInstanceOf(Temporal.Instant);
+            expect(event.instant.epochNanoseconds).toBe(payload.instant.epochNanoseconds);
+            expect(event.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+            expect(event.bigint).toBe(payload.bigint);
+        } finally {
+            await client.close();
+            await host.close();
+        }
+    });
+
     it("handshakes, invokes typed services, and fans out events", async () => {
         const host = new SharedWorkerCoordinationHost({
             scope: "shared",

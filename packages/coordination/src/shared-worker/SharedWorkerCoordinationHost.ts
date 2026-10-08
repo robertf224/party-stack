@@ -36,6 +36,7 @@ import {
     serializeError,
 } from "../internal.js";
 import { isRecord } from "../protocol.js";
+import { encodeCoordinationMessage, decodeCoordinationMessage } from "../valueCodec.js";
 import type {
     CoordinationMessagePort,
     SharedWorkerCoordinationHostOptions,
@@ -274,7 +275,7 @@ export class SharedWorkerCoordinationHost
             for (const event of yield* each(resource)) {
                 this.onMessage(
                     connection,
-                    event.data
+                    decodeCoordinationMessage(event.data)
                 );
                 if (connection.disconnected) {
                     return;
@@ -532,7 +533,7 @@ export class SharedWorkerCoordinationHost
     ): void {
         if (connection.disconnected) return;
         try {
-            connection.port.postMessage(message);
+            connection.port.postMessage(encodeCoordinationMessage(message));
         } catch {
             this.disconnectConnection(
                 connection

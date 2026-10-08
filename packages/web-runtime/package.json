@@ -14,7 +14,8 @@
     "scripts": {
         "build": "tsc",
         "lint": "eslint",
-        "test": "vitest run --pass-with-no-tests"
+        "test": "vitest run --pass-with-no-tests",
+        "test:browser": "tsc -p tsconfig.e2e.json && vitest run --config vitest.e2e.config.mjs"
     },
     "dependencies": {
         "@party-stack/coordination": "workspace:*",
@@ -24,8 +25,12 @@
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@tanstack/db": "0.12.1",
+        "@tanstack/db-sqlite-persistence-core": "0.4.5",
         "eslint": "^9.25.0",
+        "playwright": "^1.61.1",
         "typescript": "~5.8.3",
+        "vite": "^7.2.4",
         "vitest": "^3.1.1"
     }
 }

@@ -60,9 +60,7 @@ describe("createMutatorTx", () => {
                     return {
                         loadSubset: () => {
                             subsetLoads += 1;
-                            begin({
-                                immediate: true,
-                            });
+                            begin();
                             write({
                                 type: "insert",
                                 value: {

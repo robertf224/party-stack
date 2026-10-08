@@ -1,3 +1,5 @@
+// SQLite persistence revives Temporal values through the registered global constructors.
+import "temporal-polyfill/global";
 import { createHash } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -39,7 +41,7 @@ export function createNodeRuntimeWithOptions(options: CreateNodeRuntimeOptions):
         });
 
         const database = new Database(join(directory, "collections.sqlite"));
-        const { adapter: persistence } = createNodeSQLitePersistence({
+        const persistence = createNodeSQLitePersistence({
             database,
         });
         const coordination = new SingleProcessCoordination({

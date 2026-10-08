@@ -1,5 +1,5 @@
 import { createCollection, localOnlyCollectionOptions } from "@tanstack/db";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { o } from "../ir/index.js";
 import { evaluateExpression } from "./expression.js";
 import { createReadTx } from "./mutators/createMutatorTx.js";
@@ -105,6 +105,32 @@ describe("evaluateExpression", () => {
         ).resolves.toBe("Ada");
 
         await users.cleanup();
+    });
+
+    it("fetches an explicit lookup when the referenced object is not loaded", async () => {
+        const loadSubset = vi.fn();
+        const users = createCollection<OntologyObject, string | number>({
+            id: "expression-remote-users", getKey: (user) => user.id as string,
+            syncMode: "on-demand", sync: { sync: ({ begin, write, commit, markReady }) => {
+                markReady();
+                return { loadSubset: () => {
+                    loadSubset(); begin(); write({ type: "insert", value: { id: "user-1", name: "Ada" } });
+                    return commit();
+                } };
+            } },
+        });
+        try {
+            expect(users.has("user-1")).toBe(false);
+            await expect(evaluateExpression({
+                ir, actionTypeName: "assign",
+                expression: o.Expression.getAt({
+                    source: o.Expression.objectLookup({ reference: o.Expression.inputReference({ name: "user" }) }),
+                    path: ["name"],
+                }),
+                resolveParameter: () => Promise.resolve("user-1"), context: {}, tx: createReadTx({ User: users }),
+            })).resolves.toBe("Ada");
+            expect(loadSubset).toHaveBeenCalledOnce();
+        } finally { await users.cleanup(); }
     });
 
     it("returns an object-reference input without implicitly loading it", async () => {

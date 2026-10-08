@@ -2,15 +2,19 @@ import { IR, compileSingleRowExpression, parseWhereExpression } from "@tanstack/
 import {
     encodePersistedStorageKey,
     type PersistedIndexSpec,
+    type PersistedRowScanOptions,
+    type PersistencePullSinceResult,
+    type ReplayableTxDelta,
     type PersistedTx,
     type PersistenceAdapter,
+    type SQLiteCoreAdapterOptions,
 } from "@tanstack/db-sqlite-persistence-core";
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import { Temporal } from "temporal-polyfill";
 import type { LoadSubsetOptions } from "@tanstack/db";
 
 type PersistedRow = Awaited<ReturnType<PersistenceAdapter["loadSubset"]>>[number];
-type IndexValue = string | number | Date;
+type IndexValue = string | number | Date | [number, number, string];
 type IndexValueType =
     | "bigint"
     | "boolean"
@@ -24,7 +28,7 @@ type IndexValueType =
     | "string-ci"
     | "undefined";
 
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 3;
 const ROWS = "rows";
 const TRANSACTIONS = "transactions";
 const COLLECTION_METADATA = "collectionMetadata";
@@ -33,17 +37,27 @@ const INDEX_DEFINITIONS = "indexDefinitions";
 const INDEX_ENTRIES = "indexEntries";
 const BY_COLLECTION = "collectionId";
 const BY_INDEX = "index";
+const BY_METADATA = "metadata";
+const BY_VERSION = "version";
+const BY_POSITION = "position";
 const BY_LOOKUP = "lookup";
 const INDEX_BATCH_SIZE = 300;
+const INDEX_ENCODING_VERSION = 3;
 
 interface RowRecord extends PersistedRow {
+    hasMetadata?: number;
     id: string;
     collectionId: string;
 }
 
 interface TransactionRecord {
+    term?: number;
+    seq?: number;
     id: string;
     collectionId: string;
+    rowVersion?: number;
+    appliedAt?: number;
+    delta?: ReplayableTxDelta | null;
 }
 
 interface CollectionMetadataRecord {
@@ -58,6 +72,9 @@ interface StreamRecord {
     latestTerm: number;
     latestSeq: number;
     latestRowVersion: number;
+    schemaVersion?: number;
+    resetEpoch?: number;
+    replayFloor?: number;
 }
 
 interface IndexDefinitionRecord {
@@ -66,6 +83,9 @@ interface IndexDefinitionRecord {
     expression: IR.BasicExpression;
     valueTypes: IndexValueType[];
     hasUnsupportedValues: boolean;
+    valueTypeCounts?: Partial<Record<IndexValueType, number>>;
+    unsupportedValueCount?: number;
+    encodingVersion?: number;
 }
 
 interface IndexEntryRecord {
@@ -76,16 +96,16 @@ interface IndexEntryRecord {
     value: IndexValue;
 }
 
-interface RuntimePersistenceDB extends DBSchema {
+interface IndexedDBPersistenceDB extends DBSchema {
     rows: {
         key: string;
         value: RowRecord;
-        indexes: { collectionId: string };
+        indexes: { collectionId: string; metadata: [string, number] };
     };
     transactions: {
         key: string;
         value: TransactionRecord;
-        indexes: { collectionId: string };
+        indexes: { collectionId: string; version: [string, number]; position: [string, number, number] };
     };
     collectionMetadata: {
         key: string;
@@ -133,6 +153,12 @@ interface PersistedTemporalValue {
 
 export interface IndexedDBPersistenceAdapterOptions {
     databaseName: string;
+    schemaVersion?: number;
+    schemaMismatchPolicy?: SQLiteCoreAdapterOptions["schemaMismatchPolicy"];
+    /** Retry deduplication and replay are retained for this bounded window. */
+    appliedTxPruneMaxRows?: number;
+    appliedTxPruneMaxAgeSeconds?: number;
+    pullSinceReloadThreshold?: number;
     onBlocked?: () => void;
     onVersionChange?: (event: IDBVersionChangeEvent) => void;
 }
@@ -151,64 +177,129 @@ function temporalTag(value: unknown): string | undefined {
     return typeof tag === "string" ? tag : undefined;
 }
 
-function encodePersistedValue(value: unknown): unknown {
-    const tag = temporalTag(value);
-    if (tag === "Temporal.Instant" || tag === "Temporal.PlainDate") {
-        return {
-            [PERSISTED_TYPE]: tag,
-            value: String(value),
-        } satisfies PersistedTemporalValue;
-    }
+// IndexedDB natively preserves bigint, Date, non-finite numbers, and undefined.
+// Only Temporal needs tagging. Walk cloneable containers and escape tag-shaped
+// application records; the graph map belongs to one operation, not the adapter.
+function mapPersistedContainer(
+    value: object,
+    seen: WeakMap<object, unknown>,
+    visit: (entry: unknown, seen: WeakMap<object, unknown>) => unknown,
+    target?: Record<string, unknown>
+): unknown {
     if (Array.isArray(value)) {
-        return value.map(encodePersistedValue);
+        const mapped: unknown[] = [];
+        seen.set(value, mapped);
+        mapped.length = value.length;
+        for (const key of Object.keys(value)) Object.defineProperty(mapped, key, {
+            value: visit(Reflect.get(value, key), seen), enumerable: true, writable: true, configurable: true,
+        });
+        return mapped;
     }
-    if (typeof value === "object" && value !== null) {
-        const prototype = Object.getPrototypeOf(value) as unknown;
-        if (prototype === Object.prototype || prototype === null) {
-            return Object.fromEntries(
-                Object.entries(value).map(([key, entry]) => [key, encodePersistedValue(entry)])
-            );
-        }
+    if (value instanceof Map) {
+        const mapped = new Map<unknown, unknown>();
+        seen.set(value, mapped);
+        for (const [key, entry] of value) mapped.set(visit(key, seen), visit(entry, seen));
+        return mapped;
+    }
+    if (value instanceof Set) {
+        const mapped = new Set<unknown>();
+        seen.set(value, mapped);
+        for (const entry of value) mapped.add(visit(entry, seen));
+        return mapped;
+    }
+    const prototype = Object.getPrototypeOf(value) as unknown;
+    if (prototype === Object.prototype || prototype === null) {
+        const mapped = target ?? {};
+        if (!seen.has(value)) seen.set(value, mapped);
+        for (const [key, entry] of Object.entries(value)) Object.defineProperty(mapped, key, {
+            value: visit(entry, seen), enumerable: true, writable: true, configurable: true,
+        });
+        return mapped;
     }
     return value;
 }
 
-function decodePersistedValue(value: unknown): unknown {
-    if (typeof value === "object" && value !== null && PERSISTED_TYPE in value && "value" in value) {
-        const persisted = value as PersistedTemporalValue;
-        if (persisted[PERSISTED_TYPE] === "Temporal.Instant") {
-            return Temporal.Instant.from(persisted.value);
+function encodePersistedValue(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
+    if (typeof value !== "object" || value === null) return value;
+    if (seen.has(value)) return seen.get(value);
+    const tag = temporalTag(value);
+    const prototype = Object.getPrototypeOf(value) as unknown;
+    if (prototype !== Object.prototype && prototype !== null && tag?.startsWith("Temporal.")) {
+        if (tag !== "Temporal.Instant" && tag !== "Temporal.PlainDate")
+            throw new TypeError(`Unsupported ${tag} value for IndexedDB persistence`);
+        const constructor = tag === "Temporal.Instant" ? Temporal.Instant : Temporal.PlainDate;
+        const encoded = {
+            [PERSISTED_TYPE]: tag,
+            value: constructor.prototype.toString.call(value),
+        } satisfies PersistedTemporalValue;
+        seen.set(value, encoded);
+        return encoded;
+    }
+    if ((prototype === Object.prototype || prototype === null) && PERSISTED_TYPE in value) {
+        const entries: Record<string, unknown> = {};
+        const encoded = { [PERSISTED_TYPE]: "record", value: entries };
+        seen.set(value, encoded);
+        mapPersistedContainer(value, seen, encodePersistedValue, entries);
+        return encoded;
+    }
+    return mapPersistedContainer(value, seen, encodePersistedValue);
+}
+
+function decodePersistedValue(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
+    if (typeof value !== "object" || value === null) return value;
+    if (seen.has(value)) return seen.get(value);
+    if (PERSISTED_TYPE in value && "value" in value) {
+        const persisted = value as Record<string, unknown>;
+        const tag = persisted[PERSISTED_TYPE];
+        if ((tag === "Temporal.Instant" || tag === "Temporal.PlainDate") && typeof persisted.value === "string") {
+            const decoded = tag === "Temporal.Instant"
+                ? Temporal.Instant.from(persisted.value) : Temporal.PlainDate.from(persisted.value);
+            seen.set(value, decoded);
+            return decoded;
         }
-        if (persisted[PERSISTED_TYPE] === "Temporal.PlainDate") {
-            return Temporal.PlainDate.from(persisted.value);
+        if (tag === "record" && typeof persisted.value === "object" && persisted.value !== null) {
+            const decoded: Record<string, unknown> = {};
+            seen.set(value, decoded);
+            return mapPersistedContainer(persisted.value, seen, decodePersistedValue, decoded);
         }
     }
-    if (Array.isArray(value)) {
-        return value.map(decodePersistedValue);
-    }
-    if (typeof value === "object" && value !== null) {
-        const prototype = Object.getPrototypeOf(value) as unknown;
-        if (prototype === Object.prototype || prototype === null) {
-            return Object.fromEntries(
-                Object.entries(value).map(([key, entry]) => [key, decodePersistedValue(entry)])
-            );
-        }
-    }
-    return value;
+    return mapPersistedContainer(value, seen, decodePersistedValue);
+}
+
+function hasCurrentIndexEncoding(definition: IndexDefinitionRecord): boolean {
+    return definition.encodingVersion === INDEX_ENCODING_VERSION ||
+        // Version 3 changes only bigint keys. Reuse other version 2 indexes.
+        (definition.encodingVersion === 2 && !definition.valueTypes.includes("bigint"));
+}
+
+function encodeBigIntIndexValue(value: bigint): [number, number, string] {
+    const negative = value < 0n;
+    const digits = (negative ? -value : value).toString();
+    // IndexedDB compares compound keys lexicographically. Positives sort by
+    // digit count then digits; negatives reverse both. Only the digit count is
+    // a number, so values of arbitrary precision never lose magnitude bits.
+    return negative
+        ? [0, -digits.length, digits.replace(/\d/g, (digit) => String(9 - Number(digit)))]
+        : [1, digits.length, digits];
 }
 
 function encodeIndexValue(value: unknown): EncodedIndexValue | undefined {
     const tag = temporalTag(value);
     if (tag === "Temporal.PlainDate") {
+        const date = Temporal.PlainDate.from(String(value)).withCalendar("iso8601");
         return {
             type: "temporal-plain-date",
-            value: String(value),
+            value: `${String(date.year + 1_000_000).padStart(7, "0")}-${String(date.month).padStart(2, "0")}-${String(date.day).padStart(2, "0")}`,
         };
     }
     if (tag === "Temporal.Instant") {
         return {
             type: "temporal-instant",
-            value: Temporal.Instant.from(String(value)).epochMilliseconds,
+            // Shift the full supported range positive so fixed-width strings
+            // retain nanosecond ordering in IndexedDB's lexical key order.
+            value: String(
+                Temporal.Instant.from(String(value)).epochNanoseconds + 8_640_000_000_000_000_000_000n
+            ).padStart(23, "0"),
         };
     }
     if (value === null) {
@@ -227,7 +318,7 @@ function encodeIndexValue(value: unknown): EncodedIndexValue | undefined {
         return { type: "number", value };
     }
     if (typeof value === "bigint") {
-        return { type: "bigint", value: value.toString() };
+        return { type: "bigint", value: encodeBigIntIndexValue(value) };
     }
     if (typeof value === "boolean") {
         return { type: "boolean", value: value ? 1 : 0 };
@@ -244,9 +335,14 @@ interface ExpressionOperand {
 }
 
 function pathsMatch(left: readonly string[], right: readonly string[]): boolean {
-    const [longer, shorter] = left.length >= right.length ? [left, right] : [right, left];
-    const offset = longer.length - shorter.length;
-    return shorter.every((part, index) => longer[offset + index] === part);
+    return left.length === right.length && left.every((part, index) => right[index] === part);
+}
+
+function unqualifiedExpression<T>(expression: IR.BasicExpression<T>): IR.BasicExpression<T> {
+    if (expression.type === "ref") return new IR.PropRef<T>(IR.getPropRefPropertyPath(expression));
+    if (expression.type === "func")
+        return new IR.Func<T>(expression.name, expression.args.map(unqualifiedExpression));
+    return expression;
 }
 
 function parseIndexExpression(spec: PersistedIndexSpec): IR.BasicExpression {
@@ -272,7 +368,7 @@ function toExpression(value: unknown): IR.BasicExpression {
 function expressionsMatch(indexed: IR.BasicExpression, queried: IR.BasicExpression): boolean {
     if (indexed.type !== queried.type) return false;
     if (indexed.type === "ref" && queried.type === "ref") {
-        return pathsMatch(indexed.path, queried.path);
+        return pathsMatch(IR.getPropRefPropertyPath(indexed), IR.getPropRefPropertyPath(queried));
     }
     if (indexed.type === "val" && queried.type === "val") {
         return Object.is(indexed.value, queried.value);
@@ -296,16 +392,16 @@ function buildIndexRecords(
 } {
     const evaluate = compileSingleRowExpression(definition.expression);
     const entries: IndexEntryRecord[] = [];
-    const valueTypes = new Set<IndexValueType>();
-    let hasUnsupportedValues = false;
+    const valueTypeCounts: Partial<Record<IndexValueType, number>> = {};
+    let unsupportedValueCount = 0;
 
     for (const row of rows) {
         const encoded = encodeIndexValue(evaluate(row.value) as unknown);
         if (!encoded) {
-            hasUnsupportedValues = true;
+            unsupportedValueCount += 1;
             continue;
         }
-        valueTypes.add(encoded.type);
+        valueTypeCounts[encoded.type] = (valueTypeCounts[encoded.type] ?? 0) + 1;
         entries.push({
             collectionId: definition.collectionId,
             signature: definition.signature,
@@ -314,7 +410,7 @@ function buildIndexRecords(
             value: encoded.value,
         });
         if (encoded.type === "string") {
-            valueTypes.add("string-ci");
+            valueTypeCounts["string-ci"] = (valueTypeCounts["string-ci"] ?? 0) + 1;
             entries.push({
                 collectionId: definition.collectionId,
                 signature: definition.signature,
@@ -328,8 +424,11 @@ function buildIndexRecords(
     return {
         definition: {
             ...definition,
-            valueTypes: [...valueTypes],
-            hasUnsupportedValues,
+            valueTypes: Object.keys(valueTypeCounts) as IndexValueType[],
+            hasUnsupportedValues: unsupportedValueCount > 0,
+            valueTypeCounts,
+            unsupportedValueCount,
+            encodingVersion: INDEX_ENCODING_VERSION,
         },
         entries,
     };
@@ -364,7 +463,7 @@ function boundedRange(
     const keyStart: [string, string, IndexValueType, IndexValue, string] = [...prefix, encoded.value, ""];
     const keyEnd: [string, string, IndexValueType, IndexValue, IDBValidKey] = [...prefix, encoded.value, []];
     const minimum: [string, string, IndexValueType, IndexValue, string] = [...prefix, -Infinity, ""];
-    const maximum: [string, string, IndexValueType, IDBValidKey, IDBValidKey] = [...prefix, [], []];
+    const maximum: [string, string, IndexValueType, IDBValidKey, IDBValidKey] = [...prefix, [[]], []];
     switch (operator) {
         case "gt":
             return IDBKeyRange.bound(keyEnd, maximum);
@@ -407,7 +506,7 @@ function rangeAfter(range: IDBKeyRange, entry: IndexEntryRecord): IDBKeyRange | 
 function compatibleRangeType(definition: IndexDefinitionRecord, valueType: IndexValueType): boolean {
     if (
         definition.hasUnsupportedValues ||
-        ["bigint", "nan", "null", "string-ci", "undefined"].includes(valueType)
+        ["nan", "null", "string-ci", "undefined"].includes(valueType)
     ) {
         return false;
     }
@@ -556,7 +655,7 @@ function selectIndexPlan(
             expression: new IR.Func(name, values.map(toExpression)),
         });
     const parsePredicate = (predicate: IR.BasicExpression<boolean>): IndexPlan | undefined => {
-        const parsed = parseWhereExpression<unknown>(predicate, {
+        const parsed = parseWhereExpression<unknown>(unqualifiedExpression(predicate), {
             handlers: {
                 add: expressionHandler("add"),
                 and: (...values: unknown[]) => combineAnd(values),
@@ -589,20 +688,403 @@ function selectIndexPlan(
     return combineAnd(predicates.map(parsePredicate));
 }
 
+function decodeRow({ key, value, metadata }: PersistedRow): PersistedRow {
+    return {
+        key,
+        value: decodePersistedValue(value) as Record<string, unknown>,
+        metadata: decodePersistedValue(metadata),
+    };
+}
+
+function compareKeys(left: PersistedRow, right: PersistedRow): number {
+    const a = encodePersistedStorageKey(left.key);
+    const b = encodePersistedStorageKey(right.key);
+    return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function compareOrderValues(
+    left: unknown,
+    right: unknown,
+    options: IR.OrderByClause["compareOptions"]
+): number {
+    if (left == null && right == null) return 0;
+    if (left == null) return options.nulls === "first" ? -1 : 1;
+    if (right == null) return options.nulls === "first" ? 1 : -1;
+    let comparison: number;
+    const a = encodeIndexValue(left)!;
+    const b = encodeIndexValue(right)!;
+    if (a.type === "nan" || b.type === "nan") comparison = a.type === b.type ? 0 : a.type === "nan" ? 1 : -1;
+    else if (typeof left === "string" && typeof right === "string" && options.stringSort === "custom")
+        comparison = options.compare(left, right);
+    else if (typeof left === "string" && typeof right === "string" && options.stringSort !== "lexical")
+        comparison = left.localeCompare(
+            right,
+            options.stringSort === "locale" ? options.locale : undefined,
+            options.stringSort === "locale" ? options.localeOptions : undefined
+        );
+    else if (a.type === b.type)
+        comparison = indexedDB.cmp(a.value, b.value);
+    else
+        comparison =
+            (left as string | number | bigint | boolean) < (right as string | number | bigint | boolean)
+                ? -1
+                : (left as string | number | bigint | boolean) > (right as string | number | bigint | boolean)
+                  ? 1
+                  : 0;
+    return options.direction === "desc" ? -comparison : comparison;
+}
+
+/** Unsupported object identity ordering must keep the full source available to the live query. */
+function orderRows(
+    rows: PersistedRow[],
+    orderBy: IR.OrderBy | undefined
+): { rows: PersistedRow[]; supported: boolean } {
+    const clauses = (orderBy ?? []).map((clause) => ({
+        ...clause,
+        evaluate: compileSingleRowExpression(clause.expression),
+    }));
+    if (
+        clauses.some((clause) => {
+            const types = new Set(rows.map((row) => encodeIndexValue(clause.evaluate(row.value))?.type));
+            if (types.has(undefined)) return true;
+            const objectTypes = ["date", "temporal-instant", "temporal-plain-date"];
+            const nonNull = [...types].filter((type) => type !== "null" && type !== "undefined");
+            return nonNull.length > 1 && nonNull.some((type) => objectTypes.includes(type!));
+        })
+    )
+        return { rows, supported: false };
+    return {
+        supported: true,
+        rows: clauses.length
+            ? [...rows].sort((a, b) => {
+                  for (const clause of clauses) {
+                      const comparison = compareOrderValues(
+                          clause.evaluate(a.value),
+                          clause.evaluate(b.value),
+                          clause.compareOptions
+                      );
+                      if (comparison) return comparison;
+                  }
+                  return compareKeys(a, b);
+              })
+            : rows,
+    };
+}
+
 export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
-    private databasePromise?: Promise<IDBPDatabase<RuntimePersistenceDB>>;
+    private readonly connection: IndexedDBConnection;
+    private readonly ownsConnection: boolean;
     private closed = false;
 
-    constructor(private readonly options: IndexedDBPersistenceAdapterOptions) {}
+    private readonly initialized = new Map<string, Promise<number>>();
+    readonly schemaVersion: number;
+
+    constructor(private readonly options: IndexedDBPersistenceAdapterOptions, connection?: IndexedDBConnection) {
+        this.ownsConnection = connection === undefined;
+        this.connection = connection ?? new IndexedDBConnection(options);
+        this.schemaVersion = options.schemaVersion ?? 1;
+        for (const [name, value] of Object.entries({
+            schemaVersion: this.schemaVersion,
+            appliedTxPruneMaxRows: options.appliedTxPruneMaxRows ?? 1000,
+            appliedTxPruneMaxAgeSeconds: options.appliedTxPruneMaxAgeSeconds ?? 86400,
+            pullSinceReloadThreshold: options.pullSinceReloadThreshold ?? 128,
+        })) {
+            if (!Number.isSafeInteger(value) || value < (name === "schemaVersion" ? 1 : 0)) {
+                throw new Error(
+                    `IndexedDB ${name} must be a ${name === "schemaVersion" ? "positive" : "non-negative"} safe integer.`
+                );
+            }
+        }
+    }
+
+    private async collectionDatabase(collectionId: string): Promise<{ database: IDBPDatabase<IndexedDBPersistenceDB>; epoch: number }> {
+        const database = await this.database();
+        if (this.closed || this.connection.closed) throw new Error("IndexedDB persistence adapter is closed.");
+        let initialized = this.initialized.get(collectionId);
+        if (!initialized) {
+            initialized = this.initializeCollection(database, collectionId);
+            this.initialized.set(collectionId, initialized);
+            void initialized.catch(() => {
+                if (this.initialized.get(collectionId) === initialized) this.initialized.delete(collectionId);
+            });
+        }
+        // Bound per-collection bookkeeping for long-lived adapters serving dynamic IDs.
+        // Operations capture their epoch so eviction cannot invalidate an in-flight transaction.
+        this.initialized.delete(collectionId);
+        this.initialized.set(collectionId, initialized);
+        while (this.initialized.size > 128) {
+            const oldest = this.initialized.keys().next().value;
+            if (oldest !== undefined) this.initialized.delete(oldest);
+        }
+        const epoch = await initialized;
+        return { database, epoch };
+    }
+
+    private async initializeCollection(
+        database: IDBPDatabase<IndexedDBPersistenceDB>,
+        collectionId: string
+    ): Promise<number> {
+        const transaction = database.transaction(
+            [ROWS, TRANSACTIONS, COLLECTION_METADATA, STREAMS, INDEX_DEFINITIONS, INDEX_ENTRIES],
+            "readwrite"
+        );
+        try {
+            let stream = await transaction.objectStore(STREAMS).get(collectionId);
+            // Existing version-1 databases were written with the default collection schema (1).
+            const storedVersion = stream?.schemaVersion ?? (stream ? 1 : this.schemaVersion);
+            if (storedVersion > this.schemaVersion)
+                throw new Error(
+                    `Collection "${collectionId}" has schema ${storedVersion}; refusing to downgrade to ${this.schemaVersion}.`
+                );
+            if (storedVersion !== this.schemaVersion) {
+                if (this.options.schemaMismatchPolicy === "sync-absent-error") {
+                    throw new Error(
+                        `Schema version mismatch for collection "${collectionId}": found ${storedVersion}, expected ${this.schemaVersion}. Local-only data was preserved.`
+                    );
+                }
+                for (const name of [
+                    ROWS,
+                    TRANSACTIONS,
+                    COLLECTION_METADATA,
+                    INDEX_DEFINITIONS,
+                    INDEX_ENTRIES,
+                ] as const) {
+                    const store = transaction.objectStore(name);
+                    const keys = await store.index(BY_COLLECTION).getAllKeys(collectionId);
+                    await Promise.all(keys.map((key) => store.delete(key as never)));
+                }
+                stream = {
+                    collectionId,
+                    latestTerm: 0,
+                    latestSeq: 0,
+                    latestRowVersion: (stream?.latestRowVersion ?? 0) + 1,
+                    resetEpoch: (stream?.resetEpoch ?? 0) + 1,
+                    replayFloor: (stream?.latestRowVersion ?? 0) + 1,
+                };
+            }
+            const result = {
+                collectionId,
+                latestTerm: 0,
+                latestSeq: 0,
+                latestRowVersion: 0,
+                ...stream,
+                schemaVersion: this.schemaVersion,
+            };
+            const log = transaction.objectStore(TRANSACTIONS);
+            const versionRange = IDBKeyRange.bound(
+                [collectionId, 0],
+                [collectionId, Number.MAX_SAFE_INTEGER]
+            );
+            let count = await log.index(BY_COLLECTION).count(collectionId);
+            if ((await log.index(BY_VERSION).count(versionRange)) !== count) {
+                let legacy = await log.index(BY_COLLECTION).openCursor(collectionId);
+                while (legacy) {
+                    if (legacy.value.rowVersion === undefined)
+                        await legacy.update({
+                            ...legacy.value,
+                            rowVersion: result.latestRowVersion,
+                            appliedAt: Date.now(),
+                            delta: null,
+                        });
+                    legacy = await legacy.continue();
+                }
+            }
+            const cutoff = Date.now() - (this.options.appliedTxPruneMaxAgeSeconds ?? 86400) * 1000;
+            let oldest = await log
+                .index(BY_VERSION)
+                .openCursor(IDBKeyRange.bound([collectionId, 0], [collectionId, Number.MAX_SAFE_INTEGER]));
+            while (oldest) {
+                if (
+                    count <= (this.options.appliedTxPruneMaxRows ?? 1000) &&
+                    (oldest.value.appliedAt ?? 0) >= cutoff
+                )
+                    break;
+                result.replayFloor = Math.max(result.replayFloor ?? 0, oldest.value.rowVersion ?? 0);
+                await oldest.delete();
+                count--;
+                oldest = await oldest.continue();
+            }
+            await transaction.objectStore(STREAMS).put(result);
+            await transaction.done;
+            return result.resetEpoch ?? 0;
+        } catch (error) {
+            try {
+                transaction.abort();
+            } catch {
+                /* Already aborted. */
+            }
+            await transaction.done.catch(() => undefined);
+            throw error;
+        }
+    }
+
+    private assertSchema(stream: StreamRecord | undefined, collectionId: string, epoch: number): void {
+        if (stream?.schemaVersion !== this.schemaVersion || (stream.resetEpoch ?? 0) !== epoch) {
+            throw new Error(
+                `Collection "${collectionId}" was reset or migrated by another adapter. Refusing access through a stale IndexedDB adapter.`
+            );
+        }
+    }
+
+    async loadResumeSnapshot(
+        collectionId: string,
+        context?: { requiredIndexSignatures?: ReadonlyArray<string>; includeRows?: boolean }
+    ): ReturnType<PersistenceAdapter["loadResumeSnapshot"]> {
+        const { database, epoch } = await this.collectionDatabase(collectionId);
+        // Read data and its cursor together so a concurrent commit cannot make
+        // the resume position newer than the rows restored from this snapshot.
+        const transaction = database.transaction([ROWS, COLLECTION_METADATA, STREAMS], "readonly");
+        const [rows, metadata, stream] = await Promise.all([
+            context?.includeRows === false
+                ? Promise.resolve([])
+                : transaction.objectStore(ROWS).index(BY_COLLECTION).getAll(collectionId),
+            transaction.objectStore(COLLECTION_METADATA).index(BY_COLLECTION).getAll(collectionId),
+            transaction.objectStore(STREAMS).get(collectionId),
+        ]);
+        this.assertSchema(stream, collectionId, epoch);
+        await transaction.done;
+        return {
+            rows: rows.map(({ key, value, metadata }) => ({
+                key,
+                value: decodePersistedValue(value) as Record<string, unknown>,
+                metadata: decodePersistedValue(metadata),
+            })),
+            collectionMetadata: metadata.map(({ key, value }) => ({
+                key,
+                value: decodePersistedValue(value),
+            })),
+            latestTerm: stream?.latestTerm ?? 0,
+            latestSeq: stream?.latestSeq ?? 0,
+            latestRowVersion: stream?.latestRowVersion ?? 0,
+            resetEpoch: stream?.resetEpoch ?? 0,
+        };
+    }
 
     async loadSubset(collectionId: string, options: LoadSubsetOptions): Promise<PersistedRow[]> {
-        const database = await this.database();
-        const transaction = database.transaction([ROWS, INDEX_DEFINITIONS, INDEX_ENTRIES], "readonly");
+        if (options.cursor) {
+            const combine = (predicate: IR.BasicExpression<boolean>) =>
+                options.where ? new IR.Func<boolean>("and", [options.where, predicate]) : predicate;
+            // Restore every row tied at the current boundary, then the requested following page.
+            const [current, following] = await Promise.all([
+                this.loadSubset(collectionId, {
+                    where: combine(options.cursor.whereCurrent),
+                    orderBy: options.orderBy,
+                }),
+                this.loadSubset(collectionId, {
+                    where: combine(options.cursor.whereFrom),
+                    orderBy: options.orderBy,
+                    limit: options.limit,
+                }),
+            ]);
+            const currentPredicate = compileSingleRowExpression(combine(options.cursor.whereCurrent));
+            const merged = new Map(
+                [...current.filter((row) => currentPredicate(row.value) === true), ...following].map(
+                    (row) => [encodePersistedStorageKey(row.key), row]
+                )
+            );
+            return orderRows([...merged.values()], options.orderBy).rows;
+        }
+        const { database, epoch } = await this.collectionDatabase(collectionId);
+        const transaction = database.transaction(
+            [ROWS, INDEX_DEFINITIONS, INDEX_ENTRIES, STREAMS],
+            "readonly"
+        );
+        this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
         const definitions = await transaction
             .objectStore(INDEX_DEFINITIONS)
             .index(BY_COLLECTION)
             .getAll(collectionId);
-        const plan = selectIndexPlan(definitions, options);
+        // Older Temporal/bigint encodings can omit valid candidates. Ignore
+        // incompatible indexes until ensureIndex or a write rebuilds them.
+        const plan = selectIndexPlan(
+            definitions.filter(hasCurrentIndexEncoding),
+            options
+        );
+
+        const orderedClause = options.orderBy?.length === 1 ? options.orderBy[0] : undefined;
+        const orderedDefinition =
+            orderedClause &&
+            definitions.find((definition) => {
+                const types = definition.valueTypes.filter((type) => type !== "string-ci");
+                return (
+                    hasCurrentIndexEncoding(definition) &&
+                    !definition.hasUnsupportedValues &&
+                    types.length === 1 &&
+                    [
+                        "number",
+                        "bigint",
+                        "boolean",
+                        "date",
+                        "temporal-instant",
+                        "temporal-plain-date",
+                        ...(orderedClause.compareOptions.stringSort === "lexical" ? ["string"] : []),
+                    ].includes(types[0]!) &&
+                    expressionsMatch(definition.expression, orderedClause.expression)
+                );
+            });
+        if (orderedDefinition && orderedClause) {
+            const type = orderedDefinition.valueTypes.find((type) => type !== "string-ci")!;
+            const findOrderedRange = (candidate: IndexPlan | undefined): IDBKeyRange | undefined => {
+                if (
+                    candidate?.kind === "lookup" &&
+                    candidate.definition?.signature === orderedDefinition.signature &&
+                    candidate.ranges?.length === 1
+                )
+                    return candidate.ranges[0];
+                if (candidate?.kind === "and") {
+                    for (const child of candidate.children ?? []) {
+                        const range = findOrderedRange(child);
+                        if (range) return range;
+                    }
+                }
+                return undefined;
+            };
+            const range =
+                findOrderedRange(plan) ??
+                IDBKeyRange.bound(
+                    [collectionId, orderedDefinition.signature, type],
+                    [collectionId, orderedDefinition.signature, type, [[]]]
+                );
+            const predicate = options.where ? compileSingleRowExpression(options.where) : undefined;
+            const limit = options.limit === undefined ? Infinity : Math.max(0, Math.trunc(options.limit));
+            const offset = Math.max(0, Math.trunc(options.offset ?? 0));
+            const needed = plan?.kind === "none" ? 0 : limit + offset;
+            const selected: PersistedRow[] = [];
+            let group: PersistedRow[] = [];
+            let groupValue: IndexValue | undefined;
+            const flush = () => {
+                group.sort(compareKeys);
+                selected.push(...group);
+                group = [];
+            };
+            let cursor =
+                needed === 0
+                    ? null
+                    : await transaction
+                          .objectStore(INDEX_ENTRIES)
+                          .index(BY_LOOKUP)
+                          .openCursor(
+                              range,
+                              orderedClause.compareOptions.direction === "desc" ? "prev" : "next"
+                          );
+            while (cursor) {
+                const entry = cursor.value;
+                if (groupValue !== undefined && indexedDB.cmp(groupValue, entry.value) !== 0) {
+                    flush();
+                    if (selected.length >= needed) break;
+                }
+                groupValue = entry.value;
+                const stored = await transaction.objectStore(ROWS).get(entry.rowId);
+                if (stored) {
+                    const row = decodeRow(stored);
+                    if (!predicate || predicate(row.value) === true) group.push(row);
+                }
+                cursor = await cursor.continue();
+            }
+            flush();
+            await transaction.done;
+            return selected.slice(offset, offset + limit);
+        }
 
         let rows: RowRecord[];
         if (plan) {
@@ -667,6 +1149,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
                 if (!first) return new Set();
 
                 let rowIds = await executePlan(first.child);
+                if (rowIds.size === 0) return rowIds;
                 for (const { child } of rest) {
                     const intersection = new Set<string>();
                     await iteratePlan(child, (rowId) => {
@@ -692,6 +1175,288 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             rows = await transaction.objectStore(ROWS).index(BY_COLLECTION).getAll(collectionId);
         }
         await transaction.done;
+        const decoded = rows.map(decodeRow);
+        if (!options.orderBy?.length && options.limit === undefined && options.offset === undefined)
+            return decoded;
+        const predicate = options.where ? compileSingleRowExpression(options.where) : undefined;
+        const filtered = predicate ? decoded.filter((row) => predicate(row.value) === true) : decoded;
+        const ordered = orderRows(filtered, options.orderBy);
+        if (!ordered.supported) return ordered.rows;
+        const offset = Math.max(0, Math.trunc(options.offset ?? 0));
+        const limit = options.limit === undefined ? Infinity : Math.max(0, Math.trunc(options.limit));
+        return ordered.rows.slice(offset, offset + limit);
+    }
+
+    async applyCommittedTx(collectionId: string, committed: PersistedTx): Promise<void> {
+        const { database, epoch } = await this.collectionDatabase(collectionId);
+        const transaction = database.transaction(
+            [ROWS, TRANSACTIONS, COLLECTION_METADATA, STREAMS, INDEX_DEFINITIONS, INDEX_ENTRIES],
+            "readwrite"
+        );
+        // A cloning failure can abort while mutation promises are still unwinding.
+        // Observe completion immediately; the catch below still propagates the write error.
+        void transaction.done.catch(() => undefined);
+        try {
+            const stream = await transaction.objectStore(STREAMS).get(collectionId);
+            this.assertSchema(stream, collectionId, epoch);
+            const transactionId = id(collectionId, committed.txId);
+            const [previous, duplicatePosition] = await Promise.all([
+                transaction.objectStore(TRANSACTIONS).get(transactionId),
+                transaction.objectStore(TRANSACTIONS).index(BY_POSITION).getKey([collectionId, committed.term, committed.seq]),
+            ]);
+            if (previous || duplicatePosition !== undefined) {
+                await transaction.done;
+                return;
+            }
+            if (stream && stream.latestRowVersion > 0 && stream.latestTerm === committed.term && stream.latestSeq === committed.seq) {
+                await transaction.done;
+                return;
+            }
+            const definitions = await transaction.objectStore(INDEX_DEFINITIONS).index(BY_COLLECTION).getAll(collectionId);
+            const rowStore = transaction.objectStore(ROWS);
+            const changedKeys = new Set(committed.mutations.map((mutation) => mutation.key));
+            const touchedKeys = new Set([
+                ...changedKeys,
+                ...(committed.rowMetadataMutations ?? []).map((mutation) => mutation.key),
+            ]);
+            const previousRows = new Map<string, RowRecord>();
+            if (committed.truncate) {
+                const keys = await rowStore.index(BY_COLLECTION).getAllKeys(collectionId);
+                await Promise.all(keys.map((key) => rowStore.delete(key)));
+            } else {
+                await Promise.all(
+                    [...touchedKeys].map(async (key) => {
+                        const row = await rowStore.get(rowId(collectionId, key));
+                        if (row)
+                            previousRows.set(row.id, {
+                                ...row,
+                                value: decodePersistedValue(row.value) as Record<string, unknown>,
+                                metadata: decodePersistedValue(row.metadata),
+                            });
+                    })
+                );
+            }
+            const rows = new Map(previousRows);
+            for (const mutation of committed.mutations) {
+                const key = rowId(collectionId, mutation.key);
+                if (mutation.type === "delete") {
+                    rows.delete(key);
+                } else {
+                    const existing = rows.get(key);
+                    rows.set(key, {
+                        id: key,
+                        collectionId,
+                        key: mutation.key,
+                        value:
+                            mutation.type === "update"
+                                ? { ...existing?.value, ...mutation.value }
+                                : mutation.value,
+                        metadata: mutation.metadataChanged === true ? mutation.metadata : existing?.metadata,
+                    });
+                }
+            }
+            for (const mutation of committed.rowMetadataMutations ?? []) {
+                const key = rowId(collectionId, mutation.key);
+                const existing = rows.get(key);
+                if (!existing) continue;
+                rows.set(key, {
+                    ...existing,
+                    metadata: mutation.type === "delete" ? undefined : mutation.value,
+                });
+            }
+            await Promise.all(
+                [...touchedKeys].map(async (key) => {
+                    const row = rows.get(rowId(collectionId, key));
+                    return row
+                        ? rowStore.put({
+                              ...row,
+                              hasMetadata: row.metadata === undefined ? 0 : 1,
+                              value: encodePersistedValue(row.value) as Record<string, unknown>,
+                              metadata: encodePersistedValue(row.metadata),
+                          })
+                        : rowStore.delete(rowId(collectionId, key));
+                })
+            );
+            const metadataStore = transaction.objectStore(COLLECTION_METADATA);
+            for (const mutation of committed.collectionMetadataMutations ?? []) {
+                const key = id(collectionId, mutation.key);
+                if (mutation.type === "delete") await metadataStore.delete(key);
+                else
+                    await metadataStore.put({
+                        id: key,
+                        collectionId,
+                        key: mutation.key,
+                        value: encodePersistedValue(mutation.value),
+                    });
+            }
+
+            const indexEntryStore = transaction.objectStore(INDEX_ENTRIES);
+            if (committed.truncate) {
+                const keys = await indexEntryStore.index(BY_COLLECTION).getAllKeys(collectionId);
+                await Promise.all(keys.map((key) => indexEntryStore.delete(key)));
+            }
+            const definitionStore = transaction.objectStore(INDEX_DEFINITIONS);
+            for (const definition of definitions) {
+                if (!committed.truncate && changedKeys.size === 0) continue;
+                const changedPrevious = [...previousRows.values()].filter((row) => changedKeys.has(row.key));
+                const changedNext = [...rows.values()].filter((row) => changedKeys.has(row.key));
+                const before = buildIndexRecords(definition, changedPrevious);
+                const after = buildIndexRecords(definition, changedNext);
+                if (committed.truncate) {
+                    await definitionStore.put(after.definition);
+                    await Promise.all(after.entries.map((entry) => indexEntryStore.put(entry)));
+                } else if (
+                    definition.valueTypeCounts &&
+                    definition.unsupportedValueCount !== undefined &&
+                    hasCurrentIndexEncoding(definition)
+                ) {
+                    const counts = { ...definition.valueTypeCounts };
+                    for (const type of new Set([
+                        ...before.definition.valueTypes,
+                        ...after.definition.valueTypes,
+                    ])) {
+                        const count =
+                            (counts[type] ?? 0) -
+                            (before.definition.valueTypeCounts?.[type] ?? 0) +
+                            (after.definition.valueTypeCounts?.[type] ?? 0);
+                        if (count === 0) delete counts[type];
+                        else counts[type] = count;
+                    }
+                    const unsupportedValueCount =
+                        definition.unsupportedValueCount -
+                        (before.definition.unsupportedValueCount ?? 0) +
+                        (after.definition.unsupportedValueCount ?? 0);
+                    await Promise.all(
+                        before.entries.map((entry) =>
+                            indexEntryStore.delete([
+                                collectionId,
+                                definition.signature,
+                                entry.valueType,
+                                entry.rowId,
+                            ])
+                        )
+                    );
+                    await Promise.all(after.entries.map((entry) => indexEntryStore.put(entry)));
+                    await definitionStore.put({
+                        ...definition,
+                        encodingVersion: INDEX_ENCODING_VERSION,
+                        valueTypeCounts: counts,
+                        unsupportedValueCount,
+                        valueTypes: Object.keys(counts) as IndexValueType[],
+                        hasUnsupportedValues: unsupportedValueCount > 0,
+                    });
+                } else {
+                    // Upgrade legacy index summaries once, then maintain only changed rows.
+                    const storedRows = await rowStore.index(BY_COLLECTION).getAll(collectionId);
+                    const built = buildIndexRecords(
+                        definition,
+                        storedRows.map((row) => ({
+                            ...row,
+                            value: decodePersistedValue(row.value) as Record<string, unknown>,
+                        }))
+                    );
+                    const keys = await indexEntryStore
+                        .index(BY_INDEX)
+                        .getAllKeys([collectionId, definition.signature]);
+                    await Promise.all(keys.map((key) => indexEntryStore.delete(key)));
+                    await definitionStore.put(built.definition);
+                    await Promise.all(built.entries.map((entry) => indexEntryStore.put(entry)));
+                }
+            }
+            const nextRowVersion = Math.max((stream?.latestRowVersion ?? 0) + 1, committed.rowVersion);
+            const delta: ReplayableTxDelta | null = committed.truncate
+                ? null
+                : {
+                      txId: committed.txId,
+                      latestRowVersion: nextRowVersion,
+                      changedRows: [...rows.values()]
+                          .filter((row) => changedKeys.has(row.key))
+                          .map(({ key, value }) => ({ key, value })),
+                      deletedKeys: [...changedKeys].filter((key) => !rows.has(rowId(collectionId, key))),
+                      rowMetadataMutations: [...touchedKeys]
+                          .filter((key) => {
+                              const row = rows.get(rowId(collectionId, key));
+                              return row && row.metadata !== previousRows.get(row.id)?.metadata;
+                          })
+                          .map((key) => {
+                              const metadata = rows.get(rowId(collectionId, key))!.metadata;
+                              return metadata === undefined
+                                  ? { type: "delete" as const, key }
+                                  : { type: "set" as const, key, value: metadata };
+                          }),
+                      collectionMetadataMutations: committed.collectionMetadataMutations ?? [],
+                  };
+            const log = transaction.objectStore(TRANSACTIONS);
+            await log.put({
+                id: transactionId,
+                collectionId,
+                term: committed.term,
+                seq: committed.seq,
+                rowVersion: nextRowVersion,
+                appliedAt: Date.now(),
+                delta: encodePersistedValue(delta) as ReplayableTxDelta | null,
+            });
+            let replayFloor = stream?.replayFloor ?? 0;
+            let count = await log.index(BY_COLLECTION).count(collectionId);
+            const maxRows = this.options.appliedTxPruneMaxRows ?? 1000;
+            const cutoff = Date.now() - (this.options.appliedTxPruneMaxAgeSeconds ?? 86400) * 1000;
+            const range = IDBKeyRange.bound([collectionId, 0], [collectionId, Number.MAX_SAFE_INTEGER]);
+            let cursor = await log.index(BY_VERSION).openCursor(range);
+            while (cursor) {
+                const record = cursor.value;
+                if (count <= maxRows && (record.appliedAt ?? 0) >= cutoff) break;
+                await cursor.delete();
+                replayFloor = Math.max(replayFloor, record.rowVersion ?? 0);
+                count--;
+                cursor = await cursor.continue();
+            }
+            await transaction.objectStore(STREAMS).put({
+                ...stream,
+                collectionId,
+                latestTerm: Math.max(stream?.latestTerm ?? 0, committed.term),
+                latestSeq:
+                    committed.term > (stream?.latestTerm ?? 0)
+                        ? committed.seq
+                        : committed.term === (stream?.latestTerm ?? 0)
+                          ? Math.max(stream?.latestSeq ?? 0, committed.seq)
+                          : (stream?.latestSeq ?? 0),
+                latestRowVersion: nextRowVersion,
+                replayFloor,
+            });
+            await transaction.done;
+        } catch (error) {
+            try {
+                transaction.abort();
+            } catch {
+                /* The request may already have aborted it. */
+            }
+            await transaction.done.catch(() => undefined);
+            throw error;
+        }
+    }
+
+    async loadCollectionMetadata(collectionId: string): Promise<Array<{ key: string; value: unknown }>> {
+        const { database, epoch } = await this.collectionDatabase(collectionId);
+        const transaction = database.transaction([COLLECTION_METADATA, STREAMS], "readonly");
+        this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
+        const records = await transaction
+            .objectStore(COLLECTION_METADATA)
+            .index(BY_COLLECTION)
+            .getAll(collectionId);
+        await transaction.done;
+        return records.map(({ key, value }) => ({
+            key,
+            value: decodePersistedValue(value),
+        }));
+    }
+
+    async scanRows(collectionId: string, options?: PersistedRowScanOptions): Promise<PersistedRow[]> {
+        if (!options?.metadataOnly) return this.loadSubset(collectionId, {});
+        const { database, epoch } = await this.collectionDatabase(collectionId);
+        const transaction = database.transaction([ROWS, STREAMS], "readonly");
+        this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
+        const rows = await transaction.objectStore(ROWS).index(BY_METADATA).getAll([collectionId, 1]);
+        await transaction.done;
         return rows.map(({ key, value, metadata }) => ({
             key,
             value: decodePersistedValue(value) as Record<string, unknown>,
@@ -699,177 +1464,128 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         }));
     }
 
-    async applyCommittedTx(collectionId: string, committed: PersistedTx): Promise<void> {
-        const database = await this.database();
-        const transaction = database.transaction(
-            [ROWS, TRANSACTIONS, COLLECTION_METADATA, STREAMS, INDEX_DEFINITIONS, INDEX_ENTRIES],
-            "readwrite"
-        );
-        const transactionId = id(collectionId, committed.txId);
-        const [previous, storedRows, storedMetadata, stream, definitions] = await Promise.all([
-            transaction.objectStore(TRANSACTIONS).get(transactionId),
-            transaction.objectStore(ROWS).index(BY_COLLECTION).getAll(collectionId),
-            transaction.objectStore(COLLECTION_METADATA).index(BY_COLLECTION).getAll(collectionId),
-            transaction.objectStore(STREAMS).get(collectionId),
-            transaction.objectStore(INDEX_DEFINITIONS).index(BY_COLLECTION).getAll(collectionId),
-        ]);
-
-        if (previous) {
+    async pullSince(
+        collectionId: string,
+        fromRowVersion: number
+    ): Promise<PersistencePullSinceResult & { latestTerm: number; latestSeq: number }> {
+        const { database, epoch } = await this.collectionDatabase(collectionId);
+        const transaction = database.transaction([TRANSACTIONS, STREAMS], "readonly");
+        const stream = await transaction.objectStore(STREAMS).get(collectionId);
+        this.assertSchema(stream, collectionId, epoch);
+        const latestRowVersion = stream!.latestRowVersion;
+        const generation = { latestRowVersion, latestTerm: stream!.latestTerm, latestSeq: stream!.latestSeq };
+        const reload = { ...generation, requiresFullReload: true as const };
+        if (
+            !Number.isSafeInteger(fromRowVersion) ||
+            fromRowVersion < (stream!.replayFloor ?? 0) ||
+            fromRowVersion > latestRowVersion
+        ) {
             await transaction.done;
-            return;
+            return reload;
         }
-
-        const rows = new Map(
-            storedRows.map((row) => [
-                encodePersistedStorageKey(row.key),
-                {
-                    ...row,
-                    value: decodePersistedValue(row.value) as Record<string, unknown>,
-                    metadata: decodePersistedValue(row.metadata),
-                },
-            ])
-        );
-        if (committed.truncate) rows.clear();
-
-        for (const mutation of committed.mutations) {
-            const encodedKey = encodePersistedStorageKey(mutation.key);
-            if (mutation.type === "delete") {
-                rows.delete(encodedKey);
-                continue;
-            }
-            const existing = rows.get(encodedKey);
-            rows.set(encodedKey, {
-                id: rowId(collectionId, mutation.key),
-                collectionId,
-                key: mutation.key,
-                value: mutation.value,
-                metadata:
-                    mutation.metadataChanged || mutation.type === "insert"
-                        ? mutation.metadata
-                        : (mutation.metadata ?? existing?.metadata),
-            });
+        if (fromRowVersion === latestRowVersion) {
+            await transaction.done;
+            return { ...generation, requiresFullReload: false, changedKeys: [], deletedKeys: [], deltas: [] };
         }
-
-        for (const mutation of committed.rowMetadataMutations ?? []) {
-            const row = rows.get(encodePersistedStorageKey(mutation.key));
-            if (!row) continue;
-            if (mutation.type === "delete") delete row.metadata;
-            else row.metadata = mutation.value;
-        }
-
-        const rowStore = transaction.objectStore(ROWS);
-        await Promise.all(storedRows.map((row) => rowStore.delete(row.id)));
-        await Promise.all(
-            [...rows.values()].map((row) =>
-                rowStore.put({
-                    ...row,
-                    value: encodePersistedValue(row.value) as Record<string, unknown>,
-                    metadata: encodePersistedValue(row.metadata),
-                })
-            )
-        );
-
-        const metadata = new Map(
-            storedMetadata.map((record) => [
-                record.key,
-                {
-                    ...record,
-                    value: decodePersistedValue(record.value),
-                },
-            ])
-        );
-        for (const mutation of committed.collectionMetadataMutations ?? []) {
-            if (mutation.type === "delete") {
-                metadata.delete(mutation.key);
-            } else {
-                metadata.set(mutation.key, {
-                    id: id(collectionId, mutation.key),
-                    collectionId,
-                    key: mutation.key,
-                    value: mutation.value,
-                });
-            }
-        }
-        const metadataStore = transaction.objectStore(COLLECTION_METADATA);
-        await Promise.all(storedMetadata.map((record) => metadataStore.delete(record.id)));
-        await Promise.all(
-            [...metadata.values()].map((record) =>
-                metadataStore.put({
-                    ...record,
-                    value: encodePersistedValue(record.value),
-                })
-            )
-        );
-
-        const indexEntryStore = transaction.objectStore(INDEX_ENTRIES);
-        const existingIndexKeys = await indexEntryStore.index(BY_COLLECTION).getAllKeys(collectionId);
-        await Promise.all(existingIndexKeys.map((key) => indexEntryStore.delete(key)));
-        const definitionStore = transaction.objectStore(INDEX_DEFINITIONS);
-        for (const definition of definitions) {
-            const built = buildIndexRecords(definition, [...rows.values()]);
-            await definitionStore.put(built.definition);
-            await Promise.all(built.entries.map((entry) => indexEntryStore.put(entry)));
-        }
-
-        await transaction.objectStore(TRANSACTIONS).put({
-            id: transactionId,
-            collectionId,
-        });
-        await transaction.objectStore(STREAMS).put({
-            collectionId,
-            latestTerm: Math.max(stream?.latestTerm ?? 0, committed.term),
-            latestSeq:
-                committed.term > (stream?.latestTerm ?? 0)
-                    ? committed.seq
-                    : committed.term === (stream?.latestTerm ?? 0)
-                      ? Math.max(stream?.latestSeq ?? 0, committed.seq)
-                      : (stream?.latestSeq ?? 0),
-            latestRowVersion: Math.max(stream?.latestRowVersion ?? 0, committed.rowVersion),
-        });
+        const records = await transaction
+            .objectStore(TRANSACTIONS)
+            .index(BY_VERSION)
+            .getAll(
+                IDBKeyRange.bound([collectionId, fromRowVersion], [collectionId, latestRowVersion], true)
+            );
         await transaction.done;
-    }
-
-    async loadCollectionMetadata(collectionId: string): Promise<Array<{ key: string; value: unknown }>> {
-        const database = await this.database();
-        const records = await database.getAllFromIndex(COLLECTION_METADATA, BY_COLLECTION, collectionId);
-        return records.map(({ key, value }) => ({
-            key,
-            value: decodePersistedValue(value),
-        }));
-    }
-
-    async scanRows(collectionId: string): Promise<PersistedRow[]> {
-        return this.loadSubset(collectionId, {});
+        let expectedVersion = fromRowVersion + 1;
+        const deltas: ReplayableTxDelta[] = [];
+        let changeCount = 0;
+        for (const record of records) {
+            if (record.rowVersion !== expectedVersion++ || !record.delta) return reload;
+            const delta = decodePersistedValue(record.delta) as ReplayableTxDelta;
+            changeCount +=
+                delta.changedRows.length +
+                delta.deletedKeys.length +
+                delta.rowMetadataMutations.length +
+                delta.collectionMetadataMutations.length;
+            if (changeCount > (this.options.pullSinceReloadThreshold ?? 128)) return reload;
+            deltas.push(delta);
+        }
+        if (expectedVersion - 1 !== latestRowVersion) return reload;
+        const changed = new Set<string | number>();
+        const deleted = new Set<string | number>();
+        for (const delta of deltas) {
+            for (const { key } of delta.changedRows) {
+                changed.add(key);
+                deleted.delete(key);
+            }
+            for (const mutation of delta.rowMetadataMutations)
+                if (!deleted.has(mutation.key)) changed.add(mutation.key);
+            for (const key of delta.deletedKeys) {
+                deleted.add(key);
+                changed.delete(key);
+            }
+        }
+        return {
+            ...generation,
+            requiresFullReload: false,
+            changedKeys: [...changed],
+            deletedKeys: [...deleted],
+            deltas,
+        };
     }
 
     async ensureIndex(collectionId: string, signature: string, spec: PersistedIndexSpec): Promise<void> {
-        const database = await this.database();
+        const { database, epoch } = await this.collectionDatabase(collectionId);
         const expression = parseIndexExpression(spec);
-        const transaction = database.transaction([ROWS, INDEX_DEFINITIONS, INDEX_ENTRIES], "readwrite");
-        const rows = await transaction.objectStore(ROWS).index(BY_COLLECTION).getAll(collectionId);
-        const built = buildIndexRecords(
-            {
-                collectionId,
-                signature,
-                expression,
-            },
-            rows.map((row) => ({
-                ...row,
-                value: decodePersistedValue(row.value) as Record<string, unknown>,
-                metadata: decodePersistedValue(row.metadata),
-            }))
+        const transaction = database.transaction(
+            [ROWS, INDEX_DEFINITIONS, INDEX_ENTRIES, STREAMS],
+            "readwrite"
         );
-        const entryStore = transaction.objectStore(INDEX_ENTRIES);
-        const existingKeys = await entryStore.index(BY_INDEX).getAllKeys([collectionId, signature]);
-        await Promise.all(existingKeys.map((key) => entryStore.delete(key)));
-        await Promise.all(built.entries.map((entry) => entryStore.put(entry)));
-        await transaction.objectStore(INDEX_DEFINITIONS).put(built.definition);
-        await transaction.done;
+        try {
+            this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
+            const existing = await transaction.objectStore(INDEX_DEFINITIONS).get([collectionId, signature]);
+            if (
+                existing &&
+                JSON.stringify(existing.expression) === JSON.stringify(expression) &&
+                existing.valueTypeCounts &&
+                existing.unsupportedValueCount !== undefined &&
+                hasCurrentIndexEncoding(existing)
+            ) {
+                await transaction.done;
+                return;
+            }
+            const rows = await transaction.objectStore(ROWS).index(BY_COLLECTION).getAll(collectionId);
+            const built = buildIndexRecords(
+                {
+                    collectionId,
+                    signature,
+                    expression,
+                },
+                rows.map((row) => ({
+                    ...row,
+                    value: decodePersistedValue(row.value) as Record<string, unknown>,
+                    metadata: decodePersistedValue(row.metadata),
+                }))
+            );
+            const entryStore = transaction.objectStore(INDEX_ENTRIES);
+            const existingKeys = await entryStore.index(BY_INDEX).getAllKeys([collectionId, signature]);
+            await Promise.all(existingKeys.map((key) => entryStore.delete(key)));
+            await Promise.all(built.entries.map((entry) => entryStore.put(entry)));
+            await transaction.objectStore(INDEX_DEFINITIONS).put(built.definition);
+            await transaction.done;
+        } catch (error) {
+            try {
+                transaction.abort();
+            } catch {
+                /* The request may already have aborted it. */
+            }
+            await transaction.done.catch(() => undefined);
+            throw error;
+        }
     }
 
     async markIndexRemoved(collectionId: string, signature: string): Promise<void> {
-        const database = await this.database();
-        const transaction = database.transaction([INDEX_DEFINITIONS, INDEX_ENTRIES], "readwrite");
+        const { database, epoch } = await this.collectionDatabase(collectionId);
+        const transaction = database.transaction([INDEX_DEFINITIONS, INDEX_ENTRIES, STREAMS], "readwrite");
+        this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
         await transaction.objectStore(INDEX_DEFINITIONS).delete([collectionId, signature]);
         const entryStore = transaction.objectStore(INDEX_ENTRIES);
         const keys = await entryStore.index(BY_INDEX).getAllKeys([collectionId, signature]);
@@ -878,9 +1594,11 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
     }
 
     async getStreamPosition(collectionId: string): Promise<StreamRecord> {
-        const database = await this.database();
+        const { database, epoch } = await this.collectionDatabase(collectionId);
+        const stream = await database.get(STREAMS, collectionId);
+        this.assertSchema(stream, collectionId, epoch);
         return (
-            (await database.get(STREAMS, collectionId)) ?? {
+            stream ?? {
                 collectionId,
                 latestTerm: 0,
                 latestSeq: 0,
@@ -891,38 +1609,88 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
 
     close(): void {
         this.closed = true;
-        void this.databasePromise?.then((database) => database.close());
+        this.initialized.clear();
+        if (this.ownsConnection) this.connection.close();
+    }
+
+    private database(): Promise<IDBPDatabase<IndexedDBPersistenceDB>> {
+        if (this.closed) return Promise.reject(new Error("IndexedDB persistence adapter is closed."));
+        return this.connection.database();
+    }
+}
+
+/** Internal database lifetime shared by collection adapters from one factory. */
+export class IndexedDBConnection {
+    private databasePromise?: Promise<IDBPDatabase<IndexedDBPersistenceDB>>;
+    closed = false;
+
+    constructor(private readonly options: Pick<IndexedDBPersistenceAdapterOptions, "databaseName" | "onBlocked" | "onVersionChange">) {}
+
+    close(): void {
+        this.closed = true;
+        void this.databasePromise?.then((database) => database.close(), () => undefined);
         this.databasePromise = undefined;
     }
 
-    private database(): Promise<IDBPDatabase<RuntimePersistenceDB>> {
+    database(): Promise<IDBPDatabase<IndexedDBPersistenceDB>> {
         if (this.closed) {
             return Promise.reject(new Error("IndexedDB persistence adapter is closed."));
         }
-        this.databasePromise ??= openDB<RuntimePersistenceDB>(this.options.databaseName, DATABASE_VERSION, {
-            upgrade(database) {
-                const rows = database.createObjectStore(ROWS, {
-                    keyPath: "id",
-                });
-                rows.createIndex(BY_COLLECTION, "collectionId");
-                const transactions = database.createObjectStore(TRANSACTIONS, { keyPath: "id" });
-                transactions.createIndex(BY_COLLECTION, "collectionId");
-                const metadata = database.createObjectStore(COLLECTION_METADATA, { keyPath: "id" });
-                metadata.createIndex(BY_COLLECTION, "collectionId");
-                database.createObjectStore(STREAMS, {
-                    keyPath: "collectionId",
-                });
+        this.databasePromise ??= openDB<IndexedDBPersistenceDB>(this.options.databaseName, DATABASE_VERSION, {
+            upgrade(database, oldVersion, _newVersion, transaction) {
+                if (oldVersion < 1) {
+                    const rows = database.createObjectStore(ROWS, {
+                        keyPath: "id",
+                    });
+                    rows.createIndex(BY_COLLECTION, "collectionId");
+                    const transactions = database.createObjectStore(TRANSACTIONS, { keyPath: "id" });
+                    transactions.createIndex(BY_COLLECTION, "collectionId");
+                    const metadata = database.createObjectStore(COLLECTION_METADATA, { keyPath: "id" });
+                    metadata.createIndex(BY_COLLECTION, "collectionId");
+                    database.createObjectStore(STREAMS, {
+                        keyPath: "collectionId",
+                    });
 
-                const definitions = database.createObjectStore(INDEX_DEFINITIONS, {
-                    keyPath: ["collectionId", "signature"],
-                });
-                definitions.createIndex(BY_COLLECTION, "collectionId");
-                const entries = database.createObjectStore(INDEX_ENTRIES, {
-                    keyPath: ["collectionId", "signature", "valueType", "rowId"],
-                });
-                entries.createIndex(BY_COLLECTION, "collectionId");
-                entries.createIndex(BY_INDEX, ["collectionId", "signature"]);
-                entries.createIndex(BY_LOOKUP, ["collectionId", "signature", "valueType", "value", "rowId"]);
+                    const definitions = database.createObjectStore(INDEX_DEFINITIONS, {
+                        keyPath: ["collectionId", "signature"],
+                    });
+                    definitions.createIndex(BY_COLLECTION, "collectionId");
+                    const entries = database.createObjectStore(INDEX_ENTRIES, {
+                        keyPath: ["collectionId", "signature", "valueType", "rowId"],
+                    });
+                    entries.createIndex(BY_COLLECTION, "collectionId");
+                    entries.createIndex(BY_INDEX, ["collectionId", "signature"]);
+                    entries.createIndex(BY_LOOKUP, [
+                        "collectionId",
+                        "signature",
+                        "valueType",
+                        "value",
+                        "rowId",
+                    ]);
+                }
+                if (oldVersion < 2) {
+                    const rows = transaction.objectStore(ROWS);
+                    rows.createIndex(BY_METADATA, ["collectionId", "hasMetadata"]);
+                    transaction
+                        .objectStore(TRANSACTIONS)
+                        .createIndex(BY_VERSION, ["collectionId", "rowVersion"]);
+                    // Populate the selective metadata index for existing v1 databases.
+                    void (async () => {
+                        let cursor = await rows.openCursor();
+                        while (cursor) {
+                            await cursor.update({
+                                ...cursor.value,
+                                hasMetadata: cursor.value.metadata === undefined ? 0 : 1,
+                            });
+                            cursor = await cursor.continue();
+                        }
+                    })().catch(() => transaction.abort());
+                }
+                if (oldVersion < 3) {
+                    // Older journal records retain tx-id deduplication; new records also
+                    // retain the coordinator stream identity, matching SQLite's contract.
+                    transaction.objectStore(TRANSACTIONS).createIndex(BY_POSITION, ["collectionId", "term", "seq"]);
+                }
             },
             blocked: () => this.options.onBlocked?.(),
             blocking: (_currentVersion, _blockedVersion, event) => {

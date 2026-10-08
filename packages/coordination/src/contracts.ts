@@ -1,4 +1,4 @@
-export const COORDINATION_PROTOCOL_VERSION = 1 as const;
+export const COORDINATION_PROTOCOL_VERSION = 3 as const;
 
 export interface CoordinationService {
     methods: Record<
@@ -158,6 +158,7 @@ export type CoordinationErrorCode =
     | "PROTOCOL_MISMATCH"
     | "SERVICE_CLOSED"
     | "SERVICE_UNAVAILABLE"
+    | "INDETERMINATE"
     | "TIMEOUT"
     | "TRANSPORT_ERROR";
 
@@ -216,7 +217,7 @@ export class CoordinationProtocolError extends CoordinationError {
 export class CoordinationTransportError extends CoordinationError {
     constructor(
         message: string,
-        code: "DISCONNECTED" | "TIMEOUT" | "TRANSPORT_ERROR",
+        code: "DISCONNECTED" | "TIMEOUT" | "TRANSPORT_ERROR" | "INDETERMINATE",
         options?: ErrorOptions
     ) {
         super(message, code, options);

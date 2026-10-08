@@ -724,7 +724,7 @@ describe("remote ontology server policy projection", () => {
                 sync: {
                     sync: ({ begin, write, commit, markReady }) => {
                         syncStarted = true;
-                        begin({ immediate: true });
+                        begin();
                         write({
                             type: "insert",
                             value: {

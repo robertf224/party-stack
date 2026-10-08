@@ -1,11 +1,5 @@
-import {
-    afterEach,
-    beforeEach,
-    describe,
-    expect,
-    it,
-    vi,
-} from "vitest";
+import { Temporal } from "temporal-polyfill";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LockBroadcastCoordination } from "./index.js";
 
 type TestService = {
@@ -46,11 +40,7 @@ class LocalBroadcastChannel
     }
 
     postMessage(message: unknown): void {
-        for (const channel of [
-            ...(LocalBroadcastChannel.channels.get(
-                this.name
-            ) ?? []),
-        ]) {
+        for (const channel of [...(LocalBroadcastChannel.channels.get(this.name) ?? [])]) {
             if (channel === this || channel.closed) {
                 continue;
             }
@@ -89,59 +79,29 @@ class LocalLockManager implements LockManager {
         Promise<unknown>
     >();
 
-    request<T>(
-        name: string,
-        callback: (
-            lock: Lock | null
-        ) => T | PromiseLike<T>
-    ): Promise<T>;
+    request<T>(name: string, callback: (lock: Lock | null) => T | PromiseLike<T>): Promise<T>;
     request<T>(
         name: string,
         options: LockOptions,
-        callback: (
-            lock: Lock | null
-        ) => T | PromiseLike<T>
+        callback: (lock: Lock | null) => T | PromiseLike<T>
     ): Promise<T>;
     request<T>(
         name: string,
-        optionsOrCallback:
-            | LockOptions
-            | ((
-                  lock: Lock | null
-              ) => T | PromiseLike<T>),
-        callback?: (
-            lock: Lock | null
-        ) => T | PromiseLike<T>
+        optionsOrCallback: LockOptions | ((lock: Lock | null) => T | PromiseLike<T>),
+        callback?: (lock: Lock | null) => T | PromiseLike<T>
     ): Promise<T> {
-        const options =
-            typeof optionsOrCallback === "function"
-                ? {}
-                : optionsOrCallback;
-        const grant =
-            typeof optionsOrCallback === "function"
-                ? optionsOrCallback
-                : callback!;
-        const previous =
-            this.tails.get(name) ??
-            Promise.resolve();
-        const operation = previous.then(
-            async () => {
-                if (options.signal?.aborted) {
-                    throw (
-                        options.signal.reason ??
-                        new DOMException(
-                            "The operation was aborted.",
-                            "AbortError"
-                        )
-                    );
-                }
-                return grant({
-                    mode:
-                        options.mode ?? "exclusive",
-                    name,
-                } as Lock);
+        const options = typeof optionsOrCallback === "function" ? {} : optionsOrCallback;
+        const grant = typeof optionsOrCallback === "function" ? optionsOrCallback : callback!;
+        const previous = this.tails.get(name) ?? Promise.resolve();
+        const operation = previous.then(async () => {
+            if (options.signal?.aborted) {
+                throw options.signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
             }
-        );
+            return grant({
+                mode: options.mode ?? "exclusive",
+                name,
+            } as Lock);
+        });
         this.tails.set(
             name,
             operation.catch(() => undefined)
@@ -213,16 +173,18 @@ afterEach(() => {
     restoreWebApis = undefined;
 });
 
-function createPair(scope: string) {
+function createPair(scope: string, responseCacheMs?: number) {
     const first = new LockBroadcastCoordination({
         scope,
         requestTimeoutMs: 30,
         requestAttempts: 10,
+        responseCacheMs,
     });
     const second = new LockBroadcastCoordination({
         scope,
         requestTimeoutMs: 30,
         requestAttempts: 10,
+        responseCacheMs,
     });
     return { first, second };
 }
@@ -235,6 +197,83 @@ function serve(coordination: LockBroadcastCoordination) {
 }
 
 describe("LockBroadcastCoordination", () => {
+    it("preserves Temporal and bigint requests, responses, and events across structured clone", async () => {
+        type TemporalPayload = { instant: Temporal.Instant; dates: Temporal.PlainDate[]; bigint: bigint };
+        type TemporalService = { methods: { echo(value: TemporalPayload): Promise<TemporalPayload> }; events: { changed: TemporalPayload } };
+        const { first, second } = createPair("temporal");
+        const handlers = { echo: (value: TemporalPayload) => {
+            expect(value.instant).toBeInstanceOf(Temporal.Instant);
+            expect(value.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+            expect(value.bigint).toBe(2n ** 100n);
+            return value;
+        } };
+        const firstServer = first.serve<TemporalService>("temporal", handlers);
+        const secondServer = second.serve<TemporalService>("temporal", handlers);
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
+        const server = first.isLeader ? firstServer : secondServer;
+        const service = (first.isLeader ? second : first).service<TemporalService>("temporal");
+        const payload = { instant: Temporal.Instant.from("2026-10-07T12:00:00.123456789Z"), dates: [Temporal.PlainDate.from("2026-10-07")], bigint: 2n ** 100n };
+        const listener = vi.fn();
+        service.events.subscribe("changed", listener);
+        try {
+            const result = await service.methods.echo(payload);
+            expect(result.instant).toBeInstanceOf(Temporal.Instant);
+            expect(result.instant.epochNanoseconds).toBe(payload.instant.epochNanoseconds);
+            expect(result.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+            expect(result.dates[0]?.toString()).toBe("2026-10-07");
+            expect(result.bigint).toBe(payload.bigint);
+            server.events.publish("changed", payload);
+            await vi.waitFor(() => expect(listener).toHaveBeenCalled());
+            const event = listener.mock.calls[0]?.[0] as TemporalPayload;
+            expect(event.instant).toBeInstanceOf(Temporal.Instant);
+            expect(event.instant.epochNanoseconds).toBe(payload.instant.epochNanoseconds);
+            expect(event.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+            expect(event.bigint).toBe(payload.bigint);
+        } finally {
+            await first.close();
+            await second.close();
+        }
+    });
+
+    it("releases cached payloads, clients, and listeners when closed", async () => {
+        const { first, second } = createPair("close-retention");
+        serve(first);
+        serve(second);
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
+        const leader = first.isLeader ? first : second;
+        const follower = first.isLeader ? second : first;
+        leader.service<TestService>("test.v1").events.subscribe("changed", () => {});
+        await follower.service<TestService>("test.v1").methods.double({ value: 3 });
+        const retained = (key: string) => Reflect.get(leader, key) as Map<unknown, unknown>;
+        expect(retained("responses").size).toBe(1);
+        expect(retained("listeners").size).toBe(1);
+        await leader.close();
+        for (const key of ["responses", "listeners", "clients", "pending", "routes", "pendingSenders", "incoming", "leadershipWaiters"]) {
+            expect(retained(key).size, key).toBe(0);
+        }
+        await leader.close();
+        await follower.close();
+    });
+
+    it("expires reply payloads while idle without requiring another request", async () => {
+        const options = { scope: "idle-retention", requestTimeoutMs: 10, requestAttempts: 2, responseCacheMs: 1 };
+        const first = new LockBroadcastCoordination(options);
+        const second = new LockBroadcastCoordination(options);
+        serve(first);
+        serve(second);
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
+        const leader = first.isLeader ? first : second;
+        const follower = first.isLeader ? second : first;
+        try {
+            await follower.service<TestService>("test.v1").methods.double({ value: 3 });
+            await vi.waitFor(() => expect((Reflect.get(leader, "responses") as Map<string, unknown>).size).toBe(0));
+            expect(Reflect.get(leader, "responsePruneTimer")).toBeUndefined();
+        } finally {
+            await first.close();
+            await second.close();
+        }
+    });
+
     it("routes follower calls to the leader and fans out events", async () => {
         const { first, second } = createPair("routing");
         const firstServer = serve(first);
@@ -266,6 +305,149 @@ describe("LockBroadcastCoordination", () => {
 
         await leader.close();
         await follower.close();
+    });
+
+    it("routes a first call made before leader election without losing it", async () => {
+        const { first, second } = createPair("first-call");
+        serve(first);
+        serve(second);
+        try {
+            await expect(first.service<TestService>("test.v1").methods.double({ value: 3 })).resolves.toBe(6);
+            await expect(second.service<TestService>("test.v1").methods.double({ value: 4 })).resolves.toBe(8);
+        } finally {
+            await first.close();
+            await second.close();
+        }
+    });
+
+    it("shares leadership while isolating persistence, outbox, and blob services", async () => {
+        const { first, second } = createPair("shared-services");
+        const namespaces = ["persistence.v1", "outbox.v1", "blobs.v1"];
+        const publishers = new Map<LockBroadcastCoordination, () => void>();
+        for (const coordination of [first, second]) {
+            for (const [index, namespace] of namespaces.entries()) {
+                const server = coordination.serve<TestService>(namespace, {
+                    double: ({ value }) => value + index,
+                    wait: ({ value }) => value,
+                });
+                if (index === 1) publishers.set(coordination, () => server.events.publish("changed", { value: 9 }));
+            }
+        }
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
+        const leader = first.isLeader ? first : second;
+        const follower = first.isLeader ? second : first;
+        const listeners = namespaces.map(() => vi.fn());
+        namespaces.forEach((namespace, index) => {
+            follower.service<TestService>(namespace).events.subscribe("changed", listeners[index]!);
+        });
+        try {
+            for (const [index, namespace] of namespaces.entries()) {
+                await expect(follower.service<TestService>(namespace).methods.double({ value: 10 })).resolves.toBe(10 + index);
+            }
+            publishers.get(leader)!();
+            await vi.waitFor(() => expect(listeners[1]).toHaveBeenCalledOnce());
+            expect(listeners[0]).not.toHaveBeenCalled();
+            expect(listeners[2]).not.toHaveBeenCalled();
+            await leader.close();
+            await vi.waitFor(() => expect(follower.isLeader).toBe(true));
+            for (const [index, namespace] of namespaces.entries()) {
+                await expect(follower.service<TestService>(namespace).methods.double({ value: 20 })).resolves.toBe(20 + index);
+            }
+        } finally {
+            await first.close();
+            await second.close();
+        }
+    });
+
+    it("replays a lost response on the same leader without repeating work", async () => {
+        const { first, second } = createPair("lost-response", 1);
+        const apply = vi.fn(() => 42);
+        first.serve<TestService>("test.v1", { double: apply, wait: apply });
+        second.serve<TestService>("test.v1", { double: apply, wait: apply });
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
+        const follower = first.isLeader ? second : first;
+        // Capture the method deliberately; calls below explicitly bind the channel.
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        const post = LocalBroadcastChannel.prototype.postMessage;
+        let dropped = false;
+        const spy = vi.spyOn(LocalBroadcastChannel.prototype, "postMessage").mockImplementation(function (
+            this: LocalBroadcastChannel,
+            message: unknown
+        ) {
+            if ((message as { type?: string }).type === "response" && !dropped) {
+                dropped = true;
+                return;
+            }
+            post.call(this, message);
+        });
+        try {
+            await expect(follower.service<TestService>("test.v1").methods.double({ value: 1 })).resolves.toBe(
+                42
+            );
+            expect(dropped).toBe(true);
+            expect(apply).toHaveBeenCalledTimes(1);
+        } finally {
+            spy.mockRestore();
+            await first.close();
+            await second.close();
+        }
+    });
+
+    it("reports an indeterminate outcome when every reply is lost without repeating work", async () => {
+        const { first, second } = createPair("all-responses-lost", 1);
+        const apply = vi.fn(() => 42);
+        first.serve<TestService>("test.v1", { double: apply, wait: apply });
+        second.serve<TestService>("test.v1", { double: apply, wait: apply });
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
+        const follower = first.isLeader ? second : first;
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        const post = LocalBroadcastChannel.prototype.postMessage;
+        const spy = vi.spyOn(LocalBroadcastChannel.prototype, "postMessage").mockImplementation(function (this: LocalBroadcastChannel, message: unknown) {
+            if ((message as { type?: string }).type !== "response") post.call(this, message);
+        });
+        try {
+            await expect(follower.service<TestService>("test.v1").methods.double({ value: 1 })).rejects.toMatchObject({ code: "INDETERMINATE" });
+            expect(apply).toHaveBeenCalledTimes(1);
+        } finally {
+            spy.mockRestore();
+            await first.close();
+            await second.close();
+        }
+    });
+
+    it("rejects an uncertain write instead of repeating it after leader takeover", async () => {
+        const { first, second } = createPair("uncertain-takeover");
+        const apply = vi.fn(() => 42);
+        first.serve<TestService>("test.v1", { double: apply, wait: apply });
+        second.serve<TestService>("test.v1", { double: apply, wait: apply });
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
+        const leader = first.isLeader ? first : second;
+        const follower = first.isLeader ? second : first;
+        // Capture the method deliberately; calls below explicitly bind the channel.
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        const post = LocalBroadcastChannel.prototype.postMessage;
+        let dropped = false;
+        const spy = vi.spyOn(LocalBroadcastChannel.prototype, "postMessage").mockImplementation(function (
+            this: LocalBroadcastChannel,
+            message: unknown
+        ) {
+            if ((message as { type?: string }).type === "response" && !dropped) {
+                dropped = true;
+                void leader.close();
+                return;
+            }
+            post.call(this, message);
+        });
+        try {
+            await expect(
+                follower.service<TestService>("test.v1").methods.double({ value: 1 })
+            ).rejects.toMatchObject({ code: "INDETERMINATE" });
+            expect(apply).toHaveBeenCalledTimes(1);
+        } finally {
+            spy.mockRestore();
+            await first.close();
+            await second.close();
+        }
     });
 
     it("preserves FIFO remotely and permits same-service nesting", async () => {
@@ -434,13 +616,9 @@ describe("LockBroadcastCoordination", () => {
         cleanupGate.resolve();
         await closing;
 
-        await expect(
-            cleaned.promise
-        ).resolves.toBeUndefined();
-        await vi.waitFor(() =>
-            expect(follower.isLeader).toBe(true)
-        );
-        await expect(request).resolves.toBe(7);
+        await expect(cleaned.promise).resolves.toBeUndefined();
+        await vi.waitFor(() => expect(follower.isLeader).toBe(true));
+        await expect(request).rejects.toMatchObject({ code: "INDETERMINATE" });
         await follower.close();
     });
 

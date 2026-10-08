@@ -19,9 +19,10 @@
     "dependencies": {
         "@party-stack/coordination": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "@tanstack/expo-db-sqlite-persistence": "0.2.23",
+        "@tanstack/expo-db-sqlite-persistence": "0.2.30",
         "expo-secure-store": "^57.0.1",
-        "expo-web-browser": "^57.0.2"
+        "expo-web-browser": "^57.0.2",
+        "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",
