@@ -7,6 +7,7 @@ import {
     type ReplayableTxDelta,
     type PersistedTx,
     type PersistenceAdapter,
+    type SQLiteCoreAdapterOptions,
 } from "@tanstack/db-sqlite-persistence-core";
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import { Temporal } from "temporal-polyfill";
@@ -153,7 +154,7 @@ interface PersistedTemporalValue {
 export interface IndexedDBPersistenceAdapterOptions {
     databaseName: string;
     schemaVersion?: number;
-    schemaMismatchPolicy?: "sync-present-reset" | "sync-absent-error" | "reset";
+    schemaMismatchPolicy?: SQLiteCoreAdapterOptions["schemaMismatchPolicy"];
     /** Retry deduplication and replay are retained for this bounded window. */
     appliedTxPruneMaxRows?: number;
     appliedTxPruneMaxAgeSeconds?: number;

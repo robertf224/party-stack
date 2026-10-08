@@ -1,12 +1,18 @@
 import "fake-indexeddb/auto";
 import { createCollection } from "@tanstack/db";
-import { persistedCollectionOptions, SingleProcessCoordinator } from "@tanstack/db-sqlite-persistence-core";
-import { describe, expect, it, vi } from "vitest";
-import { createIndexedDBPersistence } from "./index.js";
+import { persistedCollectionOptions, SingleProcessCoordinator, type SQLiteCoreAdapterOptions } from "@tanstack/db-sqlite-persistence-core";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
+import { createIndexedDBPersistence, type IndexedDBPersistenceAdapterOptions, type IndexedDBSchemaMismatchPolicy } from "./index.js";
 
 const databaseName = () => `factory-${crypto.randomUUID()}`;
 
 describe("createIndexedDBPersistence", () => {
+    it("uses upstream schema mismatch policies with the standard factory throw alias", () => {
+        type UpstreamPolicy = NonNullable<SQLiteCoreAdapterOptions["schemaMismatchPolicy"]>;
+        expectTypeOf<NonNullable<IndexedDBPersistenceAdapterOptions["schemaMismatchPolicy"]>>().toEqualTypeOf<UpstreamPolicy>();
+        expectTypeOf<IndexedDBSchemaMismatchPolicy>().toEqualTypeOf<UpstreamPolicy | "throw">();
+    });
+
     it("persists and rehydrates a standalone TanStack collection without runtime integration", async () => {
         const name = databaseName();
         const open = () => {
