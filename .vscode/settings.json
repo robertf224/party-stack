@@ -18,4 +18,8 @@
     "typescript.suggest.completeJSDocs": false,
     "typescript.tsdk": "node_modules/typescript/lib",
     "typescript.enablePromptUseWorkspaceTsdk": true,
+    "scm.showActionButton": false,
+    "git.showCommitInput": false,
+    "diffEditor.hideOriginalLineNumbers": true,
+    "git.worktreeIncludeFiles": [".env", ".env.local"],
 }
