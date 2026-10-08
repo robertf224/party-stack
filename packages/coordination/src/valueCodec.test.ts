@@ -21,6 +21,15 @@ describe("coordination value codec", () => {
         }
     });
 
+    it.each([0n, -1n, 2n ** 100n, -(10n ** 100n)])("preserves bigint %s as a primitive and inside containers", (value) => {
+        expect(cloneValue(value)).toBe(value);
+        const payload = { nested: { value }, array: [value], map: new Map([[value, new Set([value])]]) };
+        const cloned = cloneValue(payload);
+        expect(cloned).toEqual(payload);
+        expect(typeof cloned.nested.value).toBe("bigint");
+        expect(cloned.map.get(value)?.has(value)).toBe(true);
+    });
+
     it("preserves cycles, aliases, maps, sets, sparse arrays, and cloneable native values", () => {
         const instant = Temporal.Instant.from("2026-10-07T12:00:00Z");
         const collision = { __party_stack_coordination_value__: "temporal", kind: "Temporal.Instant", value: "ordinary data" };

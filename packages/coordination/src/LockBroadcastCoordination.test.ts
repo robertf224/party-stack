@@ -197,13 +197,14 @@ function serve(coordination: LockBroadcastCoordination) {
 }
 
 describe("LockBroadcastCoordination", () => {
-    it("preserves Temporal requests, responses, and events across structured clone", async () => {
+    it("preserves Temporal and bigint requests, responses, and events across structured clone", async () => {
         type TemporalPayload = { instant: Temporal.Instant; dates: Temporal.PlainDate[]; bigint: bigint };
         type TemporalService = { methods: { echo(value: TemporalPayload): Promise<TemporalPayload> }; events: { changed: TemporalPayload } };
         const { first, second } = createPair("temporal");
         const handlers = { echo: (value: TemporalPayload) => {
             expect(value.instant).toBeInstanceOf(Temporal.Instant);
             expect(value.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+            expect(value.bigint).toBe(2n ** 100n);
             return value;
         } };
         const firstServer = first.serve<TemporalService>("temporal", handlers);
@@ -227,6 +228,7 @@ describe("LockBroadcastCoordination", () => {
             expect(event.instant).toBeInstanceOf(Temporal.Instant);
             expect(event.instant.epochNanoseconds).toBe(payload.instant.epochNanoseconds);
             expect(event.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+            expect(event.bigint).toBe(payload.bigint);
         } finally {
             await first.close();
             await second.close();
