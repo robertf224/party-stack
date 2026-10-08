@@ -15,7 +15,8 @@
         "bench:browser": "vitest bench --run --config vitest.browser.config.mjs",
         "build": "tsc",
         "lint": "eslint",
-        "test": "vitest run"
+        "test": "vitest run",
+        "test:browser": "vitest run --config vitest.browser.config.mjs"
     },
     "dependencies": {
         "@tanstack/db-sqlite-persistence-core": "0.4.5",
@@ -25,7 +26,10 @@
     "devDependencies": {
         "@bobbyfidz/universal-build-config": "^0.1.1",
         "@tanstack/db": "0.12.1",
+        "@tanstack/node-db-sqlite-persistence": "0.2.30",
+        "@types/better-sqlite3": "^7.6.13",
         "@vitest/browser": "3.2.4",
+        "better-sqlite3": "^12.9.0",
         "eslint": "^9.25.0",
         "fake-indexeddb": "^6.2.5",
         "playwright": "^1.61.1",

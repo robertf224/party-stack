@@ -8,6 +8,7 @@ import {
     createLiveQueryCollection,
     eq,
     gt,
+    gte,
     ilike,
     inArray,
     isNull,
@@ -1446,7 +1447,7 @@ describe("IndexedDB persistence lifecycle and paging", () => {
         await seed(adapter, [{ id: "a", priority: 1 }]);
         await adapter.applyCommittedTx("items", tx("metadata", 2, []));
         await adapter.applyCommittedTx("items", tx("metadata-2", 3, []));
-        const database = await openDB(name, 2);
+        const database = await openDB(name);
         expect(await database.countFromIndex("transactions", "collectionId", "items")).toBe(2);
         expect(await adapter.pullSince("items", 0)).toMatchObject({
             latestRowVersion: 3,
@@ -1481,7 +1482,7 @@ describe("IndexedDB persistence lifecycle and paging", () => {
             appliedTxPruneMaxAgeSeconds: 10,
         });
         await seed(adapter, [{ id: "a", priority: 1 }]);
-        const database = await openDB(name, 2);
+        const database = await openDB(name);
         const record = (await database.getAllFromIndex("transactions", "collectionId", "items"))[0] as {
             id: string;
             collectionId: string;
@@ -1807,5 +1808,71 @@ describe("IndexedDB partial updates", () => {
             deltas: [{ rowMetadataMutations: [{ type: "delete", key: "a" }] }],
         });
         adapter.close();
+    });
+});
+
+describe("empty indexed intersections", () => {
+    it("does not load a broad index branch after the selective branch returns no rows", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        await seed(adapter, Array.from({ length: 100 }, (_, index) => ({ id: String(index), status: "open", priority: index })));
+        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
+        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        const scan = vi.spyOn(IDBIndex.prototype, "getAll");
+        try {
+            const rows = await adapter.loadSubset("items", queryOptions((query) => query.where(({ item }) => and(eq(item.status, "absent"), gte(item.priority, 0)))));
+            expect(rows).toEqual([]);
+            const indexRanges = scan.mock.calls.filter((_, index) => (scan.mock.contexts[index] as IDBIndex).name === "lookup").map(([range]) => range as IDBKeyRange);
+            expect(indexRanges).toHaveLength(1);
+            expect((indexRanges[0]!.lower as unknown[])[1]).toBe("status-index");
+        } finally {
+            scan.mockRestore();
+            adapter.close();
+        }
+    });
+});
+
+
+describe("committed stream identity", () => {
+    it("deduplicates an older term/sequence even with a new tx id after subsequent commits", async () => {
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        try {
+            await adapter.applyCommittedTx("items", tx("one", 1, [{ type: "insert", key: "one", value: { id: "one", priority: 1 } }]));
+            await adapter.applyCommittedTx("items", tx("two", 2, [{ type: "insert", key: "two", value: { id: "two", priority: 2 } }]));
+            await adapter.applyCommittedTx("items", tx("retry-new-id", 1, [{ type: "delete", key: "one", value: { id: "one", priority: 0 } }]));
+            expect(ids(await adapter.loadSubset("items", {}))).toEqual(["one", "two"]);
+            expect(await adapter.getStreamPosition("items")).toMatchObject({ latestRowVersion: 2, latestSeq: 2 });
+            const result = await adapter.pullSince("items", 0);
+            expect(result).toMatchObject({ requiresFullReload: false });
+            if (!result.requiresFullReload) expect(result.deltas).toHaveLength(2);
+        } finally { adapter.close(); }
+    });
+    it("adds the position index to a v2 database while preserving legacy commits", async () => {
+        const name = databaseName();
+        const legacy = await openDB(name, 2, { upgrade(database) {
+            const rows = database.createObjectStore("rows", { keyPath: "id" });
+            rows.createIndex("collectionId", "collectionId"); rows.createIndex("metadata", ["collectionId", "hasMetadata"]);
+            const log = database.createObjectStore("transactions", { keyPath: "id" });
+            log.createIndex("collectionId", "collectionId"); log.createIndex("version", ["collectionId", "rowVersion"]);
+            const metadata = database.createObjectStore("collectionMetadata", { keyPath: "id" }); metadata.createIndex("collectionId", "collectionId");
+            database.createObjectStore("streams", { keyPath: "collectionId" });
+            const definitions = database.createObjectStore("indexDefinitions", { keyPath: ["collectionId", "signature"] }); definitions.createIndex("collectionId", "collectionId");
+            const entries = database.createObjectStore("indexEntries", { keyPath: ["collectionId", "signature", "valueType", "rowId"] });
+            entries.createIndex("collectionId", "collectionId"); entries.createIndex("index", ["collectionId", "signature"]); entries.createIndex("lookup", ["collectionId", "signature", "valueType", "value", "rowId"]);
+        } });
+        await legacy.put("rows", { id: JSON.stringify(["items", "s:one"]), collectionId: "items", key: "one", value: { id: "one", priority: 1 }, hasMetadata: 0 });
+        await legacy.put("streams", { collectionId: "items", schemaVersion: 1, resetEpoch: 0, latestTerm: 1, latestSeq: 1, latestRowVersion: 1 });
+        await legacy.put("transactions", { id: JSON.stringify(["items", "old"]), collectionId: "items", rowVersion: 1, appliedAt: Date.now() });
+        legacy.close();
+        const adapter = new IndexedDBPersistenceAdapter({ databaseName: name });
+        try {
+            await adapter.applyCommittedTx("items", tx("retry-new-id", 1, [{ type: "delete", key: "one", value: { id: "one", priority: 0 } }]));
+            expect(ids(await adapter.loadSubset("items", {}))).toEqual(["one"]);
+            await adapter.applyCommittedTx("items", tx("two", 2, [{ type: "insert", key: "two", value: { id: "two", priority: 2 } }]));
+            const database = await openDB(name);
+            expect(database.version).toBe(3);
+            expect(await database.getKeyFromIndex("transactions", "position", ["items", 1, 2])).toBeDefined();
+            expect(await database.get("transactions", JSON.stringify(["items", "old"]))).toBeDefined();
+            database.close();
+        } finally { adapter.close(); }
     });
 });

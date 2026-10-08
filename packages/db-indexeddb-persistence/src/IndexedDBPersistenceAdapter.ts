@@ -27,7 +27,7 @@ type IndexValueType =
     | "string-ci"
     | "undefined";
 
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 3;
 const ROWS = "rows";
 const TRANSACTIONS = "transactions";
 const COLLECTION_METADATA = "collectionMetadata";
@@ -38,6 +38,7 @@ const BY_COLLECTION = "collectionId";
 const BY_INDEX = "index";
 const BY_METADATA = "metadata";
 const BY_VERSION = "version";
+const BY_POSITION = "position";
 const BY_LOOKUP = "lookup";
 const INDEX_BATCH_SIZE = 300;
 const INDEX_ENCODING_VERSION = 3;
@@ -49,6 +50,8 @@ interface RowRecord extends PersistedRow {
 }
 
 interface TransactionRecord {
+    term?: number;
+    seq?: number;
     id: string;
     collectionId: string;
     rowVersion?: number;
@@ -101,7 +104,7 @@ interface IndexedDBPersistenceDB extends DBSchema {
     transactions: {
         key: string;
         value: TransactionRecord;
-        indexes: { collectionId: string; version: [string, number] };
+        indexes: { collectionId: string; version: [string, number]; position: [string, number, number] };
     };
     collectionMetadata: {
         key: string;
@@ -1145,6 +1148,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
                 if (!first) return new Set();
 
                 let rowIds = await executePlan(first.child);
+                if (rowIds.size === 0) return rowIds;
                 for (const { child } of rest) {
                     const intersection = new Set<string>();
                     await iteratePlan(child, (rowId) => {
@@ -1188,18 +1192,26 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             [ROWS, TRANSACTIONS, COLLECTION_METADATA, STREAMS, INDEX_DEFINITIONS, INDEX_ENTRIES],
             "readwrite"
         );
+        // A cloning failure can abort while mutation promises are still unwinding.
+        // Observe completion immediately; the catch below still propagates the write error.
+        void transaction.done.catch(() => undefined);
         try {
-            this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
+            const stream = await transaction.objectStore(STREAMS).get(collectionId);
+            this.assertSchema(stream, collectionId, epoch);
             const transactionId = id(collectionId, committed.txId);
-            const previous = await transaction.objectStore(TRANSACTIONS).get(transactionId);
-            if (previous) {
+            const [previous, duplicatePosition] = await Promise.all([
+                transaction.objectStore(TRANSACTIONS).get(transactionId),
+                transaction.objectStore(TRANSACTIONS).index(BY_POSITION).getKey([collectionId, committed.term, committed.seq]),
+            ]);
+            if (previous || duplicatePosition !== undefined) {
                 await transaction.done;
                 return;
             }
-            const [stream, definitions] = await Promise.all([
-                transaction.objectStore(STREAMS).get(collectionId),
-                transaction.objectStore(INDEX_DEFINITIONS).index(BY_COLLECTION).getAll(collectionId),
-            ]);
+            if (stream && stream.latestRowVersion > 0 && stream.latestTerm === committed.term && stream.latestSeq === committed.seq) {
+                await transaction.done;
+                return;
+            }
+            const definitions = await transaction.objectStore(INDEX_DEFINITIONS).index(BY_COLLECTION).getAll(collectionId);
             const rowStore = transaction.objectStore(ROWS);
             const changedKeys = new Set(committed.mutations.map((mutation) => mutation.key));
             const touchedKeys = new Set([
@@ -1252,7 +1264,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
                 });
             }
             await Promise.all(
-                [...touchedKeys].map((key) => {
+                [...touchedKeys].map(async (key) => {
                     const row = rows.get(rowId(collectionId, key));
                     return row
                         ? rowStore.put({
@@ -1377,6 +1389,8 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             await log.put({
                 id: transactionId,
                 collectionId,
+                term: committed.term,
+                seq: committed.seq,
                 rowVersion: nextRowVersion,
                 appliedAt: Date.now(),
                 delta: encodePersistedValue(delta) as ReplayableTxDelta | null,
@@ -1670,6 +1684,11 @@ export class IndexedDBConnection {
                             cursor = await cursor.continue();
                         }
                     })().catch(() => transaction.abort());
+                }
+                if (oldVersion < 3) {
+                    // Older journal records retain tx-id deduplication; new records also
+                    // retain the coordinator stream identity, matching SQLite's contract.
+                    transaction.objectStore(TRANSACTIONS).createIndex(BY_POSITION, ["collectionId", "term", "seq"]);
                 }
             },
             blocked: () => this.options.onBlocked?.(),

@@ -23,3 +23,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build and test
         run: pnpm turbo --color build lint test
+      - name: Install Chromium for persistence contracts
+        run: pnpm --filter @party-stack/web-runtime exec playwright install --with-deps chromium
+      - name: Native IndexedDB persistence contracts
+        run: pnpm --filter @party-stack/db-indexeddb-persistence test:browser
+      - name: Cross-tab persistence and coordinator contracts
+        run: pnpm --filter @party-stack/web-runtime test:browser

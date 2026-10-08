@@ -162,6 +162,49 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     private readonly nodeId = safeRandomUUID();
     private readonly collectionAdapters = new Map<string, AdapterWithPullSince>();
     private readonly collectionSubscriptions = new Map<string, number>();
+    private readonly resumeChecks = new Map<string, Set<(force?: boolean) => Promise<void>>>();
+    private readonly localMutationBursts = new Map<string, {
+        pending: Set<string>;
+        needsReload: boolean;
+        timer?: ReturnType<typeof setTimeout>;
+    }>();
+    private stopResumeListeners: (() => void) | undefined;
+    private checkingResume = false;
+    private resumeRequested = false;
+
+    private requestResumeCheck = (): void => {
+        this.resumeRequested = true;
+        if (this.checkingResume) return;
+        this.checkingResume = true;
+        void (async () => {
+            try {
+                while (this.resumeRequested && this.resumeChecks.size > 0) {
+                    this.resumeRequested = false;
+                    await Promise.all([...this.resumeChecks.values()].flatMap((checks) => [...checks].map((check) => check())));
+                }
+            } finally {
+                this.checkingResume = false;
+                this.resumeRequested = false;
+            }
+        })();
+    };
+
+    private startResumeListeners(): void {
+        if (this.stopResumeListeners || typeof window === "undefined" || typeof document === "undefined") return;
+        const page = window;
+        const visibility = document;
+        const onVisible = () => {
+            if (visibility.visibilityState === "visible") this.requestResumeCheck();
+        };
+        page.addEventListener("pageshow", this.requestResumeCheck);
+        page.addEventListener("focus", onVisible);
+        visibility.addEventListener("visibilitychange", onVisible);
+        this.stopResumeListeners = () => {
+            page.removeEventListener("pageshow", this.requestResumeCheck);
+            page.removeEventListener("focus", onVisible);
+            visibility.removeEventListener("visibilitychange", onVisible);
+        };
+    }
 
     setAdapterForCollection(collectionId: string, adapter: HydrationPersistenceAdapter): void {
         this.collectionAdapters.set(collectionId, adapter);
@@ -255,19 +298,70 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     }
 
     subscribe(collectionId: string, callback: (message: ProtocolEnvelope<unknown>) => void): () => void {
+        let active = true;
+        let observed: { latestTerm: number; latestSeq: number; latestRowVersion: number } | undefined;
         const unsubscribe = this.service.events.subscribe("message", (event) => {
+            if (!active) return;
             if (event.collectionId === collectionId) {
+                const payload = event.message.payload;
+                const burst = this.localMutationBursts.get(collectionId);
+                if (burst && isRecord(payload) && payload.type === "tx:committed" &&
+                    typeof payload.txId === "string" && !burst.pending.has(payload.txId)) {
+                    burst.needsReload = true;
+                }
+                if (isRecord(payload) && payload.type === "tx:committed" &&
+                    typeof payload.term === "number" && typeof payload.seq === "number" &&
+                    typeof payload.latestRowVersion === "number" &&
+                    (!observed || payload.term > observed.latestTerm ||
+                        (payload.term === observed.latestTerm && payload.seq > observed.latestSeq))) {
+                    observed = { latestTerm: payload.term, latestSeq: payload.seq, latestRowVersion: payload.latestRowVersion };
+                }
                 callback(event.message);
             }
         });
+        const checkResume = async (force = false) => {
+            try {
+                if (!active) return;
+                const adapter = this.adapterForCollection(collectionId);
+                const current = await adapter.getStreamPosition?.(collectionId);
+                if (!active) return;
+                if (!force && current && observed && current.latestTerm === observed.latestTerm &&
+                    current.latestSeq === observed.latestSeq && current.latestRowVersion === observed.latestRowVersion) return;
+                // A local reset notification makes upstream reload active subsets atomically.
+                // No storage reset or broadcast is performed. Before our first notification,
+                // the hydration position is unknown, so a resume conservatively reloads once.
+                callback({
+                    v: 1, dbName: this.coordinationScope(), collectionId,
+                    senderId: `resume:${this.nodeId}`, ts: Date.now(),
+                    payload: { type: "collection:reset", schemaVersion: this.schemaVersion(adapter) ?? 1, resetEpoch: 0 },
+                });
+                observed = current;
+            } catch (error) {
+                if (active) console.warn(`Failed to refresh resumed collection "${collectionId}".`, error);
+            }
+        };
+        const checks = this.resumeChecks.get(collectionId) ?? new Set();
+        checks.add(checkResume);
+        this.resumeChecks.set(collectionId, checks);
+        this.startResumeListeners();
         this.collectionSubscriptions.set(
             collectionId,
             (this.collectionSubscriptions.get(collectionId) ?? 0) + 1
         );
-        let active = true;
         return () => {
             if (!active) return;
             active = false;
+            checks.delete(checkResume);
+            if (checks.size === 0) {
+                this.resumeChecks.delete(collectionId);
+                const burst = this.localMutationBursts.get(collectionId);
+                if (burst?.timer !== undefined) clearTimeout(burst.timer);
+                this.localMutationBursts.delete(collectionId);
+            }
+            if (this.resumeChecks.size === 0) {
+                this.stopResumeListeners?.();
+                this.stopResumeListeners = undefined;
+            }
             try {
                 unsubscribe();
             } finally {
@@ -426,17 +520,43 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
         });
     }
 
-    requestApplyLocalMutations(
+    async requestApplyLocalMutations(
         collectionId: string,
         mutations: PersistedMutationEnvelope[]
     ): Promise<ApplyLocalMutationsResponse> {
-        return this.service.methods.applyLocalMutations({
-            collectionId,
-            rpcId: safeRandomUUID(),
-            envelopeId: safeRandomUUID(),
-            schemaVersion: this.schemaVersion(this.adapterForCollection(collectionId)),
-            mutations,
-        });
+        const envelopeId = safeRandomUUID();
+        const burst = this.resumeChecks.has(collectionId)
+            ? this.localMutationBursts.get(collectionId) ?? { pending: new Set<string>(), needsReload: false, timer: undefined }
+            : undefined;
+        if (burst) {
+            if (burst.timer !== undefined) clearTimeout(burst.timer);
+            if (burst.pending.size > 0) burst.needsReload = true;
+            burst.pending.add(envelopeId);
+            this.localMutationBursts.set(collectionId, burst);
+        }
+        try {
+            return await this.service.methods.applyLocalMutations({
+                collectionId,
+                rpcId: safeRandomUUID(),
+                envelopeId,
+                schemaVersion: this.schemaVersion(this.adapterForCollection(collectionId)),
+                mutations,
+            });
+        } finally {
+            burst?.pending.delete(envelopeId);
+            if (burst && burst.pending.size === 0 && this.localMutationBursts.get(collectionId) === burst) {
+                // Upstream advances its observed sequence from local RPC acknowledgements
+                // before queued commit messages can run. Reconcile overlapping foreign
+                // commits after the local mutation burst, without changing RPC positions.
+                burst.timer = setTimeout(() => {
+                    if (this.localMutationBursts.get(collectionId) !== burst) return;
+                    this.localMutationBursts.delete(collectionId);
+                    if (burst.needsReload) {
+                        for (const check of this.resumeChecks.get(collectionId) ?? []) void check(true);
+                    }
+                }, 0);
+            }
+        }
     }
 
     pullSince(collectionId: string, fromRowVersion: number): Promise<PullSinceResponse> {

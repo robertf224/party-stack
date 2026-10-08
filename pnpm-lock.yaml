@@ -926,9 +926,18 @@ importers:
       '@tanstack/db':
         specifier: 0.12.1
         version: 0.12.1(typescript@5.8.3)
+      '@tanstack/node-db-sqlite-persistence':
+        specifier: 0.2.30
+        version: 0.2.30(typescript@5.8.3)
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
       '@vitest/browser':
         specifier: 3.2.4
         version: 3.2.4(playwright@1.61.1)(vite@7.2.4(@types/node@24.10.1)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.1))(vitest@3.2.4)
+      better-sqlite3:
+        specifier: ^12.9.0
+        version: 12.9.0
       eslint:
         specifier: ^9.25.0
         version: 9.28.0(jiti@2.7.0)
@@ -1770,12 +1779,24 @@ importers:
       '@bobbyfidz/universal-build-config':
         specifier: ^0.1.1
         version: 0.1.1(eslint@9.28.0(jiti@2.7.0))(typescript@5.8.3)
+      '@tanstack/db':
+        specifier: 0.12.1
+        version: 0.12.1(typescript@5.8.3)
+      '@tanstack/db-sqlite-persistence-core':
+        specifier: 0.4.5
+        version: 0.4.5(typescript@5.8.3)
       eslint:
         specifier: ^9.25.0
         version: 9.28.0(jiti@2.7.0)
+      playwright:
+        specifier: ^1.61.1
+        version: 1.61.1
       typescript:
         specifier: ~5.8.3
         version: 5.8.3
+      vite:
+        specifier: ^7.2.4
+        version: 7.2.4(@types/node@24.10.1)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.1)
       vitest:
         specifier: ^3.1.1
         version: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.1)(@vitest/browser@3.2.4)(jiti@2.7.0)(jsdom@27.2.0)(lightningcss@1.33.0)(terser@5.51.2)(tsx@4.20.6)(yaml@2.9.1)

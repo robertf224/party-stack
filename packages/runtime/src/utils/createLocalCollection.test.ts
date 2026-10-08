@@ -741,3 +741,109 @@ describe("worker schema fencing", () => {
         }
     });
 });
+
+describe("persistence page resume", () => {
+    it("checks durable positions, refreshes missed final writes, and releases browser listeners", async () => {
+        const page = new EventTarget();
+        const document = Object.assign(new EventTarget(), { visibilityState: "visible" });
+        const removePage = vi.spyOn(page, "removeEventListener");
+        const removeDocument = vi.spyOn(document, "removeEventListener");
+        vi.stubGlobal("window", page);
+        vi.stubGlobal("document", document);
+        const coordination = new SingleProcessCoordination({ scope: "resume-final-write" });
+        const adapter = memoryAdapter();
+        const load = vi.spyOn(adapter, "loadSubset");
+        const position = vi.spyOn(adapter, "getStreamPosition");
+        const collection = createLocalCollection<Item, string>({
+            name: "items", getKey: (item) => item.id,
+            runtime: coordinatedRuntime({ adapter: { adapter }, coordination }).runtime,
+        });
+        try {
+            await collection.preload();
+            await collection.insert({ id: "one", title: "Original" }).isPersisted.promise;
+            load.mockClear();
+            // A durable adapter commit without its notification models a missed broadcast.
+            await adapter.applyCommittedTx(collection.id, {
+                txId: "missed", term: 1, seq: 2, rowVersion: 2,
+                mutations: [{ type: "update", key: "one", value: { id: "one", title: "Final" } }],
+            });
+            expect(collection.get("one")?.title).toBe("Original");
+            page.dispatchEvent(new Event("pageshow"));
+            document.dispatchEvent(new Event("visibilitychange"));
+            await vi.waitFor(() => expect(collection.get("one")?.title).toBe("Final"));
+            load.mockClear();
+            position.mockClear();
+            page.dispatchEvent(new Event("focus"));
+            await vi.waitFor(() => expect(position).toHaveBeenCalled());
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(load).not.toHaveBeenCalled();
+            await collection.cleanup();
+            expect(removePage).toHaveBeenCalledTimes(2);
+            expect(removeDocument).toHaveBeenCalledOnce();
+            position.mockClear();
+            page.dispatchEvent(new Event("pageshow"));
+            expect(position).not.toHaveBeenCalled();
+        } finally {
+            await collection.cleanup();
+            await coordination.close();
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it("ignores hidden visibility changes and pending checks after unsubscribe", async () => {
+        const page = new EventTarget();
+        const document = Object.assign(new EventTarget(), { visibilityState: "hidden" });
+        vi.stubGlobal("window", page);
+        vi.stubGlobal("document", document);
+        const coordination = new SingleProcessCoordination({ scope: "resume-cleanup" });
+        const adapter = memoryAdapter();
+        let finish!: (position: { latestTerm: number; latestSeq: number; latestRowVersion: number }) => void;
+        const read = vi.spyOn(adapter, "getStreamPosition").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+        const shim = createPersistedCollectionCoordinator(coordination, adapter);
+        const callback = vi.fn();
+        const unsubscribe = shim.subscribe("items", callback);
+        try {
+            document.dispatchEvent(new Event("visibilitychange"));
+            page.dispatchEvent(new Event("focus"));
+            expect(read).not.toHaveBeenCalled();
+            page.dispatchEvent(new Event("pageshow"));
+            expect(read).toHaveBeenCalledOnce();
+            unsubscribe();
+            unsubscribe();
+            finish({ latestTerm: 1, latestSeq: 5, latestRowVersion: 5 });
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(callback).not.toHaveBeenCalled();
+            expect((Reflect.get(shim, "resumeChecks") as Map<string, unknown>).size).toBe(0);
+        } finally {
+            unsubscribe();
+            await coordination.close();
+            vi.unstubAllGlobals();
+        }
+    });
+});
+
+describe("overlapping local mutation consumers", () => {
+    it("reconciles concurrent peers without retaining mutation bursts after cleanup", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "overlapping-local-peers" });
+        const adapter = memoryAdapter();
+        const runtime = coordinatedRuntime({ adapter: { adapter }, coordination }).runtime;
+        const first = createLocalCollection<Item, string>({ name: "items", runtime, getKey: (item) => item.id });
+        const second = createLocalCollection<Item, string>({ name: "items", runtime, getKey: (item) => item.id });
+        const items = Array.from({ length: 20 }, (_, index) => ({ id: String(index), title: `Task ${index}` }));
+        try {
+            await Promise.all([first.preload(), second.preload()]);
+            await Promise.all(items.map((item, index) => (index % 2 ? first : second).insert(item).isPersisted.promise));
+            await vi.waitFor(() => {
+                expect(first.size).toBe(20);
+                expect(second.size).toBe(20);
+            });
+            await Promise.all([first.cleanup(), second.cleanup()]);
+            const shim = createPersistedCollectionCoordinator(coordination, adapter);
+            expect((Reflect.get(shim, "localMutationBursts") as Map<string, unknown>).size).toBe(0);
+            expect((Reflect.get(shim, "resumeChecks") as Map<string, unknown>).size).toBe(0);
+        } finally {
+            await Promise.all([first.cleanup(), second.cleanup()]);
+            await coordination.close();
+        }
+    });
+});

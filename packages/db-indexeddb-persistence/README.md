@@ -34,9 +34,11 @@ retains only its required default adapter. An explicitly supplied shared coordin
 owns its own registration cleanup. Direct `new IndexedDBPersistenceAdapter(...)`
 usage remains available and owns its own connection.
 
-The IndexedDB database upgrades from version 1 to version 2 to add metadata and
-transaction-version indexes. This migration preserves existing rows, metadata,
-collection positions, and persisted indexes. Legacy transaction ID records remain
+The physical IndexedDB database upgrades to version 3. Version 2 adds metadata
+and transaction-version indexes; version 3 adds a transaction stream-position
+index for deduplication by collection, term, and sequence. These migrations
+preserve rows, metadata, collection positions, and persisted indexes. This
+physical database version is separate from each collection’s `schemaVersion`. Legacy transaction ID records remain
 available for deduplication within the retained window, but lack replay data;
 requests for unavailable old history require a full reload.
 
@@ -57,7 +59,7 @@ ordered cursors and stops after the requested filtered page. Compound keys encod
 sign, digit count, and digits without converting the magnitude to a number.
 Bigint indexes using encoding version 2 fall back to scans until index acquisition
 or a row write rebuilds them once; other indexes with that encoding version remain
-usable without rebuilding. The IndexedDB database schema version remains 2.
+usable without rebuilding. The physical IndexedDB database version is 3.
 Filter-only reads may return a superset as described below.
 Maps, Sets, buffers, and other native cloneable values are additional IndexedDB
 capabilities; SQLite's recursive JSON codec does not generally preserve these types.
@@ -72,7 +74,11 @@ Options follow the upstream SQLite defaults:
 | `appliedTxPruneMaxAgeSeconds` | 86,400  | History age pruned during commits                   |
 | `pullSinceReloadThreshold`    | 128     | Maximum number of replayed row and metadata changes |
 
-Transaction IDs are deduplicated within that retained window. `pullSince` reads its history and stream position atomically. Missing history, version gaps, truncation, and change sets over the threshold require a full reload. Row values and metadata, including supported Temporal values, are included in incremental replay. Set `appliedTxPruneMaxRows` to zero to disable retained replay and transaction-ID history.
+Transaction IDs and new commits’ `(collectionId, term, seq)` identities are
+deduplicated within that retained window. Old v1/v2 journal entries lack term/seq
+fields and retain transaction-ID deduplication; the durable stream position also
+fences a retry of the latest commit. Older historical positions cannot be inferred
+from those legacy records. `pullSince` reads its history and stream position atomically. Missing history, version gaps, truncation, and change sets over the threshold require a full reload. Row values and metadata, including supported Temporal values, are included in incremental replay. Set `appliedTxPruneMaxRows` to zero to disable retained replay and transaction-ID history.
 
 ## Subset reads
 
@@ -83,3 +89,42 @@ A single ordered expression can use an IndexedDB cursor when its index has one h
 Mixed/nullish types, locale/custom string sorting, and multiple sort expressions use candidate loading and in-memory filtering, sorting, and pagination. Unsupported object-identity ordering keeps the full source available to the live query rather than returning a potentially incorrect finite page.
 
 `scanRows({ metadataOnly: true })` selects only rows with metadata using the metadata index. It still returns their row values, as required by TanStack DB's scan contract.
+
+
+## Cross-tab behavior and contract checks
+
+IndexedDB has no row-change notification API. For automatic updates across tabs,
+supply a cross-tab coordinator to the factory and mutate through persisted
+collections. Party Stack’s web runtime supplies its shared Web Locks/BroadcastChannel
+coordination. Direct adapter calls and manual DevTools/storage edits do not emit
+notifications; raw edits can also bypass index and replay maintenance.
+
+Party Stack’s persistence shim checks active collections on `pageshow`, visible
+`visibilitychange`, and visible `focus`. A changed durable stream position triggers
+a local TanStack reload notification. Before the first commit notification the
+hydration position is unknown, so the first resume reloads conservatively. Subsequent
+unchanged positions skip row reads. The reload refreshes active subsets and metadata;
+it neither clears storage nor broadcasts a reset. Browser listeners and per-subscription
+checks are released during collection cleanup; no polling timer is retained.
+
+The shim also reconciles a collection when local mutation acknowledgements overlap
+other commits. Core 0.4.5 can advance the observed sequence from an acknowledgement
+before queued notifications apply, skipping their rows. A short idle-turn timer
+coalesces reconciliation across pending local requests. Ordinary single-consumer
+writes retain incremental updates. Concurrent edits can require an active-subset
+reload; pending envelopes/timers are removed when the burst finishes or the last
+subscription closes. The browser suite includes the same failing scenario with
+TanStack’s broadcast coordinator as an explicitly expected-failure reference.
+
+Run the [adapted upstream contract](src/contracts/NOTICE.md) through both IndexedDB
+and SQLite with `pnpm --filter @party-stack/db-indexeddb-persistence test`. Run it
+through native Chromium IndexedDB with `pnpm --filter @party-stack/db-indexeddb-persistence test:browser`.
+The web runtime’s `test:browser` suite uses two real pages and separate connections,
+real locks and broadcasts, deterministic lost notifications, leader failover,
+concurrent writes, durable reopening, and actual Chromium freeze/resume. Both
+browser suites run in CI. Chromium coverage does not certify Safari/Firefox or
+mobile OS process-kill behavior.
+
+Run `pnpm --filter @party-stack/db-indexeddb-persistence bench:browser` for real
+storage query, pagination, empty-intersection, and incremental-write measurements.
+See [the audit and measurements](persistence-contract-audit.md) for coverage and limits.
