@@ -122,7 +122,7 @@ through native Chromium IndexedDB with `pnpm --filter @party-stack/db-indexeddb-
 The web runtime’s `test:browser` suite uses two real pages and separate connections,
 real locks and broadcasts, deterministic lost notifications, leader failover,
 concurrent writes, durable reopening, and actual Chromium freeze/resume. Both
-browser suites run in CI. Chromium coverage does not certify Safari/Firefox or
+browser suites are available to run manually. Chromium coverage does not certify Safari/Firefox or
 mobile OS process-kill behavior.
 
 Run `pnpm --filter @party-stack/db-indexeddb-persistence bench:browser` for real

@@ -1884,6 +1884,11 @@ function ConnectedIssueTracker({
         [ontology, search, selectedProjectId, statusFilter]
     );
 
+    // Persistence publishes cached rows while the remote subset is loading.
+    // Keep those rows visible rather than replacing them with a refresh spinner.
+    const showProjectsLoading = projectsLoading && projects.length === 0;
+    const showIssuesLoading = issuesLoading && issues.length === 0;
+
     const selectedProject = projects.find((project) => project.projectId === selectedProjectId);
     const issueSections = useMemo(
         () =>
@@ -2044,7 +2049,7 @@ function ConnectedIssueTracker({
                         </Tooltip.Root>
                     </div>
                     <div className="mt-1 space-y-0.5 overflow-y-auto px-2">
-                        {projectsLoading ? (
+                        {showProjectsLoading ? (
                             <p className="px-2 py-2 text-xs text-slate-400">Loading projects…</p>
                         ) : (
                             projects.map((project) => (
@@ -2292,7 +2297,7 @@ function ConnectedIssueTracker({
                         </ToggleGroup>
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto">
-                        {issuesLoading ? (
+                        {showIssuesLoading ? (
                             <div className="grid h-full min-h-64 place-items-center p-8 text-center">
                                 <div className="flex items-center gap-2 text-sm text-slate-400">
                                     <span className="size-3 animate-spin rounded-full border-2 border-slate-200 border-r-indigo-500" />

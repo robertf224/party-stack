@@ -1,6 +1,9 @@
 import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
+import { createLiveQueryCollection } from "@tanstack/db";
 import { describe, expect, it, vi } from "vitest";
+import type { BlobManager } from "@party-stack/blobs";
 import { o } from "../../ir/index.js";
+import { createLiveOntologyActions } from "../actions/createLiveOntologyActions.js";
 import { createLiveOntologyObjectCollection } from "./createLiveOntologyObjectCollection.js";
 import type { OntologyIR } from "../../ir/index.js";
 import type { OntologyBackendAdapter } from "../OntologyBackendAdapter.js";
@@ -56,7 +59,15 @@ function memoryPersistence(
     adapter: PersistenceAdapter;
     applyCommittedTx: ReturnType<typeof vi.fn>;
 } {
-    const rows = new Map(initial.map(({ key, value }) => [key, value]));
+    const collections = new Map<string, Map<string, Record<string, unknown>>>();
+    const rowsFor = (collectionId: string) => {
+        let rows = collections.get(collectionId);
+        if (!rows) {
+            rows = new Map(collectionId.endsWith(":objects:Task") ? initial.map(({ key, value }) => [key, value]) : []);
+            collections.set(collectionId, rows);
+        }
+        return rows;
+    };
     const positions = new Map<
         string,
         {
@@ -66,6 +77,7 @@ function memoryPersistence(
         }
     >();
     const applyCommittedTx = vi.fn((collectionId: string, transaction: PersistedTx) => {
+        const rows = rowsFor(collectionId);
         if (transaction.truncate) rows.clear();
         for (const mutation of transaction.mutations) {
             if (mutation.type === "delete") {
@@ -85,14 +97,14 @@ function memoryPersistence(
         adapter: {
             loadResumeSnapshot: (collectionId) =>
                 Promise.resolve({
-                    rows: [...rows].map(([key, value]) => ({ key, value })),
+                    rows: [...rowsFor(collectionId)].map(([key, value]) => ({ key, value })),
                     collectionMetadata: [],
                     ...(positions.get(collectionId) ?? { latestTerm: 0, latestSeq: 0, latestRowVersion: 0 }),
                     resetEpoch: 0,
                 }),
-            loadSubset: () =>
+            loadSubset: (collectionId) =>
                 Promise.resolve(
-                    [...rows].map(([key, value]) => ({
+                    [...rowsFor(collectionId)].map(([key, value]) => ({
                         key,
                         value,
                     }))
@@ -183,6 +195,111 @@ describe("createLiveOntologyObjectCollection", () => {
         });
         await collection.cleanup();
         await options.coordination.close();
+    });
+
+    it("publishes persisted ordered rows while a remote subset is still loading", async () => {
+        const options = createOptions();
+        const persistence = memoryPersistence([{ key: "persisted", value: { id: "persisted", title: "Cached task" } }]);
+        let finishRemote!: () => void;
+        const remote = new Promise<void>((resolve) => { finishRemote = resolve; });
+        const loadSubset = vi.fn(() => remote);
+        const collection = createLiveOntologyObjectCollection({
+            ...options,
+            backendAdapter: {
+                ...backend(({ markReady }) => markReady()),
+                getCollectionOptions: () => ({
+                    syncMode: "on-demand",
+                    sync: { sync: ({ markReady }) => { markReady(); return { loadSubset }; } },
+                }),
+            },
+            runtime: {
+                owner: options.owner, namespace: options.ontologyId,
+                blobBytes: new MemoryBlobBytesStore(), coordination: options.coordination, persistence,
+            },
+            persistObjects: true,
+        });
+        const query = createLiveQueryCollection({
+            query: (q) => q.from({ task: collection }).orderBy(({ task }) => task.title, "asc"),
+            startSync: true,
+        });
+        try {
+            await vi.waitFor(() => expect(loadSubset).toHaveBeenCalled());
+            await vi.waitFor(() => expect(query.toArray).toMatchObject([{ id: "persisted", title: "Cached task" }]));
+            expect(query.status).not.toBe("ready");
+            finishRemote();
+            await vi.waitFor(() => expect(query.status).toBe("ready"));
+        } finally {
+            finishRemote();
+            await query.cleanup();
+            await collection.cleanup();
+            await options.coordination.close();
+        }
+    });
+
+    // Known gap: optimistic object lookups use queryOnce, whose readiness includes
+    // remote subset refresh. Keep this witness until persistence-only reads land.
+    it.fails("projects and restores queued edits from cached objects without waiting for the remote subset", async () => {
+        const options = createOptions();
+        const persistence = memoryPersistence([{ key: "persisted", value: { id: "persisted", title: "Before" } }]);
+        let finishRemote!: () => void;
+        const remote = new Promise<void>((resolve) => { finishRemote = resolve; });
+        const loadSubset = vi.fn(() => remote);
+        const applyAction = vi.fn(() => Promise.resolve());
+        const backendAdapter: OntologyBackendAdapter = {
+            ...backend(({ markReady }) => markReady()), applyAction,
+            getCollectionOptions: () => ({ syncMode: "on-demand", sync: { sync: ({ markReady }) => {
+                markReady(); return { loadSubset };
+            } } }),
+        };
+        const runtime = {
+            owner: options.owner, namespace: options.ontologyId,
+            blobBytes: new MemoryBlobBytesStore(), coordination: options.coordination, persistence,
+            connectivity: { isConnected: false, subscribe: () => () => undefined },
+        };
+        const actionIr: OntologyIR = { ...ir, actionTypes: [{
+            name: "edit", displayName: "Edit", parameters: [
+                { name: "task", displayName: "Task", type: o.objectReference({ objectType: "Task" }) },
+                { name: "title", displayName: "Title", type: o.string({}) },
+            ], logic: [o.ActionLogicStep.updateObject({ object: { name: "task" }, values: [
+                { property: ["title"], value: o.Expression.inputReference({ name: "title" }) },
+                { property: ["previousTitle"], value: o.Expression.getAt({
+                    source: o.Expression.objectLookup({ reference: o.Expression.inputReference({ name: "task" }) }),
+                    path: ["title"],
+                }) },
+            ] })],
+        }] };
+        const collection = createLiveOntologyObjectCollection({ ...options, runtime, backendAdapter, persistObjects: true });
+        const query = createLiveQueryCollection({ query: (q) => q.from({ task: collection }), startSync: true });
+        const actionCoordination = new SingleProcessCoordination({ scope: "offline-projection-outbox" });
+        const createActions = () => createLiveOntologyActions({
+            ir: actionIr, runtime: { ...runtime, coordination: actionCoordination }, backendAdapter, objects: { Task: collection }, context: {},
+            blobManager: {} as BlobManager,
+            writes: { defaultMode: "outbox", defaultVisibility: "optimistic" },
+        });
+        let actions: ReturnType<typeof createActions> | undefined;
+        try {
+            await vi.waitFor(() => expect(query.toArray).toMatchObject([{ title: "Before" }]));
+            actions = createActions();
+            await actions.outbox.ready;
+            let submissionError: unknown;
+            void actions.actions.edit!({ task: "persisted", title: "After" }).catch((error: unknown) => { submissionError = error; });
+            await vi.waitFor(() => { expect(submissionError).toBeUndefined(); expect(actions!.outbox.collection.size).toBe(1); });
+            await vi.waitFor(() => expect(collection.get("persisted")).toMatchObject({ title: "After", previousTitle: "Before" }));
+            expect(applyAction).not.toHaveBeenCalled();
+            await actions.outbox.cleanup();
+            await vi.waitFor(() => expect(collection.get("persisted")?.title).toBe("Before"));
+            actions = createActions();
+            await actions.outbox.ready;
+            expect(collection.get("persisted")).toMatchObject({ title: "After", previousTitle: "Before" });
+            expect(applyAction).not.toHaveBeenCalled();
+        } finally {
+            finishRemote();
+            await actions?.outbox.cleanup();
+            await actionCoordination.close();
+            await query.cleanup();
+            await collection.cleanup();
+            await options.coordination.close();
+        }
     });
 
     it("persists authoritative backend sync transactions", async () => {
