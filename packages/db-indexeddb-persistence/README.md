@@ -1,130 +1,190 @@
-# IndexedDB persistence
+# IndexedDB persistence for TanStack DB
 
-`createIndexedDBPersistence` provides TanStack's standard persistence resolver
-interface and works independently of Party Stack:
+An IndexedDB implementation of TanStack DB's core persistence interface. Use it
+with `persistedCollectionOptions` to persist a synced collection or store local-only
+data. See the [TanStack DB persistence guide](https://tanstack.com/db/latest/docs/guides/sqlite-persistence)
+for shared options, schema versioning, coordination, and lifecycle behavior.
 
-```ts
-import { createIndexedDBPersistence } from "@party-stack/db-indexeddb-persistence";
-import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
+## Installation
 
-const persistence = createIndexedDBPersistence({ databaseName: "my-app" });
-const options = persistedCollectionOptions({
-    id: "tasks",
-    schemaVersion: 2,
-    getKey: (task: { id: string }) => task.id,
-    persistence,
-});
+```sh
+pnpm add @party-stack/db-indexeddb-persistence @tanstack/db@0.12.1 @tanstack/db-sqlite-persistence-core@0.4.5
 ```
 
-Each collection resolution creates an adapter with its requested schema version
-and mismatch policy over one shared connection. There is no retained adapter cache
-by version, policy, or collection ID. Synced collections default to resetting
-incompatible caches; local-only collections preserve incompatible data and throw.
-Explicit `schemaMismatchPolicy` overrides those defaults; `"throw"` aliases
-`"sync-absent-error"`. Downgrades and stale adapters are rejected.
+Requires IndexedDB. The current release uses persistence core 0.4.5 and expects
+TanStack DB 0.12.1.
 
-A supplied `coordinator` is preserved. Otherwise TanStack supplies its default
-collection-local coordinator. No Party Stack imports or hooks are required.
+## Persist a Query Collection
 
-Clean up collections and drop their references when finished so their adapters and
-bookkeeping can be collected. Call `persistence.close()` at the end of the shared
-database lifetime; it closes the connection and prevents all adapter views from
-reopening it. Closing an individual view leaves other views usable. The factory
-retains only its required default adapter. An explicitly supplied shared coordinator
-owns its own registration cleanup. Direct `new IndexedDBPersistenceAdapter(...)`
-usage remains available and owns its own connection.
+Wrap a Query Collection to save fetched rows in IndexedDB while keeping its normal
+fetching and synchronization behavior. Reopening the same database and collection
+restores the persisted data.
 
-The physical IndexedDB database upgrades to version 3. Version 2 adds metadata
-and transaction-version indexes; version 3 adds a transaction stream-position
-index for deduplication by collection, term, and sequence. These migrations
-preserve rows, metadata, collection positions, and persisted indexes. This
-physical database version is separate from each collection’s `schemaVersion`. Legacy transaction ID records remain
-available for deduplication within the retained window, but lack replay data;
-requests for unavailable old history require a full reload.
+For this example, also install the Query Collection adapter and TanStack Query:
 
-## Persisted values
+```sh
+pnpm add @tanstack/query-db-collection@1.4.0 @tanstack/query-core@^5.102.8
+```
 
-Rows, row metadata, collection metadata, and replay preserve `Temporal.Instant`
-and `Temporal.PlainDate`, including nested arrays, records, Maps, and Sets.
-Unsupported Temporal kinds throw during the write instead of losing their state,
-matching SQLite core 0.4.5's supported Temporal kinds. Storage tags in ordinary
-application records are escaped; existing Temporal tags remain readable. Cloneable
-cycles and shared references are preserved using per-operation graph bookkeeping.
+```ts
+import { createCollection } from "@tanstack/db";
+import { QueryClient } from "@tanstack/query-core";
+import { queryCollectionOptions } from "@tanstack/query-db-collection";
+import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
+import { createIndexedDBPersistence } from "@party-stack/db-indexeddb-persistence";
 
-IndexedDB natively preserves bigint, Date, undefined, NaN, and positive/negative
-Infinity, so these values need no JSON tags. It can preserve bigint beyond SQLite's
-signed 64-bit limit; applications using both adapters must respect SQLite's limit.
-Bigint equality and ranges use persisted indexes. Homogeneous bigint ordering uses
-ordered cursors and stops after the requested filtered page. Compound keys encode
-sign, digit count, and digits without converting the magnitude to a number.
-Bigint indexes using encoding version 2 fall back to scans until index acquisition
-or a row write rebuilds them once; other indexes with that encoding version remain
-usable without rebuilding. The physical IndexedDB database version is 3.
-Filter-only reads may return a superset as described below.
-Maps, Sets, buffers, and other native cloneable values are additional IndexedDB
-capabilities; SQLite's recursive JSON codec does not generally preserve these types.
+type Task = { id: string; title: string };
 
-## Bounded recovery history
+const queryClient = new QueryClient();
+const persistence = createIndexedDBPersistence({ databaseName: "my-app" });
 
-Options follow the upstream SQLite defaults:
+const tasks = createCollection(
+    persistedCollectionOptions({
+        ...queryCollectionOptions({
+            id: "tasks",
+            queryClient,
+            queryKey: ["tasks"],
+            queryFn: async (): Promise<Task[]> => {
+                const response = await fetch("/api/tasks");
+                if (!response.ok) throw new Error("Could not load tasks");
+                return response.json();
+            },
+            getKey: (task) => task.id,
+        }),
+        persistence,
+        schemaVersion: 1,
+        initialRender: {
+            strategy: "network-first",
+            networkTimeoutMs: 3_000,
+        },
+    })
+);
 
-| Option                        | Default | Purpose                                             |
-| ----------------------------- | ------- | --------------------------------------------------- |
-| `appliedTxPruneMaxRows`       | 1,000   | Maximum retained transaction records per collection |
-| `appliedTxPruneMaxAgeSeconds` | 86,400  | History age pruned during commits                   |
-| `pullSinceReloadThreshold`    | 128     | Maximum number of replayed row and metadata changes |
+await tasks.preload();
+```
 
-Transaction IDs and new commits’ `(collectionId, term, seq)` identities are
-deduplicated within that retained window. Old v1/v2 journal entries lack term/seq
-fields and retain transaction-ID deduplication; the durable stream position also
-fences a retry of the latest commit. Older historical positions cannot be inferred
-from those legacy records. `pullSince` reads its history and stream position atomically. Missing history, version gaps, truncation, and change sets over the threshold require a full reload. Row values and metadata, including supported Temporal values, are included in incremental replay. Set `appliedTxPruneMaxRows` to zero to disable retained replay and transaction-ID history.
+The wrapper persists data applied by the sync adapter. Configure server mutations
+through the [Query Collection's mutation handlers](https://tanstack.com/db/latest/docs/collections/query-collection).
+Persistence of pending server mutations is a separate concern; see
+[TanStack's offline transactions guide](https://tanstack.com/db/latest/docs/guides/offline-transactions).
 
-## Subset reads
+## Local-only collection
 
-The mini planner selects candidates using equality, range, AND/OR, and supported string-prefix indexes. Filter-only reads may return a candidate superset for TanStack DB to finish filtering.
+Without a sync adapter, `persistedCollectionOptions` saves collection mutations
+locally. Using the imports, `Task` type, and persistence instance above:
 
-A single ordered expression can use an IndexedDB cursor when its index has one homogeneous supported type: number, bigint, boolean, Date, Temporal.Instant, Temporal.PlainDate, or lexically sorted string. The adapter evaluates residual filters before counting offset and limit, sorts tied rows by encoded key, and stops after the requested page. Cursor requests include all rows at the current boundary plus the limited following page.
+```ts
+const drafts = createCollection(
+    persistedCollectionOptions({
+        id: "drafts",
+        schemaVersion: 1,
+        getKey: (task: Task) => task.id,
+        persistence,
+    })
+);
 
-Mixed/nullish types, locale/custom string sorting, and multiple sort expressions use candidate loading and in-memory filtering, sorting, and pagination. Unsupported object-identity ordering keeps the full source available to the live query rather than returning a potentially incorrect finite page.
+await drafts.preload();
+const transaction = drafts.insert({ id: crypto.randomUUID(), title: "Draft task" });
+await transaction.isPersisted.promise;
+```
 
-`scanRows({ metadataOnly: true })` selects only rows with metadata using the metadata index. It still returns their row values, as required by TanStack DB's scan contract.
+One persistence instance shares a connection across collections. When finished,
+clean up the collections before closing it:
 
+```ts
+await tasks.cleanup();
+await drafts.cleanup();
+persistence.close();
+```
 
-## Cross-tab behavior and contract checks
+## Supported values
 
-IndexedDB has no row-change notification API. For automatic updates across tabs,
-supply a cross-tab coordinator to the factory and mutate through persisted
-collections. Party Stack’s web runtime supplies its shared Web Locks/BroadcastChannel
-coordination. Direct adapter calls and manual DevTools/storage edits do not emit
-notifications; raw edits can also bypass index and replay maintenance.
+Rows, row metadata, collection metadata, and incremental replay preserve
+`Temporal.Instant` and `Temporal.PlainDate`, including values nested in arrays,
+records, Maps, and Sets. Unsupported Temporal kinds throw during writes. Storage
+tags in ordinary application records are escaped, and existing Temporal tags remain
+readable. Cloneable cycles and shared references are preserved.
 
-Party Stack’s persistence shim checks active collections on `pageshow`, visible
-`visibilitychange`, and visible `focus`. A changed durable stream position triggers
-a local TanStack reload notification. Before the first commit notification the
-hydration position is unknown, so the first resume reloads conservatively. Subsequent
-unchanged positions skip row reads. The reload refreshes active subsets and metadata;
-it neither clears storage nor broadcasts a reset. Browser listeners and per-subscription
-checks are released during collection cleanup; no polling timer is retained.
+IndexedDB also natively preserves bigint, Date, undefined, NaN, positive and
+negative Infinity, Maps, Sets, buffers, and other structured-cloneable values.
+Applications that also use SQLite persistence should account for its different
+value support, including its signed 64-bit bigint limit and JSON codec limitations.
 
-The shim also reconciles a collection when local mutation acknowledgements overlap
-other commits. Core 0.4.5 can advance the observed sequence from an acknowledgement
-before queued notifications apply, skipping their rows. A short idle-turn timer
-coalesces reconciliation across pending local requests. Ordinary single-consumer
-writes retain incremental updates. Concurrent edits can require an active-subset
-reload; pending envelopes/timers are removed when the burst finishes or the last
-subscription closes. The browser suite includes the same failing scenario with
-TanStack’s broadcast coordinator as an explicitly expected-failure reference.
+## How it works
 
-Run the [adapted upstream contract](src/contracts/NOTICE.md) through both IndexedDB
-and SQLite with `pnpm --filter @party-stack/db-indexeddb-persistence test`. Run it
-through native Chromium IndexedDB with `pnpm --filter @party-stack/db-indexeddb-persistence test:browser`.
-The web runtime’s `test:browser` suite uses two real pages and separate connections,
-real locks and broadcasts, deterministic lost notifications, leader failover,
-concurrent writes, durable reopening, and actual Chromium freeze/resume. Both
-browser suites are available to run manually. Chromium coverage does not certify Safari/Firefox or
+### User-space indexes
+
+Collection indexes are stored as records in `indexDefinitions` and `indexEntries`,
+rather than creating a native IndexedDB index for every collection expression.
+A fixed set of native indexes provides lookup paths into those entries, including
+compound keys for collection, expression signature, value type, value, and row ID.
+Adding a collection index therefore does not require an IndexedDB version upgrade.
+
+When TanStack requests an index, the adapter evaluates its expression over existing
+rows and persists the entries. Subsequent commits maintain the affected entries
+alongside rows and metadata in the same IndexedDB transaction. Definitions and
+entries survive reopening, so compatible indexes can be reused.
+
+Typed encodings make values such as booleans, Temporal dates and instants, and
+arbitrarily large bigints usable as index keys. Bigint ordering encodes sign, digit
+count, and digits without converting the magnitude to a JavaScript number.
+
+### Mini query planner
+
+For subset loads, a small planner matches filters against persisted index
+expressions. Equality, range, and supported string-prefix predicates become index
+lookups; AND intersects candidate row IDs and OR unions them. This reduces the rows
+loaded from storage when suitable indexes exist. Filter-only loads may return a
+candidate superset for TanStack DB to finish filtering.
+
+For a single ordered expression with a homogeneous supported type, the adapter can
+walk an ordered IndexedDB cursor, evaluate residual filters before counting offset
+and limit, and stop after the requested page. Supported types are number, bigint,
+boolean, Date, Temporal.Instant, Temporal.PlainDate, and lexically sorted string.
+Ties use encoded row keys; cursor requests retain all rows at the current boundary
+plus the limited following page.
+
+Mixed or nullish types, locale/custom string sorting, and multiple sort expressions
+use candidate loading followed by in-memory filtering, sorting, and pagination.
+Unsupported object-identity ordering leaves the full source available to the live
+query rather than returning an incorrect finite page.
+
+### Atomic commits and incremental recovery
+
+Rows, metadata, index updates, transaction history, and the collection's stream
+position are committed atomically. Recent history includes row values and metadata,
+allowing `pullSince` to replay changes without reloading the whole collection.
+Transaction IDs and `(collectionId, term, seq)` identities deduplicate commits within
+the retained window.
+
+History is bounded by `appliedTxPruneMaxRows` (default 1,000) and
+`appliedTxPruneMaxAgeSeconds` (default 86,400). `pullSinceReloadThreshold` defaults to
+128 row and metadata changes. Missing or truncated history, version gaps, and changes
+over that threshold request a full reload. These options can be passed to
+`createIndexedDBPersistence`.
+
+IndexedDB itself does not notify other tabs about row changes. Supply a cross-tab
+`coordinator` to the factory when sharing collections across tabs; otherwise TanStack
+uses its collection-local default. Direct adapter calls and manual storage edits do
+not emit collection notifications.
+
+## Development and validation
+
+From a source checkout, run these commands in the package directory:
+
+```sh
+pnpm build
+pnpm lint
+pnpm test
+pnpm test:browser
+pnpm bench:browser
+```
+
+The [adapted upstream contract](src/contracts/NOTICE.md) runs against both
+IndexedDB and SQLite. The browser suite runs against native Chromium IndexedDB;
+the browser benchmarks measure storage queries, pagination, empty intersections,
+and incremental writes. Chromium coverage does not certify Safari, Firefox, or
 mobile OS process-kill behavior.
 
-Run `pnpm --filter @party-stack/db-indexeddb-persistence bench:browser` for real
-storage query, pagination, empty-intersection, and incremental-write measurements.
-See [the audit and measurements](persistence-contract-audit.md) for coverage and limits.
+See [the contract audit and measurements](persistence-contract-audit.md) for
+coverage and limits.
