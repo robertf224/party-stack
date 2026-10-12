@@ -15,13 +15,13 @@
         "dev:fixture": "WRANGLER_WRITE_LOGS=0 wrangler dev --config wrangler.fixture.jsonc --local --persist-to ../../temp/durable-object-ontology-fixture"
     },
     "dependencies": {
-        "@party-stack/ontology": "workspace:^",
-        "@party-stack/sqlite-ontology": "workspace:^"
+        "@party-stack/ontology": "workspace:*",
+        "@party-stack/sqlite-ontology": "workspace:*"
     },
     "devDependencies": {
         "@cloudflare/vitest-plugin": "^1.4.0",
         "@cloudflare/workers-types": "^5.20260827.1",
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@tanstack/db": "0.12.1",
         "esbuild": "^0.28.1",
         "typescript": "~7.0.2",

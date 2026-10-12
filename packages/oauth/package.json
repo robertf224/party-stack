@@ -12,12 +12,12 @@
         }
     },
     "dependencies": {
-        "@party-stack/errors": "workspace:^",
-        "@party-stack/runtime": "workspace:^",
+        "@party-stack/errors": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
         "oauth4webapi": "^3.8.7"
     },
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@tanstack/db": "0.12.1",
         "typescript": "~7.0.2",
         "vite-plus": "catalog:"

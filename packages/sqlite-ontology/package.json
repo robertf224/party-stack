@@ -16,11 +16,11 @@
         }
     },
     "dependencies": {
-        "@party-stack/ontology": "workspace:^",
+        "@party-stack/ontology": "workspace:*",
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@tanstack/db": "0.12.1",
         "@types/node": "^24.10.1",
         "better-sqlite3": "^12.9.0",

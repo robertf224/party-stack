@@ -17,7 +17,7 @@
         "prepare": "vp pack"
     },
     "dependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@tailwindcss/vite": "^4.0.6",
         "@tanstack/devtools-vite": "^0.6.0",
         "@vitejs/plugin-react": "^5.2.0",

@@ -9,6 +9,11 @@
     ],
     "semverGroups": [
         {
+            "label": "Publish workspace dependencies at their exact local version",
+            "specifierTypes": ["workspace-protocol"],
+            "range": "*"
+        },
+        {
             "label": "Keep Vite+ toolchain catalog versions exact",
             "dependencyTypes": ["pnpmCatalog"],
             "range": ""

@@ -12,11 +12,11 @@
         }
     },
     "dependencies": {
-        "@party-stack/connections": "workspace:^",
-        "@party-stack/errors": "workspace:^"
+        "@party-stack/connections": "workspace:*",
+        "@party-stack/errors": "workspace:*"
     },
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@tanstack/db": "0.12.1",
         "better-auth": "^1.7.1",
         "typescript": "~7.0.2",

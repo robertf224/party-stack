@@ -16,11 +16,11 @@
         }
     },
     "dependencies": {
-        "@party-stack/icons": "workspace:^",
+        "@party-stack/icons": "workspace:*",
         "expo-symbols": "^57.0.2"
     },
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@types/react": "^19.2.6",
         "react": "^19.2.0",
         "typescript": "~7.0.2",

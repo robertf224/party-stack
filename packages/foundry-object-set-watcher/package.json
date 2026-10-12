@@ -22,11 +22,11 @@
         "@effectionx/stream-helpers": "^0.8.1",
         "@effectionx/websocket": "^2.3.2",
         "@osdk/foundry.ontologies": "^2.77.0",
-        "@party-stack/foundry-client": "workspace:^",
+        "@party-stack/foundry-client": "workspace:*",
         "effection": "^4.0.2"
     },
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@types/node": "^24.10.1",
         "@types/react": "^19.2.6",
         "react": "^19.2.0",

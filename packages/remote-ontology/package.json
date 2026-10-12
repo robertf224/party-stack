@@ -24,15 +24,15 @@
         }
     },
     "dependencies": {
-        "@party-stack/ontology": "workspace:^",
-        "@party-stack/runtime": "workspace:^",
+        "@party-stack/ontology": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
         "@tanstack/query-core": "^5.102.8",
         "@tanstack/query-db-collection": "1.4.0",
         "temporal-polyfill": "^0.3.0",
         "zod": "^4.4.3"
     },
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@tanstack/db": "0.12.1",
         "@types/node": "^24.10.1",
         "typescript": "~7.0.2",

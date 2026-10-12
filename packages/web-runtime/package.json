@@ -15,13 +15,13 @@
         "test:browser": "tsc -p tsconfig.e2e.json && vp test run --config vitest.e2e.config.mjs"
     },
     "dependencies": {
-        "@party-stack/coordination": "workspace:^",
-        "@party-stack/db-indexeddb-persistence": "workspace:^",
-        "@party-stack/runtime": "workspace:^",
+        "@party-stack/coordination": "workspace:*",
+        "@party-stack/db-indexeddb-persistence": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
         "effection": "^4.0.2"
     },
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@tanstack/db": "0.12.1",
         "@tanstack/db-sqlite-persistence-core": "0.4.5",
         "playwright": "^1.61.1",

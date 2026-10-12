@@ -8,7 +8,7 @@
     "main": "lib/index.js",
     "types": "lib/index.d.ts",
     "dependencies": {
-        "@bobbyfidz/osdk-utils": "workspace:^",
+        "@bobbyfidz/osdk-utils": "workspace:*",
         "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/result": "^0.3.1",
         "@envelop/core": "^5.2.3",
@@ -24,7 +24,7 @@
         "js-base64": "^3.7.7"
     },
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@types/node": "^24.10.1",
         "typescript": "~7.0.2",
         "vite-plus": "catalog:"

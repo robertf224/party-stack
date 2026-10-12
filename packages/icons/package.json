@@ -13,7 +13,7 @@
     },
     "dependencies": {},
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "typescript": "~7.0.2",
         "vite-plus": "catalog:"
     }

@@ -5,8 +5,8 @@
     "type": "module",
     "dependencies": {
         "@base-ui/react": "^1.8.0",
-        "@party-stack/foundry-ontology": "workspace:^",
-        "@party-stack/ontology": "workspace:^",
+        "@party-stack/foundry-ontology": "workspace:*",
+        "@party-stack/ontology": "workspace:*",
         "@tanstack/db": "0.12.1",
         "@tanstack/query-core": "^5.102.8",
         "@tanstack/query-db-collection": "1.4.0",
@@ -18,7 +18,7 @@
         "react-dom": "^19.2.0"
     },
     "devDependencies": {
-        "@party-stack/tanstack-start-build-config": "workspace:^",
+        "@party-stack/tanstack-start-build-config": "workspace:*",
         "@types/node": "^24.10.1",
         "@types/react": "^19.2.6",
         "@types/react-dom": "^19.2.3",

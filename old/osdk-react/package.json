@@ -24,7 +24,7 @@
         }
     },
     "dependencies": {
-        "@bobbyfidz/osdk-utils": "workspace:^",
+        "@bobbyfidz/osdk-utils": "workspace:*",
         "@bobbyfidz/panic": "^0.1.0",
         "@osdk/api": "^2.5.2",
         "@osdk/client": "^2.5.2",
@@ -34,7 +34,7 @@
         "@yornaath/batshit": "^0.10.1"
     },
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@tanstack/react-query": "^5.90.10",
         "@types/react": "^19.2.6",
         "react": "^19.2.0",

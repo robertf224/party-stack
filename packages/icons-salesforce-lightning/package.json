@@ -12,10 +12,10 @@
         }
     },
     "dependencies": {
-        "@party-stack/icons": "workspace:^"
+        "@party-stack/icons": "workspace:*"
     },
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "typescript": "~7.0.2",
         "vite-plus": "catalog:"
     }

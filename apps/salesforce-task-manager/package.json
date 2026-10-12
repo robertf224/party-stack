@@ -11,11 +11,11 @@
     },
     "dependencies": {
         "@dnd-kit/core": "^6.3.1",
-        "@party-stack/node-runtime": "workspace:^",
-        "@party-stack/ontology": "workspace:^",
-        "@party-stack/ontology-devtools": "workspace:^",
-        "@party-stack/salesforce-ontology": "workspace:^",
-        "@party-stack/web-runtime": "workspace:^",
+        "@party-stack/node-runtime": "workspace:*",
+        "@party-stack/ontology": "workspace:*",
+        "@party-stack/ontology-devtools": "workspace:*",
+        "@party-stack/salesforce-ontology": "workspace:*",
+        "@party-stack/web-runtime": "workspace:*",
         "@tanstack/db": "0.12.1",
         "@tanstack/react-db": "0.5.5",
         "@tanstack/react-devtools": "^0.10.9",
@@ -26,7 +26,7 @@
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
-        "@party-stack/tanstack-start-build-config": "workspace:^",
+        "@party-stack/tanstack-start-build-config": "workspace:*",
         "@types/node": "^24.10.1",
         "@types/react": "^19.2.6",
         "@types/react-dom": "^19.2.3",

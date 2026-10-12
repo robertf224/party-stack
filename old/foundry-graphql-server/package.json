@@ -4,7 +4,7 @@
     "private": true,
     "type": "module",
     "dependencies": {
-        "@bobbyfidz/foundry-graphql-schema": "workspace:^",
+        "@bobbyfidz/foundry-graphql-schema": "workspace:*",
         "@bobbyfidz/panic": "^0.1.0",
         "@osdk/client": "^2.5.2",
         "@osdk/oauth": "^1.5.0",
@@ -13,7 +13,7 @@
         "grafserv": "^0.1.1-beta.21"
     },
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@types/node": "^24.10.1",
         "tsx": "^4.20.6",
         "typescript": "~7.0.2",

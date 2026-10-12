@@ -16,7 +16,7 @@
         }
     },
     "dependencies": {
-        "@bobbyfidz/foundry-graphql-schema": "workspace:^",
+        "@bobbyfidz/foundry-graphql-schema": "workspace:*",
         "@bobbyfidz/local-oauth-flow": "^0.1.0",
         "@bobbyfidz/panic": "^0.1.0",
         "@next/env": "^16.1.6",
@@ -26,7 +26,7 @@
         "ts-node": "^10.9.2"
     },
     "devDependencies": {
-        "@party-stack/build-config": "workspace:^",
+        "@party-stack/build-config": "workspace:*",
         "@types/node": "^24.10.1",
         "@types/relay-runtime": "^19.0.3",
         "typescript": "~7.0.2",
