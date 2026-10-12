@@ -8,10 +8,7 @@ import {
     type Scope,
     type Task,
 } from "effection";
-import {
-    BaseCoordination,
-    type InvocationContext,
-} from "./base.js";
+import { BaseCoordination, type InvocationContext } from "./base.js";
 import {
     CoordinationClosedError,
     type CoordinationCallOptions,
@@ -23,16 +20,9 @@ import {
 } from "./contracts.js";
 import { runInScope } from "./effection/runInScope.js";
 import { HostCore } from "./host-core.js";
-import {
-    deferred,
-    normalizeError,
-    randomId,
-} from "./internal.js";
+import { deferred, normalizeError, randomId } from "./internal.js";
 
-export class SingleProcessCoordination
-    extends BaseCoordination
-    implements CoordinationHost
-{
+export class SingleProcessCoordination extends BaseCoordination implements CoordinationHost {
     readonly role = "host" as const;
     readonly isLeader = true;
     readonly scope: string;
@@ -47,16 +37,12 @@ export class SingleProcessCoordination
         super();
         this.scope = options.scope;
         this.core = new HostCore({
-            contextClient: (path, signal) =>
-                this.createContextClient({ path, signal }),
-            publishEvent: (namespace, event, payload) =>
-                this.emitEvent(namespace, event, payload),
+            contextClient: (path, signal) => this.createContextClient({ path, signal }),
+            publishEvent: (namespace, event, payload) => this.emitEvent(namespace, event, payload),
         });
         this.task = run(() => this.useLifetime());
         void this.task.catch((error: unknown) => {
-            this.rootScope.reject(
-                normalizeError(error)
-            );
+            this.rootScope.reject(normalizeError(error));
         });
     }
 
@@ -69,9 +55,7 @@ export class SingleProcessCoordination
     }
 
     runAsLeader<Result>(
-        callback: (context: {
-            signal: AbortSignal;
-        }) => Result | Promise<Result>,
+        callback: (context: { signal: AbortSignal }) => Result | Promise<Result>,
         options?: CoordinationCallOptions
     ): Promise<Result> {
         try {
@@ -85,29 +69,20 @@ export class SingleProcessCoordination
                 runInScope(
                     scope,
                     function* () {
-                        const signal =
-                            yield* useAbortSignal();
-                        return yield* until(
-                            Promise.resolve(
-                                callback({ signal })
-                            )
-                        );
+                        const signal = yield* useAbortSignal();
+                        return yield* until(Promise.resolve(callback({ signal })));
                     },
                     [options?.signal]
                 )
             )
-            .catch((error: unknown) =>
-                this.rethrowScopedError(error)
-            );
+            .catch((error: unknown) => this.rethrowScopedError(error));
     }
 
     close(): Promise<void> {
         if (this.closePromise) return this.closePromise;
         this.closed = true;
         this.clearEventListeners();
-        this.closePromise = this.task
-            .halt()
-            .then(() => undefined);
+        this.closePromise = this.task.halt().then(() => undefined);
         return this.closePromise;
     }
 
@@ -123,24 +98,12 @@ export class SingleProcessCoordination
         }
         return this.rootScope.promise
             .then((scope) =>
-                runInScope(
-                    scope,
-                    () =>
-                        this.invokeOperation(
-                            namespace,
-                            method,
-                            input,
-                            context.path
-                        ),
-                    [
-                        context.signal,
-                        options?.signal,
-                    ]
-                )
+                runInScope(scope, () => this.invokeOperation(namespace, method, input, context.path), [
+                    context.signal,
+                    options?.signal,
+                ])
             )
-            .catch((error: unknown) =>
-                this.rethrowScopedError(error)
-            );
+            .catch((error: unknown) => this.rethrowScopedError(error));
     }
 
     private *invokeOperation(
@@ -151,16 +114,11 @@ export class SingleProcessCoordination
     ): Operation<unknown> {
         const signal = yield* useAbortSignal();
         return yield* until(
-            this.core.invoke(
-                namespace,
-                method,
-                input,
-                {
-                    inheritedSignal: signal,
-                    senderId: this.nodeId,
-                    path,
-                }
-            )
+            this.core.invoke(namespace, method, input, {
+                inheritedSignal: signal,
+                senderId: this.nodeId,
+                path,
+            })
         );
     }
 
@@ -172,15 +130,11 @@ export class SingleProcessCoordination
         } finally {
             yield* until(this.core.close());
             this.clearEventListeners();
-            this.rootScope.reject(
-                new CoordinationClosedError()
-            );
+            this.rootScope.reject(new CoordinationClosedError());
         }
     }
 
-    private rethrowScopedError(
-        error: unknown
-    ): never {
+    private rethrowScopedError(error: unknown): never {
         if (this.closed) {
             throw new CoordinationClosedError();
         }

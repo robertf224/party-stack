@@ -1,6 +1,6 @@
-import type { BlobDimensions } from "@party-stack/blobs";
 import type { ImageMediaType as GeneratedImageMediaType } from "../../ir/generated/types.js";
 import type { attachment } from "../../utils/values.js";
+import type { BlobDimensions } from "@party-stack/blobs";
 
 type AttachmentMetadataValues<Type extends string> = {
     size: number;
@@ -17,12 +17,9 @@ export type AttachmentMetadataSelection<Type extends string = string> = Readonly
     AttachmentMetadataField<Type>
 >;
 
-export type PartialAttachmentMetadata<Type extends string = string> = Partial<
-    AttachmentMetadataValues<Type>
->;
+export type PartialAttachmentMetadata<Type extends string = string> = Partial<AttachmentMetadataValues<Type>>;
 
 export type AttachmentMetadata<
     Type extends string = string,
     Selected extends AttachmentMetadataField<Type> = "size" | "type" | "name",
-> = attachment<Type> &
-    Pick<AttachmentMetadataValues<Type>, Selected>;
+> = attachment<Type> & Pick<AttachmentMetadataValues<Type>, Selected>;

@@ -1,7 +1,7 @@
 import { useCurrentUserId, useUser } from "@bobbyfidz/osdk-react/users";
-import { UserAvatar } from "./UserAvatar";
 import { useState, useRef, useEffect } from "react";
 import { auth } from "./client";
+import { UserAvatar } from "./UserAvatar";
 
 export const UserMenu = () => {
     const [isOpen, setIsOpen] = useState(false);
@@ -33,7 +33,7 @@ export const UserMenu = () => {
             </button>
 
             {isOpen && (
-                <div className="absolute right-0 z-50 mt-2 w-64 rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5">
+                <div className="ring-opacity-5 absolute right-0 z-50 mt-2 w-64 rounded-md bg-white shadow-lg ring-1 ring-black">
                     <div className="py-1">
                         <div className="border-b border-gray-100 px-4 py-2">
                             <p className="text-sm font-medium text-gray-900">{fullName}</p>

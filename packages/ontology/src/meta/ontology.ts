@@ -1,11 +1,7 @@
 import { invariant } from "@bobbyfidz/panic";
 import { o } from "../ir/generated/builders.js";
 import OntologyIRSchema from "../ir/schema.js";
-import type {
-    FieldDef,
-    NamedTypeDef,
-    OntologyIR,
-} from "../ir/generated/types.js";
+import type { FieldDef, NamedTypeDef, OntologyIR } from "../ir/generated/types.js";
 
 const idField = (description: string): FieldDef => ({
     name: "id",
@@ -19,30 +15,18 @@ function addRuntimeId(type: NamedTypeDef, description: string): NamedTypeDef {
     return {
         ...type,
         type: o.struct({
-            fields: [
-                idField(description),
-                ...type.type.value.fields,
-            ],
+            fields: [idField(description), ...type.type.value.fields],
         }),
     };
 }
 
 function addRuntimeMetaFields(type: NamedTypeDef): NamedTypeDef {
     if (type.name === "ObjectTypeDef") {
-        return addRuntimeId(
-            type,
-            "The provider-assigned stable identifier for this object type."
-        );
+        return addRuntimeId(type, "The provider-assigned stable identifier for this object type.");
     } else if (type.name === "PropertyDef") {
-        return addRuntimeId(
-            type,
-            "The provider-assigned stable identifier for this property."
-        );
+        return addRuntimeId(type, "The provider-assigned stable identifier for this property.");
     } else if (type.name === "ActionTypeDef") {
-        return addRuntimeId(
-            type,
-            "The provider-assigned stable identifier for this action type."
-        );
+        return addRuntimeId(type, "The provider-assigned stable identifier for this action type.");
     } else {
         return type;
     }

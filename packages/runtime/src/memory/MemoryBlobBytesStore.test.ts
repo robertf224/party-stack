@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { MemoryBlobBytesStore } from "./MemoryBlobBytesStore.js";
 
 describe("MemoryBlobBytesStore", () => {
@@ -9,8 +9,6 @@ describe("MemoryBlobBytesStore", () => {
         expect(await (await store.read("folder/blob")).text()).toBe("hello");
 
         await store.delete("folder/blob");
-        await expect(store.read("folder/blob")).rejects.toThrow(
-            'Blob bytes not found for "folder/blob".'
-        );
+        await expect(store.read("folder/blob")).rejects.toThrow('Blob bytes not found for "folder/blob".');
     });
 });

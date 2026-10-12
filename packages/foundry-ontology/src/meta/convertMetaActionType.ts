@@ -1,15 +1,5 @@
 import { fromBlueprintIconName } from "@party-stack/icons-blueprint";
 import { Temporal } from "temporal-polyfill";
-import type {
-    ActionParameterDef,
-    ActionTypeDef,
-    Expression,
-    MetaActionType,
-    PropertyAssignment,
-    StringConstraint,
-    StringSuggestion,
-    TypeDef,
-} from "@party-stack/ontology";
 import { toOntologyActionTypeName } from "../utils/actionTypeName.js";
 import {
     convertOmsActionParameterDefaults,
@@ -27,6 +17,16 @@ import type {
     OntologyDataType,
     StructFieldArgument,
 } from "@osdk/foundry.ontologies";
+import type {
+    ActionParameterDef,
+    ActionTypeDef,
+    Expression,
+    MetaActionType,
+    PropertyAssignment,
+    StringConstraint,
+    StringSuggestion,
+    TypeDef,
+} from "@party-stack/ontology";
 
 const FOUNDRY_CURRENT_USER_CONTEXT_PATH = ["user"];
 const FOUNDRY_UUID_PARAMETER_PREFIX = "__uuid_";
@@ -135,7 +135,11 @@ function applyOmsStructFieldValidation(
                 ...type,
                 value: {
                     ...type.value,
-                    elementType: applyOmsStructFieldValidation(type.value.elementType, omsMetadata, parameterName),
+                    elementType: applyOmsStructFieldValidation(
+                        type.value.elementType,
+                        omsMetadata,
+                        parameterName
+                    ),
                 },
             };
         case "struct":
@@ -148,7 +152,11 @@ function applyOmsStructFieldValidation(
                         type: applyStringSuggestionsFallback(
                             applyStringConstraintFallback(
                                 field.type,
-                                convertOmsActionParameterStringConstraint(omsMetadata, parameterName, field.name)
+                                convertOmsActionParameterStringConstraint(
+                                    omsMetadata,
+                                    parameterName,
+                                    field.name
+                                )
                             ),
                             convertOmsActionParameterStringSuggestions(omsMetadata, parameterName, field.name)
                         ),

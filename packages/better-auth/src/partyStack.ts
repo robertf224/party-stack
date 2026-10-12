@@ -67,5 +67,5 @@ export function partyStack(options?: PartyStackOptions): PartyStackPlugin {
             ],
         },
     } satisfies BetterAuthPlugin;
-    return result as PartyStackPlugin;
+    return result;
 }

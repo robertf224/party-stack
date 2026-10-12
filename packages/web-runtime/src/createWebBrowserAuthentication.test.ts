@@ -1,5 +1,5 @@
 import { BrowserAuthenticationCancelledError } from "@party-stack/runtime";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { createWebBrowserAuthentication } from "./createWebBrowserAuthentication.js";
 
 describe("createWebBrowserAuthentication", () => {
@@ -27,24 +27,18 @@ describe("createWebBrowserAuthentication", () => {
             setInterval,
             clearInterval,
         });
-        const authentication =
-            createWebBrowserAuthentication();
+        const authentication = createWebBrowserAuthentication();
 
         const session = authentication.start({
-            redirectUrl:
-                "https://app.example/auth/callback",
+            redirectUrl: "https://app.example/auth/callback",
             presentation: "popup",
         });
-        const result = session.open(
-            "https://auth.example/authorize"
-        );
-        popup.location.href =
-            "https://app.example/auth/callback?code=code";
+        const result = session.open("https://auth.example/authorize");
+        popup.location.href = "https://app.example/auth/callback?code=code";
         await vi.advanceTimersByTimeAsync(250);
 
         await expect(result).resolves.toEqual({
-            callbackUrl:
-                "https://app.example/auth/callback?code=code",
+            callbackUrl: "https://app.example/auth/callback?code=code",
         });
         expect(popup.closed).toBe(true);
     });
@@ -68,21 +62,15 @@ describe("createWebBrowserAuthentication", () => {
             setInterval,
             clearInterval,
         });
-        const authentication =
-            createWebBrowserAuthentication();
+        const authentication = createWebBrowserAuthentication();
         const session = authentication.start({
-            redirectUrl:
-                "https://app.example/auth/callback",
+            redirectUrl: "https://app.example/auth/callback",
             presentation: "popup",
         });
-        const result = session.open(
-            "https://auth.example/authorize"
-        );
+        const result = session.open("https://auth.example/authorize");
 
         await session.close();
 
-        await expect(result).rejects.toBeInstanceOf(
-            BrowserAuthenticationCancelledError
-        );
+        await expect(result).rejects.toBeInstanceOf(BrowserAuthenticationCancelledError);
     });
 });

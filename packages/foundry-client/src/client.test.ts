@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { createClient } from "./client.js";
 import { createFoundryWebSocket } from "./network.js";
 

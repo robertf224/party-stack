@@ -6,11 +6,7 @@ import {
 } from "@party-stack/runtime";
 import * as oauth from "oauth4webapi";
 import { resolveOAuthSecretStore } from "./storage.js";
-import type {
-    CreatePublicOAuthClientOptions,
-    OAuthSession,
-    PublicOAuthClient,
-} from "./types.js";
+import type { CreatePublicOAuthClientOptions, OAuthSession, PublicOAuthClient } from "./types.js";
 
 interface PendingAuthorization {
     state: string;
@@ -39,26 +35,19 @@ const PENDING_MAX_AGE_MS = 10 * 60 * 1_000;
 
 interface OAuthCoordinationService {
     methods: {
-        refresh(input: {
-            userId: string;
-        }): Promise<OAuthSession>;
+        refresh(input: { userId: string }): Promise<OAuthSession>;
     };
     events: Record<never, never>;
 }
 
-function sessionFromTokens(
-    userId: string,
-    tokens: StoredTokenSet
-): OAuthSession {
+function sessionFromTokens(userId: string, tokens: StoredTokenSet): OAuthSession {
     return tokens.expiresAt === undefined
         ? { userId }
         : {
               userId,
               expiration: {
                   expiresAt: tokens.expiresAt,
-                  refreshable:
-                      tokens.refreshToken !==
-                      undefined,
+                  refreshable: tokens.refreshToken !== undefined,
               },
           };
 }
@@ -68,43 +57,28 @@ export async function createPublicOAuthClient(
 ): Promise<PublicOAuthClient> {
     const secrets = await resolveOAuthSecretStore(options);
     const storagePrefix = `oauth:${encodeURIComponent(options.clientId)}`;
-    const refreshCoordination =
-        options.runtime.coordination.service<OAuthCoordinationService>(
-            `${storagePrefix}:refresh:v1`
-        );
-    const pending = createLocalCollection<
-        PendingAuthorization,
-        string
-    >({
+    const refreshCoordination = options.runtime.coordination.service<OAuthCoordinationService>(
+        `${storagePrefix}:refresh:v1`
+    );
+    const pending = createLocalCollection<PendingAuthorization, string>({
         name: `${storagePrefix}:pending`,
         getKey: (record) => record.state,
         runtime: options.runtime,
         schemaVersion: 1,
     });
-    const sessions = createLocalCollection<
-        SessionRecord,
-        string
-    >({
+    const sessions = createLocalCollection<SessionRecord, string>({
         name: `${storagePrefix}:sessions`,
         getKey: (record) => record.userId,
         runtime: options.runtime,
         schemaVersion: 1,
     });
-    await Promise.all([
-        pending.preload(),
-        sessions.preload(),
-    ]);
+    await Promise.all([pending.preload(), sessions.preload()]);
 
     const authorizationServer: oauth.AuthorizationServer = {
         issuer: options.authorizationServer.issuer,
-        authorization_endpoint:
-            options.authorizationServer
-                .authorizationEndpoint,
-        token_endpoint:
-            options.authorizationServer.tokenEndpoint,
-        revocation_endpoint:
-            options.authorizationServer
-                .revocationEndpoint,
+        authorization_endpoint: options.authorizationServer.authorizationEndpoint,
+        token_endpoint: options.authorizationServer.tokenEndpoint,
+        revocation_endpoint: options.authorizationServer.revocationEndpoint,
     };
     const client: oauth.Client = {
         client_id: options.clientId,
@@ -112,39 +86,20 @@ export async function createPublicOAuthClient(
     };
     const clientAuthentication = oauth.None();
     const requestOptions = {
-        [oauth.customFetch]:
-            options.fetch ??
-            globalThis.fetch.bind(globalThis),
+        [oauth.customFetch]: options.fetch ?? globalThis.fetch.bind(globalThis),
     };
-    const accessTokens = new Map<
-        string,
-        StoredTokenSet
-    >();
+    const accessTokens = new Map<string, StoredTokenSet>();
     let cleaned = false;
 
-    const pendingSecretKey = (state: string) =>
-        `${storagePrefix}:pending:${state}`;
-    const sessionSecretKey = (userId: string) =>
-        `${storagePrefix}:session:${encodeURIComponent(userId)}`;
+    const pendingSecretKey = (state: string) => `${storagePrefix}:pending:${state}`;
+    const sessionSecretKey = (userId: string) => `${storagePrefix}:session:${encodeURIComponent(userId)}`;
 
-    const writeSession = async (
-        tokens: StoredTokenSet,
-        existingUserId?: string
-    ): Promise<OAuthSession> => {
-        const resolvedUserId = await options.resolveUserId(
-            tokens.accessToken
-        );
-        if (
-            existingUserId &&
-            resolvedUserId !== existingUserId
-        ) {
-            throw new Error(
-                `OAuth session changed user from "${existingUserId}" to "${resolvedUserId}".`
-            );
+    const writeSession = async (tokens: StoredTokenSet, existingUserId?: string): Promise<OAuthSession> => {
+        const resolvedUserId = await options.resolveUserId(tokens.accessToken);
+        if (existingUserId && resolvedUserId !== existingUserId) {
+            throw new Error(`OAuth session changed user from "${existingUserId}" to "${resolvedUserId}".`);
         }
-        const userId =
-            existingUserId ??
-            resolvedUserId;
+        const userId = existingUserId ?? resolvedUserId;
         const secretKey = sessionSecretKey(userId);
         const existing = sessions.get(userId);
         if (!existing) {
@@ -159,10 +114,7 @@ export async function createPublicOAuthClient(
             await transaction.isPersisted.promise;
         }
         try {
-            await secrets.set(
-                secretKey,
-                JSON.stringify(tokens)
-            );
+            await secrets.set(secretKey, JSON.stringify(tokens));
         } catch (error) {
             if (!existing && sessions.get(userId)) {
                 await sessions.delete(userId, {
@@ -175,10 +127,7 @@ export async function createPublicOAuthClient(
         return sessionFromTokens(userId, tokens);
     };
 
-    const readTokens = async (
-        record: SessionRecord,
-        force = false
-    ): Promise<StoredTokenSet | undefined> => {
+    const readTokens = async (record: SessionRecord, force = false): Promise<StoredTokenSet | undefined> => {
         const loaded = accessTokens.get(record.userId);
         if (loaded && !force) return loaded;
         const stored = await secrets.get(record.secretKey);
@@ -187,9 +136,7 @@ export async function createPublicOAuthClient(
         accessTokens.set(record.userId, tokens);
         return tokens;
     };
-    const forgetSession = async (
-        userId: string
-    ): Promise<void> => {
+    const forgetSession = async (userId: string): Promise<void> => {
         const record = sessions.get(userId);
         if (!record) return;
         await secrets.delete(record.secretKey);
@@ -199,10 +146,7 @@ export async function createPublicOAuthClient(
         accessTokens.delete(userId);
     };
 
-    const removePending = async (
-        state: string,
-        secretKey: string
-    ) => {
+    const removePending = async (state: string, secretKey: string) => {
         await secrets.delete(secretKey);
         if (!pending.get(state)) return;
         const transaction = pending.delete(state, {
@@ -211,50 +155,29 @@ export async function createPublicOAuthClient(
         await transaction.isPersisted.promise;
     };
     const cleanupStalePending = async () => {
-        const cutoff =
-            Date.now() - PENDING_MAX_AGE_MS;
+        const cutoff = Date.now() - PENDING_MAX_AGE_MS;
         await Promise.all(
             [...pending.values()]
-                .filter(
-                    (record) =>
-                        record.createdAt < cutoff
-                )
-                .map((record) =>
-                    removePending(
-                        record.state,
-                        record.secretKey
-                    )
-                )
+                .filter((record) => record.createdAt < cutoff)
+                .map((record) => removePending(record.state, record.secretKey))
         );
     };
 
-    const completeAuthorization = async (
-        callbackUrl: string
-    ): Promise<OAuthSession> => {
+    const completeAuthorization = async (callbackUrl: string): Promise<OAuthSession> => {
         const callback = new URL(callbackUrl);
         const state = callback.searchParams.get("state");
         if (!state) {
-            throw new Error(
-                "OAuth callback did not include state."
-            );
+            throw new Error("OAuth callback did not include state.");
         }
         const pendingRecord = pending.get(state);
         if (!pendingRecord) {
-            throw new Error(
-                "OAuth callback state is not recognized."
-            );
+            throw new Error("OAuth callback state is not recognized.");
         }
-        const serialized = await secrets.get(
-            pendingRecord.secretKey
-        );
+        const serialized = await secrets.get(pendingRecord.secretKey);
         if (!serialized) {
-            throw new Error(
-                "OAuth callback secret state is unavailable."
-            );
+            throw new Error("OAuth callback secret state is unavailable.");
         }
-        const pendingSecret = JSON.parse(
-            serialized
-        ) as PendingSecret;
+        const pendingSecret = JSON.parse(serialized) as PendingSecret;
         try {
             const parameters = oauth.validateAuthResponse(
                 authorizationServer,
@@ -262,149 +185,88 @@ export async function createPublicOAuthClient(
                 callback.searchParams,
                 state
             );
-            const response =
-                await oauth.authorizationCodeGrantRequest(
-                    authorizationServer,
-                    client,
-                    clientAuthentication,
-                    parameters,
-                    options.redirectUrl,
-                    pendingSecret.codeVerifier,
-                    requestOptions
-                );
-            const result =
-                await oauth.processAuthorizationCodeResponse(
-                    authorizationServer,
-                    client,
-                    response
-                );
+            const response = await oauth.authorizationCodeGrantRequest(
+                authorizationServer,
+                client,
+                clientAuthentication,
+                parameters,
+                options.redirectUrl,
+                pendingSecret.codeVerifier,
+                requestOptions
+            );
+            const result = await oauth.processAuthorizationCodeResponse(
+                authorizationServer,
+                client,
+                response
+            );
             return writeSession({
-                accessToken:
-                    result.access_token,
-                refreshToken:
-                    result.refresh_token,
+                accessToken: result.access_token,
+                refreshToken: result.refresh_token,
                 expiresAt:
-                    result.expires_in ===
-                    undefined
-                        ? undefined
-                        : Date.now() +
-                          result.expires_in *
-                              1_000,
+                    result.expires_in === undefined ? undefined : Date.now() + result.expires_in * 1_000,
                 scope: result.scope,
             });
         } finally {
-            await removePending(
-                state,
-                pendingRecord.secretKey
-            );
+            await removePending(state, pendingRecord.secretKey);
         }
     };
 
-    const refreshDirect = async (
-        userId: string
-    ): Promise<OAuthSession> => {
+    const refreshDirect = async (userId: string): Promise<OAuthSession> => {
         const record = sessions.get(userId);
         if (!record) {
-            throw new Error(
-                `OAuth session for user "${userId}" is unavailable.`
-            );
+            throw new Error(`OAuth session for user "${userId}" is unavailable.`);
         }
         const current = await readTokens(record);
         if (!current?.refreshToken) {
-            throw new Error(
-                `OAuth session for user "${userId}" has no refresh token.`
-            );
+            throw new Error(`OAuth session for user "${userId}" has no refresh token.`);
         }
         try {
-            const response =
-                await oauth.refreshTokenGrantRequest(
-                    authorizationServer,
-                    client,
-                    clientAuthentication,
-                    current.refreshToken,
-                    requestOptions
-                );
-            const result =
-                await oauth.processRefreshTokenResponse(
-                    authorizationServer,
-                    client,
-                    response
-                );
+            const response = await oauth.refreshTokenGrantRequest(
+                authorizationServer,
+                client,
+                clientAuthentication,
+                current.refreshToken,
+                requestOptions
+            );
+            const result = await oauth.processRefreshTokenResponse(authorizationServer, client, response);
             return writeSession(
                 {
                     accessToken: result.access_token,
-                    refreshToken:
-                        result.refresh_token ??
-                        current.refreshToken,
+                    refreshToken: result.refresh_token ?? current.refreshToken,
                     expiresAt:
-                        result.expires_in ===
-                        undefined
-                            ? undefined
-                            : Date.now() +
-                              result.expires_in *
-                                  1_000,
-                    scope:
-                        result.scope ??
-                        current.scope,
+                        result.expires_in === undefined ? undefined : Date.now() + result.expires_in * 1_000,
+                    scope: result.scope ?? current.scope,
                 },
                 userId
             );
         } catch (error) {
             if (
-                error instanceof
-                    oauth.ResponseBodyError &&
-                (error.error ===
-                    "invalid_grant" ||
-                    error.error ===
-                        "invalid_token")
+                error instanceof oauth.ResponseBodyError &&
+                (error.error === "invalid_grant" || error.error === "invalid_token")
             ) {
                 await forgetSession(userId);
-                throw unauthenticated(
-                    error.error_description ??
-                        "OAuth credentials require authentication."
-                );
+                throw unauthenticated(error.error_description ?? "OAuth credentials require authentication.");
             }
             throw error;
         }
     };
 
-    const host = isCoordinationHost(
-        options.runtime.coordination
-    )
-        ? options.runtime.coordination
-        : undefined;
-    const refreshServer:
-        | CoordinationServiceServer<OAuthCoordinationService>
-        | undefined = host
-        ? host.serve<OAuthCoordinationService>(
-              `${storagePrefix}:refresh:v1`,
-              {
-                  refresh: ({ userId }) =>
-                      refreshDirect(userId),
-              }
-          )
+    const host = isCoordinationHost(options.runtime.coordination) ? options.runtime.coordination : undefined;
+    const refreshServer: CoordinationServiceServer<OAuthCoordinationService> | undefined = host
+        ? host.serve<OAuthCoordinationService>(`${storagePrefix}:refresh:v1`, {
+              refresh: ({ userId }) => refreshDirect(userId),
+          })
         : undefined;
 
-    const refresh = async (
-        userId: string
-    ): Promise<OAuthSession> => {
+    const refresh = async (userId: string): Promise<OAuthSession> => {
         let session: OAuthSession;
         try {
-            session =
-                await refreshCoordination.methods.refresh(
-                    {
-                        userId,
-                    }
-                );
+            session = await refreshCoordination.methods.refresh({
+                userId,
+            });
         } catch (error) {
-            if (
-                error instanceof Error &&
-                error.name ===
-                    "UnauthenticatedError"
-            ) {
-                throw unauthenticated(
-                    error.message
-                );
+            if (error instanceof Error && error.name === "UnauthenticatedError") {
+                throw unauthenticated(error.message);
             }
             throw error;
         }
@@ -418,31 +280,20 @@ export async function createPublicOAuthClient(
 
     const clientApi: PublicOAuthClient = {
         async signIn(signInOptions = {}) {
-            const browserAuthentication =
-                options.runtime
-                    .browserAuthentication;
+            const browserAuthentication = options.runtime.browserAuthentication;
             if (!browserAuthentication) {
-                throw new Error(
-                    "Interactive OAuth requires RuntimeAdapter.browserAuthentication."
-                );
+                throw new Error("Interactive OAuth requires RuntimeAdapter.browserAuthentication.");
             }
-            const browserSession =
-                browserAuthentication.start({
-                    redirectUrl:
-                        options.redirectUrl,
-                    presentation:
-                        signInOptions.browserPresentation,
-                });
+            const browserSession = browserAuthentication.start({
+                redirectUrl: options.redirectUrl,
+                presentation: signInOptions.browserPresentation,
+            });
             const state = oauth.generateRandomState();
             const secretKey = pendingSecretKey(state);
             try {
                 await cleanupStalePending();
-                const codeVerifier =
-                    oauth.generateRandomCodeVerifier();
-                const codeChallenge =
-                    await oauth.calculatePKCECodeChallenge(
-                        codeVerifier
-                    );
+                const codeVerifier = oauth.generateRandomCodeVerifier();
+                const codeChallenge = await oauth.calculatePKCECodeChallenge(codeVerifier);
                 const transaction = pending.insert(
                     {
                         state,
@@ -452,49 +303,27 @@ export async function createPublicOAuthClient(
                     { optimistic: false }
                 );
                 await transaction.isPersisted.promise;
-                await secrets.set(
-                    secretKey,
-                    JSON.stringify(
-                        { codeVerifier } satisfies PendingSecret
-                    )
-                );
-                const authorizationUrl = new URL(
-                    options.authorizationServer
-                        .authorizationEndpoint
-                );
-                authorizationUrl.search =
-                    new URLSearchParams({
-                        client_id: options.clientId,
-                        redirect_uri:
-                            options.redirectUrl,
-                        response_type: "code",
-                        scope: options.scopes.join(" "),
-                        state,
-                        code_challenge:
-                            codeChallenge,
-                        code_challenge_method:
-                            "S256",
-                    }).toString();
-                const { callbackUrl } =
-                    await browserSession.open(
-                        authorizationUrl.toString()
-                    );
-                return completeAuthorization(
-                    callbackUrl
-                );
-            } catch (error) {
-                await removePending(
+                await secrets.set(secretKey, JSON.stringify({ codeVerifier } satisfies PendingSecret));
+                const authorizationUrl = new URL(options.authorizationServer.authorizationEndpoint);
+                authorizationUrl.search = new URLSearchParams({
+                    client_id: options.clientId,
+                    redirect_uri: options.redirectUrl,
+                    response_type: "code",
+                    scope: options.scopes.join(" "),
                     state,
-                    secretKey
-                );
+                    code_challenge: codeChallenge,
+                    code_challenge_method: "S256",
+                }).toString();
+                const { callbackUrl } = await browserSession.open(authorizationUrl.toString());
+                return completeAuthorization(callbackUrl);
+            } catch (error) {
+                await removePending(state, secretKey);
                 await browserSession.close();
                 throw error;
             }
         },
         completeRedirect(url) {
-            const state = new URL(
-                url
-            ).searchParams.get("state");
+            const state = new URL(url).searchParams.get("state");
             if (!state || !pending.get(state)) {
                 return Promise.resolve(undefined);
             }
@@ -502,35 +331,19 @@ export async function createPublicOAuthClient(
         },
         async restoreSessions() {
             await cleanupStalePending();
-            const restored = new Map<
-                string,
-                OAuthSession
-            >();
+            const restored = new Map<string, OAuthSession>();
             for (const record of sessions.values()) {
                 if (restored.has(record.userId)) continue;
                 const tokens = await readTokens(record);
                 if (!tokens) {
-                    if (
-                        (record.createdAt ?? 0) <
-                        Date.now() -
-                            PENDING_MAX_AGE_MS
-                    ) {
-                        await sessions.delete(
-                            record.userId,
-                            {
-                                optimistic: false,
-                            }
-                        ).isPersisted.promise;
+                    if ((record.createdAt ?? 0) < Date.now() - PENDING_MAX_AGE_MS) {
+                        await sessions.delete(record.userId, {
+                            optimistic: false,
+                        }).isPersisted.promise;
                     }
                     continue;
                 }
-                restored.set(
-                    record.userId,
-                    sessionFromTokens(
-                        record.userId,
-                        tokens
-                    )
-                );
+                restored.set(record.userId, sessionFromTokens(record.userId, tokens));
             }
             return [...restored.values()];
         },
@@ -538,34 +351,17 @@ export async function createPublicOAuthClient(
         async getAccessToken(userId) {
             const record = sessions.get(userId);
             if (!record) {
-                throw new Error(
-                    `OAuth session for user "${userId}" is unavailable.`
-                );
+                throw new Error(`OAuth session for user "${userId}" is unavailable.`);
             }
             let tokens = await readTokens(record);
             if (!tokens) {
-                throw new Error(
-                    `OAuth tokens for user "${userId}" are unavailable.`
-                );
+                throw new Error(`OAuth tokens for user "${userId}" are unavailable.`);
             }
-            if (
-                tokens.expiresAt !== undefined &&
-                tokens.expiresAt <= Date.now() + 5_000
-            ) {
-                tokens =
-                    (await readTokens(
-                        record,
-                        true
-                    )) ?? tokens;
-                if (
-                    tokens.expiresAt !==
-                        undefined &&
-                    tokens.expiresAt <=
-                        Date.now() + 5_000
-                ) {
+            if (tokens.expiresAt !== undefined && tokens.expiresAt <= Date.now() + 5_000) {
+                tokens = (await readTokens(record, true)) ?? tokens;
+                if (tokens.expiresAt !== undefined && tokens.expiresAt <= Date.now() + 5_000) {
                     await refresh(userId);
-                    tokens =
-                        accessTokens.get(userId)!;
+                    tokens = accessTokens.get(userId)!;
                 }
             }
             return tokens.accessToken;
@@ -574,17 +370,12 @@ export async function createPublicOAuthClient(
             const record = sessions.get(userId);
             if (!record) return;
             const tokens = await readTokens(record);
-            if (
-                tokens &&
-                options.authorizationServer
-                    .revocationEndpoint
-            ) {
+            if (tokens && options.authorizationServer.revocationEndpoint) {
                 const response = await oauth.revocationRequest(
                     authorizationServer,
                     client,
                     clientAuthentication,
-                    tokens.refreshToken ??
-                        tokens.accessToken,
+                    tokens.refreshToken ?? tokens.accessToken,
                     requestOptions
                 );
                 await oauth.processRevocationResponse(response);

@@ -31,18 +31,9 @@ the blob resource.
 interface BlobManager {
     readonly collection: Collection<BlobRef, string>;
     stage(id: string, blob: Blob | File): Promise<BlobRef>;
-    metadata(
-        id: string,
-        options?: BlobReadOptions
-    ): Promise<BlobRemoteMetadata>;
-    read(
-        id: string,
-        options?: BlobReadOptions
-    ): Promise<Blob>;
-    bindRemoteId(
-        localId: string,
-        remoteId: string
-    ): Promise<BlobRef>;
+    metadata(id: string, options?: BlobReadOptions): Promise<BlobRemoteMetadata>;
+    read(id: string, options?: BlobReadOptions): Promise<Blob>;
+    bindRemoteId(localId: string, remoteId: string): Promise<BlobRef>;
     cleanup(): Promise<void>;
 }
 ```

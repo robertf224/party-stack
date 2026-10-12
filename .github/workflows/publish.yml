@@ -17,17 +17,27 @@ jobs:
               uses: actions/checkout@v3
               with:
                   fetch-depth: 2
-            - name: Set up pnpm
-              uses: pnpm/action-setup@v4
-            - name: Set up node
-              uses: actions/setup-node@v4
+            - name: Set up Vite+
+              uses: voidzero-dev/setup-vp@v1.21.1
               with:
-                  node-version-file: package.json
-                  cache: pnpm
-            - name: Install dependencies
-              run: pnpm install --frozen-lockfile
-            - name: Build and test
-              run: pnpm turbo --color build lint test
+                  cache: true
+            # https://viteplus.dev/guide/github-actions-cache
+            - name: Restore Vite Task cache
+              id: vite-task-cache
+              uses: actions/cache/restore@v6
+              with:
+                  path: node_modules/.vite/task-cache
+                  key: vite-task-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+                  restore-keys: |
+                      vite-task-${{ runner.os }}-${{ runner.arch }}-
+            - name: Check, build, and test
+              run: vp run ci
+            - name: Save Vite Task cache
+              if: success()
+              uses: actions/cache/save@v6
+              with:
+                  path: node_modules/.vite/task-cache
+                  key: ${{ steps.vite-task-cache.outputs.cache-primary-key }}
             - name: Create publish PR
               id: changesets
               uses: changesets/action@v1

@@ -1,22 +1,11 @@
-import {
-    type ConnectionMonitor,
-} from "@party-stack/connections";
+import { type ConnectionMonitor } from "@party-stack/connections";
 import { isUnauthenticatedError } from "@party-stack/errors";
 import {
     CoordinationTaskRejectedError,
     type CoordinationServiceClient,
     type RuntimeAdapter,
 } from "@party-stack/runtime";
-import {
-    race,
-    run,
-    sleep,
-    until,
-    useAbortSignal,
-    type Operation,
-    type Stream,
-    type Task,
-} from "effection";
+import { race, run, sleep, until, useAbortSignal, type Operation, type Stream, type Task } from "effection";
 import { NonRetryableError, type OntologyOutboxEntry } from "./types.js";
 import type { OutboxCoordinationService } from "./service.js";
 
@@ -39,37 +28,20 @@ function isStaleExecution(error: unknown): boolean {
     return error instanceof CoordinationTaskRejectedError && error.code === "STALE_EXECUTION";
 }
 
-function retryDelay(
-    baseDelayMs: number,
-    retryIndex: number
-): number {
-    return Math.min(
-        Number.MAX_SAFE_INTEGER,
-        baseDelayMs *
-            2 ** Math.min(retryIndex, 16)
-    );
+function retryDelay(baseDelayMs: number, retryIndex: number): number {
+    return Math.min(Number.MAX_SAFE_INTEGER, baseDelayMs * 2 ** Math.min(retryIndex, 16));
 }
 
-function isConnected(
-    runtime: RuntimeAdapter
-): boolean {
-    return (
-        runtime.connectivity?.isConnected !== false
-    );
+function isConnected(runtime: RuntimeAdapter): boolean {
+    return runtime.connectivity?.isConnected !== false;
 }
 
-function isConnectionReady(
-    connection: OutboxLeaderOptions["connection"]
-): boolean {
-    return (
-        !connection ||
-        connection.state.status === "active"
-    );
+function isConnectionReady(connection: OutboxLeaderOptions["connection"]): boolean {
+    return !connection || connection.state.status === "active";
 }
 
 function canExecute(options: OutboxLeaderOptions): boolean {
-    return isConnected(options.runtime) &&
-        isConnectionReady(options.connection);
+    return isConnected(options.runtime) && isConnectionReady(options.connection);
 }
 
 export function useOutboxLeader(options: OutboxLeaderOptions): Operation<void> {
@@ -77,10 +49,8 @@ export function useOutboxLeader(options: OutboxLeaderOptions): Operation<void> {
         const signal = yield* useAbortSignal();
         yield* until(
             options.service.methods.recover({
-                failureStrategy:
-                    options.failureStrategy,
-                maxRetries:
-                    options.maxRetries,
+                failureStrategy: options.failureStrategy,
+                maxRetries: options.maxRetries,
             })
         );
         const wakes = yield* options.wake;
@@ -93,23 +63,13 @@ export function useOutboxLeader(options: OutboxLeaderOptions): Operation<void> {
                     }
                     const entry = yield* until(options.service.methods.claim({}));
                     if (!entry) {
-                        const retryAt = yield* until(
-                            options.service.methods.nextRetryAt(
-                                {}
-                            )
-                        );
+                        const retryAt = yield* until(options.service.methods.nextRetryAt({}));
                         if (retryAt === undefined) {
                             break;
                         }
-                        const delay = Math.max(
-                            0,
-                            retryAt - Date.now()
-                        );
+                        const delay = Math.max(0, retryAt - Date.now());
                         if (delay > 0) {
-                            yield* race([
-                                sleep(delay),
-                                wakes.next(),
-                            ]);
+                            yield* race([sleep(delay), wakes.next()]);
                         }
                         continue;
                     }
@@ -121,10 +81,7 @@ export function useOutboxLeader(options: OutboxLeaderOptions): Operation<void> {
                     } catch (error) {
                         if (signal.aborted) throw error;
                         const normalized = normalizeError(error);
-                        if (
-                            isUnauthenticatedError(error) &&
-                            options.connection
-                        ) {
+                        if (isUnauthenticatedError(error) && options.connection) {
                             // Connection egress currently reports authentication
                             // failures. A future LiveOntology backend supervisor
                             // should own reporting for every adapter operation.
@@ -143,15 +100,11 @@ export function useOutboxLeader(options: OutboxLeaderOptions): Operation<void> {
                             break;
                         }
                         const retryable = !(normalized instanceof NonRetryableError);
-                        const retryScheduled =
-                            retryable &&
-                            entry.attempts <
-                                options.maxRetries;
+                        const retryScheduled = retryable && entry.attempts < options.maxRetries;
                         try {
                             const errorDetails = {
                                 name: normalized.name,
-                                message:
-                                    normalized.message,
+                                message: normalized.message,
                             };
                             if (retryScheduled) {
                                 yield* until(
@@ -160,26 +113,17 @@ export function useOutboxLeader(options: OutboxLeaderOptions): Operation<void> {
                                         executionId,
                                         retryable: true,
                                         retryAt:
-                                            Date.now() +
-                                            retryDelay(
-                                                options.retryDelayMs,
-                                                entry.attempts
-                                            ),
+                                            Date.now() + retryDelay(options.retryDelayMs, entry.attempts),
                                         error: errorDetails,
                                     })
                                 );
-                            } else if (
-                                options.failureStrategy ===
-                                    "discard-all"
-                            ) {
+                            } else if (options.failureStrategy === "discard-all") {
                                 yield* until(
-                                    options.service.methods.discardAll(
-                                        {
-                                            id: entry.id,
-                                            executionId,
-                                            error: errorDetails,
-                                        }
-                                    )
+                                    options.service.methods.discardAll({
+                                        id: entry.id,
+                                        executionId,
+                                        error: errorDetails,
+                                    })
                                 );
                             } else {
                                 yield* until(

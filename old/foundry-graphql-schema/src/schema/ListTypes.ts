@@ -30,6 +30,7 @@ function createPageType(
     return new GraphQLObjectType({
         name: getPageTypeName(typeName),
         description: `A page of ${pluralDisplayName}.`,
+        // oxlint-disable-next-line typescript/no-explicit-any -- GraphQL registries erase heterogeneous resolver types.
         fields: typeRegistry.use<GraphQLFieldConfig<any, any, any>>((getTypeReference) => ({
             edges: {
                 description: `A list of ${pluralDisplayName}.`,

@@ -12,12 +12,14 @@ const BASIC_CODEC: NodeIdCodec = {
 function createBasicHandler(
     typeName: string,
     idFieldName: string,
-    loader: LoadOneCallback<string, any, {}, FoundryContext>
+    // oxlint-disable-next-line typescript/no-explicit-any -- GraphQL registries erase heterogeneous resolver types.
+    loader: LoadOneCallback<string, any, NonNullable<unknown>, FoundryContext>
 ): NodeIdHandler {
     return {
         typeName,
         codec: BASIC_CODEC,
         // Create a structured id from the object.
+        // oxlint-disable-next-line typescript/no-explicit-any -- GraphQL registries erase heterogeneous resolver types.
         plan: ($object: LoadedRecordStep<any>) => {
             return list([constant(typeName), $object.get(idFieldName)]);
         },

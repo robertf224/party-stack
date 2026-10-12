@@ -10,9 +10,7 @@ export class MemoryBlobBytesStore implements BlobBytesStore {
 
     read(id: string): Promise<Blob> {
         const blob = this.blobs.get(id);
-        return blob
-            ? Promise.resolve(blob)
-            : Promise.reject(new Error(`Blob bytes not found for "${id}".`));
+        return blob ? Promise.resolve(blob) : Promise.reject(new Error(`Blob bytes not found for "${id}".`));
     }
 
     delete(id: string): Promise<void> {

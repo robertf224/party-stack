@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import canonicalOntology from "../ir/schema.js";
 import metaOntology from "./ontology.js";
 

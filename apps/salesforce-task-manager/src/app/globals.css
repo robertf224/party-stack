@@ -2,7 +2,11 @@
     min-height: 100vh;
     color: #13233a;
     background: #f4f7fb;
-    font: 14px/1.45 Inter, ui-sans-serif, system-ui, sans-serif;
+    font:
+        14px/1.45 Inter,
+        ui-sans-serif,
+        system-ui,
+        sans-serif;
 }
 
 .task-manager-app,

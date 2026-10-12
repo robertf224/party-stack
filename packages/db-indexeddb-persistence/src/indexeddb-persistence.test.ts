@@ -1,15 +1,25 @@
 import "fake-indexeddb/auto";
 import { createCollection } from "@tanstack/db";
-import { persistedCollectionOptions, SingleProcessCoordinator, type SQLiteCoreAdapterOptions } from "@tanstack/db-sqlite-persistence-core";
-import { describe, expect, expectTypeOf, it, vi } from "vitest";
-import { createIndexedDBPersistence, type IndexedDBPersistenceAdapterOptions, type IndexedDBSchemaMismatchPolicy } from "./index.js";
+import {
+    persistedCollectionOptions,
+    SingleProcessCoordinator,
+    type SQLiteCoreAdapterOptions,
+} from "@tanstack/db-sqlite-persistence-core";
+import { describe, expect, expectTypeOf, it, vi } from "vite-plus/test";
+import {
+    createIndexedDBPersistence,
+    type IndexedDBPersistenceAdapterOptions,
+    type IndexedDBSchemaMismatchPolicy,
+} from "./index.js";
 
 const databaseName = () => `factory-${crypto.randomUUID()}`;
 
 describe("createIndexedDBPersistence", () => {
     it("uses upstream schema mismatch policies with the standard factory throw alias", () => {
         type UpstreamPolicy = NonNullable<SQLiteCoreAdapterOptions["schemaMismatchPolicy"]>;
-        expectTypeOf<NonNullable<IndexedDBPersistenceAdapterOptions["schemaMismatchPolicy"]>>().toEqualTypeOf<UpstreamPolicy>();
+        expectTypeOf<
+            NonNullable<IndexedDBPersistenceAdapterOptions["schemaMismatchPolicy"]>
+        >().toEqualTypeOf<UpstreamPolicy>();
         expectTypeOf<IndexedDBSchemaMismatchPolicy>().toEqualTypeOf<UpstreamPolicy | "throw">();
     });
 
@@ -81,7 +91,11 @@ describe("createIndexedDBPersistence", () => {
 
     it("closes a pending shared connection before collection initialization can start", async () => {
         const persistence = createIndexedDBPersistence({ databaseName: databaseName() });
-        const view = persistence.resolvePersistenceForCollection!({ collectionId: "pending", mode: "sync-absent", schemaVersion: 2 });
+        const view = persistence.resolvePersistenceForCollection!({
+            collectionId: "pending",
+            mode: "sync-absent",
+            schemaVersion: 2,
+        });
         const load = view.adapter.loadResumeSnapshot("pending");
         persistence.close();
         await expect(load).rejects.toThrow("closed");

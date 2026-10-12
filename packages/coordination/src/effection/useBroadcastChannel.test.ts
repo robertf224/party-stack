@@ -1,52 +1,25 @@
-import {
-    each,
-    run,
-    spawn,
-    until,
-} from "effection";
-import {
-    afterEach,
-    beforeEach,
-    describe,
-    expect,
-    it,
-    vi,
-} from "vitest";
+import { each, run, spawn, until } from "effection";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { useBroadcastChannel } from "./useBroadcastChannel.js";
 
-class TestBroadcastChannel
-    extends EventTarget
-    implements BroadcastChannel
-{
-    static readonly channels = new Map<
-        string,
-        Set<TestBroadcastChannel>
-    >();
+class TestBroadcastChannel extends EventTarget implements BroadcastChannel {
+    static readonly channels = new Map<string, Set<TestBroadcastChannel>>();
     readonly name: string;
     onmessage: BroadcastChannel["onmessage"] = null;
-    onmessageerror: BroadcastChannel["onmessageerror"] =
-        null;
+    onmessageerror: BroadcastChannel["onmessageerror"] = null;
     private closed = false;
 
     constructor(name: string) {
         super();
         this.name = name;
-        const channels =
-            TestBroadcastChannel.channels.get(name) ??
-            new Set<TestBroadcastChannel>();
+        const channels = TestBroadcastChannel.channels.get(name) ?? new Set<TestBroadcastChannel>();
         channels.add(this);
-        TestBroadcastChannel.channels.set(
-            name,
-            channels
-        );
+        TestBroadcastChannel.channels.set(name, channels);
     }
 
     postMessage(message: unknown): void {
-        for (const channel of [
-            ...(TestBroadcastChannel.channels.get(
-                this.name
-            ) ?? []),
-        ]) {
+        const channelsSnapshot = [...(TestBroadcastChannel.channels.get(this.name) ?? [])];
+        for (const channel of channelsSnapshot) {
             if (channel === this || channel.closed) {
                 continue;
             }
@@ -55,10 +28,7 @@ class TestBroadcastChannel
             });
             queueMicrotask(() => {
                 channel.dispatchEvent(event);
-                channel.onmessage?.call(
-                    channel,
-                    event
-                );
+                channel.onmessage?.call(channel, event);
             });
         }
     }
@@ -66,65 +36,45 @@ class TestBroadcastChannel
     close(): void {
         if (this.closed) return;
         this.closed = true;
-        const channels =
-            TestBroadcastChannel.channels.get(
-                this.name
-            );
+        const channels = TestBroadcastChannel.channels.get(this.name);
         channels?.delete(this);
         if (channels?.size === 0) {
-            TestBroadcastChannel.channels.delete(
-                this.name
-            );
+            TestBroadcastChannel.channels.delete(this.name);
         }
     }
 }
 
-let previousBroadcastChannel:
-    | typeof BroadcastChannel
-    | undefined;
+let previousBroadcastChannel: typeof BroadcastChannel | undefined;
 
 beforeEach(() => {
-    previousBroadcastChannel =
-        globalThis.BroadcastChannel;
+    previousBroadcastChannel = globalThis.BroadcastChannel;
     TestBroadcastChannel.channels.clear();
-    Object.defineProperty(
-        globalThis,
-        "BroadcastChannel",
-        {
-            configurable: true,
-            value: TestBroadcastChannel,
-        }
-    );
+    Object.defineProperty(globalThis, "BroadcastChannel", {
+        configurable: true,
+        value: TestBroadcastChannel,
+    });
 });
 
 afterEach(() => {
     TestBroadcastChannel.channels.clear();
-    Object.defineProperty(
-        globalThis,
-        "BroadcastChannel",
-        {
-            configurable: true,
-            value: previousBroadcastChannel,
-        }
-    );
+    Object.defineProperty(globalThis, "BroadcastChannel", {
+        configurable: true,
+        value: previousBroadcastChannel,
+    });
 });
 
 describe("useBroadcastChannel", () => {
     it("provides a scoped native event stream", async () => {
         const received = vi.fn();
         await run(function* () {
-            const sender =
-                yield* useBroadcastChannel<{
-                    value: number;
-                }>("resource-channel");
-            const receiver =
-                yield* useBroadcastChannel<{
-                    value: number;
-                }>("resource-channel");
+            const sender = yield* useBroadcastChannel<{
+                value: number;
+            }>("resource-channel");
+            const receiver = yield* useBroadcastChannel<{
+                value: number;
+            }>("resource-channel");
             void (yield* spawn(function* () {
-                for (const event of yield* each(
-                    receiver
-                )) {
+                for (const event of yield* each(receiver)) {
                     received(event.data);
                     return;
                 }
@@ -139,8 +89,6 @@ describe("useBroadcastChannel", () => {
             );
         });
 
-        expect(
-            TestBroadcastChannel.channels.size
-        ).toBe(0);
+        expect(TestBroadcastChannel.channels.size).toBe(0);
     });
 });

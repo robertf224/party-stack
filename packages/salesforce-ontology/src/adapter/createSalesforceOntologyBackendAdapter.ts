@@ -14,11 +14,7 @@ import {
 } from "./objectCollectionOptions.js";
 import { createSalesforceCodec } from "./salesforceCodec.js";
 
-type CollectionWithUtils = Collection<
-    Record<string, unknown>,
-    string | number,
-    ObjectCollectionUtils
->;
+type CollectionWithUtils = Collection<Record<string, unknown>, string | number, ObjectCollectionUtils>;
 
 function isNonRetryableSalesforceError(error: unknown): boolean {
     if (!(error instanceof SalesforceApiError)) {
@@ -38,9 +34,7 @@ function isNonRetryableSalesforceError(error: unknown): boolean {
     );
 }
 
-async function awaitInvalidation(
-    utils: ObjectCollectionUtils
-): Promise<void> {
+async function awaitInvalidation(utils: ObjectCollectionUtils): Promise<void> {
     try {
         await utils.invalidate();
     } catch (error) {
@@ -52,32 +46,22 @@ async function awaitInvalidation(
 }
 
 async function invalidateEditedCollections(
-    objects: Record<
-        string,
-        Collection<Record<string, unknown>>
-    >
+    objects: Record<string, Collection<Record<string, unknown>>>
 ): Promise<void> {
     await Promise.all(
         Object.values(objects).map((collection) =>
-            awaitInvalidation(
-                (collection as CollectionWithUtils)
-                    .utils
-            )
+            awaitInvalidation((collection as CollectionWithUtils).utils)
         )
     );
 }
 
-function assertSaveSucceeded(result: {
-    success: boolean;
-    errors: Array<{ message: string }>;
-}): void {
+function assertSaveSucceeded(result: { success: boolean; errors: Array<{ message: string }> }): void {
     if (result.success) return;
     throw new NonRetryableError(
         result.errors
             .map((error) => error.message)
             .filter(Boolean)
-            .join("; ") ||
-            "Salesforce rejected the record write."
+            .join("; ") || "Salesforce rejected the record write."
     );
 }
 
@@ -86,8 +70,7 @@ async function refreshConfirmedRecord(
     recordId: string | number | undefined
 ): Promise<void> {
     if (!collection) return;
-    const utils: ObjectCollectionUtils =
-        collection.utils;
+    const utils: ObjectCollectionUtils = collection.utils;
     if (recordId === undefined) {
         await awaitInvalidation(utils);
         return;
@@ -110,24 +93,14 @@ export function createSalesforceOntologyBackendAdapter(opts: {
 }): OntologyBackendAdapter {
     const codec = createSalesforceCodec(opts.ir);
     const encodeInvocableParameter = (
-        type: Parameters<
-            typeof codec.encodeValue
-        >[0],
+        type: Parameters<typeof codec.encodeValue>[0],
         value: unknown
     ): unknown => {
         if (type.kind === "optional") {
-            return encodeInvocableParameter(
-                type.value.type,
-                value
-            );
+            return encodeInvocableParameter(type.value.type, value);
         }
         if (type.kind === "list" && Array.isArray(value)) {
-            return value.map((entry) =>
-                codec.encodeValue(
-                    type.value.elementType,
-                    entry
-                )
-            );
+            return value.map((entry) => codec.encodeValue(type.value.elementType, entry));
         }
         return codec.encodeValue(type, value);
     };
@@ -145,8 +118,7 @@ export function createSalesforceOntologyBackendAdapter(opts: {
                 objectType,
                 primaryKeyProperty: objectTypeDef.primaryKey,
                 selectedProperties: objectTypeDef.properties.map((property) => property.name),
-                subscribeToChangeEvents:
-                    opts.live === false ? undefined : opts.subscribeToChangeEvents,
+                subscribeToChangeEvents: opts.live === false ? undefined : opts.subscribeToChangeEvents,
                 decodeObject: (object) => codec.decodeObject(objectType, object),
             });
         },
@@ -156,94 +128,54 @@ export function createSalesforceOntologyBackendAdapter(opts: {
                 throw new NonRetryableError(`Unknown Salesforce action type "${name}".`);
             }
 
-            const parameterTypes = new Map(actionType.parameters.map((parameter) => [parameter.name, parameter.type]));
+            const parameterTypes = new Map(
+                actionType.parameters.map((parameter) => [parameter.name, parameter.type])
+            );
             const requestParameters: Record<string, unknown> = {};
             for (const [parameterName, value] of Object.entries(parameters)) {
                 if (value === undefined) continue;
                 const parameterType = parameterTypes.get(parameterName);
                 requestParameters[parameterName] = parameterType
-                    ? encodeInvocableParameter(
-                          parameterType,
-                          value
-                      )
+                    ? encodeInvocableParameter(parameterType, value)
                     : value;
             }
 
-            const metadata =
-                getSalesforceActionMetadata(actionType);
+            const metadata = getSalesforceActionMetadata(actionType);
             if (!metadata) {
                 throw new NonRetryableError(
                     `Salesforce action type "${name}" is missing Salesforce metadata.`
                 );
             }
             if (metadata.kind === "crud") {
-                const collection = live.objects[
-                    metadata.objectType
-                ] as CollectionWithUtils | undefined;
+                const collection = live.objects[metadata.objectType] as CollectionWithUtils | undefined;
                 if (metadata.operation === "create") {
-                    const result =
-                        await opts.client.createRecord(
-                            metadata.objectType,
-                            requestParameters
-                        );
-                    assertSaveSucceeded(
-                        result
-                    );
+                    const result = await opts.client.createRecord(metadata.objectType, requestParameters);
+                    assertSaveSucceeded(result);
                     if (opts.live !== false) {
-                        await refreshConfirmedRecord(
-                            collection,
-                            result.id
-                        );
+                        await refreshConfirmedRecord(collection, result.id);
                     }
                     return;
                 }
-                const recordId =
-                    requestParameters.recordId;
-                if (
-                    typeof recordId !== "string" ||
-                    recordId.length === 0
-                ) {
-                    throw new NonRetryableError(
-                        `Salesforce ${metadata.operation} action requires recordId.`
-                    );
+                const recordId = requestParameters.recordId;
+                if (typeof recordId !== "string" || recordId.length === 0) {
+                    throw new NonRetryableError(`Salesforce ${metadata.operation} action requires recordId.`);
                 }
                 if (metadata.operation === "update") {
                     const fields = Object.fromEntries(
-                        Object.entries(
-                            requestParameters
-                        ).filter(
-                            ([parameterName]) =>
-                                parameterName !==
-                                "recordId"
+                        Object.entries(requestParameters).filter(
+                            ([parameterName]) => parameterName !== "recordId"
                         )
                     );
-                    const result =
-                        await opts.client.updateRecord(
-                            metadata.objectType,
-                            recordId,
-                            fields
-                        );
-                    assertSaveSucceeded(
-                        result
-                    );
+                    const result = await opts.client.updateRecord(metadata.objectType, recordId, fields);
+                    assertSaveSucceeded(result);
                     if (opts.live !== false) {
-                        await refreshConfirmedRecord(
-                            collection,
-                            result.id ?? recordId
-                        );
+                        await refreshConfirmedRecord(collection, result.id ?? recordId);
                     }
                     return;
                 }
-                assertSaveSucceeded(
-                    await opts.client.deleteRecord(
-                        metadata.objectType,
-                        recordId
-                    )
-                );
+                assertSaveSucceeded(await opts.client.deleteRecord(metadata.objectType, recordId));
                 if (opts.live !== false && collection) {
-                    await collection.utils.deleteByKey(
-                        recordId
-                    );
+                    await collection.utils.deleteByKey(recordId);
                 }
                 return;
             }
@@ -252,21 +184,14 @@ export function createSalesforceOntologyBackendAdapter(opts: {
 
             let results;
             try {
-                results = metadata.kind === "standard"
-                    ? await opts.client.invokeStandardAction(
-                          actionApiName,
-                          [requestParameters]
-                      )
-                    : await opts.client.invokeFlowAction(
-                          actionApiName,
-                          [requestParameters]
-                      );
+                results =
+                    metadata.kind === "standard"
+                        ? await opts.client.invokeStandardAction(actionApiName, [requestParameters])
+                        : await opts.client.invokeFlowAction(actionApiName, [requestParameters]);
             } catch (error) {
                 if (isNonRetryableSalesforceError(error)) {
                     throw new NonRetryableError(
-                        error instanceof Error
-                            ? error.message
-                            : "Salesforce action invocation failed.",
+                        error instanceof Error ? error.message : "Salesforce action invocation failed.",
                         { cause: error }
                     );
                 }
@@ -275,87 +200,51 @@ export function createSalesforceOntologyBackendAdapter(opts: {
 
             const result = results[0];
             if (!result) {
-                throw new Error(
-                    `Salesforce action "${actionApiName}" returned no results.`
-                );
+                throw new Error(`Salesforce action "${actionApiName}" returned no results.`);
             }
             if (!result.isSuccess) {
                 const message =
-                    result.errors?.map((entry) => entry.message).filter(Boolean).join("; ") ||
-                    `Salesforce action "${actionApiName}" failed.`;
+                    result.errors
+                        ?.map((entry) => entry.message)
+                        .filter(Boolean)
+                        .join("; ") || `Salesforce action "${actionApiName}" failed.`;
                 throw new NonRetryableError(message);
             }
 
             if (opts.live !== false) {
-                await invalidateEditedCollections(
-                    live.objects
-                );
+                await invalidateEditedCollections(live.objects);
             }
         },
-        runQueryFunction: async (
-            name,
-            parameters
-        ) => {
-            const queryFunction =
-                opts.ir.queryFunctionTypes.find(
-                    (candidate) =>
-                        candidate.name === name
-                );
+        runQueryFunction: async (name, parameters) => {
+            const queryFunction = opts.ir.queryFunctionTypes.find((candidate) => candidate.name === name);
             if (!queryFunction) {
-                throw new NonRetryableError(
-                    `Unknown Salesforce query function type "${name}".`
-                );
+                throw new NonRetryableError(`Unknown Salesforce query function type "${name}".`);
             }
             const parameterTypes = new Map(
-                queryFunction.parameters.map(
-                    (parameter) => [
-                        parameter.name,
-                        parameter.type,
-                    ]
-                )
+                queryFunction.parameters.map((parameter) => [parameter.name, parameter.type])
             );
-            const requestParameters: Record<
-                string,
-                unknown
-            > = {};
-            for (const [parameterName, value] of Object.entries(
-                parameters
-            )) {
+            const requestParameters: Record<string, unknown> = {};
+            for (const [parameterName, value] of Object.entries(parameters)) {
                 if (value === undefined) continue;
-                const parameterType =
-                    parameterTypes.get(parameterName);
-                requestParameters[parameterName] =
-                    parameterType
-                        ? encodeInvocableParameter(
-                              parameterType,
-                              value
-                          )
-                        : value;
+                const parameterType = parameterTypes.get(parameterName);
+                requestParameters[parameterName] = parameterType
+                    ? encodeInvocableParameter(parameterType, value)
+                    : value;
             }
-            const results =
-                await opts.client.invokeStandardAction(
-                    name,
-                    [requestParameters]
-                );
+            const results = await opts.client.invokeStandardAction(name, [requestParameters]);
             const result = results[0];
             if (!result) {
-                throw new Error(
-                    `Salesforce standard query "${name}" returned no results.`
-                );
+                throw new Error(`Salesforce standard query "${name}" returned no results.`);
             }
             if (!result.isSuccess) {
                 throw new NonRetryableError(
                     result.errors
                         ?.map((entry) => entry.message)
                         .filter(Boolean)
-                        .join("; ") ||
-                        `Salesforce standard query "${name}" failed.`
+                        .join("; ") || `Salesforce standard query "${name}" failed.`
                 );
             }
-            return codec.decodeValue(
-                queryFunction.returnType,
-                result.outputValues ?? {}
-            );
+            return codec.decodeValue(queryFunction.returnType, result.outputValues ?? {});
         },
     };
 }
@@ -382,8 +271,7 @@ export function createSalesforceOntologyBackend<
         createSalesforceOntologyBackendAdapter({
             ir,
             client: "client" in opts ? opts.client : await opts.createClient(ir, context),
-            subscribeToChangeEvents:
-                opts.subscribeToChangeEvents,
+            subscribeToChangeEvents: opts.subscribeToChangeEvents,
             live: opts.live,
         });
 }

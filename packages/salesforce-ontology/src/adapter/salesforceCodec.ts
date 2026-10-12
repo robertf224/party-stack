@@ -65,7 +65,9 @@ export function createSalesforceCodec(ir: OntologyIR): SalesforceCodec {
             case "timestamp":
                 if (typeof value === "string") {
                     // Salesforce datetime wire format is typically ISO-8601.
-                    return Temporal.Instant.from(value.endsWith("Z") || value.includes("+") ? value : `${value}Z`);
+                    return Temporal.Instant.from(
+                        value.endsWith("Z") || value.includes("+") ? value : `${value}Z`
+                    );
                 }
                 if (typeof value === "number") return Temporal.Instant.fromEpochMilliseconds(value);
                 return value;

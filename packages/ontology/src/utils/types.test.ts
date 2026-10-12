@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { o } from "../ir/generated/builders.js";
 import { getTargetValueType, resolveType, unwrapValueType } from "./types.js";
 import type { OntologyIR } from "../ir/generated/types.js";

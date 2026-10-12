@@ -1,12 +1,8 @@
+import { createLiveOntology } from "@party-stack/ontology";
+import { getLoadSubsetDemandKey, type Collection, type LoadSubsetOptions } from "@tanstack/db";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
-import type { QueryCollectionUtils } from "@tanstack/query-db-collection";
-import {
-    getLoadSubsetDemandKey,
-    type Collection,
-    type LoadSubsetOptions,
-} from "@tanstack/db";
-import { createLiveOntology } from "@party-stack/ontology";
+import { serializeLoadSubsetOptions, type RemoteOntologyTransport } from "./protocol.js";
 import type {
     CreateLiveOntologyOpts,
     LiveOntology,
@@ -21,7 +17,7 @@ import type {
     ValidationIssue,
 } from "@party-stack/ontology";
 import type { Result } from "@party-stack/ontology/values";
-import { serializeLoadSubsetOptions, type RemoteOntologyTransport } from "./protocol.js";
+import type { QueryCollectionUtils } from "@tanstack/query-db-collection";
 
 export interface OntologyApplyActionClientResult extends OntologyApplyActionResult {
     invalidatedObjectTypes?: string[];
@@ -74,7 +70,11 @@ async function refreshInvalidatedCollections(opts: {
     await Promise.all(
         opts.objectTypes.map(async (objectType) => {
             const collection = opts.objects[objectType] as
-                | Collection<Record<string, unknown>, string | number, QueryCollectionUtils<Record<string, unknown>>>
+                | Collection<
+                      Record<string, unknown>,
+                      string | number,
+                      QueryCollectionUtils<Record<string, unknown>>
+                  >
                 | undefined;
             if (!collection?.utils?.refetch) {
                 return;
@@ -237,12 +237,8 @@ export async function createRemoteLiveOntology<
     const backend = createRemoteOntologyBackend<Context>({
         transport: opts.transport,
     });
-    const resolveActionParameters =
-        opts.transport.resolveActionParameters;
-    const ontology = await createLiveOntology<
-        Ontology,
-        Context
-    >({
+    const resolveActionParameters = opts.transport.resolveActionParameters;
+    const ontology = await createLiveOntology<Ontology, Context>({
         ir: description.ir,
         backend,
         id: opts.id,
@@ -251,24 +247,11 @@ export async function createRemoteLiveOntology<
         writes: opts.writes,
         context: (description.context ?? {}) as Context,
     });
-    if (
-        description.capabilities
-            ?.actionParameterResolution === true &&
-        resolveActionParameters
-    ) {
-        for (const actionType of description.ir
-            .actionTypes) {
-            const action =
-                (
-                    ontology.actions as Record<
-                        string,
-                        LiveOntologyAction
-                    >
-                )[actionType.name];
+    if (description.capabilities?.actionParameterResolution === true && resolveActionParameters) {
+        for (const actionType of description.ir.actionTypes) {
+            const action = (ontology.actions as Record<string, LiveOntologyAction>)[actionType.name];
             if (!action) continue;
-            action.resolveParameters = async (
-                parameters
-            ) =>
+            action.resolveParameters = async (parameters) =>
                 (
                     await resolveActionParameters({
                         actionType: actionType.name,

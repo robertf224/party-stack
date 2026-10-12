@@ -1,72 +1,31 @@
-import {
-    run,
-    suspend,
-} from "effection";
-import {
-    afterEach,
-    beforeEach,
-    describe,
-    expect,
-    it,
-    vi,
-} from "vitest";
+import { run, suspend } from "effection";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { useWebLock } from "./useWebLock.js";
 
 class TestLockManager implements LockManager {
-    private readonly tails = new Map<
-        string,
-        Promise<unknown>
-    >();
+    private readonly tails = new Map<string, Promise<unknown>>();
 
-    request<T>(
-        name: string,
-        callback: (
-            lock: Lock | null
-        ) => T | PromiseLike<T>
-    ): Promise<T>;
+    request<T>(name: string, callback: (lock: Lock | null) => T | PromiseLike<T>): Promise<T>;
     request<T>(
         name: string,
         options: LockOptions,
-        callback: (
-            lock: Lock | null
-        ) => T | PromiseLike<T>
+        callback: (lock: Lock | null) => T | PromiseLike<T>
     ): Promise<T>;
     request<T>(
         name: string,
-        optionsOrCallback:
-            | LockOptions
-            | ((
-                  lock: Lock | null
-              ) => T | PromiseLike<T>),
-        callback?: (
-            lock: Lock | null
-        ) => T | PromiseLike<T>
+        optionsOrCallback: LockOptions | ((lock: Lock | null) => T | PromiseLike<T>),
+        callback?: (lock: Lock | null) => T | PromiseLike<T>
     ): Promise<T> {
-        const options =
-            typeof optionsOrCallback === "function"
-                ? {}
-                : optionsOrCallback;
-        const grant =
-            typeof optionsOrCallback === "function"
-                ? optionsOrCallback
-                : callback!;
-        const operation = (
-            this.tails.get(name) ??
-            Promise.resolve()
-        ).then(async () => {
+        const options = typeof optionsOrCallback === "function" ? {} : optionsOrCallback;
+        const grant = typeof optionsOrCallback === "function" ? optionsOrCallback : callback!;
+        const operation = (this.tails.get(name) ?? Promise.resolve()).then(async () => {
             if (options.signal?.aborted) {
-                throw (
-                    options.signal.reason ??
-                    new DOMException(
-                        "The operation was aborted.",
-                        "AbortError"
-                    )
-                );
+                throw options.signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
             }
             return grant({
                 mode: options.mode ?? "exclusive",
                 name,
-            } as Lock);
+            });
         });
         this.tails.set(
             name,
@@ -83,20 +42,13 @@ class TestLockManager implements LockManager {
     }
 }
 
-let navigatorDescriptor:
-    | PropertyDescriptor
-    | undefined;
+let navigatorDescriptor: PropertyDescriptor | undefined;
 
 beforeEach(() => {
-    navigatorDescriptor =
-        Object.getOwnPropertyDescriptor(
-            globalThis,
-            "navigator"
-        );
+    navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
     Object.defineProperty(globalThis, "navigator", {
         configurable: true,
         value: {
-            ...(globalThis.navigator ?? {}),
             locks: new TestLockManager(),
         },
     });
@@ -104,32 +56,21 @@ beforeEach(() => {
 
 afterEach(() => {
     if (navigatorDescriptor) {
-        Object.defineProperty(
-            globalThis,
-            "navigator",
-            navigatorDescriptor
-        );
+        Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
     } else {
-        Reflect.deleteProperty(
-            globalThis,
-            "navigator"
-        );
+        Reflect.deleteProperty(globalThis, "navigator");
     }
 });
 
 describe("useWebLock", () => {
     it("holds the native lock for its resource scope", async () => {
         let resolveFirst!: () => void;
-        const firstAcquired = new Promise<void>(
-            (resolve) => {
-                resolveFirst = resolve;
-            }
-        );
+        const firstAcquired = new Promise<void>((resolve) => {
+            resolveFirst = resolve;
+        });
         const secondAcquired = vi.fn();
         const first = run(function* () {
-            const lock = yield* useWebLock(
-                "resource-lock"
-            );
+            const lock = yield* useWebLock("resource-lock");
             expect(lock?.name).toBe("resource-lock");
             resolveFirst();
             yield* suspend();

@@ -1,8 +1,6 @@
-import {
-    createMetaLiveOntology,
-} from "@party-stack/ontology";
+import { createMetaLiveOntology } from "@party-stack/ontology";
 import { eq, queryOnce } from "@tanstack/db";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { createSalesforceMetaOntologyBackendAdapter } from "./createSalesforceMetaOntologyBackendAdapter.js";
 
 function taskDescribe() {
@@ -33,9 +31,7 @@ function taskDescribe() {
 describe("Salesforce ObjectType metadata queries", () => {
     it("pushes exact names into describeSObject without loading the org", async () => {
         const describeGlobal = vi.fn();
-        const describeSObject = vi
-            .fn()
-            .mockResolvedValue(taskDescribe());
+        const describeSObject = vi.fn().mockResolvedValue(taskDescribe());
         const meta = await createMetaLiveOntology({
             backend: () =>
                 createSalesforceMetaOntologyBackendAdapter({
@@ -51,24 +47,16 @@ describe("Salesforce ObjectType metadata queries", () => {
             const rows = await queryOnce((q) =>
                 q
                     .from({
-                        ObjectType:
-                            meta.objects.ObjectType,
+                        ObjectType: meta.objects.ObjectType,
                     })
-                    .where(({ ObjectType }) =>
-                        eq(ObjectType.name, "Task")
-                    )
+                    .where(({ ObjectType }) => eq(ObjectType.name, "Task"))
             );
 
             expect(describeGlobal).not.toHaveBeenCalled();
-            expect(
-                describeSObject
-            ).toHaveBeenCalledExactlyOnceWith("Task");
+            expect(describeSObject).toHaveBeenCalledExactlyOnceWith("Task");
             expect(rows[0]).toMatchObject({
                 name: "Task",
-                properties: [
-                    { name: "Id" },
-                    { name: "Subject" },
-                ],
+                properties: [{ name: "Id" }, { name: "Subject" }],
             });
         } finally {
             await meta.cleanup();
@@ -76,27 +64,23 @@ describe("Salesforce ObjectType metadata queries", () => {
     });
 
     it("lists lightweight global summaries without per-object describes", async () => {
-        const describeGlobal = vi
-            .fn()
-            .mockResolvedValue({
-                sobjects: [
-                    {
-                        name: "Task",
-                        label: "Task",
-                        labelPlural: "Tasks",
-                        queryable: true,
-                    },
-                    {
-                        name: "Hidden",
-                        label: "Hidden",
-                        labelPlural: "Hidden",
-                        queryable: false,
-                    },
-                ],
-            });
-        const describeSObject = vi
-            .fn()
-            .mockResolvedValue(taskDescribe());
+        const describeGlobal = vi.fn().mockResolvedValue({
+            sobjects: [
+                {
+                    name: "Task",
+                    label: "Task",
+                    labelPlural: "Tasks",
+                    queryable: true,
+                },
+                {
+                    name: "Hidden",
+                    label: "Hidden",
+                    labelPlural: "Hidden",
+                    queryable: false,
+                },
+            ],
+        });
+        const describeSObject = vi.fn().mockResolvedValue(taskDescribe());
         const meta = await createMetaLiveOntology({
             backend: () =>
                 createSalesforceMetaOntologyBackendAdapter({
@@ -111,15 +95,12 @@ describe("Salesforce ObjectType metadata queries", () => {
         try {
             const rows = await queryOnce((q) =>
                 q.from({
-                    ObjectType:
-                        meta.objects.ObjectType,
+                    ObjectType: meta.objects.ObjectType,
                 })
             );
 
             expect(describeGlobal).toHaveBeenCalledOnce();
-            expect(
-                describeSObject
-            ).not.toHaveBeenCalled();
+            expect(describeSObject).not.toHaveBeenCalled();
             expect(rows).toEqual([
                 expect.objectContaining({
                     name: "Task",
@@ -130,16 +111,11 @@ describe("Salesforce ObjectType metadata queries", () => {
             const detail = await queryOnce((q) =>
                 q
                     .from({
-                        ObjectType:
-                            meta.objects.ObjectType,
+                        ObjectType: meta.objects.ObjectType,
                     })
-                    .where(({ ObjectType }) =>
-                        eq(ObjectType.name, "Task")
-                    )
+                    .where(({ ObjectType }) => eq(ObjectType.name, "Task"))
             );
-            expect(
-                describeSObject
-            ).toHaveBeenCalledExactlyOnceWith("Task");
+            expect(describeSObject).toHaveBeenCalledExactlyOnceWith("Task");
             expect(detail[0]?.properties).toHaveLength(2);
         } finally {
             await meta.cleanup();

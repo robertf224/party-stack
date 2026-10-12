@@ -1,6 +1,6 @@
 import { o } from "@party-stack/ontology";
 import { eq, gt, IR, type LoadSubsetOptions } from "@tanstack/db";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mockState = vi.hoisted(() => ({
     getEditsHistory: vi.fn(),
@@ -74,9 +74,7 @@ function createSyncHarness(
     });
     const truncate = vi.fn(() => {
         if (!pendingTransaction) {
-            throw new Error(
-                "No sync transaction is active."
-            );
+            throw new Error("No sync transaction is active.");
         }
         syncedData.clear();
     });
@@ -87,15 +85,10 @@ function createSyncHarness(
             fetch: opts.fetch ?? vi.fn(),
             ontologyRid: "ri.ontology.main",
             tokenProvider: () => Promise.resolve("token"),
-        } as never,
+        },
         objectType: "Employee",
         primaryKeyProperty: "employeeId",
-        selectedProperties: [
-            "employeeId",
-            "name",
-            "status",
-            "priority",
-        ],
+        selectedProperties: ["employeeId", "name", "status", "priority"],
         live: opts.live,
         decodeObject: opts.decodeObject,
         decodeEditObject: opts.decodeEditObject,
@@ -104,10 +97,8 @@ function createSyncHarness(
     const handle = syncConfig.sync({
         begin,
         collection: {
-            get: (key: string | number) =>
-                syncedData.get(key),
-            has: (key: string | number) =>
-                syncedData.has(key),
+            get: (key: string | number) => syncedData.get(key),
+            has: (key: string | number) => syncedData.has(key),
             *keys() {
                 yield* syncedData.keys();
             },
@@ -140,8 +131,7 @@ function createSyncHarness(
             const key =
                 mutation.type === "delete"
                     ? (mutation as { key: string | number }).key
-                    : (((mutation as { value: Record<string, unknown> }).value
-                          .employeeId as string | number));
+                    : ((mutation as { value: Record<string, unknown> }).value.employeeId as string | number);
             const observedWrite = { type: mutation.type as string, primaryKey: key };
             writes.push(observedWrite);
             pendingTransaction.writes.push(observedWrite);
@@ -274,8 +264,8 @@ describe("objectCollectionOptions", () => {
                 );
             });
         }) as unknown as typeof fetch;
-        mockState.search.mockImplementation((client: { fetch: typeof fetch }) =>
-            client.fetch("https://example.com/search") as never
+        mockState.search.mockImplementation(
+            (client: { fetch: typeof fetch }) => client.fetch("https://example.com/search") as never
         );
         const harness = createSyncHarness([], { fetch: fetchImpl });
         const controllerA = new AbortController();
@@ -349,10 +339,7 @@ describe("objectCollectionOptions", () => {
         });
 
         expect(mockState.getObject).not.toHaveBeenCalled();
-        expect(harness.begin.mock.calls).toEqual([
-            [],
-            [],
-        ]);
+        expect(harness.begin.mock.calls).toEqual([[], []]);
 
         harness.cleanup();
     });
@@ -399,8 +386,7 @@ describe("objectCollectionOptions", () => {
                     operationId: "op-hydrated-delete",
                     actionTypeRid: "action-1",
                     userId: "user-1",
-                    timestamp:
-                        "2099-03-12T12:01:00.000Z",
+                    timestamp: "2099-03-12T12:01:00.000Z",
                     edit: {
                         type: "deleteEdit",
                         previousProperties: {},
@@ -423,9 +409,7 @@ describe("objectCollectionOptions", () => {
         });
 
         await vi.waitFor(() => {
-            expect(
-                harness.syncedData.has(2)
-            ).toBe(false);
+            expect(harness.syncedData.has(2)).toBe(false);
         });
         expect(harness.writes).toContainEqual({
             type: "delete",
@@ -729,9 +713,7 @@ describe("objectCollectionOptions", () => {
                 primaryKey: 404,
             },
         ]);
-        expect(
-            harness.transactions.at(-1)?.writes
-        ).toEqual([
+        expect(harness.transactions.at(-1)?.writes).toEqual([
             {
                 type: "delete",
                 primaryKey: 404,
@@ -962,11 +944,9 @@ describe("objectCollectionOptions", () => {
             expect(harness.syncedData.get(8)).toEqual({
                 employeeId: 8,
                 logoMedia: {
-                    id: [
-                        "ri.mio.main.media-set.1",
-                        "ri.mio.main.view.1",
-                        "ri.mio.main.media-item.1",
-                    ].join(":"),
+                    id: ["ri.mio.main.media-set.1", "ri.mio.main.view.1", "ri.mio.main.media-item.1"].join(
+                        ":"
+                    ),
                     type: "image/png",
                 },
             });
@@ -1209,13 +1189,8 @@ describe("objectCollectionOptions", () => {
     });
 
     it("fully reconciles after websocket reconnect when edit history is unavailable", async () => {
-        const warnSpy = vi.spyOn(
-            console,
-            "warn"
-        ).mockImplementation(() => {});
-        mockState.getEditsHistory.mockRejectedValue(
-            new Error("Edit history is not enabled")
-        );
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+        mockState.getEditsHistory.mockRejectedValue(new Error("Edit history is not enabled"));
         mockState.search.mockResolvedValue({
             data: [],
             nextPageToken: undefined,
@@ -1227,9 +1202,7 @@ describe("objectCollectionOptions", () => {
             status: "open",
         });
         await vi.waitFor(() => {
-            expect(
-                mockState.search
-            ).toHaveBeenCalledOnce();
+            expect(mockState.search).toHaveBeenCalledOnce();
         });
 
         // Simulate stale persisted state becoming visible while the watcher is
@@ -1245,9 +1218,7 @@ describe("objectCollectionOptions", () => {
 
         await vi.waitFor(() => {
             expect(mockState.search).toHaveBeenCalledTimes(2);
-            expect(
-                harness.syncedData.has(30)
-            ).toBe(false);
+            expect(harness.syncedData.has(30)).toBe(false);
         });
         expect(harness.truncate).toHaveBeenCalled();
 
@@ -1313,7 +1284,7 @@ describe("objectCollectionOptions", () => {
                 fetch: vi.fn(),
                 ontologyRid: "ri.ontology.main",
                 tokenProvider: () => Promise.resolve("token"),
-            } as never,
+            },
             objectType: "Employee",
             primaryKeyProperty: "employeeId",
             selectedProperties: ["employeeId", "name"],
@@ -1421,14 +1392,13 @@ describe("objectCollectionOptions", () => {
             },
         });
 
-        const searchOptions =
-            mockState.search.mock.calls[0]?.[3] as
-                | {
-                      where?: unknown;
-                      select?: string[];
-                      selectV2?: unknown[];
-                  }
-                | undefined;
+        const searchOptions = mockState.search.mock.calls[0]?.[3] as
+            | {
+                  where?: unknown;
+                  select?: string[];
+                  selectV2?: unknown[];
+              }
+            | undefined;
         expect(searchOptions).toMatchObject({
             where: {
                 type: "and",
@@ -1447,12 +1417,7 @@ describe("objectCollectionOptions", () => {
             },
         });
         expect(searchOptions).toMatchObject({
-            select: [
-                "employeeId",
-                "name",
-                "status",
-                "priority",
-            ],
+            select: ["employeeId", "name", "status", "priority"],
         });
         expect(searchOptions?.selectV2).toEqual([]);
         expect(harness.syncedData.has(2)).toBe(true);

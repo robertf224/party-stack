@@ -11,14 +11,11 @@ import {
     not,
 } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { convertLoadSubsetFilter, isAlwaysFalseFilter } from "./convertLoadSubsetOptions.js";
 import type { SearchJsonQueryV2 } from "@osdk/foundry.ontologies";
 
-function evaluateFoundryTextPushdown(
-    filter: SearchJsonQueryV2,
-    row: Record<string, string>
-): boolean {
+function evaluateFoundryTextPushdown(filter: SearchJsonQueryV2, row: Record<string, string>): boolean {
     if (filter.type === "and") {
         return filter.value.every((child) => evaluateFoundryTextPushdown(child, row));
     }
@@ -97,10 +94,7 @@ describe("convertLoadSubsetFilter", () => {
 
     it("serializes Temporal cursor values for Foundry", () => {
         const cursor = Temporal.Instant.from("2026-07-27T12:00:00Z");
-        const expression = gt(
-            new IR.PropRef<Temporal.Instant>(["createdAt"]),
-            cursor
-        );
+        const expression = gt(new IR.PropRef<Temporal.Instant>(["createdAt"]), cursor);
         const filter = convertLoadSubsetFilter(expression);
 
         expect(filter).toMatchObject({
@@ -115,10 +109,7 @@ describe("convertLoadSubsetFilter", () => {
     });
 
     it("converts reverse inArray expressions to Foundry contains filters", () => {
-        const expression = inArray(
-            "admin",
-            new IR.PropRef<string[]>(["roles"])
-        );
+        const expression = inArray("admin", new IR.PropRef<string[]>(["roles"]));
 
         expect(expression).toMatchObject({
             type: "func",
@@ -133,17 +124,13 @@ describe("convertLoadSubsetFilter", () => {
             propertyIdentifier: { type: "property", apiName: "roles" },
             value: "admin",
         });
-        expect(
-            compileSingleRowExpression(expression)({ roles: ["admin", "member"] })
-        ).toBe(true);
+        expect(compileSingleRowExpression(expression)({ roles: ["admin", "member"] })).toBe(true);
         expect(compileSingleRowExpression(expression)({ roles: ["member"] })).toBe(false);
     });
 
     it("preserves regular inArray pushdown", () => {
         expect(
-            convertLoadSubsetFilter(
-                inArray(new IR.PropRef<string>(["status"]), ["open", "closed"])
-            )
+            convertLoadSubsetFilter(inArray(new IR.PropRef<string>(["status"]), ["open", "closed"]))
         ).toEqual({
             type: "in",
             propertyIdentifier: { type: "property", apiName: "status" },
@@ -152,9 +139,7 @@ describe("convertLoadSubsetFilter", () => {
     });
 
     it("converts two-sided LIKE wildcards to a contains pushdown", () => {
-        expect(
-            convertLoadSubsetFilter(like(new IR.PropRef<string>(["name"]), "%foo%"))
-        ).toEqual({
+        expect(convertLoadSubsetFilter(like(new IR.PropRef<string>(["name"]), "%foo%"))).toEqual({
             type: "containsAllTermsInOrder",
             propertyIdentifier: { type: "property", apiName: "name" },
             value: "foo",
@@ -162,9 +147,7 @@ describe("convertLoadSubsetFilter", () => {
     });
 
     it("normalizes ILIKE contains terms for case-insensitive search", () => {
-        expect(
-            convertLoadSubsetFilter(ilike(new IR.PropRef<string>(["name"]), "%FoO%"))
-        ).toEqual({
+        expect(convertLoadSubsetFilter(ilike(new IR.PropRef<string>(["name"]), "%FoO%"))).toEqual({
             type: "containsAllTermsInOrder",
             propertyIdentifier: { type: "property", apiName: "name" },
             value: "foo",
@@ -172,43 +155,31 @@ describe("convertLoadSubsetFilter", () => {
     });
 
     it("preserves supported one-sided wildcard pushdowns", () => {
-        expect(
-            convertLoadSubsetFilter(like(new IR.PropRef<string>(["name"]), "foo%"))
-        ).toMatchObject({ type: "wildcard", value: "foo*" });
-        expect(
-            convertLoadSubsetFilter(like(new IR.PropRef<string>(["name"]), "%foo"))
-        ).toMatchObject({ type: "wildcard", value: "*foo" });
+        expect(convertLoadSubsetFilter(like(new IR.PropRef<string>(["name"]), "foo%"))).toMatchObject({
+            type: "wildcard",
+            value: "foo*",
+        });
+        expect(convertLoadSubsetFilter(like(new IR.PropRef<string>(["name"]), "%foo"))).toMatchObject({
+            type: "wildcard",
+            value: "*foo",
+        });
     });
 
     it("distinguishes escaped LIKE characters from wildcards", () => {
-        expect(
-            convertLoadSubsetFilter(
-                like(new IR.PropRef<string>(["name"]), "%50\\%%")
-            )
-        ).toMatchObject({
+        expect(convertLoadSubsetFilter(like(new IR.PropRef<string>(["name"]), "%50\\%%"))).toMatchObject({
             type: "containsAllTermsInOrder",
             value: "50%",
         });
-        expect(
-            convertLoadSubsetFilter(
-                like(new IR.PropRef<string>(["name"]), "%foo\\_%")
-            )
-        ).toMatchObject({
+        expect(convertLoadSubsetFilter(like(new IR.PropRef<string>(["name"]), "%foo\\_%"))).toMatchObject({
             type: "containsAllTermsInOrder",
             value: "foo_",
         });
-        expect(
-            convertLoadSubsetFilter(
-                like(new IR.PropRef<string>(["name"]), "f_o%bar_baz")
-            )
-        ).toMatchObject({
+        expect(convertLoadSubsetFilter(like(new IR.PropRef<string>(["name"]), "f_o%bar_baz"))).toMatchObject({
             type: "wildcard",
             value: "f?o*bar?baz",
         });
         expect(
-            convertLoadSubsetFilter(
-                like(new IR.PropRef<string>(["name"]), "path\\\\name%")
-            )
+            convertLoadSubsetFilter(like(new IR.PropRef<string>(["name"]), "path\\\\name%"))
         ).toMatchObject({
             type: "wildcard",
             value: "path\\\\name*",
@@ -216,11 +187,7 @@ describe("convertLoadSubsetFilter", () => {
     });
 
     it("uses contains pushdowns for each wildcard-delimited term", () => {
-        expect(
-            convertLoadSubsetFilter(
-                ilike(new IR.PropRef<string>(["name"]), "%foo%BAR%baz%")
-            )
-        ).toEqual({
+        expect(convertLoadSubsetFilter(ilike(new IR.PropRef<string>(["name"]), "%foo%BAR%baz%"))).toEqual({
             type: "and",
             value: [
                 {
@@ -243,11 +210,10 @@ describe("convertLoadSubsetFilter", () => {
     });
 
     it("does not negate an approximate contains pushdown", () => {
-        expect(
-            convertLoadSubsetFilter(
-                not(ilike(new IR.PropRef<string>(["name"]), "%foo%"))
-            )
-        ).toEqual({ type: "and", value: [] });
+        expect(convertLoadSubsetFilter(not(ilike(new IR.PropRef<string>(["name"]), "%foo%")))).toEqual({
+            type: "and",
+            value: [],
+        });
     });
 
     it("always fetches a superset of exact TanStack LIKE matches", () => {
@@ -274,49 +240,31 @@ describe("convertLoadSubsetFilter", () => {
             const pushdownFilter = convertLoadSubsetFilter(predicate)!;
             const exactPredicate = compileSingleRowExpression(predicate);
             const exactRows = rows.filter((row) => exactPredicate(row));
-            const fetchedRows = rows.filter((row) =>
-                evaluateFoundryTextPushdown(pushdownFilter, row)
-            );
+            const fetchedRows = rows.filter((row) => evaluateFoundryTextPushdown(pushdownFilter, row));
 
             expect(fetchedRows).toEqual(expect.arrayContaining(exactRows));
         }
     });
 
-    it.each([ilike, like])(
-        "converts every SQL wildcard in one-sided like patterns",
-        (operator) => {
-            const filter = convertLoadSubsetFilter(
-                operator(
-                    new IR.PropRef<string>(["title"]),
-                    "ISSUE_one%two%"
-                )
-            );
+    it.each([ilike, like])("converts every SQL wildcard in one-sided like patterns", (operator) => {
+        const filter = convertLoadSubsetFilter(operator(new IR.PropRef<string>(["title"]), "ISSUE_one%two%"));
 
-            expect(filter).toEqual({
-                type: "wildcard",
-                propertyIdentifier: {
-                    type: "property",
-                    apiName: "title",
-                },
-                value: "issue?one*two*",
-            });
-        }
-    );
+        expect(filter).toEqual({
+            type: "wildcard",
+            propertyIdentifier: {
+                type: "property",
+                apiName: "title",
+            },
+            value: "issue?one*two*",
+        });
+    });
 
-    it.each([ilike, like])(
-        "treats patterns containing only percent wildcards as unfiltered",
-        (operator) => {
-            const filter = convertLoadSubsetFilter(
-                operator(
-                    new IR.PropRef<string>(["title"]),
-                    "%%"
-                )
-            );
+    it.each([ilike, like])("treats patterns containing only percent wildcards as unfiltered", (operator) => {
+        const filter = convertLoadSubsetFilter(operator(new IR.PropRef<string>(["title"]), "%%"));
 
-            expect(filter).toEqual({
-                type: "and",
-                value: [],
-            });
-        }
-    );
+        expect(filter).toEqual({
+            type: "and",
+            value: [],
+        });
+    });
 });

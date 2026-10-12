@@ -1,6 +1,9 @@
 {
     "name": "@bobbyfidz/osdk-utils",
     "version": "0.2.1",
+    "files": [
+        "lib"
+    ],
     "type": "module",
     "exports": {
         ".": {
@@ -8,21 +11,14 @@
             "default": "./lib/index.js"
         }
     },
-    "files": [
-        "lib"
-    ],
-    "scripts": {
-        "build": "tsc",
-        "lint": "eslint"
-    },
     "dependencies": {
-        "@osdk/client": "^2.5.2",
         "@bobbyfidz/panic": "^0.1.0",
-        "jose": "^6.0.11"
+        "@osdk/client": "^2.5.2",
+        "jose": "^6.2.10"
     },
     "devDependencies": {
-        "@bobbyfidz/universal-build-config": "^0.1.1",
-        "eslint": "^9.25.0",
-        "typescript": "~5.8.3"
+        "@party-stack/build-config": "workspace:^",
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
     }
 }

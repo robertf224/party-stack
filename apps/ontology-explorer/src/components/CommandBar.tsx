@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
 import { Dialog } from "@base-ui/react/dialog";
 import { useLiveQuery } from "@tanstack/react-db";
-import type { MetaLinkType } from "@party-stack/ontology";
+import { useNavigate } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useOntology } from "../ontology/OntologyProvider";
+import type { MetaLinkType } from "@party-stack/ontology";
 
 export function CommandBar() {
+    const inputRef = useRef<HTMLInputElement>(null);
     const [open, setOpen] = useState(false);
     const [search, setSearch] = useState("");
     const [selectedIndex, setSelectedIndex] = useState(0);
@@ -26,34 +27,32 @@ export function CommandBar() {
         return () => window.removeEventListener("keydown", handler);
     }, []);
 
-    useEffect(() => {
+    const [previousOpen, setPreviousOpen] = useState(open);
+    if (previousOpen !== open) {
+        setPreviousOpen(open);
         if (!open) {
             setSearch("");
             setSelectedIndex(0);
         }
-    }, [open]);
+    }
 
     const { data: objectTypes } = useLiveQuery(
         (q) =>
-            q
-                .from({ ot: metaOntology.objects.ObjectType })
-                .select(({ ot }) => ({
-                    name: ot.name,
-                    displayName: ot.displayName,
-                })),
-        [],
+            q.from({ ot: metaOntology.objects.ObjectType }).select(({ ot }) => ({
+                name: ot.name,
+                displayName: ot.displayName,
+            })),
+        []
     );
 
     const { data: linkTypes } = useLiveQuery(
         (q) =>
-            q
-                .from({ lt: metaOntology.objects.LinkType })
-                .select(({ lt }) => ({
-                    id: lt.id,
-                    sourceName: lt.source,
-                    targetName: lt.target,
-                })),
-        [],
+            q.from({ lt: metaOntology.objects.LinkType }).select(({ lt }) => ({
+                id: lt.id,
+                sourceName: lt.source,
+                targetName: lt.target,
+            })),
+        []
     );
 
     const results = useMemo(() => {
@@ -68,7 +67,11 @@ export function CommandBar() {
         });
 
         for (const ot of objectTypes) {
-            if (!term || ot.name.toLowerCase().includes(term) || ot.displayName.toLowerCase().includes(term)) {
+            if (
+                !term ||
+                ot.name.toLowerCase().includes(term) ||
+                ot.displayName.toLowerCase().includes(term)
+            ) {
                 items.push({
                     label: ot.displayName,
                     sublabel: ot.name,
@@ -97,9 +100,11 @@ export function CommandBar() {
         return items;
     }, [search, objectTypes, linkTypes]);
 
-    useEffect(() => {
+    const [previousResultCount, setPreviousResultCount] = useState(results.length);
+    if (previousResultCount !== results.length) {
+        setPreviousResultCount(results.length);
         setSelectedIndex(0);
-    }, [results.length]);
+    }
 
     const handleSelect = (path: string) => {
         setOpen(false);
@@ -135,7 +140,10 @@ export function CommandBar() {
         <Dialog.Root open={open} onOpenChange={setOpen}>
             <Dialog.Portal>
                 <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
-                <Dialog.Popup className="animate-fade-in fixed top-[20%] left-1/2 z-50 w-[min(560px,90vw)] -translate-x-1/2 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+                <Dialog.Popup
+                    initialFocus={inputRef}
+                    className="animate-fade-in fixed top-[20%] left-1/2 z-50 w-[min(560px,90vw)] -translate-x-1/2 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl"
+                >
                     <div className="flex items-center gap-3 border-b border-zinc-800 px-4 py-3">
                         <svg
                             className="h-4 w-4 shrink-0 text-zinc-500"
@@ -148,7 +156,8 @@ export function CommandBar() {
                             <path d="m21 21-4.3-4.3" />
                         </svg>
                         <input
-                            autoFocus
+                            ref={inputRef}
+                            aria-label="Search ontology"
                             className="w-full bg-transparent text-sm text-zinc-100 outline-none placeholder:text-zinc-500"
                             placeholder="Search object types, actions, links..."
                             value={search}
@@ -161,7 +170,9 @@ export function CommandBar() {
                     </div>
                     <div className="max-h-[320px] overflow-y-auto p-2">
                         {results.length === 0 && (
-                            <div className="px-3 py-6 text-center text-sm text-zinc-500">No results found</div>
+                            <div className="px-3 py-6 text-center text-sm text-zinc-500">
+                                No results found
+                            </div>
                         )}
                         {Array.from(grouped.entries()).map(([category, items]) => (
                             <div key={category}>
@@ -183,7 +194,9 @@ export function CommandBar() {
                                             onMouseEnter={() => setSelectedIndex(idx)}
                                         >
                                             <span className="truncate font-medium">{item.label}</span>
-                                            <span className="truncate text-xs text-zinc-500">{item.sublabel}</span>
+                                            <span className="truncate text-xs text-zinc-500">
+                                                {item.sublabel}
+                                            </span>
                                         </button>
                                     );
                                 })}

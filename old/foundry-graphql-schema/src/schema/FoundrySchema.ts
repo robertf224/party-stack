@@ -64,13 +64,13 @@ function create(ontology: OntologyFullMetadata): GraphQLSchema {
         mutation: new GraphQLObjectType({
             name: "Mutation",
             fields: typeRegistry.use((getTypeReference) =>
-                Object.fromEntries([
-                    ...Object.values(ontology.actionTypes)
+                Object.fromEntries(
+                    Object.values(ontology.actionTypes)
                         .map((actionType) => ActionField.create(getTypeReference, actionType, ontology))
                         // TODO: handle errors.
                         .filter(Result.isOk)
-                        .map(Result.unwrap),
-                ])
+                        .map(Result.unwrap)
+                )
             ),
         }),
         types,

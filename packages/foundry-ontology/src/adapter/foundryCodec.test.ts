@@ -1,5 +1,5 @@
 import { o } from "@party-stack/ontology";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { createFoundryCodec } from "./foundryCodec.js";
 import { encodeFoundryMediaId } from "./foundryMediaId.js";
 

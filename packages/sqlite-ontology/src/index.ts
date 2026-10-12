@@ -1,11 +1,18 @@
-import {
-    createReadTx,
-    resolveActionParameters,
-    runOptimisticAction,
-} from "@party-stack/ontology";
+import { createReadTx, resolveActionParameters, runOptimisticAction } from "@party-stack/ontology";
 import { decode, encode } from "@party-stack/ontology/json";
 import { resolveType } from "@party-stack/ontology/utils";
 import { createTransaction, eq, queryOnce } from "@tanstack/db";
+import {
+    ensureSQLiteAttachmentSchema,
+    getSQLiteAttachment,
+    markSQLiteAttachmentUploadsComplete,
+    prepareSQLiteAttachments,
+    persistSQLiteAttachmentRows,
+    readSQLiteAttachmentBlob,
+    recordSQLiteAttachmentUploads,
+    type SQLiteAttachmentStorageOptions,
+} from "./attachments.js";
+import type { SQLiteDatabase } from "./database.js";
 import type {
     AttachmentMetadata,
     OntologyBackendAdapter,
@@ -18,17 +25,6 @@ import type {
     OntologyQueryFunctionRegistry,
     ObjectTypeDef,
 } from "@party-stack/ontology";
-import {
-    ensureSQLiteAttachmentSchema,
-    getSQLiteAttachment,
-    markSQLiteAttachmentUploadsComplete,
-    prepareSQLiteAttachments,
-    persistSQLiteAttachmentRows,
-    readSQLiteAttachmentBlob,
-    recordSQLiteAttachmentUploads,
-    type SQLiteAttachmentStorageOptions,
-} from "./attachments.js";
-import type { SQLiteDatabase } from "./database.js";
 import type { Collection, PendingMutation, SyncConfig } from "@tanstack/db";
 
 type OntologyCollection = Collection<OntologyObject>;
@@ -42,8 +38,7 @@ interface SchemaRow {
     value: string;
 }
 
-const DATABASE_ONTOLOGY_KEY =
-    "__party_stack_ontology__";
+const DATABASE_ONTOLOGY_KEY = "__party_stack_ontology__";
 
 export interface CreateSQLiteOntologyBackendAdapterOptions {
     ir: OntologyIR;
@@ -65,12 +60,9 @@ function getObjectType(opts: { ir: OntologyIR; objectTypeName: string }): Object
 function encodeIdentifierPart(value: string): string {
     const encoded = value.replace(
         /[^A-Za-z0-9_]/g,
-        (character) =>
-            `_x${character.codePointAt(0)!.toString(16)}_`
+        (character) => `_x${character.codePointAt(0)!.toString(16)}_`
     );
-    return /^[A-Za-z_]/.test(encoded)
-        ? encoded
-        : `_${encoded}`;
+    return /^[A-Za-z_]/.test(encoded) ? encoded : `_${encoded}`;
 }
 
 function sqlIdentifier(name: string): string {
@@ -80,10 +72,7 @@ function sqlIdentifier(name: string): string {
     return `"${name}"`;
 }
 
-function getObjectTableName(opts: {
-    adapterName: string;
-    objectTypeName: string;
-}): string {
+function getObjectTableName(opts: { adapterName: string; objectTypeName: string }): string {
     return `party_stack_${encodeIdentifierPart(opts.adapterName)}_${encodeIdentifierPart(opts.objectTypeName)}`;
 }
 
@@ -110,18 +99,13 @@ function ensureMetadataTable(database: SQLiteDatabase): void {
     `);
 }
 
-function ensureDatabaseOntology(
-    database: SQLiteDatabase,
-    adapterName: string
-): void {
+function ensureDatabaseOntology(database: SQLiteDatabase, adapterName: string): void {
     const existing = database
         .prepare(
             `SELECT value FROM ${sqlIdentifier("party_stack_schema")}
              WHERE key = ?`
         )
-        .get(DATABASE_ONTOLOGY_KEY) as
-        | SchemaRow
-        | undefined;
+        .get(DATABASE_ONTOLOGY_KEY) as SchemaRow | undefined;
     if (existing && existing.value !== adapterName) {
         throw new Error(
             `SQLite database already belongs to ontology "${existing.value}"; create a separate database for "${adapterName}".`
@@ -190,16 +174,9 @@ function ensureObjectTable(opts: {
     }
 }
 
-function ensureSchema(opts: {
-    database: SQLiteDatabase;
-    adapterName: string;
-    ir: OntologyIR;
-}): void {
+function ensureSchema(opts: { database: SQLiteDatabase; adapterName: string; ir: OntologyIR }): void {
     ensureMetadataTable(opts.database);
-    ensureDatabaseOntology(
-        opts.database,
-        opts.adapterName
-    );
+    ensureDatabaseOntology(opts.database, opts.adapterName);
     ensureSQLiteAttachmentSchema(opts.database);
     for (const objectType of opts.ir.objectTypes) {
         ensureObjectTable({
@@ -410,7 +387,8 @@ function toAttachmentBlobPart(bytes: unknown): ArrayBuffer {
         return bytes;
     }
     if (ArrayBuffer.isView(bytes)) {
-        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        // Copy views into an owned ArrayBuffer, including views backed by SharedArrayBuffer.
+        return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength).slice().buffer;
     }
     throw new Error("SQLite attachment bytes are not a BLOB.");
 }
@@ -508,10 +486,7 @@ export function createSQLiteOntologyBackendAdapter(
                         // any later failure therefore leaves a discoverable,
                         // safely collectable key.
                         opts.database.transaction(() =>
-                            recordSQLiteAttachmentUploads(
-                                opts.database,
-                                externalRows
-                            )
+                            recordSQLiteAttachmentUploads(opts.database, externalRows)
                         )();
                         const bytes = opts.attachmentStorage?.external?.bytes;
                         if (!bytes) {
@@ -525,10 +500,7 @@ export function createSQLiteOntologyBackendAdapter(
                         // collector cannot interleave once this becomes
                         // collectable.
                         opts.database.transaction(() =>
-                            markSQLiteAttachmentUploadsComplete(
-                                opts.database,
-                                externalRows
-                            )
+                            markSQLiteAttachmentUploadsComplete(opts.database, externalRows)
                         )();
                     }
                     opts.database.transaction(() => {
@@ -544,10 +516,7 @@ export function createSQLiteOntologyBackendAdapter(
                                 }),
                             });
                         }
-                        persistSQLiteAttachmentRows(
-                            opts.database,
-                            prepared
-                        );
+                        persistSQLiteAttachmentRows(opts.database, prepared);
                     })();
                 },
             });
@@ -558,9 +527,7 @@ export function createSQLiteOntologyBackendAdapter(
                 actionTypeName,
                 parameters: resolvedParameters,
                 context: live.context ?? {},
-                idempotencyKey:
-                    live.idempotencyKey ??
-                    crypto.randomUUID(),
+                idempotencyKey: live.idempotencyKey ?? crypto.randomUUID(),
                 objects: collections,
                 mutators: opts.mutators,
             });
@@ -574,7 +541,7 @@ export function createSQLiteOntologyBackendAdapter(
                 );
             }
             return await handler({
-                tx: createReadTx(live.objects as Record<string, OntologyCollection>),
+                tx: createReadTx(live.objects),
                 args: parameters,
                 context: live.context ?? {},
             });

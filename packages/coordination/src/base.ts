@@ -14,38 +14,22 @@ export interface InvocationContext {
     readonly signal?: AbortSignal;
 }
 
-export abstract class BaseCoordination
-    implements CoordinationClient
-{
+export abstract class BaseCoordination implements CoordinationClient {
     abstract readonly role: "client" | "host";
 
     protected closed = false;
 
-    private readonly clients = new Map<
-        string,
-        CoordinationServiceClient<CoordinationService>
-    >();
-    private readonly listeners = new Map<
-        string,
-        Map<string, Set<EventListener>>
-    >();
+    private readonly clients = new Map<string, CoordinationServiceClient<CoordinationService>>();
+    private readonly listeners = new Map<string, Map<string, Set<EventListener>>>();
 
-    service<Service extends CoordinationService>(
-        namespace: string
-    ): CoordinationServiceClient<Service> {
+    service<Service extends CoordinationService>(namespace: string): CoordinationServiceClient<Service> {
         this.assertNamespace(namespace);
         const existing = this.clients.get(namespace);
         if (existing) {
             return existing as CoordinationServiceClient<Service>;
         }
-        const client = this.createServiceClient<Service>(
-            namespace,
-            { path: [] }
-        );
-        this.clients.set(
-            namespace,
-            client as CoordinationServiceClient<CoordinationService>
-        );
+        const client = this.createServiceClient<Service>(namespace, { path: [] });
+        this.clients.set(namespace, client);
         return client;
     }
 
@@ -59,38 +43,26 @@ export abstract class BaseCoordination
         context: InvocationContext
     ): Promise<unknown>;
 
-    protected createContextClient(
-        context: InvocationContext
-    ): CoordinationClient {
+    protected createContextClient(context: InvocationContext): CoordinationClient {
         const getRole = () => this.role;
         return {
             get role() {
                 return getRole();
             },
-            service: <Service extends CoordinationService>(
-                namespace: string
-            ) => {
+            service: <Service extends CoordinationService>(namespace: string) => {
                 this.assertNamespace(namespace);
-                return this.createServiceClient<Service>(
-                    namespace,
-                    context
-                );
+                return this.createServiceClient<Service>(namespace, context);
             },
             close: () => this.close(),
         };
     }
 
-    protected emitEvent(
-        namespace: string,
-        event: string,
-        payload: unknown
-    ): void {
+    protected emitEvent(namespace: string, event: string, payload: unknown): void {
         if (this.closed) return;
-        const listeners = this.listeners
-            .get(namespace)
-            ?.get(event);
+        const listeners = this.listeners.get(namespace)?.get(event);
         if (!listeners) return;
-        for (const listener of [...listeners]) {
+        const listenersSnapshot = [...listeners];
+        for (const listener of listenersSnapshot) {
             try {
                 listener(payload);
             } catch {
@@ -125,13 +97,7 @@ export abstract class BaseCoordination
                     let method = methodCache.get(property);
                     if (!method) {
                         method = (input, options) =>
-                            this.invokeRequest(
-                                namespace,
-                                property,
-                                input,
-                                options,
-                                context
-                            );
+                            this.invokeRequest(namespace, property, input, options, context);
                         methodCache.set(property, method);
                     }
                     return method;
@@ -146,16 +112,10 @@ export abstract class BaseCoordination
                     if (this.closed) return () => undefined;
                     const eventName = String(event);
                     const namespaceListeners =
-                        this.listeners.get(namespace) ??
-                        new Map<string, Set<EventListener>>();
-                    const eventListeners =
-                        namespaceListeners.get(eventName) ??
-                        new Set<EventListener>();
+                        this.listeners.get(namespace) ?? new Map<string, Set<EventListener>>();
+                    const eventListeners = namespaceListeners.get(eventName) ?? new Set<EventListener>();
                     this.listeners.set(namespace, namespaceListeners);
-                    namespaceListeners.set(
-                        eventName,
-                        eventListeners
-                    );
+                    namespaceListeners.set(eventName, eventListeners);
                     const listener = callback as EventListener;
                     eventListeners.add(listener);
 
@@ -175,9 +135,7 @@ export abstract class BaseCoordination
 
     private assertNamespace(namespace: string): void {
         if (namespace.length === 0) {
-            throw new TypeError(
-                "Coordination service namespace must not be empty."
-            );
+            throw new TypeError("Coordination service namespace must not be empty.");
         }
     }
 }

@@ -1,25 +1,13 @@
-import {
-    createCollection,
-    localOnlyCollectionOptions,
-} from "@tanstack/db";
+import { createCollection, localOnlyCollectionOptions } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
-import {
-    afterAll,
-    describe,
-    expect,
-    it,
-    vi,
-} from "vitest";
+import { afterAll, describe, expect, it, vi } from "vite-plus/test";
 import { o, type OntologyIR } from "../../ir/index.js";
 import { createLiveOntologyAction } from "./createLiveOntologyAction.js";
 import type { OntologyObject } from "../objects/OntologyObject.js";
 import type { OntologyActionRequest } from "../outbox/types.js";
 
 const users = createCollection(
-    localOnlyCollectionOptions<
-        OntologyObject,
-        string | number
-    >({
+    localOnlyCollectionOptions<OntologyObject, string | number>({
         id: "resolve-action-parameters-users",
         getKey: (user) => user.id as string | number,
         initialData: [
@@ -39,10 +27,9 @@ const action: OntologyIR["actionTypes"][number] = {
             name: "chained",
             displayName: "Chained",
             type: o.string({}),
-            defaultValue:
-                o.Expression.inputReference({
-                    name: "base",
-                }),
+            defaultValue: o.Expression.inputReference({
+                name: "base",
+            }),
         },
         {
             name: "base",
@@ -56,10 +43,9 @@ const action: OntologyIR["actionTypes"][number] = {
             name: "actor",
             displayName: "Actor",
             type: o.string({}),
-            defaultValue:
-                o.Expression.contextReference({
-                    name: "actor",
-                }),
+            defaultValue: o.Expression.contextReference({
+                name: "actor",
+            }),
         },
         {
             name: "entries",
@@ -123,10 +109,9 @@ const action: OntologyIR["actionTypes"][number] = {
             type: o.string({}),
             defaultValue: o.Expression.getAt({
                 source: o.Expression.objectLookup({
-                    reference:
-                        o.Expression.inputReference({
-                            name: "user",
-                        }),
+                    reference: o.Expression.inputReference({
+                        name: "user",
+                    }),
                 }),
                 path: ["profile", "name"],
             }),
@@ -200,11 +185,10 @@ describe("LiveOntologyAction.resolveParameters", () => {
     it("resolves defaults from partial parameters", async () => {
         await users.preload();
 
-        const resolved =
-            await liveAction.resolveParameters({
-                entries: [{ code: "alpha" }],
-                user: "user-1",
-            });
+        const resolved = await liveAction.resolveParameters({
+            entries: [{ code: "alpha" }],
+            user: "user-1",
+        });
 
         expect(resolved).toMatchObject({
             base: "base",
@@ -215,18 +199,12 @@ describe("LiveOntologyAction.resolveParameters", () => {
             user: "user-1",
             userName: "Ada",
         });
-        expect(resolved.id).toMatch(
-            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-        );
-        expect(resolved.createdAt).toBeInstanceOf(
-            Temporal.Instant
-        );
+        expect(resolved.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+        expect(resolved.createdAt).toBeInstanceOf(Temporal.Instant);
     });
 
     it("keeps supplied values instead of evaluating defaults", async () => {
-        const createdAt = Temporal.Instant.from(
-            "2026-09-08T12:00:00Z"
-        );
+        const createdAt = Temporal.Instant.from("2026-09-08T12:00:00Z");
         const supplied = {
             base: "supplied base",
             chained: "supplied chained",
@@ -239,9 +217,7 @@ describe("LiveOntologyAction.resolveParameters", () => {
             createdAt,
         };
 
-        await expect(
-            liveAction.resolveParameters(supplied)
-        ).resolves.toEqual(supplied);
+        await expect(liveAction.resolveParameters(supplied)).resolves.toEqual(supplied);
     });
 });
 

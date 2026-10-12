@@ -152,9 +152,7 @@ function convertInFilter(fieldOrValue: unknown, valuesOrField: unknown): Pushdow
     return pushdown({
         type: "in",
         propertyIdentifier: fieldPathToPropertyIdentifier(field),
-        value: values
-            .filter((entry) => entry !== null && entry !== undefined)
-            .map(convertQueryValue),
+        value: values.filter((entry) => entry !== null && entry !== undefined).map(convertQueryValue),
     });
 }
 

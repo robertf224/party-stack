@@ -1,4 +1,4 @@
-import { createCollection, localOnlyCollectionOptions, type Collection } from "@tanstack/db";
+import { BasicIndex, createCollection, localOnlyCollectionOptions, type Collection } from "@tanstack/db";
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
 import { createCollectionPersistence } from "./createCollectionPersistence.js";
 import type { RuntimeAdapter } from "../types.js";
@@ -12,6 +12,8 @@ export function createLocalCollection<T extends object, TKey extends string | nu
     const collectionOptions = {
         id: `party-stack:${options.runtime.owner}:${options.runtime.namespace}:${options.name}`,
         getKey: options.getKey,
+        defaultIndexType: BasicIndex,
+        autoIndex: "eager" as const,
     };
     const persistence = options.runtime.persistence;
 

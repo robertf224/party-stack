@@ -1,9 +1,5 @@
 import { invariant } from "@bobbyfidz/panic";
-import {
-    bulkLoadOntologyEntities,
-    type Condition,
-    type ConditionValue,
-} from "@osdk/client.unstable";
+import { bulkLoadOntologyEntities, type Condition, type ConditionValue } from "@osdk/client.unstable";
 import { GroupMemberships, Users } from "@osdk/foundry.admin";
 import {
     ActionTypesV2,
@@ -12,16 +8,11 @@ import {
     type StructEvaluatedConstraint,
     type SyncApplyActionResponseV2,
 } from "@osdk/foundry.ontologies";
-import {
-    certain,
-    uncertain,
-    type Uncertain,
-    type ValidationIssue,
-} from "@party-stack/ontology";
-import type { OntologyClient } from "@party-stack/foundry-client";
-import type { Result } from "@party-stack/ontology/values";
+import { certain, uncertain, type Uncertain, type ValidationIssue } from "@party-stack/ontology";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
+import type { OntologyClient } from "@party-stack/foundry-client";
+import type { Result } from "@party-stack/ontology/values";
 
 export interface FoundrySubmissionCriterion {
     condition: Condition;
@@ -31,17 +22,9 @@ export interface FoundrySubmissionCriterion {
 function valuesEqual(left: unknown, right: unknown): boolean {
     if (Object.is(left, right)) return true;
     if (Array.isArray(left) && Array.isArray(right)) {
-        return (
-            left.length === right.length &&
-            left.every((value, index) => valuesEqual(value, right[index]))
-        );
+        return left.length === right.length && left.every((value, index) => valuesEqual(value, right[index]));
     }
-    if (
-        typeof left === "object" &&
-        left !== null &&
-        typeof right === "object" &&
-        right !== null
-    ) {
+    if (typeof left === "object" && left !== null && typeof right === "object" && right !== null) {
         const leftEntries = Object.entries(left);
         const rightRecord = right as Record<string, unknown>;
         return (
@@ -80,12 +63,12 @@ export async function loadFoundrySubmissionCriteria(options: {
     );
     const loaded = response.actionTypes[0];
     invariant(loaded, `Foundry action type "${options.actionTypeName}" was not returned by metadata.`);
-    return Object.values(
-        loaded.actionType.actionTypeLogic.validation.actionTypeLevelValidation.rules
-    ).map((rule) => ({
-        condition: rule.condition,
-        failureMessage: rule.displayMetadata.failureMessage,
-    }));
+    return Object.values(loaded.actionType.actionTypeLogic.validation.actionTypeLevelValidation.rules).map(
+        (rule) => ({
+            condition: rule.condition,
+            failureMessage: rule.displayMetadata.failureMessage,
+        })
+    );
 }
 
 interface EvaluationContext {
@@ -116,9 +99,7 @@ function createEvaluationContext(options: {
             return groupIds;
         },
         markings: () => {
-            markings ??= Users.getMarkings(options.client, options.userId).then(
-                (response) => response.view
-            );
+            markings ??= Users.getMarkings(options.client, options.userId).then((response) => response.view);
             return markings;
         },
         user: () => {
@@ -211,9 +192,7 @@ async function evaluateUserProperty(
             return certain((await context.user()).username);
         case "userAttributes": {
             const user = await context.user();
-            return certain(
-                user.attributes[value.userProperty.propertyValue.userAttributes.attributeKey]
-            );
+            return certain(user.attributes[value.userProperty.propertyValue.userAttributes.attributeKey]);
         }
         case "groupNames":
             return uncertain();
@@ -291,9 +270,7 @@ async function evaluateCondition(
             if (results.some((result) => result.certain && !result.value)) {
                 return certain(false);
             }
-            return results.some((result) => !result.certain)
-                ? uncertain()
-                : certain(true);
+            return results.some((result) => !result.certain) ? uncertain() : certain(true);
         }
         case "or": {
             const results = await Promise.all(
@@ -302,9 +279,7 @@ async function evaluateCondition(
             if (results.some((result) => result.certain && result.value)) {
                 return certain(true);
             }
-            return results.some((result) => !result.certain)
-                ? uncertain()
-                : certain(false);
+            return results.some((result) => !result.certain) ? uncertain() : certain(false);
         }
         case "not": {
             const result = await evaluateCondition(condition.not.condition, context);
@@ -325,20 +300,14 @@ async function evaluateCondition(
                     return certain(!valuesEqual(left.value, right.value));
                 case "INTERSECTS": {
                     const leftValues = Array.isArray(left.value) ? left.value : [left.value];
-                    const rightValues = new Set(
-                        Array.isArray(right.value) ? right.value : [right.value]
-                    );
+                    const rightValues = new Set(Array.isArray(right.value) ? right.value : [right.value]);
                     return certain(leftValues.some((entry) => rightValues.has(entry)));
                 }
                 case "LESS_THAN":
                 case "LESS_THAN_EQUALS":
                 case "GREATER_THAN":
                 case "GREATER_THAN_EQUALS":
-                    return evaluateOrderedComparison(
-                        condition.comparison.operator,
-                        left.value,
-                        right.value
-                    );
+                    return evaluateOrderedComparison(condition.comparison.operator, left.value, right.value);
                 case "IS_OF_OBJECT_TYPE":
                     return uncertain();
                 default:
@@ -454,7 +423,5 @@ export function getFoundryValidationIssues(result: SyncApplyActionResponseV2): V
             collectParameterConstraintIssues(constraint, issues, [parameterName]);
         }
     }
-    return issues.length > 0
-        ? issues
-        : [{ message: "Invalid Action arguments." }];
+    return issues.length > 0 ? issues : [{ message: "Invalid Action arguments." }];
 }

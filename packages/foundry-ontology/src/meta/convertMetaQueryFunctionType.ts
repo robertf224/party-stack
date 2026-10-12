@@ -1,5 +1,5 @@
-import type { QueryFunctionParameterDef, QueryFunctionTypeDef, TypeDef } from "@party-stack/ontology";
 import type { QueryDataType, QueryParameterV2, QueryTypeV2 } from "@osdk/foundry.ontologies";
+import type { QueryFunctionParameterDef, QueryFunctionTypeDef, TypeDef } from "@party-stack/ontology";
 
 function stringType(): TypeDef {
     return { kind: "string", value: {} };
@@ -78,26 +78,25 @@ function convertQueryDataType(type: QueryDataType): TypeDef {
                     })),
                 },
             };
-        case "union":
-            {
-                const nonNullTypes = type.unionTypes.filter((variant) => variant.type !== "null");
-                const hasNull = nonNullTypes.length !== type.unionTypes.length;
-                const converted =
-                    nonNullTypes.length === 0
-                        ? { kind: "unknown" as const, value: {} }
-                        : nonNullTypes.length === 1
-                          ? convertQueryDataType(nonNullTypes[0]!)
-                          : {
-                                kind: "union" as const,
-                                value: {
-                                    variants: nonNullTypes.map((variant, index) => ({
-                                        name: `variant${index + 1}`,
-                                        type: convertQueryDataType(variant),
-                                    })),
-                                },
-                            };
-                return maybeOptional(converted, !hasNull);
-            }
+        case "union": {
+            const nonNullTypes = type.unionTypes.filter((variant) => variant.type !== "null");
+            const hasNull = nonNullTypes.length !== type.unionTypes.length;
+            const converted =
+                nonNullTypes.length === 0
+                    ? { kind: "unknown" as const, value: {} }
+                    : nonNullTypes.length === 1
+                      ? convertQueryDataType(nonNullTypes[0]!)
+                      : {
+                            kind: "union" as const,
+                            value: {
+                                variants: nonNullTypes.map((variant, index) => ({
+                                    name: `variant${index + 1}`,
+                                    type: convertQueryDataType(variant),
+                                })),
+                            },
+                        };
+            return maybeOptional(converted, !hasNull);
+        }
         case "void":
         case "null":
             return { kind: "unknown", value: {} };

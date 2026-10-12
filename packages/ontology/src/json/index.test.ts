@@ -1,5 +1,5 @@
 import { Temporal } from "temporal-polyfill";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { o } from "../ir/generated/builders.js";
 import { decode, encode } from "./index.js";
 import type { OntologyIR } from "../ir/generated/types.js";

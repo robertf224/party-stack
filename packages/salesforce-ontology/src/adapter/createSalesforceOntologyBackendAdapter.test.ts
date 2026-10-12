@@ -1,6 +1,6 @@
 import { NonRetryableError, o, type OntologyIR } from "@party-stack/ontology";
 import { SalesforceApiError } from "@party-stack/salesforce-client";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
     createSalesforceOntologyBackend,
     createSalesforceOntologyBackendAdapter,
@@ -169,12 +169,14 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         vi.clearAllMocks();
     });
 
-    function createAdapter(options: {
-        live?: boolean;
-        subscribeToChangeEvents?: Parameters<
-            typeof createSalesforceOntologyBackendAdapter
-        >[0]["subscribeToChangeEvents"];
-    } = {}) {
+    function createAdapter(
+        options: {
+            live?: boolean;
+            subscribeToChangeEvents?: Parameters<
+                typeof createSalesforceOntologyBackendAdapter
+            >[0]["subscribeToChangeEvents"];
+        } = {}
+    ) {
         return createSalesforceOntologyBackendAdapter({
             ir,
             live: options.live,
@@ -227,9 +229,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             }
         );
 
-        expect(invokeFlowAction).toHaveBeenCalledWith("Create_Account", [
-            { accountName: "Acme" },
-        ]);
+        expect(invokeFlowAction).toHaveBeenCalledWith("Create_Account", [{ accountName: "Acme" }]);
         expect(invalidate).toHaveBeenCalledOnce();
     });
 
@@ -284,9 +284,9 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         );
         const adapter = createAdapter();
 
-        await expect(
-            adapter.applyAction("Create_Account", {}, { objects: {} })
-        ).rejects.toBeInstanceOf(NonRetryableError);
+        await expect(adapter.applyAction("Create_Account", {}, { objects: {} })).rejects.toBeInstanceOf(
+            NonRetryableError
+        );
     });
 
     it("routes generated CRUD actions through sObject record APIs", async () => {
@@ -305,12 +305,8 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             id: "001000000000001",
             errors: [],
         });
-        const deleteByKey = vi.fn(
-            () => Promise.resolve()
-        );
-        const refreshByKey = vi
-            .fn()
-            .mockResolvedValue(undefined);
+        const deleteByKey = vi.fn(() => Promise.resolve());
+        const refreshByKey = vi.fn().mockResolvedValue(undefined);
         const adapter = createAdapter();
         const live = {
             objects: {
@@ -324,11 +320,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             },
         };
 
-        await adapter.applyAction(
-            "createAccount",
-            { Name: "Acme" },
-            live
-        );
+        await adapter.applyAction("createAccount", { Name: "Acme" }, live);
         await adapter.applyAction(
             "updateAccount",
             {
@@ -337,37 +329,15 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             },
             live
         );
-        await adapter.applyAction(
-            "deleteAccount",
-            { recordId: "001000000000001" },
-            live
-        );
+        await adapter.applyAction("deleteAccount", { recordId: "001000000000001" }, live);
 
-        expect(createRecord).toHaveBeenCalledWith(
-            "Account",
-            { Name: "Acme" }
-        );
-        expect(updateRecord).toHaveBeenCalledWith(
-            "Account",
-            "001000000000001",
-            { Name: "Acme 2" }
-        );
-        expect(deleteRecord).toHaveBeenCalledWith(
-            "Account",
-            "001000000000001"
-        );
-        expect(refreshByKey).toHaveBeenNthCalledWith(
-            1,
-            "001000000000001"
-        );
-        expect(refreshByKey).toHaveBeenNthCalledWith(
-            2,
-            "001000000000001"
-        );
+        expect(createRecord).toHaveBeenCalledWith("Account", { Name: "Acme" });
+        expect(updateRecord).toHaveBeenCalledWith("Account", "001000000000001", { Name: "Acme 2" });
+        expect(deleteRecord).toHaveBeenCalledWith("Account", "001000000000001");
+        expect(refreshByKey).toHaveBeenNthCalledWith(1, "001000000000001");
+        expect(refreshByKey).toHaveBeenNthCalledWith(2, "001000000000001");
         expect(invalidate).not.toHaveBeenCalled();
-        expect(deleteByKey).toHaveBeenCalledWith(
-            "001000000000001"
-        );
+        expect(deleteByKey).toHaveBeenCalledWith("001000000000001");
         expect(invokeFlowAction).not.toHaveBeenCalled();
     });
 
@@ -391,43 +361,23 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             ]);
         const adapter = createAdapter();
 
-        await adapter.applyAction(
-            "confirmSalesMeeting",
-            { meetingRequestId: "request-1" },
-            { objects: {} }
-        );
+        await adapter.applyAction("confirmSalesMeeting", { meetingRequestId: "request-1" }, { objects: {} });
         const result = await adapter.runQueryFunction(
             "getAvailableMeetingTimes",
             {
-                attendeeEmailAddresses: [
-                    "a@example.com",
-                    "b@example.com",
-                ],
+                attendeeEmailAddresses: ["a@example.com", "b@example.com"],
             },
             { objects: {} }
         );
 
-        expect(
-            invokeStandardAction
-        ).toHaveBeenNthCalledWith(
-            1,
-            "confirmSalesMeeting",
-            [{ meetingRequestId: "request-1" }]
-        );
-        expect(
-            invokeStandardAction
-        ).toHaveBeenNthCalledWith(
-            2,
-            "getAvailableMeetingTimes",
-            [
-                {
-                    attendeeEmailAddresses: [
-                        "a@example.com",
-                        "b@example.com",
-                    ],
-                },
-            ]
-        );
+        expect(invokeStandardAction).toHaveBeenNthCalledWith(1, "confirmSalesMeeting", [
+            { meetingRequestId: "request-1" },
+        ]);
+        expect(invokeStandardAction).toHaveBeenNthCalledWith(2, "getAvailableMeetingTimes", [
+            {
+                attendeeEmailAddresses: ["a@example.com", "b@example.com"],
+            },
+        ]);
         expect(result).toEqual({
             timeSlots: "10:00 AM",
         });

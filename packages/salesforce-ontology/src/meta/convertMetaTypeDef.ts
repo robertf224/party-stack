@@ -7,17 +7,10 @@ import type {
 } from "@party-stack/salesforce-client";
 
 function maybeOptional(type: TypeDef, nillable: boolean): TypeDef {
-    return nillable && type.kind !== "optional"
-        ? { kind: "optional", value: { type } }
-        : type;
+    return nillable && type.kind !== "optional" ? { kind: "optional", value: { type } } : type;
 }
 
-function asPicklistValues(
-    values:
-        | Field["picklistValues"]
-        | null
-        | undefined
-): SalesforcePicklistValue[] {
+function asPicklistValues(values: Field["picklistValues"] | null | undefined): SalesforcePicklistValue[] {
     if (!Array.isArray(values)) {
         return [];
     }
@@ -25,10 +18,7 @@ function asPicklistValues(
 }
 
 function picklistConstraint(
-    values:
-        | Field["picklistValues"]
-        | null
-        | undefined
+    values: Field["picklistValues"] | null | undefined
 ): StringConstraint | undefined {
     const options = asPicklistValues(values)
         .filter((value) => value.active)
@@ -129,54 +119,36 @@ function convertSalesforceSoapType(field: SalesforceFieldDescribe): TypeDef {
     }
 }
 
-export function convertSalesforceInvocableParameterType(parameter: {
-    type?: string | null;
-    sobjectType?: string | null;
-    sObjectType?: string | null;
-    required?: boolean;
-    maxOccurs?: number | null;
-    picklistValues?: SalesforcePicklistValue[] | null;
-}, sObjectDescribe?: SalesforceSObjectDescribe): TypeDef {
+export function convertSalesforceInvocableParameterType(
+    parameter: {
+        type?: string | null;
+        sobjectType?: string | null;
+        sObjectType?: string | null;
+        required?: boolean;
+        maxOccurs?: number | null;
+        picklistValues?: SalesforcePicklistValue[] | null;
+    },
+    sObjectDescribe?: SalesforceSObjectDescribe
+): TypeDef {
     const required = parameter.required === true;
     let baseType: TypeDef;
     const typeName = parameter.type?.toLowerCase() ?? "unknown";
-    const sObjectType =
-        parameter.sobjectType ?? parameter.sObjectType;
-    if (
-        typeName === "sobject" &&
-        sObjectType &&
-        sObjectDescribe
-    ) {
+    const sObjectType = parameter.sobjectType ?? parameter.sObjectType;
+    if (typeName === "sobject" && sObjectType && sObjectDescribe) {
         baseType = {
             kind: "struct",
             value: {
                 fields: sObjectDescribe.fields
-                    .filter(
-                        (field) =>
-                            field.type !== "address" &&
-                            field.type !== "location"
-                    )
+                    .filter((field) => field.type !== "address" && field.type !== "location")
                     .map((field) => ({
                         name: field.name,
-                        displayName:
-                            field.label || field.name,
-                        description:
-                            field.inlineHelpText ??
-                            undefined,
-                        type: maybeOptional(
-                            convertSalesforceFieldType(
-                                field
-                            ),
-                            true
-                        ),
+                        displayName: field.label || field.name,
+                        description: field.inlineHelpText ?? undefined,
+                        type: maybeOptional(convertSalesforceFieldType(field), true),
                     })),
             },
         };
-    } else if (
-        sObjectType &&
-        (typeName === "id" ||
-            typeName === "reference")
-    ) {
+    } else if (sObjectType && (typeName === "id" || typeName === "reference")) {
         baseType = {
             kind: "objectReference",
             value: { objectType: sObjectType },
@@ -195,9 +167,7 @@ export function convertSalesforceInvocableParameterType(parameter: {
                 baseType = {
                     kind: "string",
                     value: {
-                        constraint: picklistConstraint(
-                            parameter.picklistValues
-                        ),
+                        constraint: picklistConstraint(parameter.picklistValues),
                     },
                 };
                 break;
@@ -233,10 +203,7 @@ export function convertSalesforceInvocableParameterType(parameter: {
                 break;
         }
     }
-    if (
-        typeof parameter.maxOccurs === "number" &&
-        parameter.maxOccurs > 1
-    ) {
+    if (typeof parameter.maxOccurs === "number" && parameter.maxOccurs > 1) {
         baseType = {
             kind: "list",
             value: { elementType: baseType },

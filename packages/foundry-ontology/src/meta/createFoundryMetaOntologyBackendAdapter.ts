@@ -1,6 +1,4 @@
 import { notImplemented } from "@bobbyfidz/panic";
-import type { OntologyClient } from "@party-stack/foundry-client";
-import type { OntologyBackendAdapter } from "@party-stack/ontology";
 import { actionTypeCollectionOptions } from "./actionTypeCollectionOptions.js";
 import {
     createMetaEntityCollection,
@@ -9,6 +7,8 @@ import {
     valueTypeCollectionOptions,
 } from "./entityCollectionOptions.js";
 import { queryFunctionTypeCollectionOptions } from "./queryFunctionTypeCollectionOptions.js";
+import type { OntologyClient } from "@party-stack/foundry-client";
+import type { OntologyBackendAdapter } from "@party-stack/ontology";
 
 export interface CreateFoundryMetaOntologyBackendAdapterOpts {
     client: OntologyClient;

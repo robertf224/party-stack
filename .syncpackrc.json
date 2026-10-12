@@ -1,0 +1,31 @@
+{
+    "$schema": "./node_modules/syncpack/schema.json",
+    "versionGroups": [
+        {
+            "label": "Check dependency declarations and the default catalog, not peer ranges or release versions",
+            "dependencyTypes": ["!prod", "!dev", "!pnpmCatalog"],
+            "isIgnored": true
+        }
+    ],
+    "semverGroups": [
+        {
+            "label": "Keep Vite+ toolchain catalog versions exact",
+            "dependencyTypes": ["pnpmCatalog"],
+            "range": ""
+        },
+        {
+            "label": "Pin TanStack DB and its integrations while their APIs are changing",
+            "dependencies": ["@tanstack/db", "@tanstack/db-*", "@tanstack/*-db", "@tanstack/*-db-*"],
+            "range": ""
+        },
+        {
+            "label": "Allow TypeScript patch updates",
+            "dependencies": ["typescript"],
+            "range": "~"
+        },
+        {
+            "label": "Use caret ranges for other dependencies",
+            "range": "^"
+        }
+    ]
+}

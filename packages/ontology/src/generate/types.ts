@@ -290,9 +290,7 @@ function addOntologyContextType(
     ir: OntologyIR,
     outputTypeName: string
 ): void {
-    const objectTypes = new Map(
-        ir.objectTypes.map((objectType) => [objectType.name, objectType])
-    );
+    const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
     sourceFile.addTypeAlias({
         name: `${outputTypeName}Context`,
         isExported: true,
@@ -355,7 +353,10 @@ function addQueryParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: O
             name: `${pascalCase(queryFunctionType.name)}Return`,
             isExported: true,
             type: generateForTypeDef(queryFunctionType.returnType, { objectTypes }),
-            docs: buildJsDocs({ description: queryFunctionType.description, deprecated: queryFunctionType.deprecated }),
+            docs: buildJsDocs({
+                description: queryFunctionType.description,
+                deprecated: queryFunctionType.deprecated,
+            }),
         });
     }
 }

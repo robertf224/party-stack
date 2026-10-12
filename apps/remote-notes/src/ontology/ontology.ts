@@ -58,7 +58,10 @@ export const notesOntology = {
                     objectType: "Note",
                     values: [
                         { property: ["id"], value: o.Expression.inputReference({ name: "id" }) },
-                        { property: ["ownerEmail"], value: o.Expression.inputReference({ name: "ownerEmail" }) },
+                        {
+                            property: ["ownerEmail"],
+                            value: o.Expression.inputReference({ name: "ownerEmail" }),
+                        },
                         { property: ["title"], value: o.Expression.inputReference({ name: "title" }) },
                         {
                             property: ["bodyMarkdown"],
@@ -137,7 +140,10 @@ export const notesOntology = {
                     values: [
                         { property: ["id"], value: o.Expression.inputReference({ name: "id" }) },
                         { property: ["noteId"], value: o.Expression.inputReference({ name: "note" }) },
-                        { property: ["ownerEmail"], value: o.Expression.inputReference({ name: "ownerEmail" }) },
+                        {
+                            property: ["ownerEmail"],
+                            value: o.Expression.inputReference({ name: "ownerEmail" }),
+                        },
                         {
                             property: ["attachment"],
                             value: o.Expression.inputReference({ name: "attachment" }),

@@ -1,8 +1,5 @@
-import { expectTypeOf, it } from "vitest";
-import {
-    SharedWorkerCoordinationClient,
-    SharedWorkerCoordinationHost,
-} from "./shared-worker/index.js";
+import { expectTypeOf, it } from "vite-plus/test";
+import { SharedWorkerCoordinationClient, SharedWorkerCoordinationHost } from "./shared-worker/index.js";
 import {
     SingleProcessCoordination,
     type CoordinationServiceClient,
@@ -11,10 +8,7 @@ import {
 
 type TypedService = {
     methods: {
-        add(input: {
-            left: number;
-            right: number;
-        }): Promise<number>;
+        add(input: { left: number; right: number }): Promise<number>;
         label(input: { id: string }): Promise<string>;
     };
     events: {
@@ -23,10 +17,7 @@ type TypedService = {
     };
 };
 
-function acceptsPlatformWorkerTypes(
-    worker: SharedWorker,
-    port: MessagePort
-): void {
+function acceptsPlatformWorkerTypes(worker: SharedWorker, port: MessagePort): void {
     const client = new SharedWorkerCoordinationClient({
         scope: "typed-worker",
         worker,
@@ -53,36 +44,25 @@ it("maps service method, handler, and event types", async () => {
     const coordination = new SingleProcessCoordination({
         scope: "types",
     });
-    const client =
-        coordination.service<TypedService>("typed.v1");
-    expectTypeOf(client).toMatchTypeOf<
-        CoordinationServiceClient<TypedService>
-    >();
-    expectTypeOf(client.methods.add)
-        .parameter(0)
-        .toEqualTypeOf<{
-            left: number;
-            right: number;
-        }>();
-    expectTypeOf(client.methods.add)
-        .returns.toEqualTypeOf<Promise<number>>();
+    const client = coordination.service<TypedService>("typed.v1");
+    expectTypeOf(client).toMatchTypeOf<CoordinationServiceClient<TypedService>>();
+    expectTypeOf(client.methods.add).parameter(0).toEqualTypeOf<{
+        left: number;
+        right: number;
+    }>();
+    expectTypeOf(client.methods.add).returns.toEqualTypeOf<Promise<number>>();
 
-    const server = coordination.serve<TypedService>(
-        "typed.v1",
-        {
-            add: (input, context) => {
-                expectTypeOf(input).toEqualTypeOf<{
-                    left: number;
-                    right: number;
-                }>();
-                expectTypeOf(
-                    context
-                ).toEqualTypeOf<CoordinationTaskContext>();
-                return input.left + input.right;
-            },
-            label: ({ id }) => id,
-        }
-    );
+    const server = coordination.serve<TypedService>("typed.v1", {
+        add: (input, context) => {
+            expectTypeOf(input).toEqualTypeOf<{
+                left: number;
+                right: number;
+            }>();
+            expectTypeOf(context).toEqualTypeOf<CoordinationTaskContext>();
+            return input.left + input.right;
+        },
+        label: ({ id }) => id,
+    });
     client.events.subscribe("changed", (event) => {
         expectTypeOf(event).toEqualTypeOf<{
             id: string;
@@ -96,7 +76,7 @@ it("maps service method, handler, and event types", async () => {
 
     const assertInvalidCalls = async () => {
         // @ts-expect-error Unknown methods are rejected.
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+        // oxlint-disable-next-line typescript/no-unsafe-call
         await client.methods.remove({ id: "one" });
         // @ts-expect-error Method input is inferred.
         await client.methods.add({ left: 1 });

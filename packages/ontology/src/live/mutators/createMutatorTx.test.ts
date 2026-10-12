@@ -1,5 +1,5 @@
 import { createCollection, createTransaction, eq, localOnlyCollectionOptions } from "@tanstack/db";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { createMutatorTx } from "./createMutatorTx.js";
 import type { OntologyObject } from "../objects/OntologyObject.js";
 

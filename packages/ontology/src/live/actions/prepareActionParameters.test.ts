@@ -1,6 +1,6 @@
 import { createBlobManager } from "@party-stack/blobs";
 import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { o } from "../../ir/index.js";
 import { prepareActionParameters } from "./prepareActionParameters.js";
 import type { OntologyIR } from "../../ir/index.js";

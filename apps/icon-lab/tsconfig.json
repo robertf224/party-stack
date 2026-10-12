@@ -14,7 +14,8 @@
         "jsx": "react-jsx",
         "paths": {
             "@/*": ["./src/*"]
-        }
+        },
+        "types": ["node", "vite/client"]
     },
     "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts", "scripts/**/*.ts"],
     "exclude": ["node_modules", "dist"]

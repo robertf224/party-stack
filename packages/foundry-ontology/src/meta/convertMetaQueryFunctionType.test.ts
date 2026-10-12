@@ -1,11 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { convertFoundryMetaQueryFunctionType } from "./convertMetaQueryFunctionType.js";
 import type { QueryTypeV2 } from "@osdk/foundry.ontologies";
 
-function queryType(
-    parameters: QueryTypeV2["parameters"],
-    output: QueryTypeV2["output"]
-): QueryTypeV2 {
+function queryType(parameters: QueryTypeV2["parameters"], output: QueryTypeV2["output"]): QueryTypeV2 {
     return {
         apiName: "googleMapsAutocompleteAddress",
         displayName: "googleMapsAutocompleteAddress",
@@ -32,10 +29,7 @@ describe("convertFoundryMetaQueryFunctionType", () => {
                     countries: {
                         dataType: {
                             type: "union",
-                            unionTypes: [
-                                { type: "array", subType: { type: "string" } },
-                                { type: "null" },
-                            ],
+                            unionTypes: [{ type: "array", subType: { type: "string" } }, { type: "null" }],
                         },
                         required: false,
                     },
@@ -80,10 +74,7 @@ describe("convertFoundryMetaQueryFunctionType", () => {
                                                 name: "address2",
                                                 fieldType: {
                                                     type: "union",
-                                                    unionTypes: [
-                                                        { type: "string" },
-                                                        { type: "null" },
-                                                    ],
+                                                    unionTypes: [{ type: "string" }, { type: "null" }],
                                                 },
                                             },
                                         ],

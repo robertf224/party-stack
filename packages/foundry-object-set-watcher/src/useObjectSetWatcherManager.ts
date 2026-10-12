@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/rules-of-hooks */
+/* oxlint-disable react/rules-of-hooks */
 import { ObjectSet } from "@osdk/foundry.ontologies";
 import { createFoundryWebSocket, type OntologyClient } from "@party-stack/foundry-client";
 import { Channel, createChannel, Operation, resource, spawn, Stream } from "effection";

@@ -28,11 +28,11 @@ This proposal does not introduce a separate persistence election or transport.
 
 Keep three concepts distinct:
 
-| Concept | Meaning | Example |
-| --- | --- | --- |
-| Logical collection ID | Which dataset consumers address | `objects:Task` within an owner/namespace |
-| Compatibility version | Which persisted representation readers and writers support | `1` versus an incompatible `2` |
-| Migration revision | Which transformations have been applied within a compatibility version | Backfill revisions `1`, `2`, `3` |
+| Concept               | Meaning                                                                | Example                                  |
+| --------------------- | ---------------------------------------------------------------------- | ---------------------------------------- |
+| Logical collection ID | Which dataset consumers address                                        | `objects:Task` within an owner/namespace |
+| Compatibility version | Which persisted representation readers and writers support             | `1` versus an incompatible `2`           |
+| Migration revision    | Which transformations have been applied within a compatibility version | Backfill revisions `1`, `2`, `3`         |
 
 Initially, the provider's `schemaVersion` supplies TanStack's existing expected
 schema version. Treat it as a representation compatibility boundary, not the

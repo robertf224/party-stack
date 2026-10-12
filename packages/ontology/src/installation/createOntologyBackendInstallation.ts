@@ -1,16 +1,16 @@
 import { createConnectionManager, createConnectionMonitor } from "@party-stack/connections";
 import { createLocalCollection } from "@party-stack/runtime";
-import type { Connection } from "@party-stack/connections";
 import { createLiveOntology } from "../live/LiveOntology.js";
 import { createMetaOntologyConfiguration } from "./createMetaOntologyConfiguration.js";
+import type { LiveOntology } from "../live/LiveOntology.js";
+import type { OntologyDefinition } from "../live/LiveOntology.js";
+import type { MetaOntology } from "../meta/generated/types.js";
 import type {
     CreateOntologyBackendInstallationOptions,
     OntologyBackendInstallation,
     OntologyRoute,
 } from "./types.js";
-import type { LiveOntology } from "../live/LiveOntology.js";
-import type { OntologyDefinition } from "../live/LiveOntology.js";
-import type { MetaOntology } from "../meta/generated/types.js";
+import type { Connection } from "@party-stack/connections";
 
 interface LocalOntologyPartition {
     id: string;

@@ -1,5 +1,1 @@
-export {
-    isUnauthenticatedError,
-    unauthenticated,
-    UnauthenticatedError,
-} from "./UnauthenticatedError.js";
+export { isUnauthenticatedError, unauthenticated, UnauthenticatedError } from "./UnauthenticatedError.js";

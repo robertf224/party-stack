@@ -6,7 +6,7 @@ import {
     type CoordinationService,
     type RuntimeAdapter,
 } from "@party-stack/runtime";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { BLOB_COORDINATION_SERVICE, type BlobCoordinationService } from "./store/createBlobStore.js";
 import { createBlobManager } from "./index.js";
 import type { BlobManagerOptions, BlobRemoteSource } from "./types.js";

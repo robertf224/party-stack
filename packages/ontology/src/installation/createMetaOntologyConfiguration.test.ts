@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { createMetaOntologyConfiguration } from "./createMetaOntologyConfiguration.js";
 import type { OntologyIR } from "../ir/index.js";
 

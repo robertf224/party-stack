@@ -1,16 +1,12 @@
 import { Temporal } from "temporal-polyfill";
+import type { ActionTypeOmsMetadata } from "./loadActionTypeOmsMetadata.js";
+import type { AllowedParameterValues, ParameterPrefill, StaticValue } from "@osdk/client.unstable";
 import type {
     ActionParameterDef,
     Expression,
     StringConstraint,
     StringSuggestion,
 } from "@party-stack/ontology";
-import type { ActionTypeOmsMetadata } from "./loadActionTypeOmsMetadata.js";
-import type {
-    AllowedParameterValues,
-    ParameterPrefill,
-    StaticValue,
-} from "@osdk/client.unstable";
 
 function parseDate(value: unknown): unknown {
     if (typeof value !== "string") return undefined;
@@ -30,9 +26,7 @@ function parseTimestamp(value: unknown): unknown {
     }
 }
 
-function convertFoundryStaticValue(
-    staticValue: StaticValue
-): unknown {
+function convertFoundryStaticValue(staticValue: StaticValue): unknown {
     switch (staticValue.type) {
         case "string":
             return staticValue.string;
@@ -61,9 +55,7 @@ function convertFoundryStaticValue(
         case "timestamp":
             return parseTimestamp(staticValue.timestamp);
         case "timestampList":
-            return staticValue.timestampList.timestamps.map(
-                parseTimestamp
-            );
+            return staticValue.timestampList.timestamps.map(parseTimestamp);
         case "null":
             return null;
         default:
@@ -72,18 +64,13 @@ function convertFoundryStaticValue(
 }
 
 function convertDefaultValue(
-    propertyApiNamesByParameter: ReadonlyMap<
-        string,
-        ReadonlyMap<string, string>
-    >,
+    propertyApiNamesByParameter: ReadonlyMap<string, ReadonlyMap<string, string>>,
     defaultValue: ParameterPrefill | undefined
 ): Expression | undefined {
     if (!defaultValue) return undefined;
 
     if (defaultValue.type === "staticValue") {
-        const value = convertFoundryStaticValue(
-            defaultValue.staticValue
-        );
+        const value = convertFoundryStaticValue(defaultValue.staticValue);
         return value === undefined
             ? undefined
             : {
@@ -92,17 +79,12 @@ function convertDefaultValue(
               };
     }
 
-    if (
-        defaultValue.type ===
-        "objectParameterPropertyValue"
-    ) {
-        const objectProperty =
-            defaultValue.objectParameterPropertyValue;
+    if (defaultValue.type === "objectParameterPropertyValue") {
+        const objectProperty = defaultValue.objectParameterPropertyValue;
         const parameterName = objectProperty.parameterId;
-        const propertyApiName =
-            propertyApiNamesByParameter
-                .get(parameterName)
-                ?.get(objectProperty.propertyTypeId);
+        const propertyApiName = propertyApiNamesByParameter
+            .get(parameterName)
+            ?.get(objectProperty.propertyTypeId);
         if (!propertyApiName) return undefined;
 
         return {
@@ -132,20 +114,21 @@ function getOmsActionParameterAllowedValues(
     parameterName: string,
     fieldName?: string
 ): AllowedParameterValues | undefined {
-    const parameterValidation = actionType?.actionType.actionTypeLogic.validation
-        .parameterValidations[parameterName];
-    const validation = fieldName === undefined
-        ? parameterValidation
-        : parameterValidation?.structFieldValidations?.[fieldName];
+    const parameterValidation =
+        actionType?.actionType.actionTypeLogic.validation.parameterValidations[parameterName];
+    const validation =
+        fieldName === undefined
+            ? parameterValidation
+            : parameterValidation?.structFieldValidations?.[fieldName];
     return validation?.defaultValidation.validation?.allowedValues;
 }
 
-function getOmsOneOf(
-    allowedValues: AllowedParameterValues | undefined
-): {
-    options: StringSuggestion[];
-    otherValuesAllowed: boolean;
-} | undefined {
+function getOmsOneOf(allowedValues: AllowedParameterValues | undefined):
+    | {
+          options: StringSuggestion[];
+          otherValuesAllowed: boolean;
+      }
+    | undefined {
     if (allowedValues?.type !== "oneOf") return undefined;
     if (allowedValues.oneOf.type !== "oneOf") {
         return undefined;
@@ -166,8 +149,7 @@ function getOmsOneOf(
     return options.length > 0
         ? {
               options,
-              otherValuesAllowed:
-                  oneOf.otherValueAllowed.allowed,
+              otherValuesAllowed: oneOf.otherValueAllowed.allowed,
           }
         : undefined;
 }
@@ -177,11 +159,7 @@ export function convertOmsActionParameterStringConstraint(
     parameterName: string,
     fieldName?: string
 ): StringConstraint | undefined {
-    const allowedValues = getOmsActionParameterAllowedValues(
-        actionType,
-        parameterName,
-        fieldName
-    );
+    const allowedValues = getOmsActionParameterAllowedValues(actionType, parameterName, fieldName);
 
     if (allowedValues?.type === "oneOf") {
         const oneOf = getOmsOneOf(allowedValues);
@@ -214,16 +192,8 @@ export function convertOmsActionParameterStringSuggestions(
     parameterName: string,
     fieldName?: string
 ): StringSuggestion[] | undefined {
-    const oneOf = getOmsOneOf(
-        getOmsActionParameterAllowedValues(
-            actionType,
-            parameterName,
-            fieldName
-        )
-    );
-    return oneOf?.otherValuesAllowed
-        ? oneOf.options
-        : undefined;
+    const oneOf = getOmsOneOf(getOmsActionParameterAllowedValues(actionType, parameterName, fieldName));
+    return oneOf?.otherValuesAllowed ? oneOf.options : undefined;
 }
 
 export function convertOmsActionParameterDefaults(
@@ -233,19 +203,12 @@ export function convertOmsActionParameterDefaults(
     const result = new Map<string, Expression>();
     if (!actionType) return result;
 
-    const parameterValidations =
-        actionType.actionType.actionTypeLogic.validation
-            .parameterValidations;
+    const parameterValidations = actionType.actionType.actionTypeLogic.validation.parameterValidations;
 
     for (const parameter of parameters) {
         const defaultValue =
-            parameterValidations?.[parameter.name]
-                ?.defaultValidation.display.prefill ??
-            undefined;
-        const parameterDefault = convertDefaultValue(
-            actionType.propertyApiNamesByParameter,
-            defaultValue
-        );
+            parameterValidations?.[parameter.name]?.defaultValidation.display.prefill ?? undefined;
+        const parameterDefault = convertDefaultValue(actionType.propertyApiNamesByParameter, defaultValue);
         if (parameterDefault) {
             result.set(parameter.name, parameterDefault);
         }

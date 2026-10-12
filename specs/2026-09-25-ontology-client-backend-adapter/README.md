@@ -145,10 +145,7 @@ The conditional must surround manager construction, not only subscription:
 
 ```ts
 const unsubscribe = live
-    ? getObjectSetWatcherManager(client).subscribe(
-          { type: "base", objectType },
-          handleObjectSetMessage
-      )
+    ? getObjectSetWatcherManager(client).subscribe({ type: "base", objectType }, handleObjectSetMessage)
     : () => {};
 ```
 
@@ -223,17 +220,13 @@ The two public facades should feel similar, but their guarantees differ.
 as `LiveOntology`.
 
 ```ts
-interface OntologyClient<
-    Ontology extends OntologyDefinition = OntologyDefinition,
-> {
+interface OntologyClient<Ontology extends OntologyDefinition = OntologyDefinition> {
     readonly ir: OntologyIR;
     readonly context: OntologyContext<Ontology>;
 
     objects: OntologyClientObjects<Ontology["objectTypes"]>;
     actions: OntologyClientActions<Ontology["actionTypes"]>;
-    queryFunctions: OntologyClientQueryFunctions<
-        Ontology["queryFunctionTypes"]
-    >;
+    queryFunctions: OntologyClientQueryFunctions<Ontology["queryFunctionTypes"]>;
     attachments: OntologyClientAttachments<Ontology>;
 
     query<T>(
@@ -258,7 +251,8 @@ await client.actions.updateNote({
 });
 
 const counts = await client.query((q, objects) =>
-    q.from({ note: objects.Note })
+    q
+        .from({ note: objects.Note })
         .where(({ note }) => eq(note.ownerId, client.context.user))
         .groupBy(({ note }) => note.status)
         .select(({ note }) => ({
@@ -287,9 +281,7 @@ interface LiveOntology<Ontology extends OntologyDefinition> {
 
     objects: LiveOntologyObjects<Ontology["objectTypes"]>;
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
-    queryFunctions: LiveOntologyQueryFunctions<
-        Ontology["queryFunctionTypes"]
-    >;
+    queryFunctions: LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>;
     attachments: LiveOntologyAttachments<Ontology>;
 
     query<T>(
@@ -341,11 +333,7 @@ interface OntologyBackendAdapter {
         operation?: OntologyOperationOptions
     ): AsyncIterable<ChangeBatch<Checkpoint> | Resync>;
 
-    compareCheckpoints?(
-        objectType: string,
-        current: unknown,
-        target: unknown
-    ): boolean;
+    compareCheckpoints?(objectType: string, current: unknown, target: unknown): boolean;
 
     applyAction(
         name: string,
@@ -409,11 +397,9 @@ Both facades should accept the same TanStack-style builder:
 
 ```ts
 await ontology.query((q, objects) =>
-    q.from({ issue: objects.Issue })
-        .join(
-            { project: objects.Project },
-            ({ issue, project }) => eq(issue.projectId, project.id)
-        )
+    q
+        .from({ issue: objects.Issue })
+        .join({ project: objects.Project }, ({ issue, project }) => eq(issue.projectId, project.id))
         .where(({ issue }) => eq(issue.status, "open"))
         .select(({ issue, project }) => ({
             issueId: issue.id,
@@ -499,9 +485,7 @@ interface ActionReceipt {
 
 interface ActionEffect {
     objectType: string;
-    scope:
-        | { kind: "keys"; keys: Array<string | number> }
-        | { kind: "unknown" };
+    scope: { kind: "keys"; keys: Array<string | number> } | { kind: "unknown" };
 }
 
 interface ActionObservation {
@@ -559,9 +543,7 @@ return {
     changes,
     checkpoint,
     caughtUp,
-    observedActionKeys: entries.map(
-        (entry) => `foundry:${entry.operationId}`
-    ),
+    observedActionKeys: entries.map((entry) => `foundry:${entry.operationId}`),
 };
 ```
 

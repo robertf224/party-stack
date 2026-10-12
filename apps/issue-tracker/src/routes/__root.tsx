@@ -1,13 +1,6 @@
 /// <reference types="vite/client" />
-import {
-    createRootRoute,
-    HeadContent,
-    Outlet,
-    Scripts,
-} from "@tanstack/react-router";
-import {
-    type ReactNode,
-} from "react";
+import { createRootRoute, HeadContent, Link, Outlet, Scripts } from "@tanstack/react-router";
+import { type ReactNode } from "react";
 import "../app/globals.css";
 
 export const Route = createRootRoute({
@@ -26,6 +19,14 @@ export const Route = createRootRoute({
         ],
     }),
     component: RootComponent,
+    notFoundComponent: () => (
+        <main className="p-8 text-center">
+            <h1 className="text-xl font-semibold">Page not found</h1>
+            <Link to="/" className="mt-4 inline-block underline">
+                Back to Issue Tracker
+            </Link>
+        </main>
+    ),
 });
 
 function RootComponent() {
@@ -36,9 +37,7 @@ function RootComponent() {
     );
 }
 
-function RootDocument({
-    children,
-}: Readonly<{ children: ReactNode }>) {
+function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
     return (
         <html lang="en" className="h-full">
             <head>

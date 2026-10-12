@@ -1,5 +1,4 @@
 import { Temporal } from "temporal-polyfill";
-import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology";
 import { getFoundryAttachmentKind } from "../meta/foundryAttachmentMetadata.js";
 import {
     decodeFoundryMediaId,
@@ -8,6 +7,7 @@ import {
 } from "./foundryMediaId.js";
 import type { MediaReference } from "@osdk/foundry.core";
 import type { AttachmentProperty, OntologyObjectV2 } from "@osdk/foundry.ontologies";
+import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology";
 
 type FoundryObjectRecord = Record<string, unknown>;
 /** @deprecated Use {@link FoundryCodec} instead. */
@@ -123,10 +123,7 @@ export function createFoundryCodec(
                 return Object.fromEntries(
                     Object.entries(value).map(([key, entryValue]) => {
                         const field = resolvedType.value.fields.find((candidate) => candidate.name === key);
-                        return [
-                            key,
-                            field ? decodeValue(field.type, entryValue, context) : entryValue,
-                        ];
+                        return [key, field ? decodeValue(field.type, entryValue, context) : entryValue];
                     })
                 );
             case "union":
@@ -282,10 +279,9 @@ function unwrapEditHistoryValue(type: TypeDef, value: unknown): unknown {
         return value.value;
     }
     if (type.kind === "geopoint" && typeof value === "string") {
-        const match =
-            /^GeoPointPropertyValue\{latitude:\s*(-?[\d.]+),\s*longitude:\s*(-?[\d.]+)\}$/.exec(
-                value
-            );
+        const match = /^GeoPointPropertyValue\{latitude:\s*(-?[\d.]+),\s*longitude:\s*(-?[\d.]+)\}$/.exec(
+            value
+        );
         if (match) {
             return {
                 lat: Number(match[1]),
@@ -295,9 +291,7 @@ function unwrapEditHistoryValue(type: TypeDef, value: unknown): unknown {
     }
     if (
         type.kind === "attachment" &&
-        getFoundryAttachmentKind(
-            type.value.meta
-        ) !== "media" &&
+        getFoundryAttachmentKind(type.value.meta) !== "media" &&
         isPlainObject(value) &&
         value.type === "attachment" &&
         typeof value.attachment === "string"
@@ -306,9 +300,7 @@ function unwrapEditHistoryValue(type: TypeDef, value: unknown): unknown {
     }
     if (
         type.kind === "attachment" &&
-        getFoundryAttachmentKind(
-            type.value.meta
-        ) === "media" &&
+        getFoundryAttachmentKind(type.value.meta) === "media" &&
         isPlainObject(value) &&
         value.type === "mediaReference" &&
         isPlainObject(value.mediaReference)
@@ -324,16 +316,11 @@ function decodeAttachment(
     optional: boolean
 ): unknown {
     const kind = getFoundryAttachmentKind(meta);
-    const decoded =
-        kind === "media"
-            ? decodeMediaReference(value)
-            : decodeFoundryAttachment(value);
+    const decoded = kind === "media" ? decodeMediaReference(value) : decodeFoundryAttachment(value);
     if (decoded !== undefined || optional) {
         return decoded;
     }
-    throw new Error(
-        `Invalid required Foundry ${kind} value.`
-    );
+    throw new Error(`Invalid required Foundry ${kind} value.`);
 }
 
 function decodeFoundryAttachment(value: unknown): unknown {

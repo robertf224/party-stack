@@ -1,9 +1,17 @@
-/// <reference types="vite/client" />
-import { useState, useEffect, type ReactNode } from "react";
-import { Outlet, createRootRoute, HeadContent, Scripts, Link, useRouterState } from "@tanstack/react-router";
 import { useLiveQuery } from "@tanstack/react-db";
-import { OntologyProvider, useOntology } from "../ontology/OntologyProvider";
+import {
+    ClientOnly,
+    Outlet,
+    createRootRoute,
+    HeadContent,
+    Scripts,
+    Link,
+    useRouterState,
+} from "@tanstack/react-router";
 import { CommandBar } from "../components/CommandBar";
+import { OntologyProvider, useOntology } from "../ontology/OntologyProvider";
+/// <reference types="vite/client" />
+import type { ReactNode } from "react";
 import "../app.css";
 
 export const Route = createRootRoute({
@@ -25,17 +33,10 @@ export const Route = createRootRoute({
     component: RootComponent,
 });
 
-function ClientGate({ children, fallback }: { children: ReactNode; fallback?: ReactNode }) {
-    const [ready, setReady] = useState(false);
-    useEffect(() => setReady(true), []);
-    if (!ready) return <>{fallback ?? null}</>;
-    return <>{children}</>;
-}
-
 function RootComponent() {
     return (
         <RootDocument>
-            <ClientGate
+            <ClientOnly
                 fallback={
                     <div className="flex h-screen items-center justify-center bg-zinc-950 text-zinc-500">
                         Loading...
@@ -51,7 +52,7 @@ function RootComponent() {
                     </div>
                     <CommandBar />
                 </OntologyProvider>
-            </ClientGate>
+            </ClientOnly>
         </RootDocument>
     );
 }
@@ -84,7 +85,7 @@ function Sidebar() {
                     displayName: ot.displayName,
                 }))
                 .orderBy(({ ot }) => ot.displayName, "asc"),
-        [],
+        []
     );
 
     const { data: linkTypes } = useLiveQuery(
@@ -95,7 +96,7 @@ function Sidebar() {
                     id: lt.id,
                 }))
                 .orderBy(({ lt }) => lt.id, "asc"),
-        [],
+        []
     );
 
     return (
@@ -139,9 +140,17 @@ function Sidebar() {
                 <button
                     type="button"
                     className="flex w-full items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs text-zinc-400 transition-colors hover:border-zinc-600 hover:text-zinc-300"
-                    onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))}
+                    onClick={() =>
+                        window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))
+                    }
                 >
-                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <svg
+                        className="h-3.5 w-3.5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                    >
                         <circle cx="11" cy="11" r="8" />
                         <path d="m21 21-4.3-4.3" />
                     </svg>
@@ -155,20 +164,16 @@ function Sidebar() {
     );
 }
 
-function NavSection({
-    title,
-    count,
-    children,
-}: {
-    title: string;
-    count: number;
-    children: ReactNode;
-}) {
+function NavSection({ title, count, children }: { title: string; count: number; children: ReactNode }) {
     return (
         <div className="mt-5">
             <div className="mb-1 flex items-center justify-between px-2">
-                <span className="text-[11px] font-medium tracking-wider text-zinc-500 uppercase">{title}</span>
-                <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">{count}</span>
+                <span className="text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
+                    {title}
+                </span>
+                <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+                    {count}
+                </span>
             </div>
             <div className="flex flex-col gap-0.5">{children}</div>
         </div>
@@ -180,7 +185,9 @@ function NavLink({ to, label, active }: { to: string; label: string; active: boo
         <Link
             to={to}
             className={`block truncate rounded-md px-2 py-1.5 text-sm transition-colors ${
-                active ? "bg-zinc-800 font-medium text-zinc-100" : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
+                active
+                    ? "bg-zinc-800 font-medium text-zinc-100"
+                    : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
             }`}
         >
             {label}

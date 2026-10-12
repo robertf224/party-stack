@@ -1,5 +1,5 @@
-import type { Coordination } from "@party-stack/coordination";
 import { createPersistedCollectionCoordinator } from "../coordinator/createPersistedCollectionCoordinator.js";
+import type { Coordination } from "@party-stack/coordination";
 import type { PersistedCollectionPersistence } from "@tanstack/db-sqlite-persistence-core";
 
 /** Use the runtime coordinator while preserving the persistence factory's standard resolvers. */

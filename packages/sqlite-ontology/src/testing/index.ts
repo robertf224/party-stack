@@ -271,10 +271,7 @@ function runSchemaCreation(database: SQLiteDatabase): void {
     } catch {
         secondOntologyRejected = true;
     }
-    assert(
-        secondOntologyRejected,
-        "SQLite database accepted a second ontology."
-    );
+    assert(secondOntologyRejected, "SQLite database accepted a second ontology.");
 }
 
 async function runActionsAndContext(database: SQLiteDatabase): Promise<void> {
@@ -419,18 +416,13 @@ async function runLegacyAttachmentMigration(database: SQLiteDatabase): Promise<v
         database,
         name: "sqlite",
     });
-    const columns = database
-        .prepare(
-            `PRAGMA table_info("party_stack_attachments")`
-        )
-        .all() as Array<{ name: string; pk: number }>;
+    const columns = database.prepare(`PRAGMA table_info("party_stack_attachments")`).all() as Array<{
+        name: string;
+        pk: number;
+    }>;
     assert(
-        columns.find((column) => column.name === "id")
-            ?.pk === 1 &&
-            !columns.some(
-                (column) =>
-                    column.name === "ontology"
-            ),
+        columns.find((column) => column.name === "id")?.pk === 1 &&
+            !columns.some((column) => column.name === "ontology"),
         "Attachment migration did not produce a single-ontology table."
     );
     assertEqual(

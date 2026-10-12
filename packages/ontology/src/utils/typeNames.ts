@@ -12,10 +12,11 @@ export type ActionTypes<Ontology> = Ontology extends { readonly actionTypes: inf
     ? ArrayElement<ActionTypes>
     : never;
 
-export type QueryFunctionTypes<Ontology> =
-    Ontology extends { readonly queryFunctionTypes: infer QueryFunctionTypes }
-        ? ArrayElement<QueryFunctionTypes>
-        : never;
+export type QueryFunctionTypes<Ontology> = Ontology extends {
+    readonly queryFunctionTypes: infer QueryFunctionTypes;
+}
+    ? ArrayElement<QueryFunctionTypes>
+    : never;
 
 export type TypeName<Ontology> =
     NamedTypes<Ontology> extends { readonly name: infer Name } ? Extract<Name, string> : never;
@@ -27,6 +28,4 @@ export type ActionTypeName<Ontology> =
     ActionTypes<Ontology> extends { readonly name: infer Name } ? Extract<Name, string> : never;
 
 export type QueryFunctionTypeName<Ontology> =
-    QueryFunctionTypes<Ontology> extends { readonly name: infer Name }
-        ? Extract<Name, string>
-        : never;
+    QueryFunctionTypes<Ontology> extends { readonly name: infer Name } ? Extract<Name, string> : never;

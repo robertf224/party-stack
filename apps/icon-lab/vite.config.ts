@@ -1,10 +1,11 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
-import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Plugin, PreviewServer, ViteDevServer } from "vite";
+import { defineAppConfig } from "@party-stack/build-config";
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import { lazyPlugins } from "vite-plus";
+import type { Plugin, PreviewServer, ViteDevServer } from "vite-plus";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const generatedDataDir = path.join(rootDir, "temp", "data");
@@ -77,26 +78,85 @@ function generatedDataPlugin(): Plugin {
             serveGeneratedData(server);
         },
         async generateBundle() {
+            let missingData = false;
             for (const fileName of generatedFiles) {
                 if (fileName === "sfsymbols.local.zip") {
+                    continue;
+                }
+                let source: Buffer;
+                try {
+                    source = await readFile(path.join(generatedDataDir, fileName));
+                } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+                        throw error;
+                    }
+                    missingData = true;
                     continue;
                 }
                 this.emitFile({
                     type: "asset",
                     fileName: `generated-data/${fileName}`,
-                    source: await readFile(path.join(generatedDataDir, fileName)),
+                    source,
                 });
+            }
+            if (missingData) {
+                this.warn(
+                    "Icon Lab data is not prepared. Run vp run @party-stack/icon-lab#icons:embed before using the app."
+                );
             }
         },
     };
 }
 
-export default defineConfig({
+export default defineAppConfig({
+    run: {
+        tasks: {
+            "icons:archive": {
+                command: "tsx scripts/extract-assets.ts",
+                cache: false,
+                dependsOn: [{ task: "build", from: ["dependencies", "devDependencies"] }],
+            },
+            "icons:catalog": {
+                command: "tsx scripts/extract-assets.ts --catalog-only",
+                cache: {
+                    env: ["SF_SYMBOLS_ASSET_DIR"],
+                    input: [{ auto: true }, "!.", "*.{json,jsonc,ts,mts,js,mjs}", "!temp", "!temp/**"],
+                    output: ["temp/data/catalog.json", "temp/data/sfsymbols.local.zip"],
+                },
+                dependsOn: [{ task: "build", from: ["dependencies", "devDependencies"] }],
+            },
+            "icons:embed": {
+                command: "tsx scripts/generate-embeddings.ts",
+                // Cache generated artifacts independently of the downloaded model cache.
+                cache: {
+                    env: ["SF_SYMBOLS_ASSET_DIR"],
+                    input: [
+                        "../../pnpm-lock.yaml",
+                        "../../package.json",
+                        "*.json",
+                        "scripts/**",
+                        "src/shared/**",
+                        "public/icon-sets/**",
+                        "temp/data/catalog.json",
+                        "temp/data/sfsymbols.local.zip",
+                    ],
+                    output: [
+                        "temp/data/embeddings.i8",
+                        "temp/data/embeddings-index.json",
+                        "temp/data/mapping-audit.json",
+                        "temp/data/draft-mappings.json",
+                    ],
+                },
+                dependsOn: ["icons:catalog"],
+            },
+        },
+    },
+
     server: {
-        port: 5179,
         host: true,
     },
-    plugins: [react(), tailwindcss(), generatedDataPlugin()],
+    test: { environment: "node" },
+    plugins: lazyPlugins(() => [react(), tailwindcss(), generatedDataPlugin()]),
     resolve: {
         alias: {
             "@": path.resolve(rootDir, "src"),

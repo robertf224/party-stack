@@ -1,12 +1,13 @@
 import { useAction, useObject } from "@bobbyfidz/osdk-react";
 import { useAttachment, useAttachmentMetadata } from "@bobbyfidz/osdk-react/attachments";
 import { Task, deleteTask, editTask } from "@gtd/sdk";
-import { useParams, Link, useNavigate } from "react-router";
-import { useState, useRef, useEffect } from "react";
-import { Suspense } from "react";
 import { Attachment } from "@osdk/client";
+import { useState, useRef, useEffect, useId } from "react";
+import { Suspense } from "react";
+import { useParams, Link, useNavigate } from "react-router";
 
 // Full screen image preview dialog
+/* oxlint-disable jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- Clicking the backdrop dismisses the modal; the native dialog handles Escape and the close button handles keyboard activation. */
 function ImagePreviewDialog({
     isOpen,
     onClose,
@@ -18,36 +19,37 @@ function ImagePreviewDialog({
     imageUrl: string;
     altText: string;
 }) {
-    const dialogRef = useRef<HTMLDivElement>(null);
+    const dialogRef = useRef<HTMLDialogElement>(null);
 
-    // Handle escape key
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === "Escape") {
-            onClose();
-        }
-    };
-
-    // Focus the dialog when it opens
     useEffect(() => {
-        if (isOpen && dialogRef.current) {
-            dialogRef.current.focus();
-        }
+        const dialog = dialogRef.current;
+        if (!isOpen || !dialog) return;
+        dialog.showModal();
+        return () => dialog.close();
     }, [isOpen]);
 
     if (!isOpen) return null;
 
     return (
-        <div
+        <dialog
             ref={dialogRef}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm"
-            onClick={onClose}
-            onKeyDown={handleKeyDown}
-            tabIndex={0}
+            className="fixed inset-0 z-50 m-0 flex h-full max-h-none w-full max-w-none items-center justify-center border-0 bg-black/30 p-0 backdrop-blur-sm"
+            aria-modal="true"
+            aria-label={altText}
+            onClick={(event) => {
+                if (event.target === event.currentTarget) onClose();
+            }}
+            onCancel={(event) => {
+                event.preventDefault();
+                onClose();
+            }}
         >
             <div className="relative max-h-[80vh] max-w-4xl rounded-lg bg-white p-4 shadow-2xl">
                 <button
+                    aria-label="Close image preview"
+                    type="button"
                     onClick={onClose}
-                    className="absolute right-2 top-2 z-10 rounded-full bg-white bg-opacity-80 p-2 text-gray-600 shadow-sm transition-all hover:bg-opacity-100"
+                    className="bg-opacity-80 hover:bg-opacity-100 absolute top-2 right-2 z-10 rounded-full bg-white p-2 text-gray-600 shadow-sm transition-all"
                 >
                     <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path
@@ -58,16 +60,12 @@ function ImagePreviewDialog({
                         />
                     </svg>
                 </button>
-                <img
-                    src={imageUrl}
-                    alt={altText}
-                    className="max-h-full max-w-full rounded object-contain"
-                    onClick={(e) => e.stopPropagation()}
-                />
+                <img src={imageUrl} alt={altText} className="max-h-full max-w-full rounded object-contain" />
             </div>
-        </div>
+        </dialog>
     );
 }
+/* oxlint-enable jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions */
 
 function ImagePreview({ attachment }: { attachment: Attachment }) {
     const { data: dataUrl } = useAttachment(attachment);
@@ -79,12 +77,18 @@ function ImagePreview({ attachment }: { attachment: Attachment }) {
     return (
         <>
             <div className="mt-2">
-                <img
-                    src={dataUrl}
-                    alt={metadata?.filename || "Attachment preview"}
-                    className="h-auto max-h-48 max-w-full cursor-pointer rounded border transition-opacity hover:opacity-90"
+                <button
+                    aria-label={`Preview ${metadata?.filename || "attachment"}`}
+                    className="rounded outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    type="button"
                     onClick={() => setIsPreviewOpen(true)}
-                />
+                >
+                    <img
+                        src={dataUrl}
+                        alt={metadata?.filename || "Attachment preview"}
+                        className="h-auto max-h-48 max-w-full rounded border transition-opacity hover:opacity-90"
+                    />
+                </button>
             </div>
             <ImagePreviewDialog
                 isOpen={isPreviewOpen}
@@ -126,6 +130,7 @@ function AttachmentDisplay({ attachment }: { attachment: Attachment }) {
 }
 
 function TaskPage() {
+    const attachmentInputId = useId();
     const { taskId } = useParams();
     const navigate = useNavigate();
     const { data: task } = useObject(Task, taskId!);
@@ -177,7 +182,7 @@ function TaskPage() {
                 {
                     Task: task,
                     title: task.title!,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    // oxlint-disable-next-line typescript/no-explicit-any
                     attachment: null as any,
                 },
                 {
@@ -210,7 +215,7 @@ function TaskPage() {
                                     type="text"
                                     value={editedTitle}
                                     onChange={(e) => setEditedTitle(e.target.value)}
-                                    className="flex-1 rounded border border-gray-300 px-3 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                    className="flex-1 rounded border border-gray-300 px-3 py-1 focus:ring-2 focus:ring-blue-400 focus:outline-none"
                                     placeholder="Enter new title"
                                 />
                                 <button
@@ -253,8 +258,14 @@ function TaskPage() {
                     {/* File upload section in edit mode */}
                     {isEditMode && (
                         <div className="mb-4">
-                            <label className="mb-2 block text-sm font-medium text-gray-700">Attachment</label>
+                            <label
+                                htmlFor={attachmentInputId}
+                                className="mb-2 block text-sm font-medium text-gray-700"
+                            >
+                                Attachment
+                            </label>
                             <input
+                                id={attachmentInputId}
                                 ref={fileInputRef}
                                 type="file"
                                 onChange={handleFileChange}

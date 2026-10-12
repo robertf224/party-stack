@@ -1,6 +1,9 @@
 {
     "name": "@party-stack/ontology-devtools",
     "version": "0.6.0",
+    "files": [
+        "lib"
+    ],
     "type": "module",
     "exports": {
         ".": {
@@ -8,40 +11,31 @@
             "default": "./lib/index.js"
         }
     },
-    "files": [
-        "lib"
-    ],
-    "scripts": {
-        "build": "tsc && pnpm run build:css",
-        "build:css": "tailwindcss -i ./src/styles.css -o ./lib/styles.css --minify",
-        "lint": "eslint",
-        "test": "vitest run src --pass-with-no-tests"
-    },
     "dependencies": {
-        "@base-ui/react": "^1.6.0",
+        "@base-ui/react": "^1.8.0",
         "@dagrejs/dagre": "^3.1.1",
         "@number-flow/react": "^0.6.2",
         "@party-stack/icons": "workspace:^",
         "@party-stack/icons-lucide": "workspace:^",
-        "@party-stack/ontology": "workspace:*",
+        "@party-stack/ontology": "workspace:^",
         "@tanstack/devtools-utils": "^0.6.0",
-        "@tanstack/react-table": "^8.21.3",
+        "@tanstack/react-table": "^9.2.8",
         "lucide-react": "^1.31.0"
     },
     "devDependencies": {
-        "@bobbyfidz/react-build-config": "^0.1.1",
-        "@tailwindcss/cli": "4.1.17",
+        "@party-stack/build-config": "workspace:^",
+        "@tailwindcss/postcss": "^4.1.17",
         "@tanstack/db": "0.12.1",
-        "@tanstack/react-db": "~0.5.5",
+        "@tanstack/react-db": "0.5.5",
         "@tanstack/react-devtools": "^0.10.9",
         "@types/react": "^19.2.6",
         "@types/react-dom": "^19.2.3",
-        "eslint": "^9.25.0",
+        "postcss-import": "^17.0.0",
         "react": "^19.2.0",
         "react-dom": "^19.2.0",
-        "tailwindcss": "4.1.17",
-        "typescript": "~5.8.3",
-        "vitest": "^3.1.1"
+        "tailwindcss": "^4.1.17",
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
     },
     "peerDependencies": {
         "@tanstack/db": "0.12.1",

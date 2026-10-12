@@ -1,6 +1,4 @@
-export type SalesforceStandardActionKind =
-    | "action"
-    | "queryFunction";
+export type SalesforceStandardActionKind = "action" | "queryFunction";
 
 /**
  * Standard actions have Salesforce-owned, versioned semantics. Keep this list
@@ -21,10 +19,6 @@ const QUERY_FUNCTIONS = new Set([
     "summarizeRecord",
 ]);
 
-export function classifySalesforceStandardAction(
-    name: string
-): SalesforceStandardActionKind {
-    return QUERY_FUNCTIONS.has(name)
-        ? "queryFunction"
-        : "action";
+export function classifySalesforceStandardAction(name: string): SalesforceStandardActionKind {
+    return QUERY_FUNCTIONS.has(name) ? "queryFunction" : "action";
 }

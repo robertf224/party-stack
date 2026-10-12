@@ -1,8 +1,5 @@
 import { createNodeRuntime } from "@party-stack/node-runtime";
-import {
-    createClientCredentialsOAuthClient,
-    createPublicOAuthClient,
-} from "@party-stack/oauth";
+import { createClientCredentialsOAuthClient, createPublicOAuthClient } from "@party-stack/oauth";
 import { createSalesforceClient } from "../lib/index.js";
 
 function requiredEnvironmentVariable(name) {
@@ -25,9 +22,7 @@ async function resolveSalesforceUserId(loginUrl, accessToken) {
         },
     });
     if (!response.ok) {
-        throw new Error(
-            `Salesforce userinfo failed (${response.status}): ${await response.text()}`
-        );
+        throw new Error(`Salesforce userinfo failed (${response.status}): ${await response.text()}`);
     }
 
     const user = await response.json();
@@ -40,34 +35,26 @@ async function resolveSalesforceUserId(loginUrl, accessToken) {
 
 export async function createLocalSalesforceSession() {
     const clientId = requiredEnvironmentVariable("SALESFORCE_CLIENT_ID");
-    const clientSecret =
-        process.env.SALESFORCE_CLIENT_SECRET?.trim();
+    const clientSecret = process.env.SALESFORCE_CLIENT_SECRET?.trim();
     const instanceUrl = normalizeUrl(requiredEnvironmentVariable("SALESFORCE_INSTANCE_URL"));
     const loginUrl = normalizeUrl(process.env.SALESFORCE_LOGIN_URL?.trim() || instanceUrl);
-    const redirectUrl =
-        process.env.SALESFORCE_REDIRECT_URL?.trim() || "http://localhost:1717/oauth/callback";
+    const redirectUrl = process.env.SALESFORCE_REDIRECT_URL?.trim() || "http://localhost:1717/oauth/callback";
     const apiVersion = process.env.SALESFORCE_API_VERSION?.trim() || "65.0";
 
     if (clientSecret) {
-        const oauth =
-            createClientCredentialsOAuthClient({
-                clientId,
-                clientSecret,
-                tokenEndpoint: `${loginUrl}/services/oauth2/token`,
-                resolveUserId: (accessToken) =>
-                    resolveSalesforceUserId(
-                        loginUrl,
-                        accessToken
-                    ),
-            });
+        const oauth = createClientCredentialsOAuthClient({
+            clientId,
+            clientSecret,
+            tokenEndpoint: `${loginUrl}/services/oauth2/token`,
+            resolveUserId: (accessToken) => resolveSalesforceUserId(loginUrl, accessToken),
+        });
         const session = await oauth.getSession();
         return {
             apiVersion,
             client: createSalesforceClient({
                 instanceUrl,
                 apiVersion,
-                tokenProvider: () =>
-                    oauth.getAccessToken(),
+                tokenProvider: () => oauth.getAccessToken(),
             }),
             instanceUrl,
             session,
@@ -97,9 +84,7 @@ export async function createLocalSalesforceSession() {
 
     try {
         const restored = await oauth.restoreSessions();
-        const session = restored[0]
-            ? await oauth.refresh(restored[0].userId)
-            : await oauth.signIn();
+        const session = restored[0] ? await oauth.refresh(restored[0].userId) : await oauth.signIn();
         const client = createSalesforceClient({
             instanceUrl,
             apiVersion,

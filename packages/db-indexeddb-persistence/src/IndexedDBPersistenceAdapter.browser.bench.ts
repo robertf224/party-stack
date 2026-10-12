@@ -11,7 +11,7 @@ import {
     not,
     or,
 } from "@tanstack/db";
-import { afterAll, bench, describe } from "vitest";
+import { afterAll, describe, test } from "vite-plus/test";
 import { IndexedDBPersistenceAdapter } from "./IndexedDBPersistenceAdapter.js";
 import type { LoadSubsetOptions } from "@tanstack/db";
 import type { PersistedIndexSpec, PersistedTx } from "@tanstack/db-sqlite-persistence-core";
@@ -147,94 +147,102 @@ for (const [name, options, expected] of expectedCounts) {
 }
 
 describe("IndexedDBPersistenceAdapter browser query planning", () => {
-    bench(
-        "full collection fallback: 10,000 rows loaded",
-        async () => {
+    test("full collection fallback: 10,000 rows loaded", async ({ bench }) => {
+        await bench("full collection fallback: 10,000 rows loaded", async () => {
             await adapter.loadSubset("items", unplannableOr);
-        },
-        BENCH_OPTIONS
-    );
+        }).run(BENCH_OPTIONS);
+    });
 
-    bench(
-        "equality index: 100 entries scanned / rows loaded",
-        async () => {
+    test("equality index: 100 entries scanned / rows loaded", async ({ bench }) => {
+        await bench("equality index: 100 entries scanned / rows loaded", async () => {
             await adapter.loadSubset("items", categoryEquals);
-        },
-        BENCH_OPTIONS
-    );
+        }).run(BENCH_OPTIONS);
+    });
 
-    bench(
-        "range index: 1,000 entries scanned / rows loaded",
-        async () => {
+    test("range index: 1,000 entries scanned / rows loaded", async ({ bench }) => {
+        await bench("range index: 1,000 entries scanned / rows loaded", async () => {
             await adapter.loadSubset("items", highPriority);
-        },
-        BENCH_OPTIONS
-    );
+        }).run(BENCH_OPTIONS);
+    });
 
-    bench(
-        "indexed AND: 1,100 entries scanned / 10 rows loaded",
-        async () => {
+    test("indexed AND: 1,100 entries scanned / 10 rows loaded", async ({ bench }) => {
+        await bench("indexed AND: 1,100 entries scanned / 10 rows loaded", async () => {
             await adapter.loadSubset("items", indexedAnd);
-        },
-        BENCH_OPTIONS
-    );
+        }).run(BENCH_OPTIONS);
+    });
 
-    bench(
-        "indexed OR: 1,100 entries scanned / 1,090 rows loaded",
-        async () => {
+    test("indexed OR: 1,100 entries scanned / 1,090 rows loaded", async ({ bench }) => {
+        await bench("indexed OR: 1,100 entries scanned / 1,090 rows loaded", async () => {
             await adapter.loadSubset("items", indexedOr);
-        },
-        BENCH_OPTIONS
-    );
+        }).run(BENCH_OPTIONS);
+    });
 
-    bench(
-        "AND with residual NOT: 100 entries scanned / rows loaded",
-        async () => {
+    test("AND with residual NOT: 100 entries scanned / rows loaded", async ({ bench }) => {
+        await bench("AND with residual NOT: 100 entries scanned / rows loaded", async () => {
             await adapter.loadSubset("items", residualAnd);
-        },
-        BENCH_OPTIONS
-    );
+        }).run(BENCH_OPTIONS);
+    });
 
-    bench(
-        "IN with three values: 300 entries scanned / rows loaded",
-        async () => {
+    test("IN with three values: 300 entries scanned / rows loaded", async ({ bench }) => {
+        await bench("IN with three values: 300 entries scanned / rows loaded", async () => {
             await adapter.loadSubset("items", categoryIn);
-        },
-        BENCH_OPTIONS
-    );
+        }).run(BENCH_OPTIONS);
+    });
 
-    bench(
-        "prefix LIKE: 500 entries scanned / rows loaded",
-        async () => {
+    test("prefix LIKE: 500 entries scanned / rows loaded", async ({ bench }) => {
+        await bench("prefix LIKE: 500 entries scanned / rows loaded", async () => {
             await adapter.loadSubset("items", prefixLike);
-        },
-        BENCH_OPTIONS
-    );
+        }).run(BENCH_OPTIONS);
+    });
 });
 
 // Persistence analogue of upstream's incremental-update workload: a fixed large
 // collection and repeated small edits. These timings include real browser IDB.
-const fallbackAdapter = new IndexedDBPersistenceAdapter({ databaseName: `bench-fallback-${crypto.randomUUID()}` });
+const fallbackAdapter = new IndexedDBPersistenceAdapter({
+    databaseName: `bench-fallback-${crypto.randomUUID()}`,
+});
 await fallbackAdapter.applyCommittedTx("items", seedTransaction(buildRows()));
 const page = queryOptions((query) => query.orderBy(({ item }) => item.priority, "asc").limit(10));
-const emptyAnd = queryOptions((query) => query.where(({ item }) => and(eq(item.category, "absent"), gte(item.priority, 900))));
+const emptyAnd = queryOptions((query) =>
+    query.where(({ item }) => and(eq(item.category, "absent"), gte(item.priority, 900)))
+);
 const indexedPage = await adapter.loadSubset("items", page);
 const fallbackPage = await fallbackAdapter.loadSubset("items", page);
-if (indexedPage.length !== 10 || JSON.stringify(indexedPage) !== JSON.stringify(fallbackPage)) throw new Error("Pagination benchmark paths disagree");
+if (indexedPage.length !== 10 || JSON.stringify(indexedPage) !== JSON.stringify(fallbackPage))
+    throw new Error("Pagination benchmark paths disagree");
 let writeVersion = 1;
 describe("IndexedDB persistence pagination and incremental updates", () => {
-    bench("ordered index: first 10 of 10,000 rows", async () => { await adapter.loadSubset("items", page); }, BENCH_OPTIONS);
-    bench("unindexed fallback: same first 10 of 10,000 rows", async () => { await fallbackAdapter.loadSubset("items", page); }, BENCH_OPTIONS);
-    bench("empty AND: absent category intersected with 1,000 priorities", async () => {
-        if ((await adapter.loadSubset("items", emptyAnd)).length !== 0) throw new Error("Empty intersection returned rows");
-    }, BENCH_OPTIONS);
-    bench("one-row partial update with four maintained indexes", async () => {
-        const version = ++writeVersion;
-        await adapter.applyCommittedTx("items", {
-            txId: `update-${version}`, term: 1, seq: version, rowVersion: version,
-            mutations: [{ type: "update", key: "item-0", value: { priority: version % 1000 } }],
-        });
-    }, BENCH_OPTIONS);
+    test("ordered index: first 10 of 10,000 rows", async ({ bench }) => {
+        await bench("ordered index: first 10 of 10,000 rows", async () => {
+            await adapter.loadSubset("items", page);
+        }).run(BENCH_OPTIONS);
+    });
+    test("unindexed fallback: same first 10 of 10,000 rows", async ({ bench }) => {
+        await bench("unindexed fallback: same first 10 of 10,000 rows", async () => {
+            await fallbackAdapter.loadSubset("items", page);
+        }).run(BENCH_OPTIONS);
+    });
+    test("empty AND: absent category intersected with 1,000 priorities", async ({ bench }) => {
+        await bench("empty AND: absent category intersected with 1,000 priorities", async () => {
+            if ((await adapter.loadSubset("items", emptyAnd)).length !== 0)
+                throw new Error("Empty intersection returned rows");
+        }).run(BENCH_OPTIONS);
+    });
+    test("one-row partial update with four maintained indexes", async ({ bench }) => {
+        await bench("one-row partial update with four maintained indexes", async () => {
+            const version = ++writeVersion;
+            await adapter.applyCommittedTx("items", {
+                txId: `update-${version}`,
+                term: 1,
+                seq: version,
+                rowVersion: version,
+                mutations: [{ type: "update", key: "item-0", value: { priority: version % 1000 } }],
+            });
+        }).run(BENCH_OPTIONS);
+    });
 });
 
-afterAll(() => { adapter.close(); fallbackAdapter.close(); });
+afterAll(() => {
+    adapter.close();
+    fallbackAdapter.close();
+});

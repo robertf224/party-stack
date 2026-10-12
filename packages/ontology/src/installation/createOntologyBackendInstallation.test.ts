@@ -1,9 +1,9 @@
 import { createDefaultRuntime, defineRuntime } from "@party-stack/runtime";
-import { describe, expect, it, vi } from "vitest";
-import type { BackendConnectionAdapter, ConnectionEgressHandlers } from "@party-stack/connections";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { o } from "../ir/generated/builders.js";
 import { createOntologyBackendInstallation } from "./createOntologyBackendInstallation.js";
 import type { OntologyIR } from "../ir/index.js";
+import type { BackendConnectionAdapter, ConnectionEgressHandlers } from "@party-stack/connections";
 
 const ir: OntologyIR = {
     types: [],

@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import nextEnv from "@next/env";
 import { createJiti } from "jiti";
-import { format, resolveConfig } from "prettier";
 import { generateOntology } from "../generate/ontology.js";
 import { pull } from "../meta/pull.js";
+import { formatGeneratedFile } from "./format.js";
 import type { OntologyPullContext, OntologyPullSource, OntologyPullConfig } from "../OntologyPullConfig.js";
 
 const { loadEnvConfig } = nextEnv;
@@ -86,11 +86,7 @@ export async function writePulledOntology(
 
         mkdirSync(dirname(outPath), { recursive: true });
 
-        const prettierConfig = await resolveConfig(dirname(outPath));
-        const formatted = await format(`// Auto-generated file - do not edit manually\n\n${output}`, {
-            ...prettierConfig,
-            filepath: outPath,
-        });
+        const formatted = await formatGeneratedFile(outPath, output);
 
         writeFileSync(outPath, formatted, "utf-8");
     } finally {

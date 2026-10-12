@@ -6,8 +6,6 @@ import {
 } from "@osdk/foundry.ontologies";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
-import type { OntologyClient } from "@party-stack/foundry-client";
-import type { MetaActionType, OntologyCollectionOptions } from "@party-stack/ontology";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import {
     convertActionTypeLoadSubsetFilter,
@@ -15,6 +13,8 @@ import {
 } from "./convertActionTypeLoadSubsetOptions.js";
 import { convertFoundryMetaActionType } from "./convertMetaActionType.js";
 import { loadActionTypeOmsMetadata } from "./loadActionTypeOmsMetadata.js";
+import type { OntologyClient } from "@party-stack/foundry-client";
+import type { MetaActionType, OntologyCollectionOptions } from "@party-stack/ontology";
 import type { LoadSubsetOptions } from "@tanstack/db";
 
 export interface ActionTypeCollectionOpts {

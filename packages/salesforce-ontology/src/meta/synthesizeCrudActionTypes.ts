@@ -1,11 +1,3 @@
-import type {
-    MetaActionType,
-    TypeDef,
-} from "@party-stack/ontology";
-import type {
-    SalesforceFieldDescribe,
-    SalesforceSObjectDescribe,
-} from "@party-stack/salesforce-client";
 import { salesforceActionMeta } from "../actionMetadata.js";
 import {
     salesforceCrudActionTypeId,
@@ -13,24 +5,18 @@ import {
     type SalesforceCrudOperation,
 } from "../utils/ids.js";
 import { convertSalesforceFieldType } from "./convertMetaTypeDef.js";
+import type { MetaActionType, TypeDef } from "@party-stack/ontology";
+import type { SalesforceFieldDescribe, SalesforceSObjectDescribe } from "@party-stack/salesforce-client";
 
 const COMPOUND_PARENT_TYPES = new Set(["address", "location"]);
 
 function optional(type: TypeDef): TypeDef {
-    return type.kind === "optional"
-        ? type
-        : { kind: "optional", value: { type } };
+    return type.kind === "optional" ? type : { kind: "optional", value: { type } };
 }
 
-function writableFieldParameter(
-    field: SalesforceFieldDescribe,
-    operation: "create" | "update"
-) {
+function writableFieldParameter(field: SalesforceFieldDescribe, operation: "create" | "update") {
     let type = convertSalesforceFieldType(field);
-    if (
-        operation === "update" ||
-        (operation === "create" && field.defaultedOnCreate)
-    ) {
+    if (operation === "update" || (operation === "create" && field.defaultedOnCreate)) {
         type = optional(type);
     }
     return {
@@ -46,17 +32,9 @@ function action(
     operation: SalesforceCrudOperation,
     parameters: MetaActionType["parameters"]
 ): MetaActionType {
-    const verb =
-        operation === "create"
-            ? "Create"
-            : operation === "update"
-              ? "Update"
-              : "Delete";
+    const verb = operation === "create" ? "Create" : operation === "update" ? "Update" : "Delete";
     const values = parameters
-        .filter(
-            (parameter) =>
-                parameter.name !== "recordId"
-        )
+        .filter((parameter) => parameter.name !== "recordId")
         .map((parameter) => ({
             property: [parameter.name],
             value: {
@@ -98,39 +76,26 @@ function action(
                     },
                 ];
     return {
-        id: salesforceCrudActionTypeId(
-            operation,
-            describe.name
-        ),
+        id: salesforceCrudActionTypeId(operation, describe.name),
         meta: salesforceActionMeta({
             kind: "crud",
             objectType: describe.name,
             operation,
         }),
-        name: salesforceCrudActionTypeName(
-            operation,
-            describe.name
-        ),
+        name: salesforceCrudActionTypeName(operation, describe.name),
         displayName: `${verb} ${describe.label}`,
         parameters,
         logic,
     };
 }
 
-function isWritableField(
-    field: SalesforceFieldDescribe,
-    operation: "create" | "update"
-): boolean {
+function isWritableField(field: SalesforceFieldDescribe, operation: "create" | "update"): boolean {
     if (COMPOUND_PARENT_TYPES.has(field.type)) return false;
     if (field.calculated || field.autoNumber) return false;
-    return operation === "create"
-        ? field.createable
-        : field.updateable;
+    return operation === "create" ? field.createable : field.updateable;
 }
 
-export function synthesizeSalesforceCrudActionTypes(
-    describe: SalesforceSObjectDescribe
-): MetaActionType[] {
+export function synthesizeSalesforceCrudActionTypes(describe: SalesforceSObjectDescribe): MetaActionType[] {
     const actions: MetaActionType[] = [];
     if (describe.createable) {
         actions.push(
@@ -138,12 +103,8 @@ export function synthesizeSalesforceCrudActionTypes(
                 describe,
                 "create",
                 describe.fields
-                    .filter((field) =>
-                        isWritableField(field, "create")
-                    )
-                    .map((field) =>
-                        writableFieldParameter(field, "create")
-                    )
+                    .filter((field) => isWritableField(field, "create"))
+                    .map((field) => writableFieldParameter(field, "create"))
             )
         );
     }
@@ -159,12 +120,8 @@ export function synthesizeSalesforceCrudActionTypes(
                     },
                 },
                 ...describe.fields
-                    .filter((field) =>
-                        isWritableField(field, "update")
-                    )
-                    .map((field) =>
-                        writableFieldParameter(field, "update")
-                    ),
+                    .filter((field) => isWritableField(field, "update"))
+                    .map((field) => writableFieldParameter(field, "update")),
             ])
         );
     }

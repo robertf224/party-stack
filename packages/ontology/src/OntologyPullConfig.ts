@@ -1,7 +1,7 @@
-import type { Connection } from "@party-stack/connections";
-import type { RuntimeAdapterProvider } from "@party-stack/runtime";
 import type { OntologyBackendInstallation } from "./installation/types.js";
 import type { OntologyIR } from "./ir/generated/types.js";
+import type { Connection } from "@party-stack/connections";
+import type { RuntimeAdapterProvider } from "@party-stack/runtime";
 
 export interface OntologyPullContext {
     runtime: RuntimeAdapterProvider;

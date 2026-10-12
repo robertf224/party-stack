@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { o, type OntologyIR } from "../../ir/index.js";
 import { applyActionLogicToMutatorTx } from "./OntologyEdits.js";
 
@@ -46,9 +46,7 @@ describe("applyActionLogicToMutatorTx", () => {
                                 objectType: "Task",
                                 values: [
                                     {
-                                        property: [
-                                            "Subject",
-                                        ],
+                                        property: ["Subject"],
                                         value: {
                                             kind: "inputReference",
                                             value: {

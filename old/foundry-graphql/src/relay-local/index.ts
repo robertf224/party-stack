@@ -11,14 +11,14 @@ export function createNetwork(client: Client): ReturnType<typeof Network.create>
         invariant(request.text, "Query text is required.");
         const executor = await executorPromise;
         const token = await client.__osdkClientContext.tokenProvider();
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        // oxlint-disable-next-line typescript/no-unsafe-assignment
         const result = await executor({
             query: request.text,
             operationName: request.name,
             variables,
             token,
         });
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        // oxlint-disable-next-line typescript/no-unsafe-return
         return result;
     };
     return Network.create(fetchFunction);

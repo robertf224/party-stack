@@ -2,6 +2,9 @@ import { OntologiesV2 } from "@osdk/foundry.ontologies";
 import { createCollection, eq, liveQueryCollectionOptions, Query } from "@tanstack/db";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
+import { convertFoundryMetaLinkTypes } from "./convertMetaLinkType.js";
+import { convertFoundryMetaObjectType } from "./convertMetaObjectType.js";
+import { convertFoundryMetaValueType } from "./convertMetaValueType.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type {
     MetaLinkType,
@@ -9,9 +12,6 @@ import type {
     MetaValueType,
     OntologyCollectionOptions,
 } from "@party-stack/ontology";
-import { convertFoundryMetaLinkTypes } from "./convertMetaLinkType.js";
-import { convertFoundryMetaObjectType } from "./convertMetaObjectType.js";
-import { convertFoundryMetaValueType } from "./convertMetaValueType.js";
 
 type MetaEntity =
     | { entityType: "ObjectType"; entity: MetaObjectType }

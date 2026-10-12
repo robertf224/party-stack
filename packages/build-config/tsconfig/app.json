@@ -1,0 +1,14 @@
+{
+    "extends": "./react.json",
+    "compilerOptions": {
+        "rootDir": "${configDir}",
+        "noEmit": true,
+        "noUncheckedIndexedAccess": false,
+        "lib": ["DOM", "DOM.Iterable", "ESNext"],
+        "types": ["node", "vite/client"],
+        "paths": {
+            "@/*": ["${configDir}/src/*"]
+        }
+    },
+    "include": ["${configDir}/src/**/*.ts", "${configDir}/src/**/*.tsx", "${configDir}/vite.config.ts"]
+}

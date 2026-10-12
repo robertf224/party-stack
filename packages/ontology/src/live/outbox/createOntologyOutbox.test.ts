@@ -4,7 +4,10 @@ import {
     createConnectionMonitor,
     type ConnectionEgressHandlers,
 } from "@party-stack/connections";
-import { SharedWorkerCoordinationClient, SharedWorkerCoordinationHost } from "@party-stack/coordination/shared-worker";
+import {
+    SharedWorkerCoordinationClient,
+    SharedWorkerCoordinationHost,
+} from "@party-stack/coordination/shared-worker";
 import {
     type CoordinationCallOptions,
     type CoordinationClient,
@@ -20,13 +23,9 @@ import {
     type RuntimeAdapter,
     SingleProcessCoordination,
 } from "@party-stack/runtime";
+import { queryOnce } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
-import {
-    describe,
-    expect,
-    it,
-    vi,
-} from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { createOntologyOutbox } from "./createOntologyOutbox.js";
 import { OUTBOX_COORDINATION_SERVICE, type OutboxCoordinationService } from "./service.js";
 import { NonRetryableError } from "./types.js";
@@ -64,12 +63,15 @@ class TestNetworkConnectivity implements NetworkConnectivity {
 function memoryPersistenceAdapter(): PersistenceAdapter {
     const rows = new Map<string | number, Record<string, unknown>>();
     return {
-        loadResumeSnapshot: () => Promise.resolve({
-            rows: [...rows].map(([key, value]) => ({ key, value })),
-            collectionMetadata: [],
-            latestTerm: 0, latestSeq: 0, latestRowVersion: 0,
-            resetEpoch: 0,
-        }),
+        loadResumeSnapshot: () =>
+            Promise.resolve({
+                rows: [...rows].map(([key, value]) => ({ key, value })),
+                collectionMetadata: [],
+                latestTerm: 0,
+                latestSeq: 0,
+                latestRowVersion: 0,
+                resetEpoch: 0,
+            }),
         loadSubset: () =>
             Promise.resolve(
                 [...rows].map(([key, value]) => ({
@@ -118,16 +120,8 @@ function coordinatedOutboxRuntime(options: {
 }
 
 function createSingleProcessRuntime(
-    options: Omit<
-        RuntimeAdapter,
-        "coordination" | "owner" | "namespace"
-    > &
-        Partial<
-            Pick<
-                RuntimeAdapter,
-                "owner" | "namespace"
-            >
-        >,
+    options: Omit<RuntimeAdapter, "coordination" | "owner" | "namespace"> &
+        Partial<Pick<RuntimeAdapter, "owner" | "namespace">>,
     scope: string
 ): {
     runtime: RuntimeAdapter;
@@ -253,15 +247,13 @@ class TestLeadershipCoordination implements CoordinationHost {
 function setup(isConnected = true) {
     const connectivity = new TestNetworkConnectivity(isConnected);
     const execute = vi.fn(() => Promise.resolve("done"));
-    const { runtime, coordination } =
-        createSingleProcessRuntime(
-            {
-                blobBytes:
-                    new MemoryBlobBytesStore(),
-                connectivity,
-            },
-            `setup-${crypto.randomUUID()}`
-        );
+    const { runtime, coordination } = createSingleProcessRuntime(
+        {
+            blobBytes: new MemoryBlobBytesStore(),
+            connectivity,
+        },
+        `setup-${crypto.randomUUID()}`
+    );
     const outbox = createOntologyOutbox({
         runtime,
         execute,
@@ -275,6 +267,39 @@ function setup(isConnected = true) {
 }
 
 describe("createOntologyOutbox", () => {
+    it("indexes persisted queue ordering without loading the entire outbox", async () => {
+        const warn = vi.spyOn(console, "warn");
+        const { runtime, coordination } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(false),
+                persistence: { adapter: memoryPersistenceAdapter() },
+            },
+            "indexed-outbox"
+        );
+        const outbox = createOntologyOutbox({ runtime, execute: () => Promise.resolve() });
+        try {
+            await outbox.ready;
+            const first = await outbox.enqueue({ actionTypeName: "createTask", parameters: {} });
+            void first.completed.catch(() => undefined);
+            const second = await outbox.enqueue({ actionTypeName: "createTask", parameters: {} });
+            void second.completed.catch(() => undefined);
+            const head = await queryOnce((query) =>
+                query
+                    .from({ entry: outbox.collection })
+                    .orderBy(({ entry }) => entry.sequence, "asc")
+                    .findOne()
+            );
+            expect(head?.id).toBe(first.entry.id);
+            expect(second.entry.sequence).toBe(first.entry.sequence + 1);
+            expect(warn.mock.calls.flat().join(" ")).not.toContain("orderBy with limit requires an index");
+        } finally {
+            await outbox.cleanup();
+            await coordination.close();
+            warn.mockRestore();
+        }
+    });
+
     it("persists before executing and removes completed work", async () => {
         const { execute, outbox } = setup();
         await outbox.ready;
@@ -312,8 +337,7 @@ describe("createOntologyOutbox", () => {
     it("waits until the owning user connection is ready", async () => {
         const handlers: ConnectionEgressHandlers = {
             fetch: () => Promise.resolve(new Response()),
-            createWebSocket: () =>
-                Promise.reject(new Error("unexpected websocket")),
+            createWebSocket: () => Promise.reject(new Error("unexpected websocket")),
         };
         const createConnection = () => ({
             userId: "user-1",
@@ -331,28 +355,18 @@ describe("createOntologyOutbox", () => {
         }> = {
             name: "test",
             createAuthenticationClient: (controller) => ({
-                signIn: () =>
-                    controller.connect(
-                        createEstablishedConnection()
-                    ),
+                signIn: () => controller.connect(createEstablishedConnection()),
             }),
-            restoreConnections: () =>
-                Promise.resolve([
-                    createEstablishedConnection(),
-                ]),
+            restoreConnections: () => Promise.resolve([createEstablishedConnection()]),
         };
-        const connectionRuntime = createDefaultRuntime(
-            "installation",
-            `connection-${crypto.randomUUID()}`
-        );
+        const connectionRuntime = createDefaultRuntime("installation", `connection-${crypto.randomUUID()}`);
         const connections = await createConnectionManager({
             installationId: "test",
             runtime: connectionRuntime,
             adapter: () => adapter,
         });
         const connection = connections.connections.get("user-1")!;
-        const connectionEgress =
-            connections.egress("user-1");
+        const connectionEgress = connections.egress("user-1");
         await connections.disconnect("user-1");
         const { runtime, coordination } = createSingleProcessRuntime(
             {
@@ -364,10 +378,7 @@ describe("createOntologyOutbox", () => {
         const outbox = createOntologyOutbox({
             runtime,
             execute,
-            connection: createConnectionMonitor(
-                connections,
-                connection.userId
-            ),
+            connection: createConnectionMonitor(connections, connection.userId),
         });
         await outbox.ready;
         const action = await outbox.enqueue({
@@ -379,11 +390,9 @@ describe("createOntologyOutbox", () => {
         expect(execute).not.toHaveBeenCalled();
 
         await connections.authentication.signIn();
-        await expect(
-            connectionEgress!.fetch(
-                new Request("https://example.com")
-            )
-        ).resolves.toBeInstanceOf(Response);
+        await expect(connectionEgress!.fetch(new Request("https://example.com"))).resolves.toBeInstanceOf(
+            Response
+        );
         await expect(action.completed).resolves.toBe("done");
         expect(execute).toHaveBeenCalledOnce();
 
@@ -411,7 +420,9 @@ describe("createOntologyOutbox", () => {
         expect(outbox.collection.get(action.entry.id)?.request.parameters.title).toBe("After");
 
         expect(action.entry.request.parameters.title).toBe("Before");
-        expect(String(outbox.collection.get(action.entry.id)?.request.parameters.instant)).toBe(instant.toString());
+        expect(String(outbox.collection.get(action.entry.id)?.request.parameters.instant)).toBe(
+            instant.toString()
+        );
         await outbox.remove(action.entry.id);
         await expect(action.completed).rejects.toThrow("removed");
         expect(outbox.collection.has(action.entry.id)).toBe(false);
@@ -426,18 +437,13 @@ describe("createOntologyOutbox", () => {
                 settle: vi.fn(),
             };
         });
-        const { runtime } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        new TestNetworkConnectivity(
-                            false
-                        ),
-                },
-                "projection-race"
-            );
+        const { runtime } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(false),
+            },
+            "projection-race"
+        );
         const outbox = createOntologyOutbox({
             runtime,
             execute: () => Promise.resolve(),
@@ -456,27 +462,19 @@ describe("createOntologyOutbox", () => {
 
     it("does not resolve completion until its projection has settled", async () => {
         let finishSettlement!: () => void;
-        const settlement = new Promise<void>(
-            (resolve) => {
-                finishSettlement = resolve;
-            }
+        const settlement = new Promise<void>((resolve) => {
+            finishSettlement = resolve;
+        });
+        const { runtime } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(true),
+            },
+            "projection-settlement"
         );
-        const { runtime } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        new TestNetworkConnectivity(
-                            true
-                        ),
-                },
-                "projection-settlement"
-            );
         const outbox = createOntologyOutbox({
             runtime,
-            execute: () =>
-                Promise.resolve("confirmed"),
+            execute: () => Promise.resolve("confirmed"),
             project: () =>
                 Promise.resolve({
                     settle: () => settlement,
@@ -493,41 +491,27 @@ describe("createOntologyOutbox", () => {
         });
 
         await vi.waitFor(() => {
-            expect(
-                outbox.collection.has(
-                    action.entry.id
-                )
-            ).toBe(false);
+            expect(outbox.collection.has(action.entry.id)).toBe(false);
         });
         expect(completed).toBe(false);
 
         finishSettlement();
-        await expect(action.completed).resolves.toBe(
-            "confirmed"
-        );
+        await expect(action.completed).resolves.toBe("confirmed");
         await outbox.cleanup();
     });
 
     it("keeps durable intent when local projection fails", async () => {
-        const { runtime } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        new TestNetworkConnectivity(
-                            false
-                        ),
-                },
-                "projection-discard"
-            );
+        const { runtime } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(false),
+            },
+            "projection-discard"
+        );
         const outbox = createOntologyOutbox({
             runtime,
             execute: () => Promise.resolve(),
-            project: () =>
-                Promise.reject(
-                    new Error("cannot project")
-                ),
+            project: () => Promise.reject(new Error("cannot project")),
         });
         await outbox.ready;
 
@@ -535,12 +519,8 @@ describe("createOntologyOutbox", () => {
             actionTypeName: "createTask",
             parameters: {},
         });
-        void action.completed.catch(
-            () => undefined
-        );
-        const entry = outbox.collection.get(
-            action.entry.id
-        );
+        void action.completed.catch(() => undefined);
+        const entry = outbox.collection.get(action.entry.id);
         expect(entry?.status).toBe("queued");
         expect(entry?.lastError).toBeUndefined();
         await outbox.cleanup();
@@ -548,16 +528,13 @@ describe("createOntologyOutbox", () => {
 
     it("requires manual retry after execution failure", async () => {
         let attempts = 0;
-        const { runtime } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        new TestNetworkConnectivity(),
-                },
-                "manual-retry"
-            );
+        const { runtime } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(),
+            },
+            "manual-retry"
+        );
         const outbox = createOntologyOutbox({
             runtime,
             maxRetries: 0,
@@ -585,26 +562,19 @@ describe("createOntologyOutbox", () => {
 
     it("automatically retries ordinary execution failures with backoff", async () => {
         let attempts = 0;
-        const { runtime } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        new TestNetworkConnectivity(),
-                },
-                "automatic-retry"
-            );
+        const { runtime } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(),
+            },
+            "automatic-retry"
+        );
         const outbox = createOntologyOutbox({
             runtime,
             maxRetries: 3,
             execute: () => {
                 attempts += 1;
-                return attempts < 3
-                    ? Promise.reject(
-                          new Error("temporary")
-                      )
-                    : Promise.resolve("done");
+                return attempts < 3 ? Promise.reject(new Error("temporary")) : Promise.resolve("done");
             },
         });
         await outbox.ready;
@@ -613,36 +583,27 @@ describe("createOntologyOutbox", () => {
             parameters: {},
         });
 
-        await expect(action.completed).resolves.toBe(
-            "done"
-        );
+        await expect(action.completed).resolves.toBe("done");
         expect(attempts).toBe(3);
-        expect(
-            outbox.collection.get(action.entry.id)
-        ).toBeUndefined();
+        expect(outbox.collection.get(action.entry.id)).toBeUndefined();
         await outbox.cleanup();
     });
 
     it("applies the failure strategy after automatic retries are exhausted", async () => {
         let attempts = 0;
-        const { runtime } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        new TestNetworkConnectivity(),
-                },
-                "automatic-retry-exhausted"
-            );
+        const { runtime } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(),
+            },
+            "automatic-retry-exhausted"
+        );
         const outbox = createOntologyOutbox({
             runtime,
             maxRetries: 2,
             execute: () => {
                 attempts += 1;
-                return Promise.reject(
-                    new Error("still failing")
-                );
+                return Promise.reject(new Error("still failing"));
             },
         });
         await outbox.ready;
@@ -651,29 +612,22 @@ describe("createOntologyOutbox", () => {
             parameters: {},
         });
 
-        await expect(action.completed).rejects.toThrow(
-            "still failing"
-        );
+        await expect(action.completed).rejects.toThrow("still failing");
         expect(attempts).toBe(3);
-        expect(
-            outbox.collection.get(action.entry.id)
-        ).toBeUndefined();
+        expect(outbox.collection.get(action.entry.id)).toBeUndefined();
         await outbox.cleanup();
     });
 
     it("keeps a failed head ahead of later queued entries", async () => {
         const executed: string[] = [];
         let firstAttempts = 0;
-        const { runtime } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        new TestNetworkConnectivity(),
-                },
-                "strict-fifo"
-            );
+        const { runtime } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(),
+            },
+            "strict-fifo"
+        );
         const outbox = createOntologyOutbox({
             runtime,
             maxRetries: 0,
@@ -712,16 +666,13 @@ describe("createOntologyOutbox", () => {
     });
 
     it("releases a failed FIFO head when it is removed", async () => {
-        const { runtime } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        new TestNetworkConnectivity(),
-                },
-                "remove-failed-head"
-            );
+        const { runtime } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(),
+            },
+            "remove-failed-head"
+        );
         const outbox = createOntologyOutbox({
             runtime,
             maxRetries: 0,
@@ -753,16 +704,13 @@ describe("createOntologyOutbox", () => {
     });
 
     it("rolls back and pauses on non-retryable failures when configured", async () => {
-        const { runtime } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        new TestNetworkConnectivity(),
-                },
-                "non-retriable"
-            );
+        const { runtime } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(),
+            },
+            "non-retriable"
+        );
         const outbox = createOntologyOutbox({
             runtime,
             execute: () => Promise.reject(new NonRetryableError("rejected")),
@@ -783,36 +731,23 @@ describe("createOntologyOutbox", () => {
     });
 
     it("discards the remaining queue on non-retryable failures by default", async () => {
-        const connectivity =
-            new TestNetworkConnectivity(false);
-        const { runtime } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity,
-                },
-                "non-retryable-discard"
-            );
+        const connectivity = new TestNetworkConnectivity(false);
+        const { runtime } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity,
+            },
+            "non-retryable-discard"
+        );
         const settled = new Set<string>();
         const outbox = createOntologyOutbox({
             runtime,
-            execute: () =>
-                Promise.reject(
-                    new NonRetryableError(
-                        "rejected"
-                    )
-                ),
+            execute: () => Promise.reject(new NonRetryableError("rejected")),
             project: (entry) =>
                 Promise.resolve({
                     settle(error) {
                         expect(error).toBeDefined();
-                        settled.add(
-                            String(
-                                entry.request.parameters
-                                    .order
-                            )
-                        );
+                        settled.add(String(entry.request.parameters.order));
                     },
                 }),
         });
@@ -825,53 +760,32 @@ describe("createOntologyOutbox", () => {
             actionTypeName: "createTask",
             parameters: { order: 2 },
         });
-        const deleteEntries = vi.spyOn(
-            outbox.collection,
-            "delete"
-        );
+        const deleteEntries = vi.spyOn(outbox.collection, "delete");
 
         connectivity.setConnected(true);
 
-        await expect(first.completed).rejects.toThrow(
-            "rejected"
-        );
-        await expect(second.completed).rejects.toThrow(
-            "failed permanently"
-        );
+        await expect(first.completed).rejects.toThrow("rejected");
+        await expect(second.completed).rejects.toThrow("failed permanently");
         await vi.waitFor(() => {
-            expect(
-                outbox.collection.get(first.entry.id)
-            ).toBeUndefined();
-            expect(
-                outbox.collection.get(second.entry.id)
-            ).toBeUndefined();
+            expect(outbox.collection.get(first.entry.id)).toBeUndefined();
+            expect(outbox.collection.get(second.entry.id)).toBeUndefined();
         });
-        expect(settled).toEqual(
-            new Set(["1", "2"])
-        );
+        expect(settled).toEqual(new Set(["1", "2"]));
         expect(deleteEntries).toHaveBeenCalledOnce();
-        expect(deleteEntries).toHaveBeenCalledWith(
-            [first.entry.id, second.entry.id],
-            { optimistic: false }
-        );
+        expect(deleteEntries).toHaveBeenCalledWith([first.entry.id, second.entry.id], { optimistic: false });
         await outbox.cleanup();
     });
 
     it("discards previously interrupted work during recovery by default", async () => {
         const adapter = memoryPersistenceAdapter();
-        const { runtime, coordination } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        new TestNetworkConnectivity(
-                            false
-                        ),
-                    persistence: { adapter },
-                },
-                "interrupted-recovery-discard"
-            );
+        const { runtime, coordination } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(false),
+                persistence: { adapter },
+            },
+            "interrupted-recovery-discard"
+        );
         const first = createOntologyOutbox({
             runtime,
             execute: () => Promise.resolve(),
@@ -881,22 +795,15 @@ describe("createOntologyOutbox", () => {
             actionTypeName: "createTask",
             parameters: {},
         });
-        void action.completed.catch(
-            () => undefined
-        );
-        await first.collection.update(
-            action.entry.id,
-            { optimistic: false },
-            (draft) => {
-                draft.status = "failed";
-                draft.retryable = true;
-                draft.lastError = {
-                    name: "InterruptedExecution",
-                    message:
-                        "Execution was interrupted; retry manually.",
-                };
-            }
-        ).isPersisted.promise;
+        void action.completed.catch(() => undefined);
+        await first.collection.update(action.entry.id, { optimistic: false }, (draft) => {
+            draft.status = "failed";
+            draft.retryable = true;
+            draft.lastError = {
+                name: "InterruptedExecution",
+                message: "Execution was interrupted; retry manually.",
+            };
+        }).isPersisted.promise;
         await first.cleanup();
 
         const restored = createOntologyOutbox({
@@ -905,11 +812,7 @@ describe("createOntologyOutbox", () => {
         });
         await restored.ready;
         await vi.waitFor(() => {
-            expect(
-                restored.collection.get(
-                    action.entry.id
-                )
-            ).toBeUndefined();
+            expect(restored.collection.get(action.entry.id)).toBeUndefined();
         });
 
         await restored.cleanup();
@@ -918,19 +821,15 @@ describe("createOntologyOutbox", () => {
 
     it("resumes retryable failed work during recovery", async () => {
         const adapter = memoryPersistenceAdapter();
-        const connectivity =
-            new TestNetworkConnectivity(false);
-        const { runtime, coordination } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        connectivity,
-                    persistence: { adapter },
-                },
-                "failed-recovery-retry"
-            );
+        const connectivity = new TestNetworkConnectivity(false);
+        const { runtime, coordination } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: connectivity,
+                persistence: { adapter },
+            },
+            "failed-recovery-retry"
+        );
         const first = createOntologyOutbox({
             runtime,
             execute: () => Promise.resolve(),
@@ -940,27 +839,19 @@ describe("createOntologyOutbox", () => {
             actionTypeName: "createTask",
             parameters: {},
         });
-        void action.completed.catch(
-            () => undefined
-        );
-        await first.collection.update(
-            action.entry.id,
-            { optimistic: false },
-            (draft) => {
-                draft.status = "failed";
-                draft.retryable = true;
-                draft.attempts = 1;
-                draft.lastError = {
-                    name: "Error",
-                    message: "temporary",
-                };
-            }
-        ).isPersisted.promise;
+        void action.completed.catch(() => undefined);
+        await first.collection.update(action.entry.id, { optimistic: false }, (draft) => {
+            draft.status = "failed";
+            draft.retryable = true;
+            draft.attempts = 1;
+            draft.lastError = {
+                name: "Error",
+                message: "temporary",
+            };
+        }).isPersisted.promise;
         await first.cleanup();
 
-        const execute = vi.fn(() =>
-            Promise.resolve("done")
-        );
+        const execute = vi.fn(() => Promise.resolve("done"));
         connectivity.setConnected(true);
         const restored = createOntologyOutbox({
             runtime,
@@ -969,11 +860,7 @@ describe("createOntologyOutbox", () => {
         await restored.ready;
         await vi.waitFor(() => {
             expect(execute).toHaveBeenCalledOnce();
-            expect(
-                restored.collection.get(
-                    action.entry.id
-                )
-            ).toBeUndefined();
+            expect(restored.collection.get(action.entry.id)).toBeUndefined();
         });
 
         await restored.cleanup();
@@ -983,16 +870,14 @@ describe("createOntologyOutbox", () => {
     it("keeps restored intent when optimistic projection is unavailable", async () => {
         const adapter = memoryPersistenceAdapter();
         const connectivity = new TestNetworkConnectivity(false);
-        const { runtime } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity,
-                    persistence: { adapter },
-                },
-                "projection-restart"
-            );
+        const { runtime } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity,
+                persistence: { adapter },
+            },
+            "projection-restart"
+        );
         const first = createOntologyOutbox({
             runtime,
             execute: () => Promise.resolve(),
@@ -1017,9 +902,7 @@ describe("createOntologyOutbox", () => {
         });
 
         await expect(restored.ready).resolves.toBeUndefined();
-        const entry = restored.collection.get(
-            action.entry.id
-        );
+        const entry = restored.collection.get(action.entry.id);
         expect(entry?.status).toBe("queued");
         expect(entry?.lastError).toBeUndefined();
         await restored.remove(action.entry.id);
@@ -1109,29 +992,20 @@ describe("createOntologyOutbox", () => {
         });
         coordination.regainLeadership();
 
-        await expect(action.completed).rejects.toThrow(
-            "execution was interrupted"
-        );
-        expect(
-            outbox.collection.get(action.entry.id)
-        ).toBeUndefined();
+        await expect(action.completed).rejects.toThrow("execution was interrupted");
+        expect(outbox.collection.get(action.entry.id)).toBeUndefined();
         await outbox.cleanup();
         await coordination.close();
     });
 
     it("rejects a completion from a stale execution claim", async () => {
-        const { runtime, coordination } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        new TestNetworkConnectivity(
-                            false
-                        ),
-                },
-                "stale-claim"
-            );
+        const { runtime, coordination } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(false),
+            },
+            "stale-claim"
+        );
         const outbox = createOntologyOutbox({
             runtime,
             execute: () => Promise.resolve(),
@@ -1180,18 +1054,13 @@ describe("createOntologyOutbox", () => {
             name: string;
             settle: ReturnType<typeof vi.fn>;
         }> = [];
-        const { runtime, coordination } =
-            createSingleProcessRuntime(
-                {
-                    blobBytes:
-                        new MemoryBlobBytesStore(),
-                    connectivity:
-                        new TestNetworkConnectivity(
-                            false
-                        ),
-                },
-                "projection-replay"
-            );
+        const { runtime, coordination } = createSingleProcessRuntime(
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(false),
+            },
+            "projection-replay"
+        );
         const outbox = createOntologyOutbox({
             runtime,
             execute: () => Promise.resolve(),
@@ -1248,39 +1117,33 @@ describe("createOntologyOutbox", () => {
 
     it("preserves Temporal parameters across coordinated contexts", async () => {
         const adapter = memoryPersistenceAdapter();
-        const hostCoordination =
-            new SharedWorkerCoordinationHost({
-                scope: "temporal",
-            });
+        const hostCoordination = new SharedWorkerCoordinationHost({
+            scope: "temporal",
+        });
         const channel = new MessageChannel();
         hostCoordination.connect(channel.port1);
-        const clientCoordination = new SharedWorkerCoordinationClient({ scope: "temporal", worker: { port: channel.port2 } });
+        const clientCoordination = new SharedWorkerCoordinationClient({
+            scope: "temporal",
+            worker: { port: channel.port2 },
+        });
         const firstRuntime = coordinatedOutboxRuntime({
             adapter,
             coordination: hostCoordination,
-            connectivity:
-                new TestNetworkConnectivity(true),
+            connectivity: new TestNetworkConnectivity(true),
         });
         const secondRuntime = coordinatedOutboxRuntime({
             adapter,
-            coordination:
-                clientCoordination,
-            connectivity:
-                new TestNetworkConnectivity(true),
+            coordination: clientCoordination,
+            connectivity: new TestNetworkConnectivity(true),
         });
         let observed: unknown;
         let observedRecord: unknown;
-        const execute = (
-            entry: OntologyOutboxEntry
-        ) => {
-            observed =
-                entry.request.parameters.__now;
+        const execute = (entry: OntologyOutboxEntry) => {
+            observed = entry.request.parameters.__now;
             observedRecord = entry.request.parameters.record;
             return Promise.resolve("done");
         };
-        const create = ({
-            runtime,
-        }: ReturnType<typeof coordinatedOutboxRuntime>) =>
+        const create = ({ runtime }: ReturnType<typeof coordinatedOutboxRuntime>) =>
             createOntologyOutbox({
                 runtime,
                 execute,
@@ -1289,25 +1152,26 @@ describe("createOntologyOutbox", () => {
         const second = create(secondRuntime);
         await Promise.all([first.ready, second.ready]);
         const origin = second;
-        const instant = Temporal.Instant.from(
-            "2026-07-27T12:00:00Z"
-        );
+        const instant = Temporal.Instant.from("2026-07-27T12:00:00Z");
 
         const action = await origin.enqueue({
             actionTypeName: "createTask",
-            parameters: { __now: instant, record: { __party_stack_outbox_value_type__: "Temporal.Instant", value: "ordinary application data" } },
+            parameters: {
+                __now: instant,
+                record: {
+                    __party_stack_outbox_value_type__: "Temporal.Instant",
+                    value: "ordinary application data",
+                },
+            },
         });
 
-        await expect(action.completed).resolves.toBe(
-            "done"
-        );
-        expect(observed).toBeInstanceOf(
-            Temporal.Instant
-        );
-        expect(String(observed)).toBe(
-            "2026-07-27T12:00:00Z"
-        );
-        expect(observedRecord).toEqual({ __party_stack_outbox_value_type__: "Temporal.Instant", value: "ordinary application data" });
+        await expect(action.completed).resolves.toBe("done");
+        expect(observed).toBeInstanceOf(Temporal.Instant);
+        expect(String(observed)).toBe("2026-07-27T12:00:00Z");
+        expect(observedRecord).toEqual({
+            __party_stack_outbox_value_type__: "Temporal.Instant",
+            value: "ordinary application data",
+        });
         expect(action.entry.request.parameters.record).toEqual(observedRecord);
         expect(action.entry.request.parameters.__now).toBeInstanceOf(Temporal.Instant);
         expect(action.entry.request.parameters).not.toHaveProperty("__party_stack_outbox_value_type__");
@@ -1319,10 +1183,9 @@ describe("createOntologyOutbox", () => {
 
     it("serializes cross-context removal through the coordination leader", async () => {
         const adapter = memoryPersistenceAdapter();
-        const hostCoordination =
-            new SingleProcessCoordination({
-                scope: "coordinated",
-            });
+        const hostCoordination = new SingleProcessCoordination({
+            scope: "coordinated",
+        });
         const firstRuntime = coordinatedOutboxRuntime({
             adapter,
             coordination: hostCoordination,
@@ -1330,8 +1193,7 @@ describe("createOntologyOutbox", () => {
         });
         const secondRuntime = coordinatedOutboxRuntime({
             adapter,
-            coordination:
-                clientView(hostCoordination),
+            coordination: clientView(hostCoordination),
             connectivity: new TestNetworkConnectivity(false),
         });
         const create = ({ runtime }: ReturnType<typeof coordinatedOutboxRuntime>) =>
@@ -1367,10 +1229,9 @@ describe("createOntologyOutbox", () => {
 
     it("rejects removal after the leader has claimed an entry", async () => {
         const adapter = memoryPersistenceAdapter();
-        const hostCoordination =
-            new SingleProcessCoordination({
-                scope: "claimed",
-            });
+        const hostCoordination = new SingleProcessCoordination({
+            scope: "claimed",
+        });
         const firstRuntime = coordinatedOutboxRuntime({
             adapter,
             coordination: hostCoordination,
@@ -1378,8 +1239,7 @@ describe("createOntologyOutbox", () => {
         });
         const secondRuntime = coordinatedOutboxRuntime({
             adapter,
-            coordination:
-                clientView(hostCoordination),
+            coordination: clientView(hostCoordination),
             connectivity: new TestNetworkConnectivity(true),
         });
         let finishExecution!: (value: string) => void;

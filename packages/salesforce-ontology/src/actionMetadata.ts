@@ -15,9 +15,7 @@ export type SalesforceActionMetadata =
           operation: SalesforceCrudOperation;
       };
 
-export function salesforceActionMeta(
-    metadata: SalesforceActionMetadata
-): Record<string, unknown> {
+export function salesforceActionMeta(metadata: SalesforceActionMetadata): Record<string, unknown> {
     return { salesforce: metadata };
 }
 
@@ -25,19 +23,11 @@ export function getSalesforceActionMetadata(actionType: {
     meta?: Record<string, unknown>;
 }): SalesforceActionMetadata | undefined {
     const value = actionType.meta?.salesforce;
-    if (
-        typeof value !== "object" ||
-        value === null ||
-        Array.isArray(value)
-    ) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
         return undefined;
     }
     const metadata = value as Record<string, unknown>;
-    if (
-        (metadata.kind === "flow" ||
-            metadata.kind === "standard") &&
-        typeof metadata.apiName === "string"
-    ) {
+    if ((metadata.kind === "flow" || metadata.kind === "standard") && typeof metadata.apiName === "string") {
         return {
             kind: metadata.kind,
             apiName: metadata.apiName,

@@ -47,9 +47,8 @@ function create(typeRegistry: TypeRegistry, objectType: ObjectTypeFullMetadata):
         // TODO: deprecation.
         isOneOf: true,
         fields: typeRegistry.use((getTypeReference) =>
-            Object.fromEntries([
-                // TODO: and, or, not
-                ...Object.entries(objectType.objectType.properties)
+            Object.fromEntries(
+                Object.entries(objectType.objectType.properties)
                     .map(([propertyApiName, property]) => {
                         const filterType = getFilterType(getTypeReference, property);
                         return filterType
@@ -61,8 +60,8 @@ function create(typeRegistry: TypeRegistry, objectType: ObjectTypeFullMetadata):
                               ] satisfies [string, GraphQLInputFieldConfig])
                             : undefined;
                     })
-                    .filter((propertyFilterField) => propertyFilterField !== undefined),
-            ])
+                    .filter((propertyFilterField) => propertyFilterField !== undefined)
+            )
         ),
     });
 }

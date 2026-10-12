@@ -7,8 +7,7 @@ import {
     type OntologyQueryFunctionRegistry,
 } from "@party-stack/ontology";
 import { eq, inArray, queryOnce } from "@tanstack/db";
-import { afterEach, describe, expect, it } from "vitest";
-import type { attachment as OntologyAttachment } from "@party-stack/ontology/values";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 import { createSQLiteOntologyBackendAdapter } from "./index.js";
 
 interface TestDatabase {
@@ -349,8 +348,7 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         });
         expect(note.updatedAt).toHaveProperty("epochMilliseconds");
         expect(
-            ((await readObjectById(ontology.objects.Author!, "id", "author-1")) as { email: string })
-                .email
+            ((await readObjectById(ontology.objects.Author!, "id", "author-1")) as { email: string }).email
         ).toBe("author@example.com");
         expect(ir.linkTypes[0]).toMatchObject({
             foreignKey: "authorId",
@@ -384,9 +382,7 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         });
 
         const notes = await queryOnce((q) =>
-            q
-                .from({ note: ontology.objects.Note! })
-                .where(({ note }) => inArray("sqlite", note.tags))
+            q.from({ note: ontology.objects.Note! }).where(({ note }) => inArray("sqlite", note.tags))
         );
 
         expect(notes.map((note) => note.id)).toEqual(["note-1"]);
@@ -435,63 +431,44 @@ describe("SQLite LiveOntology MVP acceptance", () => {
     it("executes shared mutators and query function handlers authoritatively", async () => {
         const database = createDatabase();
         const mutators = {
-            renameNote: async ({
-                tx,
-                args,
-            }) => {
-                await tx.mutate.Note!.update(
-                    args.note as string,
-                    {
-                        title:
-                            args.title,
-                    }
-                );
+            renameNote: async ({ tx, args }) => {
+                await tx.mutate.Note!.update(args.note as string, {
+                    title: args.title,
+                });
             },
         } satisfies OntologyMutatorRegistry;
         const queryFunctions = {
-            noteTitle: async ({
-                tx,
-                args,
-            }) => {
-                const note = await tx.query<{
-                    title: unknown;
-                } | undefined>(
-                    (query, objects) =>
+            noteTitle: async ({ tx, args }) => {
+                const note = await tx.query<
+                    | {
+                          title: unknown;
+                      }
+                    | undefined
+                >((query, objects) =>
                     query
                         .from({
                             note: objects.Note!,
                         })
-                        .where(({ note }) =>
-                            eq(
-                                note.id,
-                                args.note
-                            )
-                        )
-                        .select(
-                            ({ note }) => ({
-                                title:
-                                    note.title,
-                            })
-                        )
+                        .where(({ note }) => eq(note.id, args.note))
+                        .select(({ note }) => ({
+                            title: note.title,
+                        }))
                         .findOne()
                 );
                 return note?.title;
             },
         } satisfies OntologyQueryFunctionRegistry;
-        const ontology =
-            await createLiveOntology({
-                ir,
-                backend: () =>
-                    createSQLiteOntologyBackendAdapter(
-                        {
-                            ir,
-                            database,
-                            name: "handlers",
-                            mutators,
-                            queryFunctions,
-                        }
-                    ),
-            });
+        const ontology = await createLiveOntology({
+            ir,
+            backend: () =>
+                createSQLiteOntologyBackendAdapter({
+                    ir,
+                    database,
+                    name: "handlers",
+                    mutators,
+                    queryFunctions,
+                }),
+        });
 
         await ontology.actions.createNote!({
             id: "note-1",
@@ -503,34 +480,25 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         });
 
         await expect(
-            ontology.queryFunctions.noteTitle!(
-                {
-                    note: "note-1",
-                }
-            )
+            ontology.queryFunctions.noteTitle!({
+                note: "note-1",
+            })
         ).resolves.toBe("After");
-        expect(
-            ontology.objects.Note!.get(
-                "note-1"
-            )?.title
-        ).toBe("After");
+        expect(ontology.objects.Note!.get("note-1")?.title).toBe("After");
         await ontology.cleanup();
     });
 
     it("rejects non-declarative actions without a mutator", async () => {
         const database = createDatabase();
-        const ontology =
-            await createLiveOntology({
-                ir,
-                backend: () =>
-                    createSQLiteOntologyBackendAdapter(
-                        {
-                            ir,
-                            database,
-                            name: "missing-mutator",
-                        }
-                    ),
-            });
+        const ontology = await createLiveOntology({
+            ir,
+            backend: () =>
+                createSQLiteOntologyBackendAdapter({
+                    ir,
+                    database,
+                    name: "missing-mutator",
+                }),
+        });
 
         await expect(
             ontology.actions.renameNote!({
@@ -570,7 +538,7 @@ describe("SQLite LiveOntology MVP acceptance", () => {
                 },
             }
         );
-        const attachment = creation.attachment as unknown as OntologyAttachment;
+        const attachment = creation.attachment;
 
         await ontology.actions.createNoteAttachment!({
             id: "attachment-object-1",
@@ -589,13 +557,33 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         expect(await blob.text()).toBe("hello attachment");
         expect(
             (
-                (await readObjectById(
-                    ontology.objects.NoteAttachment!,
-                    "id",
-                    "attachment-object-1"
-                )) as { noteId: string }
+                (await readObjectById(ontology.objects.NoteAttachment!, "id", "attachment-object-1")) as {
+                    noteId: string;
+                }
             ).noteId
         ).toBe("note-1");
+    });
+
+    it("reads only the attachment view's bytes from a shared buffer", async () => {
+        const database = createDatabase();
+        const backend = createSQLiteOntologyBackendAdapter({ ir, database });
+        const buffer = new SharedArrayBuffer(8);
+        const bytes = new Uint8Array(buffer, 2, 4);
+        bytes.set(new TextEncoder().encode("test"));
+        const prepare = database.prepare.bind(database);
+        database.prepare = (sql) => {
+            const statement = prepare(sql);
+            if (sql.includes("SELECT * FROM party_stack_attachments")) {
+                return {
+                    ...statement,
+                    get: () => ({ id: "shared", bytes, storage_key: null, type: "text/plain" }),
+                };
+            }
+            return statement;
+        };
+        const blob = await backend.attachments!.getAttachmentContent({ id: "shared", type: "text/plain" });
+        bytes.fill(0);
+        expect(await blob.text()).toBe("test");
     });
 
     it("supports safe initialization and idempotent cleanup", async () => {

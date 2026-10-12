@@ -53,10 +53,7 @@ export class QuantizedEmbeddingStore {
         }
         const offset = row * this.index.dims;
         const norm = this.norms[row]!;
-        return Array.from(
-            this.data.subarray(offset, offset + this.index.dims),
-            (value) => value / norm
-        );
+        return Array.from(this.data.subarray(offset, offset + this.index.dims), (value) => value / norm);
     }
 }
 

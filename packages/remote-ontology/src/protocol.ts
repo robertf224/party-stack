@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { LoadSubsetOptions } from "@tanstack/db";
 import type {
     OntologyAttachmentIdMapping,
     OntologyAttachmentUpload,
@@ -10,6 +9,7 @@ import type {
 } from "@party-stack/ontology";
 import type { Result } from "@party-stack/ontology/values";
 import type { attachment } from "@party-stack/ontology/values";
+import type { LoadSubsetOptions } from "@tanstack/db";
 
 export interface RemoteOntologyDescription {
     ir: OntologyIR;
@@ -123,8 +123,7 @@ export interface RemoteOntologyTransport {
     ) => Promise<Blob>;
 }
 
-export interface ResolvableRemoteOntologyTransport
-    extends RemoteOntologyTransport {
+export interface ResolvableRemoteOntologyTransport extends RemoteOntologyTransport {
     resolveActionParameters: (
         request: RemoteResolveActionParametersRequest,
         options?: RemoteOntologyTransportOptions
@@ -314,10 +313,6 @@ export function parseRemoteOntologyRequest(
 
 export function serializeLoadSubsetOptions(options: LoadSubsetOptions | undefined): RemoteLoadSubsetOptions {
     if (!options) return {};
-    const {
-        signal: _signal,
-        subscription: _subscription,
-        ...serializableOptions
-    } = options;
+    const { signal: _signal, subscription: _subscription, ...serializableOptions } = options;
     return serializableOptions;
 }

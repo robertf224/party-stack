@@ -1,9 +1,9 @@
 import { createMetaLiveOntology } from "@party-stack/ontology";
 import { eq, queryOnce } from "@tanstack/db";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { OntologyClient } from "@party-stack/foundry-client";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { createFoundryMetaOntologyBackendAdapter } from "./createFoundryMetaOntologyBackendAdapter.js";
 import type { ObjectTypeV2 } from "@osdk/foundry.ontologies";
+import type { OntologyClient } from "@party-stack/foundry-client";
 
 const mocks = vi.hoisted(() => ({
     getFullMetadata: vi.fn(),
@@ -80,12 +80,7 @@ describe("Foundry ObjectType metadata queries", () => {
             const rows = await queryOnce((q) =>
                 q
                     .from({ ObjectType: meta.objects.ObjectType })
-                    .where(({ ObjectType }) =>
-                        eq(
-                            ObjectType.id,
-                            "ri.ontology.main.object-type.employee"
-                        )
-                    )
+                    .where(({ ObjectType }) => eq(ObjectType.id, "ri.ontology.main.object-type.employee"))
             );
 
             expect(mocks.getFullMetadata).toHaveBeenCalledOnce();

@@ -1,8 +1,6 @@
 import type { OntologyIR } from "@party-stack/ontology";
 
-export function projectTaskManagerOntology(
-    ontology: OntologyIR
-): OntologyIR {
+export function projectTaskManagerOntology(ontology: OntologyIR): OntologyIR {
     const selectedProperties = new Map([
         [
             "Task",
@@ -21,49 +19,22 @@ export function projectTaskManagerOntology(
                 "LastModifiedById",
             ]),
         ],
-        [
-            "User",
-            new Set([
-                "Id",
-                "Name",
-                "Username",
-                "Email",
-            ]),
-        ],
+        ["User", new Set(["Id", "Name", "Username", "Email"])],
     ]);
     return {
         ...ontology,
-        objectTypes: ontology.objectTypes.map(
-            (objectType) => {
-                const selected =
-                    selectedProperties.get(
-                        objectType.name
-                    );
-                return selected
-                    ? {
-                          ...objectType,
-                          properties:
-                              objectType.properties.filter(
-                                  (property) =>
-                                      selected.has(
-                                          property.name
-                                      )
-                              ),
-                      }
-                    : objectType;
-            }
-        ),
-        linkTypes: ontology.linkTypes.filter(
-            (linkType) => {
-                const selected =
-                    selectedProperties.get(
-                        linkType.source.objectType
-                    );
-                return (
-                    !selected ||
-                    selected.has(linkType.foreignKey)
-                );
-            }
-        ),
+        objectTypes: ontology.objectTypes.map((objectType) => {
+            const selected = selectedProperties.get(objectType.name);
+            return selected
+                ? {
+                      ...objectType,
+                      properties: objectType.properties.filter((property) => selected.has(property.name)),
+                  }
+                : objectType;
+        }),
+        linkTypes: ontology.linkTypes.filter((linkType) => {
+            const selected = selectedProperties.get(linkType.source.objectType);
+            return !selected || selected.has(linkType.foreignKey);
+        }),
     };
 }

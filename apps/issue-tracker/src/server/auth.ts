@@ -1,10 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { partyStack } from "@party-stack/better-auth";
-import Database from "better-sqlite3";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { oauthPopup } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
+import Database from "better-sqlite3";
 
 export const issueTrackerUsers = [
     {

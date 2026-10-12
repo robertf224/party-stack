@@ -1,10 +1,4 @@
-import {
-    afterEach,
-    describe,
-    expect,
-    it,
-    vi,
-} from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { withHttpRetryHandling } from "./withHttpRetryHandling.js";
 
 describe("withHttpRetryHandling", () => {
@@ -31,23 +25,14 @@ describe("withHttpRetryHandling", () => {
         const handlers = withHttpRetryHandling(
             {
                 fetch,
-                createWebSocket: () =>
-                    Promise.reject(
-                        new Error(
-                            "Unexpected WebSocket."
-                        )
-                    ),
+                createWebSocket: () => Promise.reject(new Error("Unexpected WebSocket.")),
             },
             {
                 maxDelayMs: 100,
             }
         );
 
-        const responsePromise = handlers.fetch(
-            new Request(
-                "https://example.com/data"
-            )
-        );
+        const responsePromise = handlers.fetch(new Request("https://example.com/data"));
         await vi.advanceTimersByTimeAsync(100);
         expect(fetch).toHaveBeenCalledOnce();
         await vi.advanceTimersByTimeAsync(900);
@@ -73,24 +58,14 @@ describe("withHttpRetryHandling", () => {
         const handlers = withHttpRetryHandling(
             {
                 fetch,
-                createWebSocket: () =>
-                    Promise.reject(
-                        new Error(
-                            "Unexpected WebSocket."
-                        )
-                    ),
+                createWebSocket: () => Promise.reject(new Error("Unexpected WebSocket.")),
             },
             {
                 baseDelayMs: 0,
             }
         );
 
-        const response = await handlers.fetch(
-            new Request(
-                "https://example.com/action",
-                { method: "POST" }
-            )
-        );
+        const response = await handlers.fetch(new Request("https://example.com/action", { method: "POST" }));
 
         expect(response.status).toBe(204);
         expect(fetch).toHaveBeenCalledTimes(2);
@@ -106,19 +81,10 @@ describe("withHttpRetryHandling", () => {
         );
         const handlers = withHttpRetryHandling({
             fetch,
-            createWebSocket: () =>
-                Promise.reject(
-                    new Error(
-                        "Unexpected WebSocket."
-                    )
-                ),
+            createWebSocket: () => Promise.reject(new Error("Unexpected WebSocket.")),
         });
 
-        const response = await handlers.fetch(
-            new Request(
-                "https://example.com/data"
-            )
-        );
+        const response = await handlers.fetch(new Request("https://example.com/data"));
 
         expect(response.status).toBe(500);
         expect(fetch).toHaveBeenCalledOnce();
@@ -140,23 +106,14 @@ describe("withHttpRetryHandling", () => {
         const handlers = withHttpRetryHandling(
             {
                 fetch,
-                createWebSocket: () =>
-                    Promise.reject(
-                        new Error(
-                            "Unexpected WebSocket."
-                        )
-                    ),
+                createWebSocket: () => Promise.reject(new Error("Unexpected WebSocket.")),
             },
             {
                 baseDelayMs: 0,
             }
         );
 
-        const response = await handlers.fetch(
-            new Request(
-                "https://example.com/data"
-            )
-        );
+        const response = await handlers.fetch(new Request("https://example.com/data"));
 
         expect(response.status).toBe(204);
         expect(fetch).toHaveBeenCalledTimes(2);

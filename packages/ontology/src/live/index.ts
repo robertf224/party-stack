@@ -1,13 +1,8 @@
 export * from "./OntologyBackendAdapter.js";
 export * from "./LiveOntology.js";
-export type {
-    AttachmentMetadata,
-    PartialAttachmentMetadata,
-} from "./attachments/types.js";
+export type { AttachmentMetadata, PartialAttachmentMetadata } from "./attachments/types.js";
 export * from "./mutators/types.js";
-export {
-    createReadTx,
-} from "./mutators/createMutatorTx.js";
+export { createReadTx } from "./mutators/createMutatorTx.js";
 export { resolveActionParameters } from "./expression.js";
 export * from "./mutators/runOptimisticAction.js";
 export * from "./outbox/types.js";

@@ -14,8 +14,6 @@ import {
     type SalesforceChangeEventSubscription,
     type SalesforceChangeEventSubscriptionOptions,
 } from "@party-stack/salesforce-client";
-import type { BackendConnectionAdapterProvider, ConnectionEgress } from "@party-stack/connections";
-import type { RuntimeAdapterProvider } from "@party-stack/runtime";
 import { createSalesforceOntologyBackend } from "../adapter/createSalesforceOntologyBackendAdapter.js";
 import {
     createSalesforceConnectionAdapter,
@@ -24,6 +22,8 @@ import {
 } from "../connection.js";
 import { createSalesforceMetaOntologyBackendAdapter } from "../meta/createSalesforceMetaOntologyBackendAdapter.js";
 import type { SalesforceCrudActionTypeSelection } from "../crud.js";
+import type { BackendConnectionAdapterProvider, ConnectionEgress } from "@party-stack/connections";
+import type { RuntimeAdapterProvider } from "@party-stack/runtime";
 
 export type SalesforceConnectionOptions = Omit<
     CreateSalesforceConnectionAdapterOptions,
@@ -36,9 +36,7 @@ export type SalesforceOntologyRoute = (options: {
     subscribeToChangeEvents?: (
         userId: string,
         objectType: string,
-        listener: (
-            event: SalesforceChangeEvent
-        ) => void,
+        listener: (event: SalesforceChangeEvent) => void,
         subscriptionOptions?: SalesforceChangeEventSubscriptionOptions
     ) => Promise<SalesforceChangeEventSubscription>;
 }) => OntologyRoute;
@@ -75,9 +73,7 @@ function configureSalesforceMeta(
     flowActionTypeNames: string[] | undefined,
     standardActionTypeNames: string[] | undefined,
     standardQueryFunctionTypeNames: string[] | undefined,
-    crudActionTypes:
-        | readonly SalesforceCrudActionTypeSelection[]
-        | undefined,
+    crudActionTypes: readonly SalesforceCrudActionTypeSelection[] | undefined,
     options: ConfigureOntologyOptions
 ): OntologyConfiguration {
     const client = createConnectionSalesforceClient({
@@ -110,20 +106,13 @@ export function createSalesforceOntologyRoute(options: {
     persistObjects?: boolean;
     writes?: LiveOntologyWrites;
 }): SalesforceOntologyRoute {
-    return ({
-        instanceUrl,
-        apiVersion,
-        subscribeToChangeEvents,
-    }) => {
+    return ({ instanceUrl, apiVersion, subscribeToChangeEvents }) => {
         const route: OntologyRoute = {
             matches: (ontologyId) => ontologyId === options.ontologyId,
         };
         const ir = options.ir;
         if (ir) {
-            route.configure = ({
-                egress,
-                connection,
-            }) => {
+            route.configure = ({ egress, connection }) => {
                 const client = createConnectionSalesforceClient({
                     instanceUrl,
                     apiVersion,
@@ -134,20 +123,15 @@ export function createSalesforceOntologyRoute(options: {
                     backend: createSalesforceOntologyBackend({
                         client,
                         live: options.live,
-                        subscribeToChangeEvents:
-                            subscribeToChangeEvents
-                                ? (
+                        subscribeToChangeEvents: subscribeToChangeEvents
+                            ? (objectType, listener, subscriptionOptions) =>
+                                  subscribeToChangeEvents(
+                                      connection.userId,
                                       objectType,
                                       listener,
                                       subscriptionOptions
-                                  ) =>
-                                      subscribeToChangeEvents(
-                                          connection.userId,
-                                          objectType,
-                                          listener,
-                                          subscriptionOptions
-                                      )
-                                : undefined,
+                                  )
+                            : undefined,
                     }),
                     persistObjects: options.persistObjects,
                     writes: options.writes,
@@ -174,33 +158,22 @@ export function createSalesforceBackendInstallation<
 >(
     options: CreateSalesforceBackendInstallationOptions<AuthenticationClient>
 ): Promise<OntologyBackendInstallation<AuthenticationClient>> {
-    let installation:
-        | OntologyBackendInstallation<AuthenticationClient>
-        | undefined;
+    let installation: OntologyBackendInstallation<AuthenticationClient> | undefined;
     const subscribeToChangeEvents =
         typeof options.connections === "function"
             ? undefined
             : (
                   userId: string,
                   objectType: string,
-                  listener: (
-                      event: SalesforceChangeEvent
-                  ) => void,
+                  listener: (event: SalesforceChangeEvent) => void,
                   subscriptionOptions?: SalesforceChangeEventSubscriptionOptions
               ) => {
                   if (!installation) {
-                      throw new Error(
-                          "Salesforce installation is not ready."
-                      );
+                      throw new Error("Salesforce installation is not ready.");
                   }
                   return (
                       installation.authentication as unknown as SalesforceAuthenticationClient
-                  ).subscribeToChangeEvents(
-                      userId,
-                      objectType,
-                      listener,
-                      subscriptionOptions
-                  );
+                  ).subscribeToChangeEvents(userId, objectType, listener, subscriptionOptions);
               };
     const connectionAdapter =
         typeof options.connections === "function"

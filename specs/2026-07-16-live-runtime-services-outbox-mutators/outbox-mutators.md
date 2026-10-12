@@ -246,10 +246,7 @@ The outbox collection should expose explicit operations:
 ```ts
 interface OntologyOutbox {
     enqueue(request: OntologyActionRequest): Promise<OutboxEntry>;
-    edit(
-        id: string,
-        update: (draft: EditableActionRequest) => void
-    ): Promise<OutboxEntry>;
+    edit(id: string, update: (draft: EditableActionRequest) => void): Promise<OutboxEntry>;
     remove(id: string): Promise<void>;
     retry(id: string): Promise<void>;
 }
@@ -432,33 +429,33 @@ required. It does not need to be a full clone.
 Options:
 
 1. **Lazy copy-on-write mutator workspace**
-   - Maintain authoritative base separately from visible projection.
-   - Fork only queried object types/subsets.
-   - Overlay mutator edits in memory.
-   - Run pending mutators FIFO against the evolving workspace.
-   - Atomically or synchronously replace the visible projection when complete.
+    - Maintain authoritative base separately from visible projection.
+    - Fork only queried object types/subsets.
+    - Overlay mutator edits in memory.
+    - Run pending mutators FIFO against the evolving workspace.
+    - Atomically or synchronously replace the visible projection when complete.
 
 2. **Hidden authoritative collections plus public projection collections**
-   - Server sync and persistence update hidden base collections.
-   - Async replay queries hidden base plus an edit overlay.
-   - Public ontology collections receive one reconciled snapshot transaction.
-   - Strongest semantics without modifying TanStack core, but doubles the
-     collection layer.
+    - Server sync and persistence update hidden base collections.
+    - Async replay queries hidden base plus an edit overlay.
+    - Public ontology collections receive one reconciled snapshot transaction.
+    - Strongest semantics without modifying TanStack core, but doubles the
+      collection layer.
 
 3. **TanStack core reconciliation primitive**
-   - Add a mutation-log/base projection API aligned with RFC #1625.
-   - Replace authoritative base plus pending mutation program in one batched
-     materialized transition.
-   - Best long-term design, but requires an upstream change or maintained fork.
+    - Add a mutation-log/base projection API aligned with RFC #1625.
+    - Replace authoritative base plus pending mutation program in one batched
+      materialized transition.
+    - Best long-term design, but requires an upstream change or maintained fork.
 
 4. **Synchronous aggregate-transaction swap**
-   - Plan asynchronously in a hidden workspace while the old prediction stays
-     visible.
-   - Roll back one aggregate projection transaction.
-   - Apply authoritative sync as immediate.
-   - Apply the new aggregate projection transaction synchronously.
-   - React may batch this, but TanStack subscriptions are not guaranteed to
-     avoid intermediate rollback/sync/replay events.
+    - Plan asynchronously in a hidden workspace while the old prediction stays
+      visible.
+    - Roll back one aggregate projection transaction.
+    - Apply authoritative sync as immediate.
+    - Apply the new aggregate projection transaction synchronously.
+    - React may batch this, but TanStack subscriptions are not guaranteed to
+      avoid intermediate rollback/sync/replay events.
 
 These remain advanced options. Implement them only after the
 `defer-until-empty` strategy is working and measurements show that delayed
@@ -491,12 +488,8 @@ separates subset loading from real-time sync:
 
 ```ts
 interface OntologyObjectSource<T> {
-    loadSubset(
-        options: LoadSubsetOptions
-    ): Promise<readonly T[]>;
-    subscribeRealtime?(
-        sink: OntologySyncSink<T>
-    ): () => void;
+    loadSubset(options: LoadSubsetOptions): Promise<readonly T[]>;
+    subscribeRealtime?(sink: OntologySyncSink<T>): () => void;
 }
 
 interface OntologySyncPolicy {
@@ -597,11 +590,7 @@ interface OntologyOutboxEntry {
     mutatorVersion: number;
     idempotencyKey: string;
     createdAt: number;
-    status:
-        | "queued"
-        | "executing"
-        | "awaitingReceipt"
-        | "failed";
+    status: "queued" | "executing" | "awaitingReceipt" | "failed";
     attempts: number;
     nextAttemptAt?: number;
     lastError?: SerializedError;
@@ -618,10 +607,7 @@ nondeterministic input required by prediction. Do not let replay call ambient
 ```ts
 interface OntologyReadTx {
     query<T>(
-        build: (
-            query: InitialQueryBuilder,
-            objects: OntologyMutatorQueryObjects
-        ) => QueryBuilder
+        build: (query: InitialQueryBuilder, objects: OntologyMutatorQueryObjects) => QueryBuilder
     ): Promise<T>;
 }
 
@@ -632,9 +618,7 @@ interface OntologyMutatorTx extends OntologyReadTx {
             create(object: Record<string, unknown>): Promise<void>;
             update(
                 key: string | number,
-                changes:
-                    | Record<string, unknown>
-                    | OntologyPropertyChange[]
+                changes: Record<string, unknown> | OntologyPropertyChange[]
             ): Promise<void>;
             delete(key: string | number): Promise<void>;
         }
@@ -704,39 +688,39 @@ mutator contract without requiring the same transaction implementation.
 ### Reconciliation components
 
 1. **Outbox collection**
-   - Durable source of semantic mutation order and retry state.
-   - Persist-before-dispatch.
+    - Durable source of semantic mutation order and retry state.
+    - Persist-before-dispatch.
 
 2. **Mutator registry**
-   - Stable name plus version to async replay implementation.
-   - Missing or incompatible versions become explicit blocked entries.
+    - Stable name plus version to async replay implementation.
+    - Missing or incompatible versions become explicit blocked entries.
 
 3. **Authoritative base branch**
-   - Queryable state containing only server/persistence data.
-   - Must not include current optimistic projection.
+    - Queryable state containing only server/persistence data.
+    - Must not include current optimistic projection.
 
 4. **Mutator workspace**
-   - Cheap branch/fork over authoritative base.
-   - Supports `queryOnce`.
-   - Applies buffered edits immediately so reads observe previous writes and
-     previous pending mutators.
+    - Cheap branch/fork over authoritative base.
+    - Supports `queryOnce`.
+    - Applies buffered edits immediately so reads observe previous writes and
+      previous pending mutators.
 
 5. **Projection manager**
-   - Holds one aggregate manual TanStack transaction representing all currently
-     visible predictions.
-   - Replaces it after a replay generation.
+    - Holds one aggregate manual TanStack transaction representing all currently
+      visible predictions.
+    - Replaces it after a replay generation.
 
 6. **Executor**
-   - One Coordinator-leader online worker.
-   - Claims entries with a unique `executionId`.
-   - Executes action requests FIFO with stable idempotency keys.
-   - Accepts completion/failure only from the current execution claim.
-   - Runs blob transfer prerequisites with separate bounded concurrency.
+    - One Coordinator-leader online worker.
+    - Claims entries with a unique `executionId`.
+    - Executes action requests FIFO with stable idempotency keys.
+    - Accepts completion/failure only from the current execution claim.
+    - Runs blob transfer prerequisites with separate bounded concurrency.
 
 7. **Receipt reconciler**
-   - Reads stable client mutation IDs from authoritative sync.
-   - Excludes acknowledged outbox entries before replay.
-   - Deletes/archive entries only after receipt/base durability is established.
+    - Reads stable client mutation IDs from authoritative sync.
+    - Excludes acknowledged outbox entries before replay.
+    - Deletes/archive entries only after receipt/base durability is established.
 
 ## Initial action flow
 
@@ -766,10 +750,10 @@ workspace as it is recorded.
 6. If another authoritative batch arrives, invalidate or advance the workspace
    generation and replay again.
 7. Once replay completes:
-   - Roll back the old aggregate projection.
-   - Apply authoritative base changes.
-   - Create the new aggregate projection transaction.
-   - Apply all derived edits synchronously.
+    - Roll back the old aggregate projection.
+    - Apply authoritative base changes.
+    - Create the new aggregate projection transaction.
+    - Apply all derived edits synchronously.
 8. Emit/observe one final visible transition if the chosen TanStack integration
    supports batching; otherwise measure the intermediate event behavior.
 9. After authoritative persistence is confirmed, delete or archive acknowledged

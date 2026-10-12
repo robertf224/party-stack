@@ -1,13 +1,9 @@
+import { isLinkHopFromForeignKeySource, resolveLinkHop } from "@party-stack/ontology/utils";
 import { Temporal } from "temporal-polyfill";
-import {
-    isLinkHopFromForeignKeySource,
-    resolveLinkHop,
-} from "@party-stack/ontology/utils";
 import type {
     ActionLogicStep,
     ActionTypeDef,
     Expression,
-    ObjectTypeDef,
     OntologyDefinition,
     OntologyIR,
     PropertyAssignment,
@@ -19,10 +15,9 @@ export type FixedActionParameterValue = Expression;
 
 export type FixedActionParameterValues<Ontology extends OntologyDefinition = OntologyDefinition> = {
     [ActionTypeName in Extract<keyof Ontology["actionTypes"], string>]?: {
-        [ParameterName in Extract<
-            keyof Ontology["actionTypes"][ActionTypeName]["parameters"],
-            string
-        >]?: FixedActionParameterValue;
+        [
+            ParameterName in Extract<keyof Ontology["actionTypes"][ActionTypeName]["parameters"], string>
+        ]?: FixedActionParameterValue;
     };
 };
 
@@ -68,26 +63,14 @@ function getActionType(ir: OntologyIR, actionTypeName: string): ActionTypeDef {
     return actionType;
 }
 
-function getObjectType(ir: OntologyIR, objectTypeName: string): ObjectTypeDef {
-    const objectType = ir.objectTypes.find((candidate) => candidate.name === objectTypeName);
-    if (!objectType) {
-        throw new Error(`Unknown object type "${objectTypeName}".`);
-    }
-    return objectType;
-}
-
 function getObjectReferenceObjectType(
     ir: OntologyIR,
     actionType: ActionTypeDef,
     reference: InputReferenceExpression
 ): string {
-    const parameter = actionType.parameters.find(
-        (candidate) => candidate.name === reference.name
-    );
+    const parameter = actionType.parameters.find((candidate) => candidate.name === reference.name);
     if (!parameter) {
-        throw new Error(
-            `Unknown action parameter "${reference.name}".`
-        );
+        throw new Error(`Unknown action parameter "${reference.name}".`);
     }
     const type = resolveType(ir, parameter.type);
     if (type.kind !== "objectReference") {
@@ -162,9 +145,7 @@ function evaluateExpression<Context>(opts: {
         }
         case "objectLookup":
         case "linkHop":
-            throw new Error(
-                `Cannot evaluate ${opts.expression.kind} without ontology object collections.`
-            );
+            throw new Error(`Cannot evaluate ${opts.expression.kind} without ontology object collections.`);
     }
 }
 
@@ -175,7 +156,7 @@ function getFixedActionParameterValues(
     return (fixedActionParameterValues as RuntimeFixedActionParameterValues | undefined)?.[actionName];
 }
 
-function isActionParameterFixed<Context>(
+function isActionParameterFixed(
     fixedActionParameterValues: FixedActionParameterValues | undefined,
     actionName: string,
     parameterName: string
@@ -194,11 +175,7 @@ export function getVisibleActionParameterNames(
         parameters
             .filter(
                 (parameter) =>
-                    !isActionParameterFixed(
-                        fixedActionParameterValues,
-                        actionTypeName,
-                        parameter.name
-                    )
+                    !isActionParameterFixed(fixedActionParameterValues, actionTypeName, parameter.name)
             )
             .map((parameter) => parameter.name)
     );
@@ -230,51 +207,30 @@ function getExpressionObjectType(
         if (reference.kind !== "inputReference") {
             return undefined;
         }
-        const parameter = getActionType(
-            ir,
-            actionName
-        ).parameters.find(
-            (candidate) =>
-                candidate.name ===
-                reference.value.name
+        const parameter = getActionType(ir, actionName).parameters.find(
+            (candidate) => candidate.name === reference.value.name
         );
         if (!parameter) return undefined;
         let type = resolveType(ir, parameter.type);
         while (type.kind === "optional") {
             type = resolveType(ir, type.value.type);
         }
-        return type.kind === "objectReference"
-            ? type.value.objectType
-            : undefined;
+        return type.kind === "objectReference" ? type.value.objectType : undefined;
     }
     if (expression.kind === "linkHop") {
-        const sourceObjectType = getExpressionObjectType(
-            ir,
-            actionName,
-            expression.value.source
-        );
+        const sourceObjectType = getExpressionObjectType(ir, actionName, expression.value.source);
         if (!sourceObjectType) return undefined;
-        const link = resolveLinkHop(
-            ir,
+        const link = resolveLinkHop(ir, sourceObjectType, expression.value.link);
+        if (!link) return undefined;
+        const foreignKeyOnSource = isLinkHopFromForeignKeySource(
+            link,
             sourceObjectType,
             expression.value.link
         );
-        if (!link) return undefined;
-        const foreignKeyOnSource =
-            isLinkHopFromForeignKeySource(
-                link,
-                sourceObjectType,
-                expression.value.link
-            );
-        if (
-            !foreignKeyOnSource &&
-            link.cardinality === "many"
-        ) {
+        if (!foreignKeyOnSource && link.cardinality === "many") {
             return undefined;
         }
-        return foreignKeyOnSource
-            ? link.target.objectType
-            : link.source.objectType;
+        return foreignKeyOnSource ? link.target.objectType : link.source.objectType;
     }
     return undefined;
 }
@@ -294,9 +250,7 @@ function projectExpression<Context>(opts: {
     switch (opts.expression.kind) {
         case "contextReference":
             return opts.clientContextMode === "forward" &&
-                hasPath(opts.clientContext, [
-                    opts.expression.value.name,
-                ])
+                hasPath(opts.clientContext, [opts.expression.value.name])
                 ? opts.expression
                 : undefined;
         case "literal":
@@ -312,11 +266,7 @@ function projectExpression<Context>(opts: {
             );
             if (
                 objectType &&
-                !(
-                    opts.allowedObjectTypeProperties[
-                        objectType
-                    ] ?? []
-                ).includes(opts.expression.value.path[0]!)
+                !(opts.allowedObjectTypeProperties[objectType] ?? []).includes(opts.expression.value.path[0]!)
             ) {
                 return undefined;
             }
@@ -351,12 +301,7 @@ function projectExpression<Context>(opts: {
                 ...opts,
                 expression: opts.expression.value.source,
             });
-            return source &&
-                getExpressionObjectType(
-                    opts.ir,
-                    opts.actionName,
-                    opts.expression
-                )
+            return source && getExpressionObjectType(opts.ir, opts.actionName, opts.expression)
                 ? {
                       kind: "linkHop",
                       value: {
@@ -419,10 +364,7 @@ function projectExpression<Context>(opts: {
                 opts.actionName
             )?.[parameterName];
             if (fixedValue === undefined) return undefined;
-            if (
-                fixedValue.kind === "inputReference" &&
-                fixedValue.value.name === parameterName
-            ) {
+            if (fixedValue.kind === "inputReference" && fixedValue.value.name === parameterName) {
                 return undefined;
             }
             return projectExpression({
@@ -723,8 +665,7 @@ export function projectRemoteOntologyIR<
                                   fixedActionParameterValues: opts.fixedActionParameterValues,
                                   allowedObjectTypeProperties: opts.allowedObjectTypeProperties,
                                   projectFixedParameterValues:
-                                      opts.projectFixedActionParameterValuesInDefaults ??
-                                      false,
+                                      opts.projectFixedActionParameterValuesInDefaults ?? false,
                               })
                             : undefined,
                     })),

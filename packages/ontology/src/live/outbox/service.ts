@@ -25,16 +25,9 @@ export interface OutboxCoordinationService {
         edit(input: { id: string; request: OntologyActionRequest }): Promise<OntologyOutboxEntry>;
         remove(input: { id: string }): Promise<void>;
         retry(input: { id: string }): Promise<void>;
-        recover(input: {
-            failureStrategy:
-                | "pause"
-                | "discard-all";
-            maxRetries: number;
-        }): Promise<void>;
+        recover(input: { failureStrategy: "pause" | "discard-all"; maxRetries: number }): Promise<void>;
         claim(input: Record<string, never>): Promise<OntologyOutboxEntry | undefined>;
-        nextRetryAt(
-            input: Record<string, never>
-        ): Promise<number | undefined>;
+        nextRetryAt(input: Record<string, never>): Promise<number | undefined>;
         complete(input: { id: string; executionId: string; result: unknown }): Promise<void>;
         fail(input: {
             id: string;
@@ -43,11 +36,7 @@ export interface OutboxCoordinationService {
             retryAt?: number;
             error: OutboxErrorDetails;
         }): Promise<OntologyOutboxEntry>;
-        discardAll(input: {
-            id: string;
-            executionId: string;
-            error: OutboxErrorDetails;
-        }): Promise<void>;
+        discardAll(input: { id: string; executionId: string; error: OutboxErrorDetails }): Promise<void>;
     };
     events: {
         result: OutboxResultEvent;

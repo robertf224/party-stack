@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { convertFoundryMetaLinkTypes } from "./convertMetaLinkType.js";
 import type { ObjectTypeFullMetadata } from "@osdk/foundry.ontologies";
 

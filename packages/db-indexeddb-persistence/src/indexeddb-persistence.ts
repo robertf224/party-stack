@@ -35,11 +35,14 @@ export function createIndexedDBPersistence(
                 ? "sync-absent-error"
                 : (schemaMismatchPolicy ??
                   (mode === "sync-present" ? "sync-present-reset" : "sync-absent-error"));
-        const adapter = new IndexedDBPersistenceAdapter({
-            ...baseOptions,
-            schemaVersion,
-            schemaMismatchPolicy: policy,
-        }, connection);
+        const adapter = new IndexedDBPersistenceAdapter(
+            {
+                ...baseOptions,
+                schemaVersion,
+                schemaMismatchPolicy: policy,
+            },
+            connection
+        );
         // Without a supplied coordinator, TanStack creates a collection-local default.
         return { adapter, ...(coordinator ? { coordinator } : {}) };
     };

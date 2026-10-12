@@ -153,7 +153,7 @@ export function createPersistedCollectionCoordinator(
     const existing = adapters.get(adapter);
     if (existing) return existing;
 
-    const created = new CoordinationPersistenceShim(coordination, adapter as AdapterWithPullSince);
+    const created = new CoordinationPersistenceShim(coordination, adapter);
     adapters.set(adapter, created);
     return created;
 }
@@ -163,11 +163,14 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     private readonly collectionAdapters = new Map<string, AdapterWithPullSince>();
     private readonly collectionSubscriptions = new Map<string, number>();
     private readonly resumeChecks = new Map<string, Set<(force?: boolean) => Promise<void>>>();
-    private readonly localMutationBursts = new Map<string, {
-        pending: Set<string>;
-        needsReload: boolean;
-        timer?: ReturnType<typeof setTimeout>;
-    }>();
+    private readonly localMutationBursts = new Map<
+        string,
+        {
+            pending: Set<string>;
+            needsReload: boolean;
+            timer?: ReturnType<typeof setTimeout>;
+        }
+    >();
     private stopResumeListeners: (() => void) | undefined;
     private checkingResume = false;
     private resumeRequested = false;
@@ -180,7 +183,11 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
             try {
                 while (this.resumeRequested && this.resumeChecks.size > 0) {
                     this.resumeRequested = false;
-                    await Promise.all([...this.resumeChecks.values()].flatMap((checks) => [...checks].map((check) => check())));
+                    await Promise.all(
+                        [...this.resumeChecks.values()].flatMap((checks) =>
+                            [...checks].map((check) => check())
+                        )
+                    );
                 }
             } finally {
                 this.checkingResume = false;
@@ -190,7 +197,8 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     };
 
     private startResumeListeners(): void {
-        if (this.stopResumeListeners || typeof window === "undefined" || typeof document === "undefined") return;
+        if (this.stopResumeListeners || typeof window === "undefined" || typeof document === "undefined")
+            return;
         const page = window;
         const visibility = document;
         const onVisible = () => {
@@ -266,7 +274,8 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
                           // Release it before dropping our strong reference to its options.
                           if (this.remoteAcquisitions.get(input.acquisitionId)?.options === options) {
                               this.remoteAcquisitions.delete(input.acquisitionId);
-                              await this.remoteSubsets.requestReleaseRemoteSubset(input.collectionId, options)
+                              await this.remoteSubsets
+                                  .requestReleaseRemoteSubset(input.collectionId, options)
                                   .catch(() => undefined);
                           }
                           throw error;
@@ -305,16 +314,30 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
             if (event.collectionId === collectionId) {
                 const payload = event.message.payload;
                 const burst = this.localMutationBursts.get(collectionId);
-                if (burst && isRecord(payload) && payload.type === "tx:committed" &&
-                    typeof payload.txId === "string" && !burst.pending.has(payload.txId)) {
+                if (
+                    burst &&
+                    isRecord(payload) &&
+                    payload.type === "tx:committed" &&
+                    typeof payload.txId === "string" &&
+                    !burst.pending.has(payload.txId)
+                ) {
                     burst.needsReload = true;
                 }
-                if (isRecord(payload) && payload.type === "tx:committed" &&
-                    typeof payload.term === "number" && typeof payload.seq === "number" &&
+                if (
+                    isRecord(payload) &&
+                    payload.type === "tx:committed" &&
+                    typeof payload.term === "number" &&
+                    typeof payload.seq === "number" &&
                     typeof payload.latestRowVersion === "number" &&
-                    (!observed || payload.term > observed.latestTerm ||
-                        (payload.term === observed.latestTerm && payload.seq > observed.latestSeq))) {
-                    observed = { latestTerm: payload.term, latestSeq: payload.seq, latestRowVersion: payload.latestRowVersion };
+                    (!observed ||
+                        payload.term > observed.latestTerm ||
+                        (payload.term === observed.latestTerm && payload.seq > observed.latestSeq))
+                ) {
+                    observed = {
+                        latestTerm: payload.term,
+                        latestSeq: payload.seq,
+                        latestRowVersion: payload.latestRowVersion,
+                    };
                 }
                 callback(event.message);
             }
@@ -325,15 +348,29 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
                 const adapter = this.adapterForCollection(collectionId);
                 const current = await adapter.getStreamPosition?.(collectionId);
                 if (!active) return;
-                if (!force && current && observed && current.latestTerm === observed.latestTerm &&
-                    current.latestSeq === observed.latestSeq && current.latestRowVersion === observed.latestRowVersion) return;
+                if (
+                    !force &&
+                    current &&
+                    observed &&
+                    current.latestTerm === observed.latestTerm &&
+                    current.latestSeq === observed.latestSeq &&
+                    current.latestRowVersion === observed.latestRowVersion
+                )
+                    return;
                 // A local reset notification makes upstream reload active subsets atomically.
                 // No storage reset or broadcast is performed. Before our first notification,
                 // the hydration position is unknown, so a resume conservatively reloads once.
                 callback({
-                    v: 1, dbName: this.coordinationScope(), collectionId,
-                    senderId: `resume:${this.nodeId}`, ts: Date.now(),
-                    payload: { type: "collection:reset", schemaVersion: this.schemaVersion(adapter) ?? 1, resetEpoch: 0 },
+                    v: 1,
+                    dbName: this.coordinationScope(),
+                    collectionId,
+                    senderId: `resume:${this.nodeId}`,
+                    ts: Date.now(),
+                    payload: {
+                        type: "collection:reset",
+                        schemaVersion: this.schemaVersion(adapter) ?? 1,
+                        resetEpoch: 0,
+                    },
                 });
                 observed = current;
             } catch (error) {
@@ -526,7 +563,11 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     ): Promise<ApplyLocalMutationsResponse> {
         const envelopeId = safeRandomUUID();
         const burst = this.resumeChecks.has(collectionId)
-            ? this.localMutationBursts.get(collectionId) ?? { pending: new Set<string>(), needsReload: false, timer: undefined }
+            ? (this.localMutationBursts.get(collectionId) ?? {
+                  pending: new Set<string>(),
+                  needsReload: false,
+                  timer: undefined,
+              })
             : undefined;
         if (burst) {
             if (burst.timer !== undefined) clearTimeout(burst.timer);

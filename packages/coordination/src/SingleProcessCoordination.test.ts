@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
     CoordinationServiceError,
     SingleProcessCoordination,
@@ -18,9 +18,7 @@ type TestService = {
 };
 
 function handlers(
-    overrides: Partial<
-        CoordinationServiceHandlers<TestService>
-    > = {}
+    overrides: Partial<CoordinationServiceHandlers<TestService>> = {}
 ): CoordinationServiceHandlers<TestService> {
     return {
         echo: ({ value }) => value,
@@ -45,10 +43,8 @@ describe("SingleProcessCoordination", () => {
         const coordination = new SingleProcessCoordination({
             scope: "roles",
         });
-        const first =
-            coordination.service<TestService>("test.v1");
-        const second =
-            coordination.service<TestService>("test.v1");
+        const first = coordination.service<TestService>("test.v1");
+        const second = coordination.service<TestService>("test.v1");
 
         expect(coordination.role).toBe("host");
         expect(coordination.isLeader).toBe(true);
@@ -56,9 +52,7 @@ describe("SingleProcessCoordination", () => {
         expect(first).toBe(second);
 
         coordination.serve("test.v1", handlers());
-        await expect(
-            first.methods.echo({ value: "hello" })
-        ).resolves.toBe("hello");
+        await expect(first.methods.echo({ value: "hello" })).resolves.toBe("hello");
         await coordination.close();
     });
 
@@ -66,21 +60,14 @@ describe("SingleProcessCoordination", () => {
         const coordination = new SingleProcessCoordination({
             scope: "events",
         });
-        const client =
-            coordination.service<TestService>("test.v1");
+        const client = coordination.service<TestService>("test.v1");
         const first = vi.fn(() => {
             throw new Error("listener failure");
         });
         const second = vi.fn();
         client.events.subscribe("changed", first);
-        const unsubscribe = client.events.subscribe(
-            "changed",
-            second
-        );
-        const server = coordination.serve(
-            "test.v1",
-            handlers()
-        );
+        const unsubscribe = client.events.subscribe("changed", second);
+        const server = coordination.serve("test.v1", handlers());
 
         server.events.publish("changed", { value: "one" });
         expect(first).toHaveBeenCalledWith({ value: "one" });
@@ -123,24 +110,11 @@ describe("SingleProcessCoordination", () => {
 
         const first = a.methods.pause({ value: "first" });
         const second = a.methods.pause({ value: "second" });
-        await expect(
-            b.methods.echo({ value: "parallel" })
-        ).resolves.toBe("parallel");
-        expect(order).toEqual([
-            "start:first",
-            "other:parallel",
-        ]);
+        await expect(b.methods.echo({ value: "parallel" })).resolves.toBe("parallel");
+        expect(order).toEqual(["start:first", "other:parallel"]);
         gate.resolve();
-        await expect(
-            Promise.all([first, second])
-        ).resolves.toEqual(["first", "second"]);
-        expect(order).toEqual([
-            "start:first",
-            "other:parallel",
-            "end:first",
-            "start:second",
-            "end:second",
-        ]);
+        await expect(Promise.all([first, second])).resolves.toEqual(["first", "second"]);
+        expect(order).toEqual(["start:first", "other:parallel", "end:first", "start:second", "end:second"]);
         expect(maxActive).toBe(1);
         await coordination.close();
     });
@@ -152,22 +126,14 @@ describe("SingleProcessCoordination", () => {
         cyclic.serve<TestService>("a.v1", {
             ...handlers(),
             nested: (_input, context) =>
-                context.coordination
-                    .service<TestService>("b.v1")
-                    .methods.nested({ value: 1 }),
+                context.coordination.service<TestService>("b.v1").methods.nested({ value: 1 }),
         });
         cyclic.serve<TestService>("b.v1", {
             ...handlers(),
             nested: (_input, context) =>
-                context.coordination
-                    .service<TestService>("a.v1")
-                    .methods.nested({ value: 2 }),
+                context.coordination.service<TestService>("a.v1").methods.nested({ value: 2 }),
         });
-        await expect(
-            cyclic
-                .service<TestService>("a.v1")
-                .methods.nested({ value: 0 })
-        ).rejects.toMatchObject({
+        await expect(cyclic.service<TestService>("a.v1").methods.nested({ value: 0 })).rejects.toMatchObject({
             code: "CYCLIC_SERVICE_CALL",
         });
         await cyclic.close();
@@ -181,17 +147,13 @@ describe("SingleProcessCoordination", () => {
             ...handlers(),
             nested: ({ value }, context) =>
                 value === 0
-                    ? context.coordination
-                          .service<TestService>("test.v1")
-                          .methods.nested({ value: 1 })
+                    ? context.coordination.service<TestService>("test.v1").methods.nested({ value: 1 })
                     : value,
         });
 
-        await expect(
-            coordination
-                .service<TestService>("test.v1")
-                .methods.nested({ value: 0 })
-        ).resolves.toBe(1);
+        await expect(coordination.service<TestService>("test.v1").methods.nested({ value: 0 })).resolves.toBe(
+            1
+        );
         await coordination.close();
     });
 
@@ -199,25 +161,16 @@ describe("SingleProcessCoordination", () => {
         const coordination = new SingleProcessCoordination({
             scope: "registry",
         });
-        const server = coordination.serve(
-            "test.v1",
-            handlers()
-        );
-        expect(() =>
-            coordination.serve("test.v1", handlers())
-        ).toThrowError(CoordinationServiceError);
+        const server = coordination.serve("test.v1", handlers());
+        expect(() => coordination.serve("test.v1", handlers())).toThrowError(CoordinationServiceError);
         await expect(
-            coordination
-                .service<TestService>("missing.v1")
-                .methods.echo({ value: "no" })
+            coordination.service<TestService>("missing.v1").methods.echo({ value: "no" })
         ).rejects.toMatchObject({
             code: "SERVICE_UNAVAILABLE",
         });
         await server.close();
         await expect(
-            coordination
-                .service<TestService>("test.v1")
-                .methods.echo({ value: "no" })
+            coordination.service<TestService>("test.v1").methods.echo({ value: "no" })
         ).rejects.toMatchObject({
             code: "SERVICE_UNAVAILABLE",
         });
@@ -235,11 +188,7 @@ describe("SingleProcessCoordination", () => {
             pause: async (_input, context) => {
                 started.resolve();
                 await new Promise<void>((resolve) => {
-                    context.signal.addEventListener(
-                        "abort",
-                        () => resolve(),
-                        { once: true }
-                    );
+                    context.signal.addEventListener("abort", () => resolve(), { once: true });
                 });
                 cleaned.resolve();
                 return "clean";
@@ -248,10 +197,7 @@ describe("SingleProcessCoordination", () => {
         const controller = new AbortController();
         const call = coordination
             .service<TestService>("test.v1")
-            .methods.pause(
-                { value: "wait" },
-                { signal: controller.signal }
-            );
+            .methods.pause({ value: "wait" }, { signal: controller.signal });
         await started.promise;
         controller.abort();
         await expect(call).rejects.toMatchObject({
@@ -267,35 +213,29 @@ describe("SingleProcessCoordination", () => {
         });
         const started = promiseWithResolvers<void>();
         const cleaned = promiseWithResolvers<void>();
-        const server = coordination.serve<TestService>(
-            "test.v1",
-            {
-                ...handlers(),
-                pause: async ({ value }, context) => {
-                    started.resolve();
-                    await new Promise<void>((resolve) =>
-                        context.signal.addEventListener(
-                            "abort",
-                            () => resolve(),
-                            { once: true }
-                        )
-                    );
-                    cleaned.resolve();
-                    return value;
-                },
-            }
-        );
-        const client =
-            coordination.service<TestService>("test.v1");
+        const server = coordination.serve<TestService>("test.v1", {
+            ...handlers(),
+            pause: async ({ value }, context) => {
+                started.resolve();
+                await new Promise<void>((resolve) =>
+                    context.signal.addEventListener("abort", () => resolve(), { once: true })
+                );
+                cleaned.resolve();
+                return value;
+            },
+        });
+        const client = coordination.service<TestService>("test.v1");
         const active = client.methods.pause({
             value: "active",
         });
         const queued = client.methods.pause({
             value: "queued",
         });
+        // oxlint-disable-next-line vitest/valid-expect -- Register before shutdown; awaited below after shutdown triggers rejection.
         const activeResult = expect(active).rejects.toMatchObject({
             code: "SERVICE_CLOSED",
         });
+        // oxlint-disable-next-line vitest/valid-expect -- Register before shutdown; awaited below after shutdown triggers rejection.
         const queuedResult = expect(queued).rejects.toMatchObject({
             code: "SERVICE_CLOSED",
         });
@@ -332,23 +272,17 @@ describe("SingleProcessCoordination", () => {
         });
         const started = promiseWithResolvers<void>();
         const cleaned = promiseWithResolvers<void>();
-        const leader = coordination.runAsLeader(
-            async ({ signal }) => {
-                started.resolve();
-                await new Promise<void>((resolve) =>
-                    signal.addEventListener(
-                        "abort",
-                        () => resolve(),
-                        {
-                            once: true,
-                        }
-                    )
-                );
-                await Promise.resolve();
-                cleaned.resolve();
-                return "done";
-            }
-        );
+        const leader = coordination.runAsLeader(async ({ signal }) => {
+            started.resolve();
+            await new Promise<void>((resolve) =>
+                signal.addEventListener("abort", () => resolve(), {
+                    once: true,
+                })
+            );
+            await Promise.resolve();
+            cleaned.resolve();
+            return "done";
+        });
         await started.promise;
 
         await coordination.close();
@@ -358,9 +292,7 @@ describe("SingleProcessCoordination", () => {
             code: "CLOSED",
         });
         await expect(
-            coordination
-                .service<TestService>("test.v1")
-                .methods.echo({ value: "closed" })
+            coordination.service<TestService>("test.v1").methods.echo({ value: "closed" })
         ).rejects.toMatchObject({ code: "CLOSED" });
     });
 });

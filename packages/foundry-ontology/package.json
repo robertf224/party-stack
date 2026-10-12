@@ -1,6 +1,9 @@
 {
     "name": "@party-stack/foundry-ontology",
     "version": "0.18.0",
+    "files": [
+        "lib"
+    ],
     "type": "module",
     "exports": {
         ".": {
@@ -20,14 +23,6 @@
             "default": "./lib/config/index.js"
         }
     },
-    "files": [
-        "lib"
-    ],
-    "scripts": {
-        "build": "tsc",
-        "lint": "eslint",
-        "test": "vitest run --pass-with-no-tests"
-    },
     "dependencies": {
         "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/urls": "^0.2.1",
@@ -36,14 +31,14 @@
         "@osdk/foundry.core": "^2.77.0",
         "@osdk/foundry.mediasets": "^2.77.0",
         "@osdk/foundry.ontologies": "^2.77.0",
-        "@party-stack/connections": "workspace:*",
-        "@party-stack/errors": "workspace:*",
-        "@party-stack/foundry-client": "workspace:*",
-        "@party-stack/foundry-object-set-watcher": "workspace:*",
+        "@party-stack/connections": "workspace:^",
+        "@party-stack/errors": "workspace:^",
+        "@party-stack/foundry-client": "workspace:^",
+        "@party-stack/foundry-object-set-watcher": "workspace:^",
         "@party-stack/icons-blueprint": "workspace:^",
-        "@party-stack/oauth": "workspace:*",
-        "@party-stack/ontology": "workspace:*",
-        "@party-stack/runtime": "workspace:*",
+        "@party-stack/oauth": "workspace:^",
+        "@party-stack/ontology": "workspace:^",
+        "@party-stack/runtime": "workspace:^",
         "@tanstack/store": "^0.11.0",
         "change-case": "^5.4.4",
         "effection": "^4.0.2",
@@ -51,17 +46,16 @@
         "zod": "^4.4.3"
     },
     "devDependencies": {
-        "@bobbyfidz/react-build-config": "^0.1.1",
+        "@party-stack/build-config": "workspace:^",
         "@tanstack/db": "0.12.1",
         "@tanstack/query-db-collection": "1.4.0",
         "@types/node": "^24.10.1",
         "@types/react": "^19.2.6",
-        "eslint": "^9.25.0",
         "react": "^19.2.0",
         "ts-node": "^10.9.2",
         "tsx": "^4.20.6",
-        "typescript": "~5.8.3",
-        "vitest": "^3.1.1"
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
     },
     "peerDependencies": {
         "@tanstack/db": "0.12.1",

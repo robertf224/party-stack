@@ -10,27 +10,23 @@ import {
     createSalesforceOntologyRoute,
 } from "@party-stack/salesforce-ontology";
 
-const installation =
-    await createSalesforceBackendInstallation({
-        instanceUrl:
-            "https://example.my.salesforce.com",
-        apiVersion: "65.0",
-        runtime,
-        connections: {
-            oauth: {
-                clientId,
-                redirectUrl:
-                    "http://localhost:1717/oauth/callback",
-            },
+const installation = await createSalesforceBackendInstallation({
+    instanceUrl: "https://example.my.salesforce.com",
+    apiVersion: "65.0",
+    runtime,
+    connections: {
+        oauth: {
+            clientId,
+            redirectUrl: "http://localhost:1717/oauth/callback",
         },
-        routes: [
-            createSalesforceOntologyRoute({
-                ontologyId:
-                    "salesforce:task-manager",
-                ir: generatedOntology,
-            }),
-        ],
-    });
+    },
+    routes: [
+        createSalesforceOntologyRoute({
+            ontologyId: "salesforce:task-manager",
+            ir: generatedOntology,
+        }),
+    ],
+});
 ```
 
 The connection adapter uses `@party-stack/oauth`, persists refresh tokens
@@ -43,9 +39,7 @@ token-provider/egress agnostic.
 Consumer projects can export a standard Party Stack pull configuration:
 
 ```ts
-import {
-    createSalesforceOntologyPullConfig,
-} from "@party-stack/salesforce-ontology/config";
+import { createSalesforceOntologyPullConfig } from "@party-stack/salesforce-ontology/config";
 
 export default createSalesforceOntologyPullConfig({
     instanceUrl,
@@ -53,12 +47,8 @@ export default createSalesforceOntologyPullConfig({
     ontologyId: "salesforce:task-manager",
     objectTypeNames: ["Task", "User"],
     flowActionTypeNames: ["Create_Task_Flow"],
-    standardActionTypeNames: [
-        "confirmSalesMeeting",
-    ],
-    standardQueryFunctionTypeNames: [
-        "getAvailableMeetingTimes",
-    ],
+    standardActionTypeNames: ["confirmSalesMeeting"],
+    standardQueryFunctionTypeNames: ["getAvailableMeetingTimes"],
     crudActionTypes: [
         {
             objectType: "Task",
@@ -79,6 +69,7 @@ normal `src/ontology/ontology.ts` consumed by
 `createSalesforceOntologyRoute({ ir })`.
 
 See `apps/salesforce-task-manager` for a real-org example.
+
 # salesforce-ontology
 
 Salesforce backend adapters for Party Stack LiveOntology.
@@ -86,9 +77,9 @@ Salesforce backend adapters for Party Stack LiveOntology.
 ## Runtime adapter
 
 ```ts
+import { createLiveOntology } from "@party-stack/ontology";
 import { createSalesforceClient } from "@party-stack/salesforce-client";
 import { createSalesforceOntologyBackend } from "@party-stack/salesforce-ontology";
-import { createLiveOntology } from "@party-stack/ontology";
 
 // jsforce-backed client; supply your own token (no OAuth ownership here)
 const client = createSalesforceClient({
@@ -106,8 +97,8 @@ const ontology = await createLiveOntology({
 ## Metadata adapter
 
 ```ts
-import { createSalesforceMetaOntologyBackendAdapter } from "@party-stack/salesforce-ontology/meta";
 import { createMetaLiveOntology } from "@party-stack/ontology";
+import { createSalesforceMetaOntologyBackendAdapter } from "@party-stack/salesforce-ontology/meta";
 
 const meta = await createMetaLiveOntology({
     backend: () =>

@@ -1,5 +1,5 @@
-/* eslint-disable require-yield */
-/* eslint-disable react-hooks/rules-of-hooks */
+/* oxlint-disable require-yield */
+/* oxlint-disable react/rules-of-hooks */
 import { Pathnames, Urls } from "@bobbyfidz/urls";
 import { map } from "@effectionx/stream-helpers";
 import { useWebSocket } from "@effectionx/websocket";
@@ -120,17 +120,15 @@ export function useObjectSetWatcherConnection(
         const subscriptionMessages = createChannel<ObjectSetSubscriptionsMessage, CloseEvent | void>();
 
         const url = Urls.extend(baseUrl, {
-                protocol: "wss:",
-                pathname: Pathnames.join(
-                    "/api/v2/ontologySubscriptions/ontologies",
-                    ontologyRid,
-                    "streamSubscriptions"
-                ),
-            }).toString();
+            protocol: "wss:",
+            pathname: Pathnames.join(
+                "/api/v2/ontologySubscriptions/ontologies",
+                ontologyRid,
+                "streamSubscriptions"
+            ),
+        }).toString();
         const webSocket = yield* until(createWebSocket(url));
-        const socket = yield* useWebSocket(
-            () => webSocket
-        );
+        const socket = yield* useWebSocket(() => webSocket);
 
         let latestRequestId = 0n;
         let externalSubscriptionIdsToInternal: Map<string, string> | undefined;

@@ -162,10 +162,7 @@ export async function ensureBinary(opts: {
     clientSecret: string;
 }): Promise<string>;
 
-export async function ensureBinary(opts: {
-    apolloUrl: string;
-    auth: ApolloAuth;
-}): Promise<string>;
+export async function ensureBinary(opts: { apolloUrl: string; auth: ApolloAuth }): Promise<string>;
 
 export async function ensureBinary(
     opts:
@@ -308,7 +305,9 @@ async function executeGraphql<TData>(opts: {
 
     const body = (await response.json()) as GraphqlResponse<TData>;
     if (body.errors !== undefined && body.errors.length > 0) {
-        throw new Error(`Apollo GraphQL request failed: ${body.errors.map((error) => error.message).join("; ")}`);
+        throw new Error(
+            `Apollo GraphQL request failed: ${body.errors.map((error) => error.message).join("; ")}`
+        );
     }
 
     invariant(body.data, "Apollo GraphQL response did not include data.");
@@ -321,18 +320,29 @@ function parseMavenCoordinate(mavenCoordinate: string): {
     productVersion: string;
 } {
     const [productGroup, productName, productVersion, ...rest] = mavenCoordinate.split(":");
-    invariant(productGroup !== undefined && productGroup.length > 0, `Invalid Maven coordinate: ${mavenCoordinate}`);
-    invariant(productName !== undefined && productName.length > 0, `Invalid Maven coordinate: ${mavenCoordinate}`);
-    invariant(productVersion !== undefined && productVersion.length > 0, `Invalid Maven coordinate: ${mavenCoordinate}`);
+    invariant(
+        productGroup !== undefined && productGroup.length > 0,
+        `Invalid Maven coordinate: ${mavenCoordinate}`
+    );
+    invariant(
+        productName !== undefined && productName.length > 0,
+        `Invalid Maven coordinate: ${mavenCoordinate}`
+    );
+    invariant(
+        productVersion !== undefined && productVersion.length > 0,
+        `Invalid Maven coordinate: ${mavenCoordinate}`
+    );
     invariant(rest.length === 0, `Invalid Maven coordinate: ${mavenCoordinate}`);
 
     return { productGroup, productName, productVersion };
 }
 
-export function createHelmChartProductManifest(opts: CreateHelmChartProductManifestOptions): HelmChartProductManifest {
+export function createHelmChartProductManifest(
+    opts: CreateHelmChartProductManifestOptions
+): HelmChartProductManifest {
     const { productGroup, productName, productVersion } = parseMavenCoordinate(opts.mavenCoordinate);
     const extensions: HelmChartProductManifest["extensions"] = {
-        ...(opts.extensions ?? {}),
+        ...opts.extensions,
         "helm-chart": {
             "helm-chart-name": opts.helmChartName,
             "helm-chart-version": opts.helmChartVersion,
@@ -432,17 +442,24 @@ export async function publishHelmChart(opts: {
     });
 }
 
-export async function createHelmChartProductRelease(opts: CreateHelmChartProductManifestOptions & {
-    apolloUrl: string;
-    auth: ApolloAuth;
-    outputDir?: string;
-    cwd?: string;
-    spaceId?: string;
-    graphqlUrl?: string;
-    graphqlPath?: string;
-}): Promise<{ manifest: HelmChartProductManifest; manifestPath: string; productRelease: ApolloProductReleaseCreated }> {
+export async function createHelmChartProductRelease(
+    opts: CreateHelmChartProductManifestOptions & {
+        apolloUrl: string;
+        auth: ApolloAuth;
+        outputDir?: string;
+        cwd?: string;
+        spaceId?: string;
+        graphqlUrl?: string;
+        graphqlPath?: string;
+    }
+): Promise<{
+    manifest: HelmChartProductManifest;
+    manifestPath: string;
+    productRelease: ApolloProductReleaseCreated;
+}> {
     const manifest = createHelmChartProductManifest(opts);
-    const outputDir = opts.outputDir ?? path.join(process.cwd(), ".apollo-product-release", manifest["product-version"]);
+    const outputDir =
+        opts.outputDir ?? path.join(process.cwd(), ".apollo-product-release", manifest["product-version"]);
     const manifestPath = path.join(outputDir, "manifest.yml");
 
     await writeHelmChartProductManifest(manifest, manifestPath);
@@ -492,7 +509,9 @@ export async function createHelmChartProductRelease(opts: CreateHelmChartProduct
         case "ApolloProductRelease":
             return { manifest, manifestPath, productRelease };
         case "ApolloProductReleaseFailedToDeserializeManifest":
-            throw new Error(`Apollo failed to deserialize product release manifest: ${productRelease.message}`);
+            throw new Error(
+                `Apollo failed to deserialize product release manifest: ${productRelease.message}`
+            );
         case "ApolloProductReleaseRejected":
             throw new Error(
                 `Apollo rejected product release ${productRelease.mavenCoordinate}: ${productRelease.rejectionReasons
@@ -532,7 +551,9 @@ export async function searchProductReleases(opts: {
     );
 
     if (!response.ok) {
-        throw new Error(`Failed to search Apollo product releases: ${response.status} ${response.statusText}`);
+        throw new Error(
+            `Failed to search Apollo product releases: ${response.status} ${response.statusText}`
+        );
     }
 
     return await response.json();

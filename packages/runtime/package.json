@@ -1,6 +1,9 @@
 {
     "name": "@party-stack/runtime",
     "version": "0.4.0",
+    "files": [
+        "lib"
+    ],
     "type": "module",
     "exports": {
         ".": {
@@ -12,25 +15,16 @@
             "default": "./lib/effection/index.js"
         }
     },
-    "files": [
-        "lib"
-    ],
-    "scripts": {
-        "build": "tsc",
-        "lint": "eslint",
-        "test": "vitest run"
-    },
     "dependencies": {
-        "@party-stack/coordination": "workspace:*",
+        "@party-stack/coordination": "workspace:^",
         "effection": "^4.0.2"
     },
     "devDependencies": {
-        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@party-stack/build-config": "workspace:^",
         "@tanstack/db": "0.12.1",
         "@tanstack/db-sqlite-persistence-core": "0.4.5",
-        "eslint": "^9.25.0",
-        "typescript": "~5.8.3",
-        "vitest": "^3.1.1"
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
     },
     "peerDependencies": {
         "@tanstack/db": "0.12.1",

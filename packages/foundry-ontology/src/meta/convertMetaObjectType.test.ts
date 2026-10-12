@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { convertFoundryMetaObjectType } from "./convertMetaObjectType.js";
 import type { ObjectTypeFullMetadata, ObjectTypeV2 } from "@osdk/foundry.ontologies";
 
@@ -39,7 +39,7 @@ describe("convertFoundryMetaObjectType", () => {
             implementsInterfaces: [],
             implementsInterfaces2: {},
             sharedPropertyTypeMapping: {},
-        } as ObjectTypeFullMetadata);
+        });
 
         expect(result).toMatchObject({
             id: "ri.ontology.main.object-type.employee",
@@ -97,7 +97,7 @@ describe("convertFoundryMetaObjectType", () => {
                 implementsInterfaces: [],
                 implementsInterfaces2: {},
                 sharedPropertyTypeMapping: {},
-            } as ObjectTypeFullMetadata)
+            })
         ).toMatchObject({
             icon: undefined,
             color: "#000000",

@@ -1,11 +1,11 @@
 import { FieldPath, LoadSubsetOptions, parseOrderByExpression, parseWhereExpression } from "@tanstack/db";
-import type { MetaActionType } from "@party-stack/ontology";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import type {
     ActionTypeSearchJsonQueryV2,
     ActionTypeSortByV2,
     SearchActionTypesOrderByV2,
 } from "@osdk/foundry.ontologies";
+import type { MetaActionType } from "@party-stack/ontology";
 
 const FILTER_FIELDS = {
     id: "actionTypeRid",

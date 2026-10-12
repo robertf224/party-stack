@@ -60,7 +60,6 @@ type LensOp =
           kind: "select";
           properties: string[];
       };
-
 ```
 
 `move` handles both renaming and relocation. A rename is a move whose source
@@ -77,13 +76,7 @@ o.LensOp.move({
 });
 
 o.LensOp.select({
-    properties: [
-        "id",
-        "givenName",
-        "familyName",
-        "email",
-        "avatar",
-    ],
+    properties: ["id", "givenName", "familyName", "email", "avatar"],
 });
 ```
 
@@ -97,13 +90,7 @@ const foundryUserToUser = {
             to: ["avatar"],
         }),
         o.LensOp.select({
-            properties: [
-                "id",
-                "givenName",
-                "familyName",
-                "email",
-                "avatar",
-            ],
+            properties: ["id", "givenName", "familyName", "email", "avatar"],
         }),
     ],
 } satisfies Lens;
@@ -161,15 +148,9 @@ Steps:
         to: ["avatar"],
     }),
     o.LensOp.select({
-        properties: [
-            "id",
-            "givenName",
-            "familyName",
-            "email",
-            "avatar",
-        ],
+        properties: ["id", "givenName", "familyName", "email", "avatar"],
     }),
-]
+];
 ```
 
 Derived target:
@@ -201,14 +182,13 @@ against it rather than appended.
 The lens compiler produces a TanStack select projection:
 
 ```ts
-q.from({ source: foundryUsers })
-    .select(({ source }) => ({
-        id: source.id,
-        givenName: source.givenName,
-        familyName: source.familyName,
-        email: source.email,
-        avatar: source.profilePicture,
-    }));
+q.from({ source: foundryUsers }).select(({ source }) => ({
+    id: source.id,
+    givenName: source.givenName,
+    familyName: source.familyName,
+    email: source.email,
+    avatar: source.profilePicture,
+}));
 ```
 
 The projection is declarative query IR, not an opaque JavaScript mapper.
@@ -247,7 +227,7 @@ validation.
 The composite backend exposes the app target normally:
 
 ```ts
-ontology.objects.User
+ontology.objects.User;
 ```
 
 Internally:

@@ -1,32 +1,15 @@
-import {
-    resource,
-    spawn,
-    until,
-    useAbortSignal,
-    withResolvers,
-    type Operation,
-} from "effection";
+import { resource, spawn, until, useAbortSignal, withResolvers, type Operation } from "effection";
 import { normalizeError } from "../internal.js";
 
-export type UseWebLockOptions = Omit<
-    LockOptions,
-    "signal"
->;
+export type UseWebLockOptions = Omit<LockOptions, "signal">;
 
-export function useWebLock(
-    name: string,
-    options: UseWebLockOptions = {}
-): Operation<Lock | null> {
+export function useWebLock(name: string, options: UseWebLockOptions = {}): Operation<Lock | null> {
     return resource(function* (provide) {
         if (!globalThis.navigator?.locks) {
-            throw new Error(
-                "The Web Locks API is not available."
-            );
+            throw new Error("The Web Locks API is not available.");
         }
         const signal = yield* useAbortSignal();
-        const acquired = withResolvers<Lock | null>(
-            `acquire web lock: ${name}`
-        );
+        const acquired = withResolvers<Lock | null>(`acquire web lock: ${name}`);
         let release!: () => void;
         const hold = new Promise<void>((resolve) => {
             release = resolve;

@@ -1,3 +1,6 @@
+import { decode, encode } from "@party-stack/ontology/json";
+import { parseRemoteOntologyErrorBody } from "./errors.js";
+import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
 import type {
     RemoteApplyActionResponse,
     RemoteAttachmentMetadataRequest,
@@ -9,6 +12,7 @@ import type {
     RemoteOntologyTransportOptions,
     ResolvableRemoteOntologyTransport,
 } from "./protocol.js";
+import type { RemoteOntologyServer } from "./server.js";
 import type {
     OntologyIR,
     PartialAttachmentMetadata,
@@ -16,10 +20,6 @@ import type {
     ValidationIssue,
 } from "@party-stack/ontology";
 import type { Result } from "@party-stack/ontology/values";
-import { decode, encode } from "@party-stack/ontology/json";
-import { parseRemoteOntologyErrorBody } from "./errors.js";
-import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
-import type { RemoteOntologyServer } from "./server.js";
 
 export interface HttpRemoteOntologyTransportOptions {
     url: string | URL;
@@ -55,12 +55,11 @@ async function postJson<TResponse>(
     headers?: HeadersInit,
     options?: RemoteOntologyTransportOptions
 ): Promise<TResponse> {
+    const requestHeaders = new Headers(headers);
+    requestHeaders.set("content-type", "application/json");
     const response = await fetchImpl(url, {
         method: "POST",
-        headers: {
-            ...headers,
-            "content-type": "application/json",
-        },
+        headers: requestHeaders,
         body: serializeRemoteOntologyJson(body),
         signal: options?.signal,
     });
@@ -123,12 +122,11 @@ async function postBlob(
     headers?: HeadersInit,
     options?: RemoteOntologyTransportOptions
 ): Promise<Blob> {
+    const requestHeaders = new Headers(headers);
+    requestHeaders.set("content-type", "application/json");
     const response = await fetchImpl(url, {
         method: "POST",
-        headers: {
-            ...headers,
-            "content-type": "application/json",
-        },
+        headers: requestHeaders,
         body: serializeRemoteOntologyJson(body),
         signal: options?.signal,
     });
@@ -164,10 +162,8 @@ export function createHttpRemoteOntologyTransport(
                 options
             );
             ir = description.ir;
-            actionValidationSupported =
-                description.capabilities?.actionValidation === true;
-            actionParameterResolutionSupported =
-                description.capabilities?.actionParameterResolution === true;
+            actionValidationSupported = description.capabilities?.actionValidation === true;
+            actionParameterResolutionSupported = description.capabilities?.actionParameterResolution === true;
             return description;
         },
         loadSubset: async (request, options) => {
@@ -241,9 +237,7 @@ export function createHttpRemoteOntologyTransport(
         },
         resolveActionParameters: async (request, options) => {
             if (actionParameterResolutionSupported === false) {
-                throw new Error(
-                    "Remote ontology server does not support action parameter resolution."
-                );
+                throw new Error("Remote ontology server does not support action parameter resolution.");
             }
             const ontology = getIr();
             const response = await postJson<RemoteResolveActionParametersResponse>(
@@ -322,7 +316,6 @@ export function createInProcessHttpRemoteOntologyTransport(
     return createHttpRemoteOntologyTransport({
         ...opts,
         url: "http://remote-ontology.in-process/",
-        fetch: (input, init) =>
-            server.handleRequest(new Request(input, init)),
+        fetch: (input, init) => server.handleRequest(new Request(input, init)),
     });
 }

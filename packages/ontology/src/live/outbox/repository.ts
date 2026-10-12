@@ -15,7 +15,7 @@ export class OntologyOutboxRepository {
     }
 
     get(id: string): OntologyOutboxEntry | undefined {
-        return this.collection.get(id) as OntologyOutboxEntry | undefined;
+        return this.collection.get(id);
     }
 
     entries(): Promise<OntologyOutboxEntry[]> {
@@ -37,7 +37,7 @@ export class OntologyOutboxRepository {
                     executionId: entry.executionId,
                     lastError: entry.lastError,
                 }))
-        ) as Promise<OntologyOutboxEntry[]>;
+        );
     }
 
     async enqueue(proposed: OntologyOutboxEntry): Promise<OntologyOutboxEntry> {
@@ -103,38 +103,25 @@ export class OntologyOutboxRepository {
     }
 
     async recover(
-        failureStrategy:
-            | "pause"
-            | "discard-all",
+        failureStrategy: "pause" | "discard-all",
         maxRetries: number
     ): Promise<OntologyOutboxEntry[]> {
         const entries = await this.entries();
         const head = entries[0];
         if (!head) return [];
 
-        const interrupted =
-            head.status === "executing" ||
-            head.lastError?.name ===
-                "InterruptedExecution";
+        const interrupted = head.status === "executing" || head.lastError?.name === "InterruptedExecution";
         const exhausted =
             head.status === "failed" &&
             (!head.retryable ||
                 head.attempts > maxRetries ||
-                head.lastError?.name ===
-                    "ProjectionRestoreError");
-        if (
-            failureStrategy === "discard-all" &&
-            (interrupted || exhausted)
-        ) {
+                head.lastError?.name === "ProjectionRestoreError");
+        if (failureStrategy === "discard-all" && (interrupted || exhausted)) {
             await this.deleteEntries(entries);
             return entries;
         }
 
-        if (
-            head.status === "failed" &&
-            head.retryable &&
-            head.attempts <= maxRetries
-        ) {
+        if (head.status === "failed" && head.retryable && head.attempts <= maxRetries) {
             const now = Date.now();
             await this.update(head.id, (draft) => {
                 draft.status = "queued";
@@ -175,13 +162,9 @@ export class OntologyOutboxRepository {
         });
     }
 
-    async nextRetryAt(): Promise<
-        number | undefined
-    > {
+    async nextRetryAt(): Promise<number | undefined> {
         const entry = await this.head();
-        return entry?.status === "queued"
-            ? entry.nextAttemptAt
-            : undefined;
+        return entry?.status === "queued" ? entry.nextAttemptAt : undefined;
     }
 
     async complete(id: string, executionId: string): Promise<void> {
@@ -199,48 +182,31 @@ export class OntologyOutboxRepository {
         const entry = this.assertCurrentExecution(id, executionId);
         const now = Date.now();
         return this.update(id, (draft) => {
-            draft.status =
-                retryAt === undefined
-                    ? "failed"
-                    : "queued";
+            draft.status = retryAt === undefined ? "failed" : "queued";
             draft.retryable = retryable;
             draft.attempts = entry.attempts + 1;
             draft.executionId = undefined;
-            draft.nextAttemptAt =
-                retryAt ?? now;
+            draft.nextAttemptAt = retryAt ?? now;
             draft.updatedAt = now;
             draft.lastError = error;
         });
     }
 
-    async discardAll(
-        id: string,
-        executionId: string
-    ): Promise<OntologyOutboxEntry[]> {
-        this.assertCurrentExecution(
-            id,
-            executionId
-        );
+    async discardAll(id: string, executionId: string): Promise<OntologyOutboxEntry[]> {
+        this.assertCurrentExecution(id, executionId);
         return this.discardFrom(id);
     }
 
-    async discardFrom(
-        id: string
-    ): Promise<OntologyOutboxEntry[]> {
+    async discardFrom(id: string): Promise<OntologyOutboxEntry[]> {
         const failed = this.get(id);
         if (!failed) return [];
-        const discarded = (
-            await this.entries()
-        ).filter(
-            (entry) =>
-                entry.sequence >= failed.sequence
-        );
+        const discarded = (await this.entries()).filter((entry) => entry.sequence >= failed.sequence);
         await this.deleteEntries(discarded);
         return discarded;
     }
 
     private async head(): Promise<OntologyOutboxEntry | undefined> {
-        return (await queryOnce((query) =>
+        return await queryOnce((query) =>
             query
                 .from({ entry: this.collection })
                 .orderBy(({ entry }) => entry.sequence, "asc")
@@ -259,7 +225,7 @@ export class OntologyOutboxRepository {
                     lastError: entry.lastError,
                 }))
                 .findOne()
-        )) as OntologyOutboxEntry | undefined;
+        );
     }
 
     private async nextSequence(): Promise<number> {
@@ -306,9 +272,7 @@ export class OntologyOutboxRepository {
         }).isPersisted.promise;
     }
 
-    private async deleteEntries(
-        entries: readonly OntologyOutboxEntry[]
-    ): Promise<void> {
+    private async deleteEntries(entries: readonly OntologyOutboxEntry[]): Promise<void> {
         if (entries.length === 0) return;
         await this.collection.delete(
             entries.map((entry) => entry.id),

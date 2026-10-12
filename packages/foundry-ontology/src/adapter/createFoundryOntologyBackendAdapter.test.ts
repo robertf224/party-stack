@@ -1,13 +1,13 @@
 import { o } from "@party-stack/ontology";
 import { Temporal } from "temporal-polyfill";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { OntologyClient } from "@party-stack/foundry-client";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
     createFoundryOntologyBackend,
     createFoundryOntologyBackendAdapter,
     isFoundryNotFoundError,
 } from "./createFoundryOntologyBackendAdapter.js";
 import { encodeFoundryMediaId } from "./foundryMediaId.js";
+import type { OntologyClient } from "@party-stack/foundry-client";
 
 const mediaMocks = vi.hoisted(() => ({
     metadata: vi.fn(),
@@ -142,24 +142,15 @@ describe("Foundry action execution time overrides", () => {
 
     it("rejects an invalid execution time before making a Foundry request", async () => {
         await expect(
-            adapter.applyAction(
-                "setTimestamp",
-                { __now: "not an ISO instant" },
-                { objects: {} }
-            )
-        ).rejects.toThrow(
-            "Invalid action execution time: expected a Date or Temporal-like ISO instant."
-        );
+            adapter.applyAction("setTimestamp", { __now: "not an ISO instant" }, { objects: {} })
+        ).rejects.toThrow("Invalid action execution time: expected a Date or Temporal-like ISO instant.");
         expect(ontologyMocks.applyWithOverrides).not.toHaveBeenCalled();
     });
 });
 
 describe("Foundry action API names", () => {
     it.each([
-        [
-            "createWarrantySubmissionForBBStreamline",
-            "create-warranty-submission-for-b-b-streamline",
-        ],
+        ["createWarrantySubmissionForBBStreamline", "create-warranty-submission-for-b-b-streamline"],
         [
             "com.palantirfoundry.valinorEnterprises.streamline.completeTask",
             "com.palantirfoundry.valinor-enterprises.streamline.complete-task",
@@ -256,13 +247,17 @@ describe("Foundry live behavior", () => {
         });
 
         expect(adapter.live).toBe(true);
-        await adapter.applyAction("updateTask", {}, {
-            objects: {
-                Task: {
-                    utils: { awaitOperationId },
-                } as never,
-            },
-        });
+        await adapter.applyAction(
+            "updateTask",
+            {},
+            {
+                objects: {
+                    Task: {
+                        utils: { awaitOperationId },
+                    } as never,
+                },
+            }
+        );
 
         expect(awaitOperationId).toHaveBeenCalledWith("operation-1");
     });
@@ -278,13 +273,17 @@ describe("Foundry live behavior", () => {
         });
 
         expect(adapter.live).toBe(false);
-        await adapter.applyAction("updateTask", {}, {
-            objects: {
-                Task: {
-                    utils: { awaitOperationId },
-                } as never,
-            },
-        });
+        await adapter.applyAction(
+            "updateTask",
+            {},
+            {
+                objects: {
+                    Task: {
+                        utils: { awaitOperationId },
+                    } as never,
+                },
+            }
+        );
 
         expect(awaitOperationId).not.toHaveBeenCalled();
     });
@@ -628,21 +627,24 @@ describe("Foundry media attachments", () => {
         });
 
         await expect(
-            adapter.validateActionDraft!("createMedia", {}, {
-                objects: {},
-                context: {
-                    user: "user-1",
-                },
-                knownParameters: [],
-            })
+            adapter.validateActionDraft!(
+                "createMedia",
+                {},
+                {
+                    objects: {},
+                    context: {
+                        user: "user-1",
+                    },
+                    knownParameters: [],
+                }
+            )
         ).resolves.toEqual({
             certain: true,
             value: {
                 kind: "err",
                 value: [
                     {
-                        message:
-                            "Impossible submission criterion: Only administrators may submit.",
+                        message: "Impossible submission criterion: Only administrators may submit.",
                     },
                 ],
             },
@@ -652,10 +654,14 @@ describe("Foundry media attachments", () => {
 
     it("reports uncertain draft validation without a context user", async () => {
         await expect(
-            adapter.validateActionDraft!("createMedia", {}, {
-                objects: {},
-                knownParameters: [],
-            })
+            adapter.validateActionDraft!(
+                "createMedia",
+                {},
+                {
+                    objects: {},
+                    knownParameters: [],
+                }
+            )
         ).resolves.toEqual({
             certain: false,
         });
@@ -665,13 +671,17 @@ describe("Foundry media attachments", () => {
 
     it("reports a known required parameter as missing", async () => {
         await expect(
-            adapter.validateActionDraft!("createMedia", {}, {
-                objects: {},
-                context: {
-                    user: "user-1",
-                },
-                knownParameters: ["media"],
-            })
+            adapter.validateActionDraft!(
+                "createMedia",
+                {},
+                {
+                    objects: {},
+                    context: {
+                        user: "user-1",
+                    },
+                    knownParameters: ["media"],
+                }
+            )
         ).resolves.toEqual({
             certain: true,
             value: {

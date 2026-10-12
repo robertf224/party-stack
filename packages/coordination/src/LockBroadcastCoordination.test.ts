@@ -1,5 +1,5 @@
 import { Temporal } from "temporal-polyfill";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { LockBroadcastCoordination } from "./index.js";
 
 type TestService = {
@@ -12,35 +12,24 @@ type TestService = {
     };
 };
 
-class LocalBroadcastChannel
-    extends EventTarget
-    implements BroadcastChannel
-{
-    static readonly channels = new Map<
-        string,
-        Set<LocalBroadcastChannel>
-    >();
+class LocalBroadcastChannel extends EventTarget implements BroadcastChannel {
+    static readonly channels = new Map<string, Set<LocalBroadcastChannel>>();
     readonly name: string;
     onmessage: BroadcastChannel["onmessage"] = null;
-    onmessageerror: BroadcastChannel["onmessageerror"] =
-        null;
+    onmessageerror: BroadcastChannel["onmessageerror"] = null;
     private closed = false;
 
     constructor(name: string) {
         super();
         this.name = name;
-        const channels =
-            LocalBroadcastChannel.channels.get(name) ??
-            new Set<LocalBroadcastChannel>();
+        const channels = LocalBroadcastChannel.channels.get(name) ?? new Set<LocalBroadcastChannel>();
         channels.add(this);
-        LocalBroadcastChannel.channels.set(
-            name,
-            channels
-        );
+        LocalBroadcastChannel.channels.set(name, channels);
     }
 
     postMessage(message: unknown): void {
-        for (const channel of [...(LocalBroadcastChannel.channels.get(this.name) ?? [])]) {
+        const channelsSnapshot = [...(LocalBroadcastChannel.channels.get(this.name) ?? [])];
+        for (const channel of channelsSnapshot) {
             if (channel === this || channel.closed) {
                 continue;
             }
@@ -49,10 +38,7 @@ class LocalBroadcastChannel
             });
             queueMicrotask(() => {
                 channel.dispatchEvent(event);
-                channel.onmessage?.call(
-                    channel,
-                    event
-                );
+                channel.onmessage?.call(channel, event);
             });
         }
     }
@@ -60,24 +46,16 @@ class LocalBroadcastChannel
     close(): void {
         if (this.closed) return;
         this.closed = true;
-        const channels =
-            LocalBroadcastChannel.channels.get(
-                this.name
-            );
+        const channels = LocalBroadcastChannel.channels.get(this.name);
         channels?.delete(this);
         if (channels?.size === 0) {
-            LocalBroadcastChannel.channels.delete(
-                this.name
-            );
+            LocalBroadcastChannel.channels.delete(this.name);
         }
     }
 }
 
 class LocalLockManager implements LockManager {
-    private readonly tails = new Map<
-        string,
-        Promise<unknown>
-    >();
+    private readonly tails = new Map<string, Promise<unknown>>();
 
     request<T>(name: string, callback: (lock: Lock | null) => T | PromiseLike<T>): Promise<T>;
     request<T>(
@@ -100,7 +78,7 @@ class LocalLockManager implements LockManager {
             return grant({
                 mode: options.mode ?? "exclusive",
                 name,
-            } as Lock);
+            });
         });
         this.tails.set(
             name,
@@ -120,50 +98,29 @@ class LocalLockManager implements LockManager {
 let restoreWebApis: (() => void) | undefined;
 
 beforeEach(() => {
-    const previousBroadcastChannel =
-        globalThis.BroadcastChannel;
-    const navigatorDescriptor =
-        Object.getOwnPropertyDescriptor(
-            globalThis,
-            "navigator"
-        );
+    const previousBroadcastChannel = globalThis.BroadcastChannel;
+    const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
     LocalBroadcastChannel.channels.clear();
-    Object.defineProperty(
-        globalThis,
-        "BroadcastChannel",
-        {
-            configurable: true,
-            value: LocalBroadcastChannel,
-        }
-    );
+    Object.defineProperty(globalThis, "BroadcastChannel", {
+        configurable: true,
+        value: LocalBroadcastChannel,
+    });
     Object.defineProperty(globalThis, "navigator", {
         configurable: true,
         value: {
-            ...(globalThis.navigator ?? {}),
             locks: new LocalLockManager(),
         },
     });
     restoreWebApis = () => {
         LocalBroadcastChannel.channels.clear();
-        Object.defineProperty(
-            globalThis,
-            "BroadcastChannel",
-            {
-                configurable: true,
-                value: previousBroadcastChannel,
-            }
-        );
+        Object.defineProperty(globalThis, "BroadcastChannel", {
+            configurable: true,
+            value: previousBroadcastChannel,
+        });
         if (navigatorDescriptor) {
-            Object.defineProperty(
-                globalThis,
-                "navigator",
-                navigatorDescriptor
-            );
+            Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
         } else {
-            Reflect.deleteProperty(
-                globalThis,
-                "navigator"
-            );
+            Reflect.deleteProperty(globalThis, "navigator");
         }
     };
 });
@@ -199,20 +156,29 @@ function serve(coordination: LockBroadcastCoordination) {
 describe("LockBroadcastCoordination", () => {
     it("preserves Temporal and bigint requests, responses, and events across structured clone", async () => {
         type TemporalPayload = { instant: Temporal.Instant; dates: Temporal.PlainDate[]; bigint: bigint };
-        type TemporalService = { methods: { echo(value: TemporalPayload): Promise<TemporalPayload> }; events: { changed: TemporalPayload } };
+        type TemporalService = {
+            methods: { echo(value: TemporalPayload): Promise<TemporalPayload> };
+            events: { changed: TemporalPayload };
+        };
         const { first, second } = createPair("temporal");
-        const handlers = { echo: (value: TemporalPayload) => {
-            expect(value.instant).toBeInstanceOf(Temporal.Instant);
-            expect(value.dates[0]).toBeInstanceOf(Temporal.PlainDate);
-            expect(value.bigint).toBe(2n ** 100n);
-            return value;
-        } };
+        const handlers = {
+            echo: (value: TemporalPayload) => {
+                expect(value.instant).toBeInstanceOf(Temporal.Instant);
+                expect(value.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+                expect(value.bigint).toBe(2n ** 100n);
+                return value;
+            },
+        };
         const firstServer = first.serve<TemporalService>("temporal", handlers);
         const secondServer = second.serve<TemporalService>("temporal", handlers);
         await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
         const server = first.isLeader ? firstServer : secondServer;
         const service = (first.isLeader ? second : first).service<TemporalService>("temporal");
-        const payload = { instant: Temporal.Instant.from("2026-10-07T12:00:00.123456789Z"), dates: [Temporal.PlainDate.from("2026-10-07")], bigint: 2n ** 100n };
+        const payload = {
+            instant: Temporal.Instant.from("2026-10-07T12:00:00.123456789Z"),
+            dates: [Temporal.PlainDate.from("2026-10-07")],
+            bigint: 2n ** 100n,
+        };
         const listener = vi.fn();
         service.events.subscribe("changed", listener);
         try {
@@ -248,7 +214,16 @@ describe("LockBroadcastCoordination", () => {
         expect(retained("responses").size).toBe(1);
         expect(retained("listeners").size).toBe(1);
         await leader.close();
-        for (const key of ["responses", "listeners", "clients", "pending", "routes", "pendingSenders", "incoming", "leadershipWaiters"]) {
+        for (const key of [
+            "responses",
+            "listeners",
+            "clients",
+            "pending",
+            "routes",
+            "pendingSenders",
+            "incoming",
+            "leadershipWaiters",
+        ]) {
             expect(retained(key).size, key).toBe(0);
         }
         await leader.close();
@@ -256,7 +231,12 @@ describe("LockBroadcastCoordination", () => {
     });
 
     it("expires reply payloads while idle without requiring another request", async () => {
-        const options = { scope: "idle-retention", requestTimeoutMs: 10, requestAttempts: 2, responseCacheMs: 1 };
+        const options = {
+            scope: "idle-retention",
+            requestTimeoutMs: 10,
+            requestAttempts: 2,
+            responseCacheMs: 1,
+        };
         const first = new LockBroadcastCoordination(options);
         const second = new LockBroadcastCoordination(options);
         serve(first);
@@ -266,7 +246,9 @@ describe("LockBroadcastCoordination", () => {
         const follower = first.isLeader ? second : first;
         try {
             await follower.service<TestService>("test.v1").methods.double({ value: 3 });
-            await vi.waitFor(() => expect((Reflect.get(leader, "responses") as Map<string, unknown>).size).toBe(0));
+            await vi.waitFor(() =>
+                expect((Reflect.get(leader, "responses") as Map<string, unknown>).size).toBe(0)
+            );
             expect(Reflect.get(leader, "responsePruneTimer")).toBeUndefined();
         } finally {
             await first.close();
@@ -278,24 +260,14 @@ describe("LockBroadcastCoordination", () => {
         const { first, second } = createPair("routing");
         const firstServer = serve(first);
         const secondServer = serve(second);
-        await vi.waitFor(() =>
-            expect(first.isLeader || second.isLeader).toBe(true)
-        );
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
         const leader = first.isLeader ? first : second;
         const follower = first.isLeader ? second : first;
-        const server = first.isLeader
-            ? firstServer
-            : secondServer;
+        const server = first.isLeader ? firstServer : secondServer;
         const listener = vi.fn();
-        follower
-            .service<TestService>("test.v1")
-            .events.subscribe("changed", listener);
+        follower.service<TestService>("test.v1").events.subscribe("changed", listener);
 
-        await expect(
-            follower
-                .service<TestService>("test.v1")
-                .methods.double({ value: 4 })
-        ).resolves.toBe(8);
+        await expect(follower.service<TestService>("test.v1").methods.double({ value: 4 })).resolves.toBe(8);
         server.events.publish("changed", { value: 9 });
         await vi.waitFor(() =>
             expect(listener).toHaveBeenCalledWith({
@@ -313,7 +285,9 @@ describe("LockBroadcastCoordination", () => {
         serve(second);
         try {
             await expect(first.service<TestService>("test.v1").methods.double({ value: 3 })).resolves.toBe(6);
-            await expect(second.service<TestService>("test.v1").methods.double({ value: 4 })).resolves.toBe(8);
+            await expect(second.service<TestService>("test.v1").methods.double({ value: 4 })).resolves.toBe(
+                8
+            );
         } finally {
             await first.close();
             await second.close();
@@ -330,7 +304,8 @@ describe("LockBroadcastCoordination", () => {
                     double: ({ value }) => value + index,
                     wait: ({ value }) => value,
                 });
-                if (index === 1) publishers.set(coordination, () => server.events.publish("changed", { value: 9 }));
+                if (index === 1)
+                    publishers.set(coordination, () => server.events.publish("changed", { value: 9 }));
             }
         }
         await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
@@ -342,7 +317,9 @@ describe("LockBroadcastCoordination", () => {
         });
         try {
             for (const [index, namespace] of namespaces.entries()) {
-                await expect(follower.service<TestService>(namespace).methods.double({ value: 10 })).resolves.toBe(10 + index);
+                await expect(
+                    follower.service<TestService>(namespace).methods.double({ value: 10 })
+                ).resolves.toBe(10 + index);
             }
             publishers.get(leader)!();
             await vi.waitFor(() => expect(listeners[1]).toHaveBeenCalledOnce());
@@ -351,7 +328,9 @@ describe("LockBroadcastCoordination", () => {
             await leader.close();
             await vi.waitFor(() => expect(follower.isLeader).toBe(true));
             for (const [index, namespace] of namespaces.entries()) {
-                await expect(follower.service<TestService>(namespace).methods.double({ value: 20 })).resolves.toBe(20 + index);
+                await expect(
+                    follower.service<TestService>(namespace).methods.double({ value: 20 })
+                ).resolves.toBe(20 + index);
             }
         } finally {
             await first.close();
@@ -367,7 +346,7 @@ describe("LockBroadcastCoordination", () => {
         await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
         const follower = first.isLeader ? second : first;
         // Capture the method deliberately; calls below explicitly bind the channel.
-        // eslint-disable-next-line @typescript-eslint/unbound-method
+        // oxlint-disable-next-line typescript/unbound-method
         const post = LocalBroadcastChannel.prototype.postMessage;
         let dropped = false;
         const spy = vi.spyOn(LocalBroadcastChannel.prototype, "postMessage").mockImplementation(function (
@@ -400,13 +379,18 @@ describe("LockBroadcastCoordination", () => {
         second.serve<TestService>("test.v1", { double: apply, wait: apply });
         await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
         const follower = first.isLeader ? second : first;
-        // eslint-disable-next-line @typescript-eslint/unbound-method
+        // oxlint-disable-next-line typescript/unbound-method
         const post = LocalBroadcastChannel.prototype.postMessage;
-        const spy = vi.spyOn(LocalBroadcastChannel.prototype, "postMessage").mockImplementation(function (this: LocalBroadcastChannel, message: unknown) {
+        const spy = vi.spyOn(LocalBroadcastChannel.prototype, "postMessage").mockImplementation(function (
+            this: LocalBroadcastChannel,
+            message: unknown
+        ) {
             if ((message as { type?: string }).type !== "response") post.call(this, message);
         });
         try {
-            await expect(follower.service<TestService>("test.v1").methods.double({ value: 1 })).rejects.toMatchObject({ code: "INDETERMINATE" });
+            await expect(
+                follower.service<TestService>("test.v1").methods.double({ value: 1 })
+            ).rejects.toMatchObject({ code: "INDETERMINATE" });
             expect(apply).toHaveBeenCalledTimes(1);
         } finally {
             spy.mockRestore();
@@ -424,7 +408,7 @@ describe("LockBroadcastCoordination", () => {
         const leader = first.isLeader ? first : second;
         const follower = first.isLeader ? second : first;
         // Capture the method deliberately; calls below explicitly bind the channel.
-        // eslint-disable-next-line @typescript-eslint/unbound-method
+        // oxlint-disable-next-line typescript/unbound-method
         const post = LocalBroadcastChannel.prototype.postMessage;
         let dropped = false;
         const spy = vi.spyOn(LocalBroadcastChannel.prototype, "postMessage").mockImplementation(function (
@@ -453,32 +437,23 @@ describe("LockBroadcastCoordination", () => {
     it("preserves FIFO remotely and permits same-service nesting", async () => {
         const { first, second } = createPair("lanes");
         const order: number[] = [];
-        const register = (
-            coordination: LockBroadcastCoordination
-        ) =>
+        const register = (coordination: LockBroadcastCoordination) =>
             coordination.serve<TestService>("test.v1", {
                 double: ({ value }, context) =>
                     value === 1
-                        ? context.coordination
-                              .service<TestService>("test.v1")
-                              .methods.double({ value: 2 })
+                        ? context.coordination.service<TestService>("test.v1").methods.double({ value: 2 })
                         : value * 2,
                 wait: async ({ value }) => {
-                    await new Promise((resolve) =>
-                        setTimeout(resolve, 2)
-                    );
+                    await new Promise((resolve) => setTimeout(resolve, 2));
                     order.push(value);
                     return value;
                 },
             });
         register(first);
         register(second);
-        await vi.waitFor(() =>
-            expect(first.isLeader || second.isLeader).toBe(true)
-        );
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
         const follower = first.isLeader ? second : first;
-        const client =
-            follower.service<TestService>("test.v1");
+        const client = follower.service<TestService>("test.v1");
 
         await expect(
             Promise.all([
@@ -488,9 +463,7 @@ describe("LockBroadcastCoordination", () => {
             ])
         ).resolves.toEqual([1, 2, 3]);
         expect(order).toEqual([1, 2, 3]);
-        await expect(
-            client.methods.double({ value: 1 })
-        ).resolves.toBe(4);
+        await expect(client.methods.double({ value: 1 })).resolves.toBe(4);
         await first.close();
         await second.close();
     });
@@ -499,9 +472,7 @@ describe("LockBroadcastCoordination", () => {
         const { first, second } = createPair("failover");
         serve(first);
         serve(second);
-        await vi.waitFor(() =>
-            expect(first.isLeader || second.isLeader).toBe(true)
-        );
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
         const leader = first.isLeader ? first : second;
         const follower = first.isLeader ? second : first;
         const callback = vi.fn(() => "leading");
@@ -512,11 +483,7 @@ describe("LockBroadcastCoordination", () => {
         await expect(waiting).resolves.toBe("leading");
         expect(callback).toHaveBeenCalledOnce();
         expect(follower.isLeader).toBe(true);
-        await expect(
-            follower
-                .service<TestService>("test.v1")
-                .methods.double({ value: 5 })
-        ).resolves.toBe(10);
+        await expect(follower.service<TestService>("test.v1").methods.double({ value: 5 })).resolves.toBe(10);
         await follower.close();
     });
 
@@ -524,32 +491,24 @@ describe("LockBroadcastCoordination", () => {
         const { first, second } = createPair("leader-cleanup");
         serve(first);
         serve(second);
-        await vi.waitFor(() =>
-            expect(first.isLeader || second.isLeader).toBe(true)
-        );
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
         const leader = first.isLeader ? first : second;
         const follower = first.isLeader ? second : first;
         const started = promiseWithResolvers<void>();
         const cleanupGate = promiseWithResolvers<void>();
         const cleaned = promiseWithResolvers<void>();
-        const operation = leader.runAsLeader(
-            async ({ signal }) => {
-                started.resolve();
-                await new Promise<void>((resolve) =>
-                    signal.addEventListener(
-                        "abort",
-                        () => resolve(),
-                        { once: true }
-                    )
-                );
-                await cleanupGate.promise;
-                cleaned.resolve();
-            }
-        );
-        const operationResult =
-            expect(operation).rejects.toMatchObject({
-                code: "CLOSED",
-            });
+        const operation = leader.runAsLeader(async ({ signal }) => {
+            started.resolve();
+            await new Promise<void>((resolve) =>
+                signal.addEventListener("abort", () => resolve(), { once: true })
+            );
+            await cleanupGate.promise;
+            cleaned.resolve();
+        });
+        // oxlint-disable-next-line vitest/valid-expect -- Register before shutdown; awaited below after shutdown triggers rejection.
+        const operationResult = expect(operation).rejects.toMatchObject({
+            code: "CLOSED",
+        });
         await started.promise;
 
         const closing = leader.close();
@@ -560,41 +519,24 @@ describe("LockBroadcastCoordination", () => {
 
         await expect(cleaned.promise).resolves.toBeUndefined();
         await operationResult;
-        await vi.waitFor(() =>
-            expect(follower.isLeader).toBe(true)
-        );
+        await vi.waitFor(() => expect(follower.isLeader).toBe(true));
         await follower.close();
     });
 
     it("waits for inbound handler cleanup before lock failover", async () => {
-        const { first, second } = createPair(
-            "handler-cleanup"
-        );
-        await vi.waitFor(() =>
-            expect(
-                first.isLeader || second.isLeader
-            ).toBe(true)
-        );
-        const leader = first.isLeader
-            ? first
-            : second;
-        const follower = first.isLeader
-            ? second
-            : first;
+        const { first, second } = createPair("handler-cleanup");
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
+        const leader = first.isLeader ? first : second;
+        const follower = first.isLeader ? second : first;
         const started = promiseWithResolvers<void>();
-        const cleanupGate =
-            promiseWithResolvers<void>();
+        const cleanupGate = promiseWithResolvers<void>();
         const cleaned = promiseWithResolvers<void>();
         leader.serve<TestService>("test.v1", {
             double: ({ value }) => value * 2,
             wait: async ({ value }, context) => {
                 started.resolve();
                 await new Promise<void>((resolve) =>
-                    context.signal.addEventListener(
-                        "abort",
-                        () => resolve(),
-                        { once: true }
-                    )
+                    context.signal.addEventListener("abort", () => resolve(), { once: true })
                 );
                 await cleanupGate.promise;
                 cleaned.resolve();
@@ -605,9 +547,7 @@ describe("LockBroadcastCoordination", () => {
             double: ({ value }) => value * 2,
             wait: ({ value }) => value,
         });
-        const request = follower
-            .service<TestService>("test.v1")
-            .methods.wait({ value: 7 });
+        const request = follower.service<TestService>("test.v1").methods.wait({ value: 7 });
         await started.promise;
 
         const closing = leader.close();
@@ -626,19 +566,13 @@ describe("LockBroadcastCoordination", () => {
         const { first, second } = createPair("cancel");
         const started = promiseWithResolvers<void>();
         const aborted = promiseWithResolvers<void>();
-        const register = (
-            coordination: LockBroadcastCoordination
-        ) =>
+        const register = (coordination: LockBroadcastCoordination) =>
             coordination.serve<TestService>("test.v1", {
                 double: ({ value }) => value * 2,
                 wait: async ({ value }, context) => {
                     started.resolve();
                     await new Promise<void>((resolve) =>
-                        context.signal.addEventListener(
-                            "abort",
-                            () => resolve(),
-                            { once: true }
-                        )
+                        context.signal.addEventListener("abort", () => resolve(), { once: true })
                     );
                     aborted.resolve();
                     return value;
@@ -646,17 +580,12 @@ describe("LockBroadcastCoordination", () => {
             });
         register(first);
         register(second);
-        await vi.waitFor(() =>
-            expect(first.isLeader || second.isLeader).toBe(true)
-        );
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
         const follower = first.isLeader ? second : first;
         const controller = new AbortController();
         const request = follower
             .service<TestService>("test.v1")
-            .methods.wait(
-                { value: 1 },
-                { signal: controller.signal }
-            );
+            .methods.wait({ value: 1 }, { signal: controller.signal });
         await started.promise;
 
         controller.abort();
@@ -670,27 +599,15 @@ describe("LockBroadcastCoordination", () => {
     });
 
     it("rejects malformed protocol and scope messages", async () => {
-        const { first, second } =
-            createPair("protocol");
+        const { first, second } = createPair("protocol");
         serve(first);
         serve(second);
-        await vi.waitFor(() =>
-            expect(first.isLeader || second.isLeader).toBe(true)
-        );
-        const observer = new BroadcastChannel(
-            "party-stack.coordination:protocol"
-        );
-        const response =
-            promiseWithResolvers<Record<string, unknown>>();
+        await vi.waitFor(() => expect(first.isLeader || second.isLeader).toBe(true));
+        const observer = new BroadcastChannel("party-stack.coordination:protocol");
+        const response = promiseWithResolvers<Record<string, unknown>>();
         observer.addEventListener("message", (event) => {
-            const message = event.data as Record<
-                string,
-                unknown
-            >;
-            if (
-                message.type === "response" &&
-                message.recipientId === "rogue"
-            ) {
+            const message = event.data as Record<string, unknown>;
+            if (message.type === "response" && message.recipientId === "rogue") {
                 response.resolve(message);
             }
         });

@@ -1,9 +1,9 @@
 import { createMutatorTx } from "./createMutatorTx.js";
 import { applyActionLogicToMutatorTx } from "./OntologyEdits.js";
-import type { OntologyMutatorRegistry } from "./types.js";
 import type { OntologyIR } from "../../ir/index.js";
 import type { OntologyCollection } from "../objects/createLiveOntologyObjectCollection.js";
 import type { OntologyObject } from "../objects/OntologyObject.js";
+import type { OntologyMutatorRegistry } from "./types.js";
 import type { Transaction } from "@tanstack/db";
 
 export async function runOptimisticAction(options: {
@@ -13,22 +13,14 @@ export async function runOptimisticAction(options: {
     parameters: Record<string, unknown>;
     context: Record<string, unknown>;
     idempotencyKey: string;
-    objects: Record<
-        string,
-        OntologyCollection<OntologyObject>
-    >;
+    objects: Record<string, OntologyCollection<OntologyObject>>;
     mutators?: OntologyMutatorRegistry;
 }): Promise<void> {
     const tx = createMutatorTx({
         transaction: options.transaction,
         objects: options.objects,
         primaryKeys: Object.fromEntries(
-            options.ir.objectTypes.map(
-                (objectType) => [
-                    objectType.name,
-                    objectType.primaryKey,
-                ]
-            )
+            options.ir.objectTypes.map((objectType) => [objectType.name, objectType.primaryKey])
         ),
     });
     await applyActionLogicToMutatorTx({
@@ -36,8 +28,7 @@ export async function runOptimisticAction(options: {
         actionTypeName: options.actionTypeName,
         parameters: options.parameters,
         context: options.context,
-        idempotencyKey:
-            options.idempotencyKey,
+        idempotencyKey: options.idempotencyKey,
         objects: options.objects,
         tx,
     });

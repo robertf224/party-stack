@@ -23,8 +23,11 @@ async function responseToDataURL(response: Response): Promise<string> {
     }
 }
 
-export const UserProfilePictureLoader = loadOneCallback<PrincipalId, string, {}, FoundryContext>(
-    async (ids, { unary: context }) => {
-        return Promise.all(ids.map((id) => Users.profilePicture(context.client, id).then(responseToDataURL)));
-    }
-);
+export const UserProfilePictureLoader = loadOneCallback<
+    PrincipalId,
+    string,
+    NonNullable<unknown>,
+    FoundryContext
+>(async (ids, { unary: context }) => {
+    return Promise.all(ids.map((id) => Users.profilePicture(context.client, id).then(responseToDataURL)));
+});

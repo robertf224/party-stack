@@ -1,7 +1,6 @@
 import { createBlobManager, type BlobManager } from "@party-stack/blobs";
 import { createDefaultRuntime, type RuntimeAdapterProvider } from "@party-stack/runtime";
 import { type Collection } from "@tanstack/db";
-import type { ConnectionMonitor } from "@party-stack/connections";
 import { provide } from "../utils/provide.js";
 import { createLiveOntologyActions } from "./actions/createLiveOntologyActions.js";
 import {
@@ -11,14 +10,15 @@ import {
 import { unsupportedOntologyAttachmentsAdapter } from "./attachments/unsupportedOntologyAttachmentsAdapter.js";
 import { createLiveOntologyObjectCollection } from "./objects/createLiveOntologyObjectCollection.js";
 import { waitForCollectionsReady } from "./waitForCollectionReady.js";
+import type { OntologyIR } from "../ir/index.js";
+import type { attachment } from "../utils/values.js";
 import type { LiveOntologyAction } from "./actions/createLiveOntologyAction.js";
 import type { OntologyMutatorRegistry } from "./mutators/types.js";
 import type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
 import type { OntologyObject } from "./objects/OntologyObject.js";
 import type { OntologyBackendAdapter, OntologyBackendAdapterProvider } from "./OntologyBackendAdapter.js";
 import type { OntologyOutbox } from "./outbox/types.js";
-import type { OntologyIR } from "../ir/index.js";
-import type { attachment } from "../utils/values.js";
+import type { ConnectionMonitor } from "@party-stack/connections";
 
 export type { LiveOntologyAction, LiveOntologyActionOptions } from "./actions/createLiveOntologyAction.js";
 export type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
@@ -138,9 +138,7 @@ export async function createLiveOntology<
 >(opts: CreateLiveOntologyOpts<Context>): Promise<LiveOntology<Ontology>> {
     const ontologyId = opts.id ?? "default";
     const context = (opts.context ?? {}) as Context;
-    const owner =
-        getContextUserId(context) ??
-        "anonymous";
+    const owner = getContextUserId(context) ?? "anonymous";
     // TODO(errors): Decorate backend operations and collection options so
     // normalized errors (especially UnauthenticatedError) are reported through
     // the ConnectionMonitor. Promise-based calls can be wrapped directly;
@@ -197,7 +195,7 @@ export async function createLiveOntology<
             queryFunctionType.name,
             (parameters: Record<string, unknown>) =>
                 backendAdapter.runQueryFunction(queryFunctionType.name, parameters, {
-                    objects: objects as Record<string, Collection<Record<string, unknown>>>,
+                    objects: objects,
                     context,
                 }),
         ])
@@ -205,62 +203,38 @@ export async function createLiveOntology<
     const ready = Promise.all([actionsSubsystem.outbox.ready, blobManager.ready]).then(() => undefined);
     void ready.catch(() => undefined);
 
-    let cleanupPromise:
-        | Promise<void>
-        | undefined;
+    let cleanupPromise: Promise<void> | undefined;
     const cleanup = (): Promise<void> => {
         cleanupPromise ??= (async () => {
             // Settle subsystem startups before tearing down persistence.
-            await Promise.allSettled([
-                ready,
-            ]);
+            await Promise.allSettled([ready]);
             await actionsSubsystem.outbox.cleanup();
             await Promise.all(
-                Object.values(objects).map(
-                    async (collection) => {
-                        const status =
-                            collection.status;
-                        if (
-                            status ===
-                            "cleaned-up"
-                        ) {
-                            return;
-                        }
-                        // Settle in-flight startup only; ready/idle need no preload.
-                        if (
-                            status ===
-                            "loading"
-                        ) {
-                            await Promise.allSettled(
-                                [
-                                    collection.preload(),
-                                ]
-                            );
-                        }
-                        try {
-                            await collection.cleanup();
-                        } catch {
-                            // Idempotent: already cleaned up during preload race.
-                        }
+                Object.values(objects).map(async (collection) => {
+                    const status = collection.status;
+                    if (status === "cleaned-up") {
+                        return;
                     }
-                )
+                    // Settle in-flight startup only; ready/idle need no preload.
+                    if (status === "loading") {
+                        await Promise.allSettled([collection.preload()]);
+                    }
+                    try {
+                        await collection.cleanup();
+                    } catch {
+                        // Idempotent: already cleaned up during preload race.
+                    }
+                })
             );
-            await Promise.all([
-                blobManager.cleanup(),
-                backendAdapter.cleanup?.(),
-            ]);
+            await Promise.all([blobManager.cleanup(), backendAdapter.cleanup?.()]);
             await runtime.cleanup?.();
         })();
         return cleanupPromise;
     };
-    let destroyPromise:
-        | Promise<void>
-        | undefined;
+    let destroyPromise: Promise<void> | undefined;
     const destroy = (): Promise<void> => {
         destroyPromise ??= cleanup()
-            .then(() =>
-                runtime.destroy?.()
-            )
+            .then(() => runtime.destroy?.())
             .then(() => undefined);
         return destroyPromise;
     };

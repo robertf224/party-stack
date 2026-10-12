@@ -1,18 +1,10 @@
-import { createTransaction, type Collection, type Transaction } from "@tanstack/db";
-import type { BlobManager } from "@party-stack/blobs";
-import type { ConnectionMonitor } from "@party-stack/connections";
-import type { RuntimeAdapter } from "@party-stack/runtime";
+import { createTransaction, type Transaction } from "@tanstack/db";
 import { resolveActionParameters } from "../expression.js";
 import { createReadTx } from "../mutators/createMutatorTx.js";
 import { runOptimisticAction } from "../mutators/runOptimisticAction.js";
 import { createOntologyOutbox, type OutboxProjection } from "../outbox/createOntologyOutbox.js";
 import { createLiveOntologyAction } from "./createLiveOntologyAction.js";
 import { prepareActionParameters } from "./prepareActionParameters.js";
-import type {
-    LiveOntologyAction,
-    LiveOntologyActionDraftValidationOptions,
-    LiveOntologyActionOptions,
-} from "./createLiveOntologyAction.js";
 import type { OntologyIR } from "../../ir/index.js";
 import type { Uncertain } from "../../utils/uncertain.js";
 import type { ValidationIssue } from "../../utils/validation.js";
@@ -20,11 +12,16 @@ import type { Result } from "../../utils/values.js";
 import type { LiveOntologyWrites, LiveOntologyWriteVisibility } from "../LiveOntology.js";
 import type { OntologyCollection } from "../objects/createLiveOntologyObjectCollection.js";
 import type { OntologyObject } from "../objects/OntologyObject.js";
-import type {
-    OntologyApplyActionResult,
-    OntologyBackendAdapter,
-} from "../OntologyBackendAdapter.js";
+import type { OntologyApplyActionResult, OntologyBackendAdapter } from "../OntologyBackendAdapter.js";
 import type { OntologyActionRequest, OntologyOutbox, OntologyOutboxEntry } from "../outbox/types.js";
+import type {
+    LiveOntologyAction,
+    LiveOntologyActionDraftValidationOptions,
+    LiveOntologyActionOptions,
+} from "./createLiveOntologyAction.js";
+import type { BlobManager } from "@party-stack/blobs";
+import type { ConnectionMonitor } from "@party-stack/connections";
+import type { RuntimeAdapter } from "@party-stack/runtime";
 
 export interface LiveOntologyActionsSubsystem {
     actions: Record<string, LiveOntologyAction>;
@@ -55,7 +52,7 @@ export function createLiveOntologyActions(options: {
             blobManager: options.blobManager,
         });
         const result = await options.backendAdapter.applyAction(request.actionTypeName, prepared.parameters, {
-            objects: options.objects as Record<string, Collection<Record<string, unknown>>>,
+            objects: options.objects,
             context: options.context,
             attachmentUploads: prepared.attachmentUploads,
             idempotencyKey: request.idempotencyKey,
@@ -93,8 +90,7 @@ export function createLiveOntologyActions(options: {
                 actionTypeName: request.actionTypeName,
                 parameters,
                 context: options.context,
-                idempotencyKey:
-                    request.idempotencyKey,
+                idempotencyKey: request.idempotencyKey,
                 objects: options.objects,
                 mutators: options.writes?.mutators,
             });
@@ -197,7 +193,7 @@ export function createLiveOntologyActions(options: {
             });
         }
         return options.backendAdapter.validateAction(actionTypeName, parameters, {
-            objects: options.objects as Record<string, Collection<Record<string, unknown>>>,
+            objects: options.objects,
             context: options.context,
         });
     };
@@ -213,7 +209,7 @@ export function createLiveOntologyActions(options: {
             });
         }
         return options.backendAdapter.validateActionDraft(actionTypeName, parameters, {
-            objects: options.objects as Record<string, Collection<Record<string, unknown>>>,
+            objects: options.objects,
             context: options.context,
             knownParameters: validationOptions?.knownParameters ?? [],
         });

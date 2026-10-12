@@ -1,5 +1,3 @@
-import { createContext, use, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useLiveQuery } from "@tanstack/react-db";
 import { createFoundryOntologyBackend } from "@party-stack/foundry-ontology";
 import { createFoundryMetaOntologyBackendAdapter } from "@party-stack/foundry-ontology/meta";
 import {
@@ -9,6 +7,8 @@ import {
     type MetaOntology,
     type OntologyIR,
 } from "@party-stack/ontology";
+import { useLiveQuery } from "@tanstack/react-db";
+import { createContext, use, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getClient } from "./client";
 
 interface OntologyContextValue {
@@ -63,12 +63,12 @@ function OntologyInner({ meta, children }: { meta: LiveOntology<MetaOntology>; c
 
     const [data, setData] = useState<LiveOntology | null>(null);
     const [error, setError] = useState<Error>();
+    if (objectTypes.length === 0 && data !== null) {
+        setData(null);
+    }
 
     useEffect(() => {
-        if (objectTypes.length === 0) {
-            setData(null);
-            return;
-        }
+        if (objectTypes.length === 0) return;
         const ir = {
             types: valueTypes,
             objectTypes: objectTypes,

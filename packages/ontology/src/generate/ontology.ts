@@ -158,9 +158,7 @@ function renderType(type: TypeDef): string {
                 },
                 {
                     name: "suggestions",
-                    value: type.value.suggestions
-                        ? renderPlainValue(type.value.suggestions)
-                        : undefined,
+                    value: type.value.suggestions ? renderPlainValue(type.value.suggestions) : undefined,
                 },
             ])})`;
         case "boolean":

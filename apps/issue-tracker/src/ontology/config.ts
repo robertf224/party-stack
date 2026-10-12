@@ -1,7 +1,7 @@
 import { createFoundryOntologyPullSource } from "@party-stack/foundry-ontology/config";
 import { o } from "@party-stack/ontology";
-import type { FoundryOntologyPullConfig } from "@party-stack/foundry-ontology/config";
 import { foundryUserToUser } from "./user";
+import type { FoundryOntologyPullConfig } from "@party-stack/foundry-ontology/config";
 
 const imageConstraint = {
     content: o.AttachmentContentConstraint.image({

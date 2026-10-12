@@ -1,17 +1,15 @@
-import { describe, expect, expectTypeOf, it, vi } from "vitest";
-import type { BlobManager } from "@party-stack/blobs";
+import { describe, expect, expectTypeOf, it, vi } from "vite-plus/test";
 import { createLiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
-import type { LiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
-import type { AttachmentMetadataField } from "./types.js";
 import type { OntologyIR } from "../../ir/index.js";
 import type * as v from "../../utils/values.js";
 import type { OntologyAttachmentsAdapter } from "../OntologyBackendAdapter.js";
+import type { LiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
+import type { AttachmentMetadataField } from "./types.js";
+import type { BlobManager } from "@party-stack/blobs";
 
 describe("attachment metadata", () => {
     it("only exposes dimensions for image selections", () => {
-        expectTypeOf<AttachmentMetadataField<"application/pdf">>().toEqualTypeOf<
-            "size" | "type" | "name"
-        >();
+        expectTypeOf<AttachmentMetadataField<"application/pdf">>().toEqualTypeOf<"size" | "type" | "name">();
         expectTypeOf<AttachmentMetadataField<"image/png">>().toEqualTypeOf<
             "size" | "type" | "name" | "dimensions"
         >();
@@ -44,9 +42,7 @@ describe("attachment metadata", () => {
                     property: "image",
                 },
             });
-            expectTypeOf(image.attachment).toEqualTypeOf<
-                v.attachment<"image/png" | "image/jpeg">
-            >();
+            expectTypeOf(image.attachment).toEqualTypeOf<v.attachment<"image/png" | "image/jpeg">>();
 
             const images = await attachments.create(new Blob(), {
                 target: {
@@ -55,9 +51,7 @@ describe("attachment metadata", () => {
                     property: "images",
                 },
             });
-            expectTypeOf(images.attachment).toEqualTypeOf<
-                v.attachment<"image/png">
-            >();
+            expectTypeOf(images.attachment).toEqualTypeOf<v.attachment<"image/png">>();
 
             const parameter = await attachments.create(new Blob(), {
                 target: {
@@ -66,9 +60,7 @@ describe("attachment metadata", () => {
                     parameter: "image",
                 },
             });
-            expectTypeOf(parameter.attachment).toEqualTypeOf<
-                v.attachment<"image/jpeg">
-            >();
+            expectTypeOf(parameter.attachment).toEqualTypeOf<v.attachment<"image/jpeg">>();
 
             const targetless = await attachments.create(new Blob());
             expectTypeOf(targetless.attachment).toEqualTypeOf<v.attachment>();

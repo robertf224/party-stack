@@ -1,11 +1,8 @@
 import { Temporal } from "temporal-polyfill";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { SharedWorkerCoordinationClient } from "./SharedWorkerCoordinationClient.js";
 import { SharedWorkerCoordinationHost } from "./SharedWorkerCoordinationHost.js";
-import type {
-    CoordinationMessagePort,
-    CoordinationPortEvent,
-} from "./contracts.js";
+import type { CoordinationMessagePort, CoordinationPortEvent } from "./contracts.js";
 
 type TestService = {
     methods: {
@@ -20,10 +17,7 @@ type TestService = {
 
 class TestMessagePort implements CoordinationMessagePort {
     peer?: TestMessagePort;
-    private readonly listeners = new Map<
-        string,
-        Set<(event: CoordinationPortEvent) => void>
-    >();
+    private readonly listeners = new Map<string, Set<(event: CoordinationPortEvent) => void>>();
     private closed = false;
 
     postMessage(message: unknown): void {
@@ -42,8 +36,7 @@ class TestMessagePort implements CoordinationMessagePort {
         type: "message" | "messageerror" | "close",
         listener: (event: CoordinationPortEvent) => void
     ): void {
-        const listeners =
-            this.listeners.get(type) ?? new Set();
+        const listeners = this.listeners.get(type) ?? new Set();
         this.listeners.set(type, listeners);
         listeners.add(listener);
     }
@@ -61,18 +54,12 @@ class TestMessagePort implements CoordinationMessagePort {
         if (this.closed) return;
         this.closed = true;
         const peer = this.peer;
-        queueMicrotask(() =>
-            peer?.dispatch("close", {})
-        );
+        queueMicrotask(() => peer?.dispatch("close", {}));
     }
 
-    private dispatch(
-        type: "message" | "messageerror" | "close",
-        event: CoordinationPortEvent
-    ): void {
-        for (const listener of [
-            ...(this.listeners.get(type) ?? []),
-        ]) {
+    private dispatch(type: "message" | "messageerror" | "close", event: CoordinationPortEvent): void {
+        const listenersSnapshot = [...(this.listeners.get(type) ?? [])];
+        for (const listener of listenersSnapshot) {
             listener(event);
         }
     }
@@ -97,11 +84,7 @@ function serve(host: SharedWorkerCoordinationHost) {
         },
         wait: async (_input, context) => {
             await new Promise<void>((resolve) =>
-                context.signal.addEventListener(
-                    "abort",
-                    () => resolve(),
-                    { once: true }
-                )
+                context.signal.addEventListener("abort", () => resolve(), { once: true })
             );
         },
     });
@@ -110,19 +93,31 @@ function serve(host: SharedWorkerCoordinationHost) {
 describe("SharedWorker coordination", () => {
     it("preserves Temporal and bigint requests, responses, and events across structured clone", async () => {
         type TemporalPayload = { instant: Temporal.Instant; dates: Temporal.PlainDate[]; bigint: bigint };
-        type TemporalService = { methods: { echo(value: TemporalPayload): Promise<TemporalPayload> }; events: { changed: TemporalPayload } };
+        type TemporalService = {
+            methods: { echo(value: TemporalPayload): Promise<TemporalPayload> };
+            events: { changed: TemporalPayload };
+        };
         const host = new SharedWorkerCoordinationHost({ scope: "temporal" });
         const channel = messageChannel();
         host.connect(channel.port1);
-        const client = new SharedWorkerCoordinationClient({ scope: "temporal", worker: { port: channel.port2 } });
-        const server = host.serve<TemporalService>("temporal", { echo: (value) => {
-            expect(value.instant).toBeInstanceOf(Temporal.Instant);
-            expect(value.dates[0]).toBeInstanceOf(Temporal.PlainDate);
-            expect(value.bigint).toBe(2n ** 100n);
-            return value;
-        } });
+        const client = new SharedWorkerCoordinationClient({
+            scope: "temporal",
+            worker: { port: channel.port2 },
+        });
+        const server = host.serve<TemporalService>("temporal", {
+            echo: (value) => {
+                expect(value.instant).toBeInstanceOf(Temporal.Instant);
+                expect(value.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+                expect(value.bigint).toBe(2n ** 100n);
+                return value;
+            },
+        });
         const service = client.service<TemporalService>("temporal");
-        const payload = { instant: Temporal.Instant.from("2026-10-07T12:00:00.123456789Z"), dates: [Temporal.PlainDate.from("2026-10-07")], bigint: 2n ** 100n };
+        const payload = {
+            instant: Temporal.Instant.from("2026-10-07T12:00:00.123456789Z"),
+            dates: [Temporal.PlainDate.from("2026-10-07")],
+            bigint: 2n ** 100n,
+        };
         const listener = vi.fn();
         service.events.subscribe("changed", listener);
         try {
@@ -158,26 +153,18 @@ describe("SharedWorker coordination", () => {
             requestTimeoutMs: 100,
         });
         const listener = vi.fn();
-        client
-            .service<TestService>("test.v1")
-            .events.subscribe("changed", listener);
+        client.service<TestService>("test.v1").events.subscribe("changed", listener);
 
-        await expect(
-            client
-                .service<TestService>("test.v1")
-                .methods.echo({ value: "hello" })
-        ).resolves.toBe("hello");
+        await expect(client.service<TestService>("test.v1").methods.echo({ value: "hello" })).resolves.toBe(
+            "hello"
+        );
         server.events.publish("changed", { value: "one" });
         await vi.waitFor(() =>
             expect(listener).toHaveBeenCalledWith({
                 value: "one",
             })
         );
-        await expect(
-            client
-                .service<TestService>("test.v1")
-                .methods.fail(undefined)
-        ).rejects.toMatchObject({
+        await expect(client.service<TestService>("test.v1").methods.fail(undefined)).rejects.toMatchObject({
             name: "RangeError",
             message: "handler failed",
         });
@@ -199,13 +186,9 @@ describe("SharedWorker coordination", () => {
             requestTimeoutMs: 1_000,
         });
         await expect(
-            first
-                .service<TestService>("test.v1")
-                .methods.echo({ value: "connected" })
+            first.service<TestService>("test.v1").methods.echo({ value: "connected" })
         ).resolves.toBe("connected");
-        const pending = first
-            .service<TestService>("test.v1")
-            .methods.wait(undefined);
+        const pending = first.service<TestService>("test.v1").methods.wait(undefined);
 
         disconnect();
 
@@ -220,9 +203,7 @@ describe("SharedWorker coordination", () => {
             requestTimeoutMs: 100,
         });
         await expect(
-            second
-                .service<TestService>("test.v1")
-                .methods.echo({ value: "reconnected" })
+            second.service<TestService>("test.v1").methods.echo({ value: "reconnected" })
         ).resolves.toBe("reconnected");
 
         await first.close();
@@ -243,9 +224,7 @@ describe("SharedWorker coordination", () => {
         });
 
         await expect(
-            client
-                .service<TestService>("test.v1")
-                .methods.echo({ value: "no" })
+            client.service<TestService>("test.v1").methods.echo({ value: "no" })
         ).rejects.toMatchObject({
             code: "PROTOCOL_MISMATCH",
         });
@@ -262,11 +241,9 @@ describe("SharedWorker coordination", () => {
             },
         });
 
-        await expect(
-            client
-                .service<TestService>("test.v1")
-                .methods.echo({ value: "no" })
-        ).rejects.toBe(failure);
+        await expect(client.service<TestService>("test.v1").methods.echo({ value: "no" })).rejects.toBe(
+            failure
+        );
         await client.close();
     });
 
@@ -282,11 +259,7 @@ describe("SharedWorker coordination", () => {
             wait: async (_input, context) => {
                 started.resolve();
                 await new Promise<void>((resolve) =>
-                    context.signal.addEventListener(
-                        "abort",
-                        () => resolve(),
-                        { once: true }
-                    )
+                    context.signal.addEventListener("abort", () => resolve(), { once: true })
                 );
                 aborted.resolve();
             },
@@ -299,11 +272,9 @@ describe("SharedWorker coordination", () => {
             requestTimeoutMs: 100,
         });
         const controller = new AbortController();
-        const request = client
-            .service<TestService>("test.v1")
-            .methods.wait(undefined, {
-                signal: controller.signal,
-            });
+        const request = client.service<TestService>("test.v1").methods.wait(undefined, {
+            signal: controller.signal,
+        });
         await started.promise;
 
         controller.abort();

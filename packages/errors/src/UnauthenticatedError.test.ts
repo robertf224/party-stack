@@ -1,9 +1,5 @@
-import { describe, expect, it } from "vitest";
-import {
-    isUnauthenticatedError,
-    unauthenticated,
-    UnauthenticatedError,
-} from "./UnauthenticatedError.js";
+import { describe, expect, it } from "vite-plus/test";
+import { isUnauthenticatedError, unauthenticated, UnauthenticatedError } from "./UnauthenticatedError.js";
 
 describe("UnauthenticatedError", () => {
     it("creates a normalized unauthenticated error", () => {

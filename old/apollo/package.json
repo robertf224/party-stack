@@ -1,20 +1,15 @@
 {
     "name": "@bobbyfidz/apollo",
     "version": "0.3.0",
-    "type": "module",
     "files": [
         "lib"
     ],
+    "type": "module",
     "exports": {
         ".": {
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
         }
-    },
-    "scripts": {
-        "build": "tsc",
-        "lint": "eslint",
-        "test": "vitest run --passWithNoTests"
     },
     "dependencies": {
         "@bobbyfidz/binaries": "^0.4.0",
@@ -23,10 +18,9 @@
         "yaml": "^2.9.0"
     },
     "devDependencies": {
-        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@party-stack/build-config": "workspace:^",
         "@types/node": "^24.10.1",
-        "eslint": "^9.25.0",
-        "typescript": "~5.8.3",
-        "vitest": "^3.1.1"
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
     }
 }

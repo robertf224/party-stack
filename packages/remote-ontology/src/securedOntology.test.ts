@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
 import { o, type OntologyIR } from "@party-stack/ontology";
-import { applyFixedActionParameterValues, getVisibleActionParameterNames, pickVisibleActionParameters, projectRemoteOntologyIR } from "./securedOntology.js";
+import { describe, expect, it } from "vite-plus/test";
+import {
+    applyFixedActionParameterValues,
+    getVisibleActionParameterNames,
+    pickVisibleActionParameters,
+    projectRemoteOntologyIR,
+} from "./securedOntology.js";
 
 function contextEmail() {
     return o.Expression.getAt({
@@ -154,21 +159,19 @@ describe("secured ontology projection", () => {
         const projected = projectRemoteOntologyIR({
             ir: {
                 ...ir,
-                objectTypes: ir.objectTypes.map(
-                    (objectType) => ({
-                        ...objectType,
-                        properties: [
-                            ...objectType.properties,
-                            {
-                                name: "entries",
-                                displayName: "Entries",
-                                type: o.list({
-                                    elementType: o.unknown({}),
-                                }),
-                            },
-                        ],
-                    })
-                ),
+                objectTypes: ir.objectTypes.map((objectType) => ({
+                    ...objectType,
+                    properties: [
+                        ...objectType.properties,
+                        {
+                            name: "entries",
+                            displayName: "Entries",
+                            type: o.list({
+                                elementType: o.unknown({}),
+                            }),
+                        },
+                    ],
+                })),
                 actionTypes: [
                     {
                         ...action,
@@ -202,29 +205,19 @@ describe("secured ontology projection", () => {
             },
             serverContext: {},
             allowedObjectTypeProperties: {
-                Note: [
-                    "id",
-                    "title",
-                    "ownerEmail",
-                    "updatedAt",
-                    "directContext",
-                    "entries",
-                ],
+                Note: ["id", "title", "ownerEmail", "updatedAt", "directContext", "entries"],
             },
         });
-        const projectedStep =
-            projected.actionTypes[0]!.logic[0]!;
+        const projectedStep = projected.actionTypes[0]!.logic[0]!;
         expect(projectedStep.kind).toBe("createObject");
         if (projectedStep.kind !== "createObject") {
             return;
         }
 
-        expect(projectedStep.value.values).toContainEqual(
-            {
-                property: ["entries"],
-                value: mapping,
-            }
-        );
+        expect(projectedStep.value.values).toContainEqual({
+            property: ["entries"],
+            value: mapping,
+        });
     });
 
     it("projects action defaults through object and property authorization", () => {
@@ -373,11 +366,7 @@ describe("secured ontology projection", () => {
         });
 
         expect(projected.objectTypes).toEqual([]);
-        expect(
-            projected.actionTypes.map(
-                (action) => action.name,
-            ),
-        ).toEqual(["createNote"]);
+        expect(projected.actionTypes.map((action) => action.name)).toEqual(["createNote"]);
         expect(projected.actionTypes[0]?.logic).toEqual([]);
     });
 
@@ -445,19 +434,18 @@ describe("secured ontology projection", () => {
             value: contextEmail(),
         });
     });
-
 });
 
 describe("visible action parameter helpers", () => {
     it("derives visible parameter names from fixed parameter policy", () => {
         const action = ir.actionTypes[0]!;
-        expect(
-            [...getVisibleActionParameterNames("createNote", action.parameters, {
+        expect([
+            ...getVisibleActionParameterNames("createNote", action.parameters, {
                 createNote: {
                     ownerEmail: contextEmail(),
                 },
-            })]
-        ).toEqual(["id", "title", "updatedAt"]);
+            }),
+        ]).toEqual(["id", "title", "updatedAt"]);
     });
 
     it("filters resolved parameters to visible names only", () => {
@@ -487,8 +475,8 @@ describe("visible action parameter helpers", () => {
 });
 
 describe("fixed action parameter values", () => {
-    it("evaluates fixed values after client parameters so clients cannot override them", async () => {
-        const parameters = await applyFixedActionParameterValues({
+    it("evaluates fixed values after client parameters so clients cannot override them", () => {
+        const parameters = applyFixedActionParameterValues({
             ctx: { user: { email: "alice@example.com" } },
             actionType: "createNote",
             parameters: {

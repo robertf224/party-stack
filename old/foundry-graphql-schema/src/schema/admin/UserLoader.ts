@@ -3,7 +3,7 @@ import { PrincipalId } from "@osdk/foundry.core";
 import { loadOneCallback } from "grafast";
 import { FoundryContext } from "../context.js";
 
-export const UserLoader = loadOneCallback<PrincipalId, User, {}, FoundryContext>(
+export const UserLoader = loadOneCallback<PrincipalId, User, NonNullable<unknown>, FoundryContext>(
     async (ids, { unary: context }) => {
         const users = await Users.getBatch(
             context.client,

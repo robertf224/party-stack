@@ -2,10 +2,10 @@ import {
     fromSalesforceLightningIconName,
     getSalesforceObjectIconName,
 } from "@party-stack/icons-salesforce-lightning";
-import type { MetaObjectProperty, MetaObjectType } from "@party-stack/ontology";
-import type { SalesforceFieldDescribe, SalesforceSObjectDescribe } from "@party-stack/salesforce-client";
 import { salesforceObjectTypeId, salesforcePropertyId } from "../utils/ids.js";
 import { convertSalesforceFieldType } from "./convertMetaTypeDef.js";
+import type { MetaObjectProperty, MetaObjectType } from "@party-stack/ontology";
+import type { SalesforceFieldDescribe, SalesforceSObjectDescribe } from "@party-stack/salesforce-client";
 
 const COMPOUND_PARENT_TYPES = new Set(["address", "location"]);
 
@@ -45,9 +45,7 @@ export function convertSalesforceMetaObjectType(describe: SalesforceSObjectDescr
         pluralDisplayName: describe.labelPlural,
         primaryKey: "Id",
         title: chooseTitleProperty(describe.fields),
-        icon: sourceIconName
-            ? fromSalesforceLightningIconName(sourceIconName)
-            : undefined,
+        icon: sourceIconName ? fromSalesforceLightningIconName(sourceIconName) : undefined,
         properties,
     };
 }

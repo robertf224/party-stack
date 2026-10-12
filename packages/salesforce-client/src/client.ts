@@ -36,10 +36,7 @@ export interface SalesforceClient {
     queryMore: <T extends SalesforceRecord = SalesforceRecord>(
         nextRecordsUrl: string
     ) => Promise<QueryResult<T>>;
-    createRecord: (
-        sObjectName: string,
-        record: Record<string, unknown>
-    ) => Promise<SalesforceSaveResult>;
+    createRecord: (sObjectName: string, record: Record<string, unknown>) => Promise<SalesforceSaveResult>;
     updateRecord: (
         sObjectName: string,
         id: string,
@@ -54,19 +51,11 @@ export interface SalesforceClient {
     listFlowActions: () => Promise<SalesforceInvocableActionListResponse>;
     describeInvocableActions: (
         actions: readonly SalesforceInvocableActionDescribeRequest[]
-    ) => Promise<
-        Array<
-            SalesforceInvocableActionDescribe | undefined
-        >
-    >;
+    ) => Promise<Array<SalesforceInvocableActionDescribe | undefined>>;
     describeFlowAction: (apiName: string) => Promise<SalesforceInvocableActionDescribe>;
     describeFlowActions: (
         apiNames: readonly string[]
-    ) => Promise<
-        Array<
-            SalesforceInvocableActionDescribe | undefined
-        >
-    >;
+    ) => Promise<Array<SalesforceInvocableActionDescribe | undefined>>;
     invokeFlowAction: (
         apiName: string,
         inputs: Record<string, unknown>[]
@@ -75,11 +64,7 @@ export interface SalesforceClient {
     describeStandardAction: (apiName: string) => Promise<SalesforceInvocableActionDescribe>;
     describeStandardActions: (
         apiNames: readonly string[]
-    ) => Promise<
-        Array<
-            SalesforceInvocableActionDescribe | undefined
-        >
-    >;
+    ) => Promise<Array<SalesforceInvocableActionDescribe | undefined>>;
     invokeStandardAction: (
         apiName: string,
         inputs: Record<string, unknown>[]
@@ -162,10 +147,7 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
     const tokenProvider = options.tokenProvider;
     const cometdUrl = options.cometdUrl
         ? new URL(options.cometdUrl)
-        : resolveUrl(
-              instanceUrl,
-              `/cometd/${apiVersion}`
-          );
+        : resolveUrl(instanceUrl, `/cometd/${apiVersion}`);
 
     invariant(instanceUrl.length > 0, "Salesforce instanceUrl is required.");
     invariant(
@@ -201,22 +183,13 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
             }
 
             if (tokenProvider) {
-                headers.Authorization =
-                    `Bearer ${await tokenProvider()}`;
+                headers.Authorization = `Bearer ${await tokenProvider()}`;
             }
-            const response = await fetchImpl(
-                url,
-                {
-                    method,
-                    headers,
-                    body:
-                        init?.body === undefined
-                            ? undefined
-                            : JSON.stringify(
-                                  init.body
-                              ),
-                }
-            );
+            const response = await fetchImpl(url, {
+                method,
+                headers,
+                body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+            });
             if (!response.ok) {
                 const text = await response.text();
                 let details: unknown = text;
@@ -226,28 +199,16 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
                     // Preserve non-JSON Salesforce responses.
                 }
                 const first =
-                    Array.isArray(details) &&
-                    typeof details[0] ===
-                        "object" &&
-                    details[0] !== null
-                        ? (details[0] as Record<
-                              string,
-                              unknown
-                          >)
+                    Array.isArray(details) && typeof details[0] === "object" && details[0] !== null
+                        ? (details[0] as Record<string, unknown>)
                         : undefined;
                 throw new SalesforceApiError(
-                    typeof first?.message ===
-                        "string"
+                    typeof first?.message === "string"
                         ? first.message
                         : `Salesforce request failed with status ${response.status}.`,
                     {
-                        statusCode:
-                            response.status,
-                        errorCode:
-                            typeof first?.errorCode ===
-                            "string"
-                                ? first.errorCode
-                                : undefined,
+                        statusCode: response.status,
+                        errorCode: typeof first?.errorCode === "string" ? first.errorCode : undefined,
                         details,
                     }
                 );
@@ -261,54 +222,30 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
 
     const describeInvocableActions = async (
         actions: readonly SalesforceInvocableActionDescribeRequest[]
-    ): Promise<
-        Array<
-            SalesforceInvocableActionDescribe | undefined
-        >
-    > => {
-        const describes: Array<
-            SalesforceInvocableActionDescribe | undefined
-        > = [];
-        for (
-            let offset = 0;
-            offset < actions.length;
-            offset += COMPOSITE_REQUEST_LIMIT
-        ) {
-            const batch = actions.slice(
-                offset,
-                offset + COMPOSITE_REQUEST_LIMIT
-            );
+    ): Promise<Array<SalesforceInvocableActionDescribe | undefined>> => {
+        const describes: Array<SalesforceInvocableActionDescribe | undefined> = [];
+        for (let offset = 0; offset < actions.length; offset += COMPOSITE_REQUEST_LIMIT) {
+            const batch = actions.slice(offset, offset + COMPOSITE_REQUEST_LIMIT);
             const response = await request<{
                 hasErrors: boolean;
                 results: Array<{
                     result: SalesforceInvocableActionDescribe;
                     statusCode: number;
                 }>;
-            }>(
-                dataApiPath(
-                    apiVersion,
-                    "/composite/batch"
-                ),
-                {
-                    method: "POST",
-                    body: {
-                        haltOnError: false,
-                        batchRequests: batch.map(
-                            (action) => ({
-                                method: "GET",
-                                url: `v${apiVersion}/actions/${action.kind === "flow" ? "custom/flow" : "standard"}/${encodePathSegment(action.apiName)}`,
-                            })
-                        ),
-                    },
-                }
-            );
+            }>(dataApiPath(apiVersion, "/composite/batch"), {
+                method: "POST",
+                body: {
+                    haltOnError: false,
+                    batchRequests: batch.map((action) => ({
+                        method: "GET",
+                        url: `v${apiVersion}/actions/${action.kind === "flow" ? "custom/flow" : "standard"}/${encodePathSegment(action.apiName)}`,
+                    })),
+                },
+            });
             describes.push(
                 ...batch.map((_, index) => {
-                    const entry =
-                        response.results[index];
-                    return entry &&
-                        entry.statusCode >= 200 &&
-                        entry.statusCode < 300
+                    const entry = response.results[index];
+                    return entry && entry.statusCode >= 200 && entry.statusCode < 300
                         ? entry.result
                         : undefined;
                 })
@@ -319,22 +256,16 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
 
     const subscribeToChangeEvents = async (
         sObjectName: string,
-        listener: (
-            event: SalesforceChangeEvent
-        ) => void,
+        listener: (event: SalesforceChangeEvent) => void,
         subscriptionOptions?: SalesforceChangeEventSubscriptionOptions
     ): Promise<SalesforceChangeEventSubscription> => {
         if (!tokenProvider) {
-            throw new Error(
-                "Salesforce Change Data Capture requires a tokenProvider."
-            );
+            throw new Error("Salesforce Change Data Capture requires a tokenProvider.");
         }
-        const channel =
-            changeEventChannel(sObjectName);
+        const channel = changeEventChannel(sObjectName);
         const controller = new AbortController();
         let messageId = 0;
-        let replayId =
-            subscriptionOptions?.replayId ?? -1;
+        let replayId = subscriptionOptions?.replayId ?? -1;
         type CometdMessage = {
             advice?: {
                 interval?: number;
@@ -346,30 +277,20 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
             error?: string;
             successful?: boolean;
         };
-        const send = async (
-            messages: Record<string, unknown>[]
-        ): Promise<CometdMessage[]> => {
+        const send = async (messages: Record<string, unknown>[]): Promise<CometdMessage[]> => {
             const token = await tokenProvider();
-            invariant(
-                token.length > 0,
-                "Salesforce tokenProvider returned an empty token."
-            );
-            const response = await fetchImpl(
-                cometdUrl,
-                {
-                    method: "POST",
-                    credentials: "include",
-                    headers: {
-                        Accept: "application/json",
-                        Authorization:
-                            `Bearer ${token}`,
-                        "Content-Type":
-                            "application/json",
-                    },
-                    body: JSON.stringify(messages),
-                    signal: controller.signal,
-                }
-            );
+            invariant(token.length > 0, "Salesforce tokenProvider returned an empty token.");
+            const response = await fetchImpl(cometdUrl, {
+                method: "POST",
+                credentials: "include",
+                headers: {
+                    Accept: "application/json",
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(messages),
+                signal: controller.signal,
+            });
             if (!response.ok) {
                 throw new SalesforceApiError(
                     `Salesforce CometD request failed with status ${response.status}.`,
@@ -378,56 +299,40 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
             }
             return (await response.json()) as CometdMessage[];
         };
-        const nextId = () =>
-            String(++messageId);
+        const nextId = () => String(++messageId);
         const establish = async (): Promise<string> => {
             const handshake = (
                 await send([
                     {
                         id: nextId(),
-                        channel:
-                            "/meta/handshake",
+                        channel: "/meta/handshake",
                         version: "1.0",
                         minimumVersion: "1.0",
-                        supportedConnectionTypes: [
-                            "long-polling",
-                        ],
+                        supportedConnectionTypes: ["long-polling"],
                         ext: { replay: true },
                     },
                 ])
             )[0];
-            if (
-                !handshake?.successful ||
-                !handshake.clientId
-            ) {
-                throw new Error(
-                    handshake?.error ??
-                        "Salesforce CometD handshake failed."
-                );
+            if (!handshake?.successful || !handshake.clientId) {
+                throw new Error(handshake?.error ?? "Salesforce CometD handshake failed.");
             }
             const subscription = (
                 await send([
                     {
                         id: nextId(),
-                        channel:
-                            "/meta/subscribe",
-                        clientId:
-                            handshake.clientId,
+                        channel: "/meta/subscribe",
+                        clientId: handshake.clientId,
                         subscription: channel,
                         ext: {
                             replay: {
-                                [channel]:
-                                    replayId,
+                                [channel]: replayId,
                             },
                         },
                     },
                 ])
             )[0];
             if (!subscription?.successful) {
-                throw new Error(
-                    subscription?.error ??
-                        `Salesforce CDC subscription to "${channel}" failed.`
-                );
+                throw new Error(subscription?.error ?? `Salesforce CDC subscription to "${channel}" failed.`);
             }
             return handshake.clientId;
         };
@@ -438,74 +343,37 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
                     const messages = await send([
                         {
                             id: nextId(),
-                            channel:
-                                "/meta/connect",
+                            channel: "/meta/connect",
                             clientId,
-                            connectionType:
-                                "long-polling",
+                            connectionType: "long-polling",
                         },
                     ]);
                     for (const message of messages) {
-                        if (
-                            message.channel !==
-                                channel ||
-                            !message.data
-                        ) {
+                        if (message.channel !== channel || !message.data) {
                             continue;
                         }
-                        const nextReplayId =
-                            message.data.event
-                                ?.replayId;
-                        if (
-                            nextReplayId !==
-                            undefined
-                        ) {
-                            replayId =
-                                nextReplayId;
+                        const nextReplayId = message.data.event?.replayId;
+                        if (nextReplayId !== undefined) {
+                            replayId = nextReplayId;
                         }
                         listener(message.data);
                     }
-                    const connectMessage =
-                        messages.find(
-                            (message) =>
-                                message.channel ===
-                                "/meta/connect"
-                        );
-                    if (
-                        connectMessage?.advice
-                            ?.reconnect === "none"
-                    ) {
+                    const connectMessage = messages.find((message) => message.channel === "/meta/connect");
+                    if (connectMessage?.advice?.reconnect === "none") {
                         break;
                     }
-                    if (
-                        connectMessage?.advice
-                            ?.reconnect ===
-                        "handshake"
-                    ) {
-                        clientId =
-                            await establish();
+                    if (connectMessage?.advice?.reconnect === "handshake") {
+                        clientId = await establish();
                     }
-                    const interval =
-                        connectMessage?.advice
-                            ?.interval ?? 0;
+                    const interval = connectMessage?.advice?.interval ?? 0;
                     if (interval > 0) {
-                        await new Promise(
-                            (resolve) =>
-                                setTimeout(
-                                    resolve,
-                                    interval
-                                )
-                        );
+                        await new Promise((resolve) => setTimeout(resolve, interval));
                     }
                 } catch {
-                    if (
-                        controller.signal.aborted
-                    ) {
+                    if (controller.signal.aborted) {
                         break;
                     }
-                    await new Promise((resolve) =>
-                        setTimeout(resolve, 1_000)
-                    );
+                    await new Promise((resolve) => setTimeout(resolve, 1_000));
                     clientId = await establish();
                 }
             }
@@ -513,8 +381,7 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
         void connect().catch(() => undefined);
         return {
             channel,
-            unsubscribe: () =>
-                controller.abort(),
+            unsubscribe: () => controller.abort(),
         };
     };
 
@@ -524,30 +391,18 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
         tokenProvider,
         fetch: fetchImpl,
         request,
-        describeGlobal: () =>
-            request<DescribeGlobalResult>(
-                dataApiPath(apiVersion, "/sobjects")
-            ),
+        describeGlobal: () => request<DescribeGlobalResult>(dataApiPath(apiVersion, "/sobjects")),
         describeSObject: (sObjectName) =>
             request<DescribeSObjectResult>(
-                dataApiPath(
-                    apiVersion,
-                    `/sobjects/${encodePathSegment(sObjectName)}/describe`
-                )
+                dataApiPath(apiVersion, `/sobjects/${encodePathSegment(sObjectName)}/describe`)
             ),
         query: <T extends SalesforceRecord = SalesforceRecord>(soql: string) =>
-            request<QueryResult<T>>(
-                dataApiPath(apiVersion, "/query"),
-                { searchParams: { q: soql } }
-            ),
+            request<QueryResult<T>>(dataApiPath(apiVersion, "/query"), { searchParams: { q: soql } }),
         queryMore: <T extends SalesforceRecord = SalesforceRecord>(nextRecordsUrl: string) =>
             request<QueryResult<T>>(nextRecordsUrl),
         createRecord: (sObjectName, record) =>
             request<SalesforceSaveResult>(
-                dataApiPath(
-                    apiVersion,
-                    `/sobjects/${encodePathSegment(sObjectName)}`
-                ),
+                dataApiPath(apiVersion, `/sobjects/${encodePathSegment(sObjectName)}`),
                 { method: "POST", body: record }
             ),
         updateRecord: async (sObjectName, id, record) => {
@@ -602,15 +457,10 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
                 }
             ),
         listStandardActions: () =>
-            request<SalesforceInvocableActionListResponse>(
-                dataApiPath(apiVersion, "/actions/standard")
-            ),
+            request<SalesforceInvocableActionListResponse>(dataApiPath(apiVersion, "/actions/standard")),
         describeStandardAction: (apiName) =>
             request<SalesforceInvocableActionDescribe>(
-                dataApiPath(
-                    apiVersion,
-                    `/actions/standard/${encodePathSegment(apiName)}`
-                )
+                dataApiPath(apiVersion, `/actions/standard/${encodePathSegment(apiName)}`)
             ),
         describeStandardActions: (apiNames) =>
             describeInvocableActions(
@@ -621,10 +471,7 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
             ),
         invokeStandardAction: (apiName, inputs) =>
             request<SalesforceInvocableActionResult[]>(
-                dataApiPath(
-                    apiVersion,
-                    `/actions/standard/${encodePathSegment(apiName)}`
-                ),
+                dataApiPath(apiVersion, `/actions/standard/${encodePathSegment(apiName)}`),
                 {
                     method: "POST",
                     body: { inputs },

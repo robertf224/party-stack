@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { o } from "./generated/builders.js";
 import { validate, ValidationResult } from "./validate.js";
 import type { OntologyIR } from "./generated/types.js";
@@ -9,9 +9,9 @@ function expectOk(result: ValidationResult): void {
 
 function expectErr(result: ValidationResult, count?: number): void {
     expect(result.kind).toBe("err");
-    if (result.kind === "err" && count !== undefined) {
-        expect(result.value).toHaveLength(count);
-    }
+    if (count === undefined) return;
+    if (result.kind !== "err") throw new Error("Expected validation errors");
+    expect(result.value).toHaveLength(count);
 }
 
 function getErrors(result: ValidationResult): string[] {
@@ -724,9 +724,7 @@ describe("Ontology Validation", () => {
 
             const result = validate(ontology);
             expectErr(result, 1);
-            expect(getErrors(result)).toContain(
-                'Unknown action parameter: "missing".'
-            );
+            expect(getErrors(result)).toContain('Unknown action parameter: "missing".');
         });
 
         it("validates map expressions with scoped element references", () => {

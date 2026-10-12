@@ -27,11 +27,11 @@ pnpm add @tanstack/query-db-collection@1.4.0 @tanstack/query-core@^5.102.8
 ```
 
 ```ts
+import { createIndexedDBPersistence } from "@party-stack/db-indexeddb-persistence";
 import { createCollection } from "@tanstack/db";
+import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
-import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
-import { createIndexedDBPersistence } from "@party-stack/db-indexeddb-persistence";
 
 type Task = { id: string; title: string };
 
@@ -173,11 +173,11 @@ not emit collection notifications.
 From a source checkout, run these commands in the package directory:
 
 ```sh
-pnpm build
-pnpm lint
-pnpm test
-pnpm test:browser
-pnpm bench:browser
+vp run build
+vp run check
+vp run test
+vp run test:browser
+vp run bench:browser
 ```
 
 The [adapted upstream contract](src/contracts/NOTICE.md) runs against both

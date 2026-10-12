@@ -1,15 +1,8 @@
-import { defineConfig } from "vite";
-import { devtools } from "@tanstack/devtools-vite";
-import { tanstackStart } from "@tanstack/react-start/plugin/vite";
-import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import { defineAppConfig } from "@party-stack/tanstack-start-build-config";
 
-export default defineConfig({
+export default defineAppConfig({
+    server: { port: 3000 },
     ssr: {
         external: ["better-sqlite3"],
     },
-    server: {
-        port: 3000,
-    },
-    plugins: [devtools(), tanstackStart(), react(), tailwindcss()],
 });

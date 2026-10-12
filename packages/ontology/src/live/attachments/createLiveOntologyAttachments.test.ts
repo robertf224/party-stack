@@ -1,11 +1,11 @@
 import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
-import { describe, expect, it, vi } from "vitest";
-import type { BlobManager } from "@party-stack/blobs";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { o } from "../../ir/index.js";
 import { createLiveOntology } from "../LiveOntology.js";
 import { createLiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
 import type { OntologyIR } from "../../ir/index.js";
 import type { OntologyAttachmentsAdapter, OntologyBackendAdapter } from "../index.js";
+import type { BlobManager } from "@party-stack/blobs";
 
 const ir: OntologyIR = {
     types: [],

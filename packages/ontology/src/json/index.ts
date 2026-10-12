@@ -63,12 +63,7 @@ function resolveTargetType<IR extends OntologyIR>(ir: IR, target: JsonTarget<IR>
     }
 }
 
-function decodeValue(
-    ir: OntologyIR,
-    type: TypeDef,
-    value: unknown,
-    normalizeOptionalNull = false
-): unknown {
+function decodeValue(ir: OntologyIR, type: TypeDef, value: unknown, normalizeOptionalNull = false): unknown {
     const resolvedType = resolveType(ir, type);
     if (value === undefined) return undefined;
     if (value === null) {
@@ -100,12 +95,7 @@ function decodeValue(
             return Object.fromEntries(
                 Object.entries(value).map(([key, entry]) => {
                     const field = resolvedType.value.fields.find((candidate) => candidate.name === key);
-                    return [
-                        key,
-                        field
-                            ? decodeValue(ir, field.type, entry, normalizeOptionalNull)
-                            : entry,
-                    ];
+                    return [key, field ? decodeValue(ir, field.type, entry, normalizeOptionalNull) : entry];
                 })
             );
         default:
@@ -212,10 +202,18 @@ export function decode<IR extends OntologyIR>(opts: {
         return decodeObject(opts.ir, opts.target.name, opts.value);
     }
     if (opts.target.kind === "actionParameters") {
-        return decodeParameters(opts.ir, getActionType(opts.ir, opts.target.actionType).parameters, opts.value);
+        return decodeParameters(
+            opts.ir,
+            getActionType(opts.ir, opts.target.actionType).parameters,
+            opts.value
+        );
     }
     if (opts.target.kind === "queryFunctionParameters") {
-        return decodeParameters(opts.ir, getQueryFunctionType(opts.ir, opts.target.queryFunctionType).parameters, opts.value);
+        return decodeParameters(
+            opts.ir,
+            getQueryFunctionType(opts.ir, opts.target.queryFunctionType).parameters,
+            opts.value
+        );
     }
     return decodeValue(
         opts.ir,
@@ -234,10 +232,18 @@ export function encode<IR extends OntologyIR>(opts: {
         return encodeObject(opts.ir, opts.target.name, opts.value);
     }
     if (opts.target.kind === "actionParameters") {
-        return encodeParameters(opts.ir, getActionType(opts.ir, opts.target.actionType).parameters, opts.value);
+        return encodeParameters(
+            opts.ir,
+            getActionType(opts.ir, opts.target.actionType).parameters,
+            opts.value
+        );
     }
     if (opts.target.kind === "queryFunctionParameters") {
-        return encodeParameters(opts.ir, getQueryFunctionType(opts.ir, opts.target.queryFunctionType).parameters, opts.value);
+        return encodeParameters(
+            opts.ir,
+            getQueryFunctionType(opts.ir, opts.target.queryFunctionType).parameters,
+            opts.value
+        );
     }
     return encodeValue(opts.ir, resolveTargetType(opts.ir, opts.target)!, opts.value);
 }

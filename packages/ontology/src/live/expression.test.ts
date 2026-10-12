@@ -1,9 +1,9 @@
 import { createCollection, localOnlyCollectionOptions } from "@tanstack/db";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { o } from "../ir/index.js";
 import { evaluateExpression } from "./expression.js";
 import { createReadTx } from "./mutators/createMutatorTx.js";
-import type { Expression, OntologyIR } from "../ir/index.js";
+import type { OntologyIR } from "../ir/index.js";
 import type { OntologyObject } from "./objects/OntologyObject.js";
 
 const ir: OntologyIR = {
@@ -97,7 +97,7 @@ describe("evaluateExpression", () => {
                         },
                         path: ["name"],
                     },
-                } as Expression,
+                },
                 resolveParameter: () => Promise.resolve("user-1"),
                 context: {},
                 tx: createReadTx({ User: users }),
@@ -110,27 +110,44 @@ describe("evaluateExpression", () => {
     it("fetches an explicit lookup when the referenced object is not loaded", async () => {
         const loadSubset = vi.fn();
         const users = createCollection<OntologyObject, string | number>({
-            id: "expression-remote-users", getKey: (user) => user.id as string,
-            syncMode: "on-demand", sync: { sync: ({ begin, write, commit, markReady }) => {
-                markReady();
-                return { loadSubset: () => {
-                    loadSubset(); begin(); write({ type: "insert", value: { id: "user-1", name: "Ada" } });
-                    return commit();
-                } };
-            } },
+            id: "expression-remote-users",
+            getKey: (user) => user.id as string,
+            syncMode: "on-demand",
+            sync: {
+                sync: ({ begin, write, commit, markReady }) => {
+                    markReady();
+                    return {
+                        loadSubset: () => {
+                            loadSubset();
+                            begin();
+                            write({ type: "insert", value: { id: "user-1", name: "Ada" } });
+                            return commit();
+                        },
+                    };
+                },
+            },
         });
         try {
             expect(users.has("user-1")).toBe(false);
-            await expect(evaluateExpression({
-                ir, actionTypeName: "assign",
-                expression: o.Expression.getAt({
-                    source: o.Expression.objectLookup({ reference: o.Expression.inputReference({ name: "user" }) }),
-                    path: ["name"],
-                }),
-                resolveParameter: () => Promise.resolve("user-1"), context: {}, tx: createReadTx({ User: users }),
-            })).resolves.toBe("Ada");
+            await expect(
+                evaluateExpression({
+                    ir,
+                    actionTypeName: "assign",
+                    expression: o.Expression.getAt({
+                        source: o.Expression.objectLookup({
+                            reference: o.Expression.inputReference({ name: "user" }),
+                        }),
+                        path: ["name"],
+                    }),
+                    resolveParameter: () => Promise.resolve("user-1"),
+                    context: {},
+                    tx: createReadTx({ User: users }),
+                })
+            ).resolves.toBe("Ada");
             expect(loadSubset).toHaveBeenCalledOnce();
-        } finally { await users.cleanup(); }
+        } finally {
+            await users.cleanup();
+        }
     });
 
     it("returns an object-reference input without implicitly loading it", async () => {
@@ -147,7 +164,7 @@ describe("evaluateExpression", () => {
                     value: {
                         name: "user",
                     },
-                } as Expression,
+                },
                 resolveParameter: () => Promise.resolve("user-1"),
                 context: {},
                 tx: { query } as never,
@@ -211,13 +228,9 @@ describe("evaluateExpression", () => {
             ],
         };
         const users = createCollection(
-            localOnlyCollectionOptions<
-                OntologyObject,
-                string | number
-            >({
+            localOnlyCollectionOptions<OntologyObject, string | number>({
                 id: "link-hop-users",
-                getKey: (user) =>
-                    user.id as string | number,
+                getKey: (user) => user.id as string | number,
                 initialData: [
                     {
                         id: "user-1",
@@ -227,13 +240,9 @@ describe("evaluateExpression", () => {
             })
         );
         const projects = createCollection(
-            localOnlyCollectionOptions<
-                OntologyObject,
-                string | number
-            >({
+            localOnlyCollectionOptions<OntologyObject, string | number>({
                 id: "link-hop-projects",
-                getKey: (project) =>
-                    project.id as string | number,
+                getKey: (project) => project.id as string | number,
                 initialData: [
                     {
                         id: "project-1",
@@ -251,17 +260,15 @@ describe("evaluateExpression", () => {
                 expression: o.Expression.getAt({
                     source: o.Expression.linkHop({
                         source: o.Expression.objectLookup({
-                            reference:
-                                o.Expression.inputReference({
-                                    name: "project",
-                                }),
+                            reference: o.Expression.inputReference({
+                                name: "project",
+                            }),
                         }),
                         link: "owner",
                     }),
                     path: ["name"],
                 }),
-                resolveParameter: () =>
-                    Promise.resolve("project-1"),
+                resolveParameter: () => Promise.resolve("project-1"),
                 context: {},
                 tx: createReadTx({
                     User: users,
@@ -270,10 +277,7 @@ describe("evaluateExpression", () => {
             })
         ).resolves.toBe("Ada");
 
-        await Promise.all([
-            users.cleanup(),
-            projects.cleanup(),
-        ]);
+        await Promise.all([users.cleanup(), projects.cleanup()]);
     });
 
     it("maps list elements into constructed structs", async () => {

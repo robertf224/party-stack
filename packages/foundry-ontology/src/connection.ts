@@ -133,37 +133,22 @@ async function createFoundryConnectionAdapterInstance(
               resolveUserId: (token) => getTokenDetails(token).userId,
           })
         : undefined;
-    const clientCredentialsOauth:
-        | ClientCredentialsOAuthClient
-        | undefined = options.clientCredentials
+    const clientCredentialsOauth: ClientCredentialsOAuthClient | undefined = options.clientCredentials
         ? createClientCredentialsOAuthClient({
-              clientId:
-                  options.clientCredentials.clientId,
-              clientSecret:
-                  options.clientCredentials.clientSecret,
+              clientId: options.clientCredentials.clientId,
+              clientSecret: options.clientCredentials.clientSecret,
               tokenEndpoint: new URL(
                   "multipass/api/oauth2/token",
-                  options.baseUrl.endsWith("/")
-                      ? options.baseUrl
-                      : `${options.baseUrl}/`
+                  options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
               ).toString(),
-              tokenEndpointAuthMethod:
-                  "client_secret_basic",
+              tokenEndpointAuthMethod: "client_secret_basic",
               revocationEndpoint: new URL(
                   "multipass/api/oauth2/revoke_token",
-                  options.baseUrl.endsWith("/")
-                      ? options.baseUrl
-                      : `${options.baseUrl}/`
+                  options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
               ).toString(),
-              scopes:
-                  options.clientCredentials.scopes ??
-                  DEFAULT_SCOPES,
-              fetch:
-                  options.clientCredentials.fetch,
-              resolveUserId: (token) =>
-                  options.clientCredentials
-                      ?.userId ??
-                  getTokenDetails(token).userId,
+              scopes: options.clientCredentials.scopes ?? DEFAULT_SCOPES,
+              fetch: options.clientCredentials.fetch,
+              resolveUserId: (token) => options.clientCredentials?.userId ?? getTokenDetails(token).userId,
           })
         : undefined;
 
@@ -196,28 +181,18 @@ async function createFoundryConnectionAdapterInstance(
         oauth: ClientCredentialsOAuthClient,
         forceRefresh = false
     ): Promise<EstablishedConnection> => {
-        const oauthSession = forceRefresh
-            ? await oauth.refresh()
-            : await oauth.getSession();
+        const oauthSession = forceRefresh ? await oauth.refresh() : await oauth.getSession();
         const userId = oauthSession.userId;
         const connection: Connection<"active"> = {
             userId,
-            state: activeState(
-                oauthSession.expiration?.expiresAt,
-                true
-            ),
+            state: activeState(oauthSession.expiration?.expiresAt, true),
         };
         const session: ConnectionSession = {
-            refresh: () =>
-                createClientCredentialsSession(
-                    oauth,
-                    true
-                ),
+            refresh: () => createClientCredentialsSession(oauth, true),
             disconnect: () => oauth.revoke(),
             egress: createFoundryEgressWrapper({
                 baseUrl: options.baseUrl,
-                tokenProvider: () =>
-                    oauth.getAccessToken(),
+                tokenProvider: () => oauth.getAccessToken(),
             }),
         };
         return { connection, session };
@@ -286,10 +261,7 @@ async function createFoundryConnectionAdapterInstance(
                         if (typeof window !== "undefined") {
                             throw new Error("Foundry client credentials cannot run in a browser.");
                         }
-                        const session =
-                            await createClientCredentialsSession(
-                                clientCredentialsOauth
-                            );
+                        const session = await createClientCredentialsSession(clientCredentialsOauth);
                         await controller.connect(session);
                         return session.connection;
                     },
@@ -316,14 +288,8 @@ async function createFoundryConnectionAdapterInstance(
                     restored.set(session.connection.userId, session);
                 }
             }
-            if (
-                clientCredentialsOauth &&
-                typeof window === "undefined"
-            ) {
-                const session =
-                    await createClientCredentialsSession(
-                        clientCredentialsOauth
-                    );
+            if (clientCredentialsOauth && typeof window === "undefined") {
+                const session = await createClientCredentialsSession(clientCredentialsOauth);
                 restored.set(session.connection.userId, session);
             }
             return [...restored.values()];

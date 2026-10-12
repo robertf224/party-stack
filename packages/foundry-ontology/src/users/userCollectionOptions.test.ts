@@ -1,7 +1,7 @@
 import { ilike, IR, or } from "@tanstack/db";
-import { describe, expect, it } from "vitest";
-import type { Lens } from "@party-stack/ontology";
+import { describe, expect, it } from "vite-plus/test";
 import { convertQuery } from "./userCollectionOptions.js";
+import type { Lens } from "@party-stack/ontology";
 
 const identityLens = { operations: [] } satisfies Lens;
 

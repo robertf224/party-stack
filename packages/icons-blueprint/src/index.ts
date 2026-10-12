@@ -1,5 +1,5 @@
-import type { IconDescriptor, IconName } from "@party-stack/icons";
 import type { IconName as BlueprintIconName } from "@blueprintjs/icons";
+import type { IconDescriptor, IconName } from "@party-stack/icons";
 
 export const BlueprintIconNames = {
     activity: "pulse",

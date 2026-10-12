@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
-import type { OntologyIR } from "@party-stack/ontology";
+import { describe, expect, it, vi } from "vite-plus/test";
 import * as metaAdapter from "../meta/createFoundryMetaOntologyBackendAdapter.js";
 import { createFoundryOntologyRoute } from "./createFoundryBackendInstallation.js";
+import type { OntologyIR } from "@party-stack/ontology";
 
 const ir: OntologyIR = {
     types: [],

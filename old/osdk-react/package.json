@@ -1,6 +1,9 @@
 {
     "name": "@bobbyfidz/osdk-react",
     "version": "0.13.0",
+    "files": [
+        "lib"
+    ],
     "type": "module",
     "exports": {
         ".": {
@@ -20,32 +23,23 @@
             "default": "./lib/attachments/index.js"
         }
     },
-    "files": [
-        "lib"
-    ],
-    "scripts": {
-        "build": "tsc",
-        "lint": "eslint",
-        "test": "vitest run --pass-with-no-tests"
-    },
     "dependencies": {
-        "@bobbyfidz/osdk-utils": "workspace:*",
+        "@bobbyfidz/osdk-utils": "workspace:^",
         "@bobbyfidz/panic": "^0.1.0",
         "@osdk/api": "^2.5.2",
         "@osdk/client": "^2.5.2",
-        "@osdk/foundry.admin": "^2.47.0",
+        "@osdk/foundry.admin": "^2.77.0",
         "@osdk/foundry.aipagents": "^2.47.0",
-        "@osdk/foundry.ontologies": "^2.49.0",
+        "@osdk/foundry.ontologies": "^2.77.0",
         "@yornaath/batshit": "^0.10.1"
     },
     "devDependencies": {
-        "@bobbyfidz/react-build-config": "^0.1.1",
+        "@party-stack/build-config": "workspace:^",
         "@tanstack/react-query": "^5.90.10",
         "@types/react": "^19.2.6",
-        "eslint": "^9.25.0",
         "react": "^19.2.0",
-        "typescript": "~5.8.3",
-        "vitest": "^3.1.1"
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
     },
     "peerDependencies": {
         "@tanstack/react-query": "^5.0.0",

@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/rules-of-hooks */
+/* oxlint-disable react/rules-of-hooks */
 import { createChannel, Operation, resource, scoped, sleep, spawn, Stream } from "effection";
 import { ObjectSetSubscription, ObjectSetSubscriptionsMessage } from "./types.js";
 import { useObjectSetWatcherConnection } from "./useObjectSetWatcherConnection.js";

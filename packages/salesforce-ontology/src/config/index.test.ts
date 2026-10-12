@@ -1,26 +1,18 @@
-import {
-    o,
-    type OntologyIR,
-} from "@party-stack/ontology";
-import { describe, expect, it, vi } from "vitest";
+import { o, type OntologyIR } from "@party-stack/ontology";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { createSalesforceOntologyPullConfig, createSalesforceOntologyPullSource } from "./index.js";
 import type { Connection } from "@party-stack/connections";
-import {
-    createSalesforceOntologyPullConfig,
-    createSalesforceOntologyPullSource,
-} from "./index.js";
 
 function createSource() {
     return createSalesforceOntologyPullSource({
-        instanceUrl:
-            "https://example.my.salesforce.com",
+        instanceUrl: "https://example.my.salesforce.com",
         apiVersion: "65.0",
         ontologyId: "salesforce:tasks",
         objectTypeNames: ["Task", "User"],
         connection: {
             oauth: {
                 clientId: "client",
-                redirectUrl:
-                    "http://localhost:1717/oauth/callback",
+                redirectUrl: "http://localhost:1717/oauth/callback",
             },
         },
     });
@@ -35,9 +27,7 @@ describe("createSalesforceOntologyPullSource", () => {
         const oauth = vi.fn();
 
         const resolved = await createSource().resolveConnection({
-            connections: new Map([
-                [connection.userId, connection],
-            ]),
+            connections: new Map([[connection.userId, connection]]),
             authentication: {
                 signIn: {
                     oauth,
@@ -54,9 +44,7 @@ describe("createSalesforceOntologyPullSource", () => {
             userId: "005000000000001",
             state: { status: "active" },
         };
-        const oauth = vi.fn(() =>
-            Promise.resolve(connection)
-        );
+        const oauth = vi.fn(() => Promise.resolve(connection));
 
         const resolved = await createSource().resolveConnection({
             connections: new Map(),
@@ -73,26 +61,17 @@ describe("createSalesforceOntologyPullSource", () => {
 
     it("builds a pull config with a scoped metadata allowlist", () => {
         const config = createSalesforceOntologyPullConfig({
-            instanceUrl:
-                "https://example.my.salesforce.com",
+            instanceUrl: "https://example.my.salesforce.com",
             apiVersion: "65.0",
             ontologyId: "salesforce:tasks",
             objectTypeNames: ["Task", "User"],
             flowActionTypeNames: ["Create_Task"],
-            standardActionTypeNames: [
-                "confirmSalesMeeting",
-            ],
-            standardQueryFunctionTypeNames: [
-                "getAvailableMeetingTimes",
-            ],
+            standardActionTypeNames: ["confirmSalesMeeting"],
+            standardQueryFunctionTypeNames: ["getAvailableMeetingTimes"],
             crudActionTypes: [
                 {
                     objectType: "Task",
-                    operations: [
-                        "create",
-                        "update",
-                        "delete",
-                    ],
+                    operations: ["create", "update", "delete"],
                 },
             ],
             connection: {
@@ -101,13 +80,8 @@ describe("createSalesforceOntologyPullSource", () => {
             },
         });
 
-        expect(config.source.ontologyId).toBe(
-            "salesforce:tasks"
-        );
-        expect(config.objectTypeNames).toEqual([
-            "Task",
-            "User",
-        ]);
+        expect(config.source.ontologyId).toBe("salesforce:tasks");
+        expect(config.objectTypeNames).toEqual(["Task", "User"]);
         expect(config.actionTypeNames).toEqual([
             "Create_Task",
             "confirmSalesMeeting",
@@ -115,16 +89,13 @@ describe("createSalesforceOntologyPullSource", () => {
             "updateTask",
             "deleteTask",
         ]);
-        expect(config.queryFunctionTypeNames).toEqual([
-            "getAvailableMeetingTimes",
-        ]);
+        expect(config.queryFunctionTypeNames).toEqual(["getAvailableMeetingTimes"]);
     });
 
     it("requires CRUD object types to be pulled", () => {
         expect(() =>
             createSalesforceOntologyPullConfig({
-                instanceUrl:
-                    "https://example.my.salesforce.com",
+                instanceUrl: "https://example.my.salesforce.com",
                 apiVersion: "65.0",
                 ontologyId: "salesforce:tasks",
                 objectTypeNames: ["User"],
@@ -192,30 +163,15 @@ describe("createSalesforceOntologyPullSource", () => {
             queryFunctionTypes: [],
         };
 
-        const transformed =
-            await createSource()
-                .transformPulledOntology!(ontology);
-        const task = transformed.objectTypes.find(
-            (objectType) =>
-                objectType.name === "Task"
-        )!;
+        const transformed = await createSource().transformPulledOntology!(ontology);
+        const task = transformed.objectTypes.find((objectType) => objectType.name === "Task")!;
 
-        expect(
-            task.properties.find(
-                (property) =>
-                    property.name === "CreatedById"
-            )?.type
-        ).toEqual(
+        expect(task.properties.find((property) => property.name === "CreatedById")?.type).toEqual(
             o.objectReference({
                 objectType: "User",
             })
         );
-        expect(
-            task.properties.find(
-                (property) =>
-                    property.name === "AccountId"
-            )?.type
-        ).toEqual(
+        expect(task.properties.find((property) => property.name === "AccountId")?.type).toEqual(
             o.optional({
                 type: o.string({}),
             })

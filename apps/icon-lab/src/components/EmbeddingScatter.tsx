@@ -61,8 +61,8 @@ export function EmbeddingScatter({
                 <div>
                     <h2 className="text-xl font-semibold">Embedding map</h2>
                     <p className="mt-1 text-sm text-[var(--muted)]">
-                        PCA projection of multimodal embeddings for mapped icons. Click a point to
-                        inspect neighbors.
+                        PCA projection of multimodal embeddings for mapped icons. Click a point to inspect
+                        neighbors.
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -123,7 +123,7 @@ export function EmbeddingScatter({
             </div>
 
             {hover && (
-                <div className="mt-3 font-[var(--font-mono)] text-xs text-[var(--muted)]">
+                <div className="mt-3 text-xs font-[var(--font-mono)] text-[var(--muted)]">
                     {hover.provider}:{hover.name} → {hover.concept}
                 </div>
             )}

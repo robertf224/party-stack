@@ -6,11 +6,8 @@ import {
     type CoordinationService,
 } from "@party-stack/runtime";
 import { eq, queryOnce } from "@tanstack/db";
-import { describe, expect, it } from "vitest";
-import {
-    BlobBytesUnavailableError,
-    createBlobStore,
-} from "./createBlobStore.js";
+import { describe, expect, it } from "vite-plus/test";
+import { BlobBytesUnavailableError, createBlobStore } from "./createBlobStore.js";
 import type { BlobMetadataRecord, BlobRef } from "../types.js";
 
 type TestBlobRecord = BlobMetadataRecord & BlobRef;
@@ -27,45 +24,32 @@ class TestBlobBytesStore extends MemoryBlobBytesStore {
     }
 
     override delete(id: string): Promise<void> {
-        return this.deleteError
-            ? Promise.reject(this.deleteError)
-            : super.delete(id);
+        return this.deleteError ? Promise.reject(this.deleteError) : super.delete(id);
     }
 }
 
-async function expectTaskRejection(
-    promise: Promise<unknown>,
-    code: string
-): Promise<void> {
+async function expectTaskRejection(promise: Promise<unknown>, code: string): Promise<void> {
     const error = await promise.then(
         () => undefined,
         (reason: unknown) => reason
     );
-    expect(error).toBeInstanceOf(
-        CoordinationTaskRejectedError
-    );
-    if (error instanceof CoordinationTaskRejectedError) {
-        expect(error.code).toBe(code);
-    }
+    expect(error).toBeInstanceOf(CoordinationTaskRejectedError);
+    if (!(error instanceof CoordinationTaskRejectedError))
+        throw new Error("Expected a coordination rejection");
+    expect(error.code).toBe(code);
 }
 
-function asClient(
-    coordination: Coordination
-): Coordination {
+function asClient(coordination: Coordination): Coordination {
     return {
         role: "client",
-        service<Service extends CoordinationService>(
-            namespace: string
-        ) {
+        service<Service extends CoordinationService>(namespace: string) {
             return coordination.service<Service>(namespace);
         },
         close: () => Promise.resolve(),
     };
 }
 
-function setup(
-    blobs = new Map<string, Blob>()
-) {
+function setup(blobs = new Map<string, Blob>()) {
     const bytes = new TestBlobBytesStore(blobs);
     const coordination = new SingleProcessCoordination({
         scope: "blob-store-test",
@@ -100,9 +84,7 @@ describe("createBlobStore", () => {
             state: "staged",
             operation: undefined,
         });
-        await expect(
-            bytes.read("local-id").then((blob) => blob.text())
-        ).resolves.toBe("hello");
+        await expect(bytes.read("local-id").then((blob) => blob.text())).resolves.toBe("hello");
         await store.cleanup();
     });
 
@@ -124,44 +106,31 @@ describe("createBlobStore", () => {
             state: "cached",
             operation: undefined,
         });
-        await expect(
-            store.read("remote-id").then((blob) => blob.text())
-        ).resolves.toBe("remote");
+        await expect(store.read("remote-id").then((blob) => blob.text())).resolves.toBe("remote");
         await store.cleanup();
     });
 
     it("queries refs by local id, remote id, and state", async () => {
         const { store } = setup();
         await store.stage("local-id", new Blob(["hello"]));
-        await store.bindRemoteId(
-            "local-id",
-            "remote-id"
-        );
+        await store.bindRemoteId("local-id", "remote-id");
 
-        await expect(store.find("remote-id")).resolves.toMatchObject(
-            {
-                id: "local-id",
-                remoteId: "remote-id",
-                state: "persisted",
-            }
-        );
+        await expect(store.find("remote-id")).resolves.toMatchObject({
+            id: "local-id",
+            remoteId: "remote-id",
+            state: "persisted",
+        });
         await expect(
             queryOnce((query) =>
                 query
                     .from({ blob: store.collection })
-                    .where(({ blob }) =>
-                        eq(blob.state, "persisted")
-                    )
+                    .where(({ blob }) => eq(blob.state, "persisted"))
                     .select(({ blob }) => ({
                         id: blob.id,
                     }))
             )
-        ).resolves.toEqual([
-            expect.objectContaining({ id: "local-id" }),
-        ]);
-        await expect(
-            store.read("remote-id").then((blob) => blob.text())
-        ).resolves.toBe("hello");
+        ).resolves.toEqual([expect.objectContaining({ id: "local-id" })]);
+        await expect(store.read("remote-id").then((blob) => blob.text())).resolves.toBe("hello");
         await store.cleanup();
     });
 
@@ -169,13 +138,7 @@ describe("createBlobStore", () => {
         const { store } = setup();
         await store.stage("local-id", new Blob(["hello"]));
 
-        await Promise.all([
-            store.read("local-id"),
-            store.bindRemoteId(
-                "local-id",
-                "remote-id"
-            ),
-        ]);
+        await Promise.all([store.read("local-id"), store.bindRemoteId("local-id", "remote-id")]);
 
         await expect(store.find("local-id")).resolves.toMatchObject({
             state: "persisted",
@@ -187,9 +150,7 @@ describe("createBlobStore", () => {
         const { bytes, store } = setup();
         bytes.writeError = new Error("disk full");
 
-        await expect(
-            store.stage("local-id", new Blob(["partial"]))
-        ).rejects.toThrow("disk full");
+        await expect(store.stage("local-id", new Blob(["partial"]))).rejects.toThrow("disk full");
 
         const ref = await store.find("local-id");
         expect(ref?.state).toBeUndefined();
@@ -198,9 +159,7 @@ describe("createBlobStore", () => {
             status: "failed",
             error: "disk full",
         });
-        expect(ref?.operation?.operationId).toEqual(
-            expect.any(String)
-        );
+        expect(ref?.operation?.operationId).toEqual(expect.any(String));
         await store.cleanup();
     });
 
@@ -209,9 +168,7 @@ describe("createBlobStore", () => {
         bytes.writeError = new Error("disk full");
         bytes.writePartialBytes = true;
 
-        await expect(
-            store.cache("remote-id", new Blob(["partial"]))
-        ).rejects.toThrow("disk full");
+        await expect(store.cache("remote-id", new Blob(["partial"]))).rejects.toThrow("disk full");
 
         await expect(store.find("remote-id")).resolves.toMatchObject({
             state: "persisted",
@@ -221,12 +178,8 @@ describe("createBlobStore", () => {
                 error: "disk full",
             },
         });
-        await expect(store.read("remote-id")).rejects.toBeInstanceOf(
-            BlobBytesUnavailableError
-        );
-        await expect(bytes.read("remote-id")).rejects.toThrow(
-            "not found"
-        );
+        await expect(store.read("remote-id")).rejects.toBeInstanceOf(BlobBytesUnavailableError);
+        await expect(bytes.read("remote-id")).rejects.toThrow("not found");
         await store.cleanup();
     });
 
@@ -260,18 +213,10 @@ describe("createBlobStore", () => {
             kind: "stage",
             metadata,
         });
-        expect(second.operationId).not.toBe(
-            first.operationId
-        );
-        await bytes.write(
-            second.id,
-            new Blob(["fresh"], { type: "text/plain" })
-        );
+        expect(second.operationId).not.toBe(first.operationId);
+        await bytes.write(second.id, new Blob(["fresh"], { type: "text/plain" }));
 
-        await expectTaskRejection(
-            store.commitWrite(first),
-            "BLOB_OPERATION_STALE"
-        );
+        await expectTaskRejection(store.commitWrite(first), "BLOB_OPERATION_STALE");
         await expectTaskRejection(
             store.failWrite({
                 ...first,
@@ -279,13 +224,9 @@ describe("createBlobStore", () => {
             }),
             "BLOB_OPERATION_STALE"
         );
-        await expect(
-            bytes.read(second.id).then((blob) => blob.text())
-        ).resolves.toBe("fresh");
+        await expect(bytes.read(second.id).then((blob) => blob.text())).resolves.toBe("fresh");
 
-        await expect(
-            store.commitWrite(second)
-        ).resolves.toMatchObject({
+        await expect(store.commitWrite(second)).resolves.toMatchObject({
             id: "local-id",
             size: 5,
             type: "text/plain",
@@ -304,15 +245,12 @@ describe("createBlobStore", () => {
                 owner: "user-1",
                 namespace: "ontology-1",
                 blobBytes: bytes,
-                coordination:
-                    asClient(coordination),
+                coordination: asClient(coordination),
             },
         });
 
         await expectTaskRejection(
-            clientStore.recoverAsLeader(
-                new AbortController().signal
-            ),
+            clientStore.recoverAsLeader(new AbortController().signal),
             "BLOB_RECOVERY_NOT_LEADER"
         );
 
@@ -321,9 +259,7 @@ describe("createBlobStore", () => {
     });
 
     it("deletes interrupted stage bytes and marks the operation failed", async () => {
-        const { bytes, coordination, store } = setup(
-            new Map([["local-id", new Blob(["partial"])]])
-        );
+        const { bytes, coordination, store } = setup(new Map([["local-id", new Blob(["partial"])]]));
         const timestamp = Date.now();
         const ref: TestBlobRecord = {
             id: "local-id",
@@ -341,9 +277,7 @@ describe("createBlobStore", () => {
             optimistic: false,
         }).isPersisted.promise;
 
-        await coordination.runAsLeader(({ signal }) =>
-            store.recoverAsLeader(signal)
-        );
+        await coordination.runAsLeader(({ signal }) => store.recoverAsLeader(signal));
 
         await expect(bytes.read("local-id")).rejects.toThrow("not found");
         const recovered = await store.find("local-id");
@@ -352,54 +286,41 @@ describe("createBlobStore", () => {
             kind: "stage",
             status: "failed",
         });
-        expect(
-            recovered?.operation?.status === "failed"
-                ? recovered.operation.error
-                : undefined
-        ).toContain("interrupted before completion");
-
-        await bytes.write(
-            "local-id",
-            new Blob(["late write"])
+        expect(recovered?.operation?.status === "failed" ? recovered.operation.error : undefined).toContain(
+            "interrupted before completion"
         );
+
+        await bytes.write("local-id", new Blob(["late write"]));
         await store.failWrite({
             id: "local-id",
             operationId: "interrupted-stage",
             error: "late writer observed failover",
         });
-        await expect(
-            bytes.read("local-id")
-        ).rejects.toThrow("not found");
+        await expect(bytes.read("local-id")).rejects.toThrow("not found");
         await store.cleanup();
     });
 
     it("deletes interrupted cache bytes and preserves persisted state", async () => {
-        const { bytes, coordination, store } = setup(
-            new Map([["remote-id", new Blob(["partial"])]])
-        );
+        const { bytes, coordination, store } = setup(new Map([["remote-id", new Blob(["partial"])]]));
         const timestamp = Date.now();
-        await store.collection
-            .insert(
-                {
-                    id: "remote-id",
-                    type: "text/plain",
-                    size: 7,
-                    state: "persisted",
-                    operation: {
-                        kind: "cache",
-                        status: "pending",
-                        operationId: "interrupted-cache",
-                    },
-                    createdAt: timestamp,
-                    updatedAt: timestamp,
+        await store.collection.insert(
+            {
+                id: "remote-id",
+                type: "text/plain",
+                size: 7,
+                state: "persisted",
+                operation: {
+                    kind: "cache",
+                    status: "pending",
+                    operationId: "interrupted-cache",
                 },
-                { optimistic: false }
-            )
-            .isPersisted.promise;
+                createdAt: timestamp,
+                updatedAt: timestamp,
+            },
+            { optimistic: false }
+        ).isPersisted.promise;
 
-        await coordination.runAsLeader(({ signal }) =>
-            store.recoverAsLeader(signal)
-        );
+        await coordination.runAsLeader(({ signal }) => store.recoverAsLeader(signal));
 
         await expect(bytes.read("remote-id")).rejects.toThrow("not found");
         const recovered = await store.find("remote-id");
@@ -410,41 +331,33 @@ describe("createBlobStore", () => {
                 status: "failed",
             },
         });
-        expect(
-            recovered?.operation?.status === "failed"
-                ? recovered.operation.error
-                : undefined
-        ).toContain("interrupted before completion");
+        expect(recovered?.operation?.status === "failed" ? recovered.operation.error : undefined).toContain(
+            "interrupted before completion"
+        );
         await store.cleanup();
     });
 
     it("finishes an interrupted purge", async () => {
-        const { bytes, coordination, store } = setup(
-            new Map([["cached-id", new Blob(["cached"])]])
-        );
+        const { bytes, coordination, store } = setup(new Map([["cached-id", new Blob(["cached"])]]));
         const timestamp = Date.now();
-        await store.collection
-            .insert(
-                {
-                    id: "cached-id",
-                    type: "text/plain",
-                    size: 6,
-                    state: "cached",
-                    operation: {
-                        kind: "purge",
-                        status: "pending",
-                        operationId: "interrupted-purge",
-                    },
-                    createdAt: timestamp,
-                    updatedAt: timestamp,
+        await store.collection.insert(
+            {
+                id: "cached-id",
+                type: "text/plain",
+                size: 6,
+                state: "cached",
+                operation: {
+                    kind: "purge",
+                    status: "pending",
+                    operationId: "interrupted-purge",
                 },
-                { optimistic: false }
-            )
-            .isPersisted.promise;
+                createdAt: timestamp,
+                updatedAt: timestamp,
+            },
+            { optimistic: false }
+        ).isPersisted.promise;
 
-        await coordination.runAsLeader(({ signal }) =>
-            store.recoverAsLeader(signal)
-        );
+        await coordination.runAsLeader(({ signal }) => store.recoverAsLeader(signal));
 
         await expect(store.find("cached-id")).resolves.toBeUndefined();
         await expect(bytes.read("cached-id")).rejects.toThrow("not found");
@@ -459,49 +372,39 @@ describe("createBlobStore", () => {
             ])
         );
         const timestamp = Date.now();
-        await store.collection
-            .insert(
-                {
-                    id: "stable",
-                    type: "text/plain",
-                    size: 6,
-                    state: "cached",
-                    createdAt: timestamp,
-                    updatedAt: timestamp,
+        await store.collection.insert(
+            {
+                id: "stable",
+                type: "text/plain",
+                size: 6,
+                state: "cached",
+                createdAt: timestamp,
+                updatedAt: timestamp,
+            },
+            { optimistic: false }
+        ).isPersisted.promise;
+        await store.collection.insert(
+            {
+                id: "failed",
+                type: "text/plain",
+                size: 8,
+                state: "persisted",
+                operation: {
+                    kind: "cache",
+                    status: "failed",
+                    operationId: "failed-cache",
+                    error: "previous failure",
                 },
-                { optimistic: false }
-            )
-            .isPersisted.promise;
-        await store.collection
-            .insert(
-                {
-                    id: "failed",
-                    type: "text/plain",
-                    size: 8,
-                    state: "persisted",
-                    operation: {
-                        kind: "cache",
-                        status: "failed",
-                        operationId: "failed-cache",
-                        error: "previous failure",
-                    },
-                    createdAt: timestamp,
-                    updatedAt: timestamp,
-                },
-                { optimistic: false }
-            )
-            .isPersisted.promise;
+                createdAt: timestamp,
+                updatedAt: timestamp,
+            },
+            { optimistic: false }
+        ).isPersisted.promise;
 
-        await coordination.runAsLeader(({ signal }) =>
-            store.recoverAsLeader(signal)
-        );
+        await coordination.runAsLeader(({ signal }) => store.recoverAsLeader(signal));
 
-        await expect(
-            bytes.read("stable").then((blob) => blob.text())
-        ).resolves.toBe("stable");
-        await expect(
-            bytes.read("failed").then((blob) => blob.text())
-        ).resolves.toBe("existing");
+        await expect(bytes.read("stable").then((blob) => blob.text())).resolves.toBe("stable");
+        await expect(bytes.read("failed").then((blob) => blob.text())).resolves.toBe("existing");
         await expect(store.find("failed")).resolves.toMatchObject({
             operation: {
                 status: "failed",
@@ -516,9 +419,7 @@ describe("createBlobStore", () => {
         await store.stage("local-id", new Blob(["hello"]));
         bytes.deleteError = new Error("busy");
 
-        await expect(store.purge("local-id")).rejects.toThrow(
-            "busy"
-        );
+        await expect(store.purge("local-id")).rejects.toThrow("busy");
 
         await expect(store.find("local-id")).resolves.toMatchObject({
             state: "staged",
@@ -533,20 +434,16 @@ describe("createBlobStore", () => {
 
     it("distinguishes unavailable bytes from metadata failures", async () => {
         const { store } = setup();
-        await store.collection
-            .insert({
-                id: "missing",
-                type: "text/plain",
-                size: 5,
-                state: "cached",
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-            })
-            .isPersisted.promise;
+        await store.collection.insert({
+            id: "missing",
+            type: "text/plain",
+            size: 5,
+            state: "cached",
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        }).isPersisted.promise;
 
-        await expect(store.read("missing")).rejects.toBeInstanceOf(
-            BlobBytesUnavailableError
-        );
+        await expect(store.read("missing")).rejects.toBeInstanceOf(BlobBytesUnavailableError);
         await store.cleanup();
     });
 

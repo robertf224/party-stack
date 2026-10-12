@@ -9,10 +9,7 @@ import {
     type Scope,
     type Task,
 } from "effection";
-import {
-    BaseCoordination,
-    type InvocationContext,
-} from "../base.js";
+import { BaseCoordination, type InvocationContext } from "../base.js";
 import {
     COORDINATION_PROTOCOL_VERSION,
     CoordinationClosedError,
@@ -24,23 +21,13 @@ import {
     type CoordinationServiceHandlers,
     type CoordinationServiceServer,
 } from "../contracts.js";
-import {
-    useMessagePort,
-} from "../effection/index.js";
+import { useMessagePort } from "../effection/index.js";
 import { runInScope } from "../effection/runInScope.js";
 import { HostCore } from "../host-core.js";
-import {
-    deferred,
-    normalizeError,
-    randomId,
-    serializeError,
-} from "../internal.js";
+import { deferred, normalizeError, randomId, serializeError } from "../internal.js";
 import { isRecord } from "../protocol.js";
 import { encodeCoordinationMessage, decodeCoordinationMessage } from "../valueCodec.js";
-import type {
-    CoordinationMessagePort,
-    SharedWorkerCoordinationHostOptions,
-} from "./contracts.js";
+import type { CoordinationMessagePort, SharedWorkerCoordinationHostOptions } from "./contracts.js";
 import type {
     WorkerCancel,
     WorkerDisconnect,
@@ -61,10 +48,7 @@ interface PortConnection {
     disconnected: boolean;
 }
 
-export class SharedWorkerCoordinationHost
-    extends BaseCoordination
-    implements CoordinationHost
-{
+export class SharedWorkerCoordinationHost extends BaseCoordination implements CoordinationHost {
     readonly role = "host" as const;
     readonly isLeader = true;
     readonly scope: string;
@@ -81,16 +65,12 @@ export class SharedWorkerCoordinationHost
         super();
         this.scope = options.scope;
         this.core = new HostCore({
-            contextClient: (path, signal) =>
-                this.createContextClient({ path, signal }),
-            publishEvent: (service, event, payload) =>
-                this.publishEvent(service, event, payload),
+            contextClient: (path, signal) => this.createContextClient({ path, signal }),
+            publishEvent: (service, event, payload) => this.publishEvent(service, event, payload),
         });
         this.task = run(() => this.useLifetime());
         void this.task.catch((error: unknown) => {
-            this.rootScope.reject(
-                normalizeError(error)
-            );
+            this.rootScope.reject(normalizeError(error));
         });
     }
 
@@ -108,16 +88,10 @@ export class SharedWorkerCoordinationHost
             this.connections.delete(connection);
             throw new CoordinationClosedError();
         }
-        connection.task = scope.run(() =>
-            this.useConnection(connection)
-        );
-        void connection.task.catch(
-            () => undefined
-        );
+        connection.task = scope.run(() => this.useConnection(connection));
+        void connection.task.catch(() => undefined);
         return () => {
-            void connection.task
-                ?.halt()
-                .catch(() => undefined);
+            void connection.task?.halt().catch(() => undefined);
         };
     }
 
@@ -130,9 +104,7 @@ export class SharedWorkerCoordinationHost
     }
 
     runAsLeader<Result>(
-        callback: (context: {
-            signal: AbortSignal;
-        }) => Result | Promise<Result>,
+        callback: (context: { signal: AbortSignal }) => Result | Promise<Result>,
         options?: CoordinationCallOptions
     ): Promise<Result> {
         try {
@@ -145,13 +117,8 @@ export class SharedWorkerCoordinationHost
                 runInScope(
                     scope,
                     function* () {
-                        const signal =
-                            yield* useAbortSignal();
-                        return yield* until(
-                            Promise.resolve(
-                                callback({ signal })
-                            )
-                        );
+                        const signal = yield* useAbortSignal();
+                        return yield* until(Promise.resolve(callback({ signal })));
                     },
                     [options?.signal]
                 )
@@ -168,19 +135,17 @@ export class SharedWorkerCoordinationHost
         if (this.closePromise) return this.closePromise;
         this.closed = true;
         const error = new CoordinationClosedError();
-        for (const connection of [...this.connections]) {
+        const connectionsSnapshot = [...this.connections];
+        for (const connection of connectionsSnapshot) {
             this.post(connection, {
                 v: COORDINATION_PROTOCOL_VERSION,
                 scope: this.scope,
                 type: "disconnect",
-                connectionId:
-                    connection.connectionId ?? "",
+                connectionId: connection.connectionId ?? "",
                 error: serializeError(error),
             } satisfies WorkerDisconnect);
         }
-        this.closePromise = this.task
-            .halt()
-            .then(() => undefined);
+        this.closePromise = this.task.halt().then(() => undefined);
         return this.closePromise;
     }
 
@@ -196,20 +161,10 @@ export class SharedWorkerCoordinationHost
         }
         return this.rootScope.promise
             .then((scope) =>
-                runInScope(
-                    scope,
-                    () =>
-                        this.invokeOperation(
-                            namespace,
-                            method,
-                            input,
-                            context.path
-                        ),
-                    [
-                        context.signal,
-                        options?.signal,
-                    ]
-                )
+                runInScope(scope, () => this.invokeOperation(namespace, method, input, context.path), [
+                    context.signal,
+                    options?.signal,
+                ])
             )
             .catch((error: unknown) => {
                 if (this.closed) {
@@ -227,16 +182,11 @@ export class SharedWorkerCoordinationHost
     ): Operation<unknown> {
         const signal = yield* useAbortSignal();
         return yield* until(
-            this.core.invoke(
-                namespace,
-                method,
-                input,
-                {
-                    inheritedSignal: signal,
-                    senderId: this.nodeId,
-                    path,
-                }
-            )
+            this.core.invoke(namespace, method, input, {
+                inheritedSignal: signal,
+                senderId: this.nodeId,
+                path,
+            })
         );
     }
 
@@ -247,14 +197,10 @@ export class SharedWorkerCoordinationHost
         try {
             yield* suspend();
         } finally {
-            const error =
-                new CoordinationClosedError();
-            for (const connection of [
-                ...this.connections,
-            ]) {
-                this.disconnectConnection(
-                    connection
-                );
+            const error = new CoordinationClosedError();
+            const connectionsSnapshot = [...this.connections];
+            for (const connection of connectionsSnapshot) {
+                this.disconnectConnection(connection);
             }
             yield* until(this.core.close());
             this.clearEventListeners();
@@ -263,79 +209,46 @@ export class SharedWorkerCoordinationHost
         }
     }
 
-    private *useConnection(
-        connection: PortConnection
-    ): Operation<void> {
+    private *useConnection(connection: PortConnection): Operation<void> {
         connection.scope = yield* useScope();
         try {
-            const resource =
-                yield* useMessagePort(
-                    connection.port
-                );
+            const resource = yield* useMessagePort(connection.port);
             for (const event of yield* each(resource)) {
-                this.onMessage(
-                    connection,
-                    decodeCoordinationMessage(event.data)
-                );
+                this.onMessage(connection, decodeCoordinationMessage(event.data));
                 if (connection.disconnected) {
                     return;
                 }
                 yield* each.next();
             }
         } catch (error) {
-            if (
-                error instanceof
-                    CoordinationTransportError &&
-                error.code === "DISCONNECTED"
-            ) {
+            if (error instanceof CoordinationTransportError && error.code === "DISCONNECTED") {
                 return;
             }
             throw error;
         } finally {
             connection.scope = undefined;
-            this.disconnectConnection(
-                connection
-            );
+            this.disconnectConnection(connection);
         }
     }
 
-    private onMessage(
-        connection: PortConnection,
-        message: unknown
-    ): void {
-        if (
-            this.closed ||
-            connection.disconnected ||
-            !isRecord(message)
-        ) {
+    private onMessage(connection: PortConnection, message: unknown): void {
+        if (this.closed || connection.disconnected || !isRecord(message)) {
             return;
         }
         if (message.type === "hello") {
-            this.onHello(
-                connection,
-                message as unknown as WorkerHello
-            );
+            this.onHello(connection, message as unknown as WorkerHello);
             return;
         }
-        if (
-            !connection.accepted ||
-            message.connectionId !== connection.connectionId
-        ) {
+        if (!connection.accepted || message.connectionId !== connection.connectionId) {
             return;
         }
-        if (
-            message.v !== COORDINATION_PROTOCOL_VERSION ||
-            message.scope !== this.scope
-        ) {
+        if (message.v !== COORDINATION_PROTOCOL_VERSION || message.scope !== this.scope) {
             this.rejectProtocol(connection);
             return;
         }
 
         if (message.type === "request") {
-            this.onRequest(
-                connection,
-                message as unknown as WorkerRequest
-            );
+            this.onRequest(connection, message as unknown as WorkerRequest);
         } else if (message.type === "cancel") {
             const cancel = message as unknown as WorkerCancel;
             void connection.active
@@ -347,19 +260,13 @@ export class SharedWorkerCoordinationHost
         }
     }
 
-    private onHello(
-        connection: PortConnection,
-        hello: WorkerHello
-    ): void {
+    private onHello(connection: PortConnection, hello: WorkerHello): void {
         if (
             typeof hello.connectionId !== "string" ||
             hello.v !== COORDINATION_PROTOCOL_VERSION ||
             hello.scope !== this.scope
         ) {
-            const connectionId =
-                typeof hello.connectionId === "string"
-                    ? hello.connectionId
-                    : "";
+            const connectionId = typeof hello.connectionId === "string" ? hello.connectionId : "";
             this.post(connection, {
                 v: COORDINATION_PROTOCOL_VERSION,
                 scope: this.scope,
@@ -367,18 +274,13 @@ export class SharedWorkerCoordinationHost
                 connectionId,
                 accepted: false,
                 error: serializeError(
-                    new CoordinationProtocolError(
-                        "SharedWorker coordination protocol or scope mismatch."
-                    )
+                    new CoordinationProtocolError("SharedWorker coordination protocol or scope mismatch.")
                 ),
             } satisfies WorkerWelcome);
             this.disconnectConnection(connection);
             return;
         }
-        if (
-            connection.accepted &&
-            connection.connectionId !== hello.connectionId
-        ) {
+        if (connection.accepted && connection.connectionId !== hello.connectionId) {
             this.disconnectConnection(connection);
             return;
         }
@@ -393,49 +295,29 @@ export class SharedWorkerCoordinationHost
         } satisfies WorkerWelcome);
     }
 
-    private onRequest(
-        connection: PortConnection,
-        request: WorkerRequest
-    ): void {
+    private onRequest(connection: PortConnection, request: WorkerRequest): void {
         if (connection.active.has(request.requestId)) return;
         const scope = connection.scope;
         if (!scope) return;
-        const task = scope.run(() =>
-            this.handleRequest(connection, request)
-        );
-        connection.active.set(
-            request.requestId,
-            task
-        );
+        const task = scope.run(() => this.handleRequest(connection, request));
+        connection.active.set(request.requestId, task);
         void task
             .finally(() => {
-                connection.active.delete(
-                    request.requestId
-                );
+                connection.active.delete(request.requestId);
             })
             .catch(() => undefined);
     }
 
-    private *handleRequest(
-        connection: PortConnection,
-        request: WorkerRequest
-    ): Operation<void> {
+    private *handleRequest(connection: PortConnection, request: WorkerRequest): Operation<void> {
         const signal = yield* useAbortSignal();
         try {
             const result = yield* until(
-                this.core.invoke(
-                    request.service,
-                    request.method,
-                    request.payload,
-                    {
-                        signal,
-                        requestId:
-                            request.requestId,
-                        senderId:
-                            request.connectionId,
-                        path: [],
-                    }
-                )
+                this.core.invoke(request.service, request.method, request.payload, {
+                    signal,
+                    requestId: request.requestId,
+                    senderId: request.connectionId,
+                    path: [],
+                })
             );
             this.respond(connection, request, {
                 ok: true,
@@ -457,16 +339,10 @@ export class SharedWorkerCoordinationHost
             | { readonly ok: true; readonly result: unknown }
             | {
                   readonly ok: false;
-                  readonly error: ReturnType<
-                      typeof serializeError
-                  >;
+                  readonly error: ReturnType<typeof serializeError>;
               }
     ): void {
-        if (
-            connection.disconnected ||
-            this.closed ||
-            connection.connectionId !== request.connectionId
-        ) {
+        if (connection.disconnected || this.closed || connection.connectionId !== request.connectionId) {
             return;
         }
         this.post(connection, {
@@ -479,17 +355,10 @@ export class SharedWorkerCoordinationHost
         } satisfies WorkerResponse);
     }
 
-    private publishEvent(
-        service: string,
-        event: string,
-        payload: unknown
-    ): void {
+    private publishEvent(service: string, event: string, payload: unknown): void {
         this.emitEvent(service, event, payload);
         for (const connection of this.connections) {
-            if (
-                !connection.accepted ||
-                !connection.connectionId
-            ) {
+            if (!connection.accepted || !connection.connectionId) {
                 continue;
             }
             this.post(connection, {
@@ -515,9 +384,7 @@ export class SharedWorkerCoordinationHost
             type: "disconnect",
             connectionId: connection.connectionId,
             error: serializeError(
-                new CoordinationProtocolError(
-                    "SharedWorker coordination protocol or scope mismatch."
-                )
+                new CoordinationProtocolError("SharedWorker coordination protocol or scope mismatch.")
             ),
         } satisfies WorkerDisconnect);
         this.disconnectConnection(connection);
@@ -525,39 +392,27 @@ export class SharedWorkerCoordinationHost
 
     private post(
         connection: PortConnection,
-        message:
-            | WorkerWelcome
-            | WorkerResponse
-            | WorkerEvent
-            | WorkerDisconnect
+        message: WorkerWelcome | WorkerResponse | WorkerEvent | WorkerDisconnect
     ): void {
         if (connection.disconnected) return;
         try {
             connection.port.postMessage(encodeCoordinationMessage(message));
         } catch {
-            this.disconnectConnection(
-                connection
-            );
+            this.disconnectConnection(connection);
         }
     }
 
-    private disconnectConnection(
-        connection: PortConnection
-    ): void {
+    private disconnectConnection(connection: PortConnection): void {
         if (connection.disconnected) return;
         connection.disconnected = true;
         this.connections.delete(connection);
         for (const task of connection.active.values()) {
-            void task.halt().catch(
-                () => undefined
-            );
+            void task.halt().catch(() => undefined);
         }
         connection.active.clear();
         connection.port.close?.();
         queueMicrotask(() => {
-            void connection.task
-                ?.halt()
-                .catch(() => undefined);
+            void connection.task?.halt().catch(() => undefined);
         });
     }
 }

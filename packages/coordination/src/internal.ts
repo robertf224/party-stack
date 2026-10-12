@@ -53,21 +53,12 @@ export function randomId(): string {
 
 export function normalizeError(reason: unknown): Error {
     if (reason instanceof Error) return reason;
-    return new Error(
-        typeof reason === "string" ? reason : String(reason)
-    );
+    return new Error(typeof reason === "string" ? reason : String(reason));
 }
 
-export function abortError(
-    signal: AbortSignal,
-    fallback = "Operation aborted."
-): Error {
+export function abortError(signal: AbortSignal, fallback = "Operation aborted."): Error {
     if (signal.reason instanceof Error) return signal.reason;
-    const error = new Error(
-        typeof signal.reason === "string"
-            ? signal.reason
-            : fallback
-    );
+    const error = new Error(typeof signal.reason === "string" ? signal.reason : fallback);
     error.name = "AbortError";
     return error;
 }
@@ -76,10 +67,7 @@ export function throwIfAborted(signal?: AbortSignal): void {
     if (signal?.aborted) throw abortError(signal);
 }
 
-export function linkAbortSignal(
-    source: AbortSignal | undefined,
-    target: AbortController
-): () => void {
+export function linkAbortSignal(source: AbortSignal | undefined, target: AbortController): () => void {
     if (!source) return () => undefined;
     const abort = () => target.abort(source.reason);
     if (source.aborted) {
@@ -90,10 +78,7 @@ export function linkAbortSignal(
     return () => source.removeEventListener("abort", abort);
 }
 
-export function waitForAbortable<Value>(
-    promise: PromiseLike<Value>,
-    signal?: AbortSignal
-): Promise<Value> {
+export function waitForAbortable<Value>(promise: PromiseLike<Value>, signal?: AbortSignal): Promise<Value> {
     if (!signal) return Promise.resolve(promise);
     if (signal.aborted) return Promise.reject(abortError(signal));
     return new Promise<Value>((resolve, reject) => {
@@ -121,8 +106,7 @@ export interface SerializedError {
 export function serializeError(reason: unknown): SerializedError {
     const error = normalizeError(reason);
     const code =
-        error instanceof CoordinationError ||
-        error instanceof CoordinationTaskRejectedError
+        error instanceof CoordinationError || error instanceof CoordinationTaskRejectedError
             ? error.code
             : undefined;
     return {
@@ -148,15 +132,8 @@ const coordinationCodes = new Set<CoordinationErrorCode>([
 ]);
 
 export function deserializeError(details: SerializedError): Error {
-    if (
-        details.name ===
-            "CoordinationTaskRejectedError" &&
-        details.code
-    ) {
-        return new CoordinationTaskRejectedError(
-            details.message,
-            details.code
-        );
+    if (details.name === "CoordinationTaskRejectedError" && details.code) {
+        return new CoordinationTaskRejectedError(details.message, details.code);
     }
     if (details.code === "CLOSED") {
         return new CoordinationClosedError(details.message);
@@ -168,10 +145,7 @@ export function deserializeError(details: SerializedError): Error {
         details.code === "SERVICE_CLOSED" ||
         details.code === "SERVICE_UNAVAILABLE"
     ) {
-        return new CoordinationServiceError(
-            details.message,
-            details.code
-        );
+        return new CoordinationServiceError(details.message, details.code);
     }
     if (
         details.code === "DISCONNECTED" ||
@@ -179,17 +153,11 @@ export function deserializeError(details: SerializedError): Error {
         details.code === "TIMEOUT" ||
         details.code === "TRANSPORT_ERROR"
     ) {
-        return new CoordinationTransportError(
-            details.message,
-            details.code
-        );
+        return new CoordinationTransportError(details.message, details.code);
     }
     const error =
         details.code && coordinationCodes.has(details.code as CoordinationErrorCode)
-            ? new CoordinationError(
-                  details.message,
-                  details.code as CoordinationErrorCode
-              )
+            ? new CoordinationError(details.message, details.code as CoordinationErrorCode)
             : new Error(details.message);
     error.name = details.name;
     return error;

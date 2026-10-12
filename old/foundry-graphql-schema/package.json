@@ -1,36 +1,32 @@
 {
     "name": "@bobbyfidz/foundry-graphql-schema",
     "version": "0.2.5",
-    "type": "module",
-    "main": "lib/index.js",
-    "types": "lib/index.d.ts",
     "files": [
         "lib"
     ],
-    "scripts": {
-        "build": "tsc",
-        "lint": "eslint"
-    },
+    "type": "module",
+    "main": "lib/index.js",
+    "types": "lib/index.d.ts",
     "dependencies": {
-        "@bobbyfidz/osdk-utils": "workspace:*",
+        "@bobbyfidz/osdk-utils": "workspace:^",
         "@bobbyfidz/panic": "^0.1.0",
         "@bobbyfidz/result": "^0.3.1",
         "@envelop/core": "^5.2.3",
         "@envelop/parser-cache": "^8.1.3",
         "@envelop/validation-cache": "^8.1.3",
         "@osdk/client": "^2.5.2",
-        "@osdk/foundry.admin": "^2.47.0",
-        "@osdk/foundry.core": "^2.47.0",
-        "@osdk/foundry.ontologies": "^2.49.0",
+        "@osdk/foundry.admin": "^2.77.0",
+        "@osdk/foundry.core": "^2.77.0",
+        "@osdk/foundry.ontologies": "^2.77.0",
         "change-case": "^5.4.4",
-        "grafast": "0.1.1-beta.21",
+        "grafast": "^0.1.1-beta.21",
         "graphql": "^16.10.0",
         "js-base64": "^3.7.7"
     },
     "devDependencies": {
-        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@party-stack/build-config": "workspace:^",
         "@types/node": "^24.10.1",
-        "eslint": "^9.25.0",
-        "typescript": "~5.8.3"
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
     }
 }

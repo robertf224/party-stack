@@ -51,36 +51,32 @@ client, but a client cannot register services or run leader work.
 
 ```ts
 interface CoordinationClient {
-  readonly role: "client" | "host";
+    readonly role: "client" | "host";
 
-  service<Service extends CoordinationService>(
-    namespace: string
-  ): CoordinationServiceClient<Service>;
+    service<Service extends CoordinationService>(namespace: string): CoordinationServiceClient<Service>;
 
-  close(): Promise<void>;
+    close(): Promise<void>;
 }
 
 interface CoordinationHost extends CoordinationClient {
-  readonly role: "host";
-  readonly isLeader: boolean;
+    readonly role: "host";
+    readonly isLeader: boolean;
 
-  serve<Service extends CoordinationService>(
-    namespace: string,
-    handlers: CoordinationServiceHandlers<Service>
-  ): CoordinationServiceServer<Service>;
+    serve<Service extends CoordinationService>(
+        namespace: string,
+        handlers: CoordinationServiceHandlers<Service>
+    ): CoordinationServiceServer<Service>;
 
-  runAsLeader<Result>(
-    callback: (context: { signal: AbortSignal }) => Result | Promise<Result>,
-    options?: { signal?: AbortSignal }
-  ): Promise<Result>;
+    runAsLeader<Result>(
+        callback: (context: { signal: AbortSignal }) => Result | Promise<Result>,
+        options?: { signal?: AbortSignal }
+    ): Promise<Result>;
 }
 
 type Coordination = CoordinationClient | CoordinationHost;
 
-function isCoordinationHost(
-  value: Coordination
-): value is CoordinationHost {
-  return value.role === "host";
+function isCoordinationHost(value: Coordination): value is CoordinationHost {
+    return value.role === "host";
 }
 ```
 
@@ -97,32 +93,25 @@ RPC methods and events belong to one typed, versioned service:
 
 ```ts
 interface CoordinationService {
-  methods: Record<string, (input: never) => Promise<unknown>>;
-  events: Record<string, unknown>;
+    methods: Record<string, (input: never) => Promise<unknown>>;
+    events: Record<string, unknown>;
 }
 
-interface CoordinationServiceClient<
-  Service extends CoordinationService
-> {
-  readonly methods: CoordinationServiceMethods<Service>;
-  readonly events: {
-    subscribe<Event extends keyof Service["events"]>(
-      event: Event,
-      callback: (value: Service["events"][Event]) => void
-    ): () => void;
-  };
+interface CoordinationServiceClient<Service extends CoordinationService> {
+    readonly methods: CoordinationServiceMethods<Service>;
+    readonly events: {
+        subscribe<Event extends keyof Service["events"]>(
+            event: Event,
+            callback: (value: Service["events"][Event]) => void
+        ): () => void;
+    };
 }
 
-interface CoordinationServiceServer<
-  Service extends CoordinationService
-> {
-  readonly events: {
-    publish<Event extends keyof Service["events"]>(
-      event: Event,
-      payload: Service["events"][Event]
-    ): void;
-  };
-  close(): Promise<void>;
+interface CoordinationServiceServer<Service extends CoordinationService> {
+    readonly events: {
+        publish<Event extends keyof Service["events"]>(event: Event, payload: Service["events"][Event]): void;
+    };
+    close(): Promise<void>;
 }
 ```
 
@@ -174,7 +163,7 @@ V1 does not expose a lane key. If profiling shows a need, `serve` may later
 accept a host-owned resolver such as:
 
 ```ts
-lane: (method, input) => blobId
+lane: (method, input) => blobId;
 ```
 
 The resolver must be host-owned; clients cannot choose a lane to bypass
@@ -275,42 +264,27 @@ runtime cleanup closes it after subsystem servers and leader callbacks stop.
 Every context opens:
 
 ```ts
-coordination.service<PersistenceCoordinationService>(
-  "party-stack.persistence.v1"
-);
+coordination.service<PersistenceCoordinationService>("party-stack.persistence.v1");
 ```
 
 A host context also serves:
 
 ```ts
 interface PersistenceCoordinationService {
-  methods: {
-    ensureLeadership(
-      input: { collectionId: string }
-    ): Promise<void>;
-    ensureRemoteSubset(
-      input: EnsureRemoteSubsetInput
-    ): Promise<void>;
-    ensurePersistedIndex(
-      input: EnsurePersistedIndexInput
-    ): Promise<void>;
-    applyLocalMutations(
-      input: ApplyLocalMutationsInput
-    ): Promise<ApplyLocalMutationsResponse>;
-    pullSince(
-      input: PullSinceInput
-    ): Promise<PullSinceResponse>;
-    relayMessage(input: {
-      collectionId: string;
-      message: ProtocolEnvelope<unknown>;
-    }): Promise<void>;
-  };
-  events: {
-    message: {
-      collectionId: string;
-      message: ProtocolEnvelope<unknown>;
+    methods: {
+        ensureLeadership(input: { collectionId: string }): Promise<void>;
+        ensureRemoteSubset(input: EnsureRemoteSubsetInput): Promise<void>;
+        ensurePersistedIndex(input: EnsurePersistedIndexInput): Promise<void>;
+        applyLocalMutations(input: ApplyLocalMutationsInput): Promise<ApplyLocalMutationsResponse>;
+        pullSince(input: PullSinceInput): Promise<PullSinceResponse>;
+        relayMessage(input: { collectionId: string; message: ProtocolEnvelope<unknown> }): Promise<void>;
     };
-  };
+    events: {
+        message: {
+            collectionId: string;
+            message: ProtocolEnvelope<unknown>;
+        };
+    };
 }
 ```
 
@@ -436,4 +410,3 @@ events, incomplete handlers, and invalid publish payloads.
 - Cross-collection persistence transactions.
 - Moving large blob payloads through coordination.
 - Durable attachment jobs in v1.
-
