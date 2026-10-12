@@ -36,8 +36,8 @@
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
         "@tanstack/react-query": "^5.90.10",
-        "@types/react": "^19.2.6",
-        "react": "^19.2.0",
+        "@types/react": "^19.3.0",
+        "react": "^19.3.0",
         "typescript": "~7.0.2",
         "vite-plus": "catalog:"
     },

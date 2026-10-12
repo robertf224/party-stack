@@ -1,8 +1,9 @@
 import { defineAppConfig as defineBaseAppConfig, type AppConfig } from "@party-stack/build-config";
+import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
 import { devtools } from "@tanstack/devtools-vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
-import react from "@vitejs/plugin-react";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { lazyPlugins, type ViteUserConfig } from "vite-plus";
 
 export type TanStackStartConfig = AppConfig & {
@@ -20,13 +21,8 @@ export function defineAppConfig(config: TanStackStartConfig = {}): ViteUserConfi
             devtools({ consolePiping: { enabled: false } }),
             tailwindcss(),
             tanstackStart(start),
-            react({
-                babel: {
-                    // Resolve the compiler from this package, including with pnpm's isolated dependencies.
-                    cwd: import.meta.dirname,
-                    plugins: ["babel-plugin-react-compiler"],
-                },
-            }),
+            react(),
+            babel({ presets: [reactCompilerPreset()] }),
         ]),
     });
 }
