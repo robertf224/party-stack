@@ -11,6 +11,9 @@
             "default": "./lib/index.js"
         }
     },
+    "scripts": {
+        "prepare": "vp pack"
+    },
     "dependencies": {
         "portless": "^0.15.7"
     },
