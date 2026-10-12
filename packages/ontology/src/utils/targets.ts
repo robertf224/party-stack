@@ -1,5 +1,5 @@
-import type { ActionTypeName, ObjectTypeName, QueryFunctionTypeName, TypeName } from "./typeNames.js";
 import type { OntologyIR } from "../ir/generated/types.js";
+import type { ActionTypeName, ObjectTypeName, QueryFunctionTypeName, TypeName } from "./typeNames.js";
 
 // TODO: allow more nested targets
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { convertSubscriptionMessage } from "./useObjectSetWatcherConnection.js";
 import type { StreamMessage } from "@osdk/foundry.ontologies";
 

@@ -44,20 +44,13 @@ export function FormSelect({
         containerClassName?: string;
     }) {
     return (
-        <span
-            className={`relative inline-block ${
-                fullWidth ? "w-full" : ""
-            } ${containerClassName}`}
-        >
+        <span className={`relative inline-block ${fullWidth ? "w-full" : ""} ${containerClassName}`}>
             <select
                 className={`${baseClassName} appearance-none ${sizeClassNames[controlSize]} ${
                     fullWidth ? "w-full" : ""
                 } ${className}`}
                 style={{
-                    paddingRight:
-                        controlSize === "tiny"
-                            ? "1.75rem"
-                            : "2rem",
+                    paddingRight: controlSize === "tiny" ? "1.75rem" : "2rem",
                     ...style,
                 }}
                 {...props}
@@ -65,9 +58,7 @@ export function FormSelect({
             <svg
                 aria-hidden
                 className={`pointer-events-none absolute top-1/2 -translate-y-1/2 text-slate-400 ${
-                    controlSize === "tiny"
-                        ? "right-2 size-3"
-                        : "right-2.5 size-3.5"
+                    controlSize === "tiny" ? "right-2 size-3" : "right-2.5 size-3.5"
                 }`}
                 fill="none"
                 stroke="currentColor"
@@ -86,13 +77,10 @@ export function FormTextarea({
     className = "",
     fullWidth = true,
     ...props
-}: ComponentProps<"textarea"> &
-    Pick<SharedControlProps, "fullWidth">) {
+}: ComponentProps<"textarea"> & Pick<SharedControlProps, "fullWidth">) {
     return (
         <textarea
-            className={`${baseClassName} ${
-                fullWidth ? "w-full" : ""
-            } px-3 py-2 text-sm ${className}`}
+            className={`${baseClassName} ${fullWidth ? "w-full" : ""} px-3 py-2 text-sm ${className}`}
             {...props}
         />
     );

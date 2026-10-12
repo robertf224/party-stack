@@ -4,11 +4,11 @@ import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pascalCase } from "change-case";
 import { createJiti } from "jiti";
-import { format, resolveConfig } from "prettier";
 import { generateBuilders } from "../generate/builders.js";
 import { generateConstants } from "../generate/constants.js";
 import { generateLive } from "../generate/live.js";
 import { generateTypeDefinitions, generateTypes } from "../generate/types.js";
+import { formatGeneratedFile } from "./format.js";
 import type { OntologyIR } from "../ir/generated/types.js";
 
 function toModuleSpecifier(path: string): string {
@@ -68,16 +68,8 @@ function resolveValuesImportPath(outDir: string): string {
     return formatImportSpecifier(relative(outDir, workspaceValuesPath), true);
 }
 
-async function formatAndWrite(
-    filePath: string,
-    content: string,
-    prettierConfig: Awaited<ReturnType<typeof resolveConfig>>
-): Promise<void> {
-    const header = "// Auto-generated file - do not edit manually\n\n";
-    const formatted = await format(header + content, {
-        ...prettierConfig,
-        filepath: filePath,
-    });
+async function formatAndWrite(filePath: string, content: string): Promise<void> {
+    const formatted = await formatGeneratedFile(filePath, content);
     writeFileSync(filePath, formatted, "utf-8");
 }
 
@@ -102,7 +94,6 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
     }
 
     mkdirSync(outDir, { recursive: true });
-    const prettierConfig = await resolveConfig(outDir);
 
     if (isTypeOnlyOntology(ontology)) {
         const typesFilePath = join(outDir, "types.ts");
@@ -118,9 +109,9 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
         const constantsOutput = generateConstants(ontology);
 
         await Promise.all([
-            formatAndWrite(typesFilePath, typesOutput, prettierConfig),
-            formatAndWrite(buildersFilePath, buildersOutput, prettierConfig),
-            formatAndWrite(constantsFilePath, constantsOutput, prettierConfig),
+            formatAndWrite(typesFilePath, typesOutput),
+            formatAndWrite(buildersFilePath, buildersOutput),
+            formatAndWrite(constantsFilePath, constantsOutput),
         ]);
 
         console.log(`Generated types written to: ${typesFilePath}`);
@@ -135,7 +126,9 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
     const generatedOntologyTypeName = ontologyTypeName(namespace);
     const jsExtensions = options.jsExtensions ?? true;
     const ontologyRuntimeImportPath = maybeStripJsExtension(
-        readPackageName(process.cwd()) === "@party-stack/ontology" ? "../../index.js" : "@party-stack/ontology",
+        readPackageName(process.cwd()) === "@party-stack/ontology"
+            ? "../../index.js"
+            : "@party-stack/ontology",
         jsExtensions
     );
 
@@ -157,9 +150,9 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
     const constantsFilePath = join(outDir, "constants.ts");
 
     await Promise.all([
-        formatAndWrite(typesFilePath, typesOutput, prettierConfig),
-        formatAndWrite(liveFilePath, liveOutput, prettierConfig),
-        formatAndWrite(constantsFilePath, constantsOutput, prettierConfig),
+        formatAndWrite(typesFilePath, typesOutput),
+        formatAndWrite(liveFilePath, liveOutput),
+        formatAndWrite(constantsFilePath, constantsOutput),
     ]);
 
     console.log(`Generated types written to: ${typesFilePath}`);

@@ -2,29 +2,21 @@
     "name": "@party-stack/monorepo",
     "private": true,
     "scripts": {
-        "fix-versions": "syncpack set-semver-ranges && syncpack fix-mismatches",
-        "lint-versions": "syncpack lint",
-        "upgrade-versions": "syncpack update && syncpack set-semver-ranges && syncpack fix-mismatches"
+        "fix-versions": "syncpack fix",
+        "upgrade-versions": "syncpack update && syncpack fix",
+        "prepare": "vp config --hooks --no-agent"
     },
     "devDependencies": {
         "@changesets/cli": "^2.29.7",
-        "husky": "^9.1.7",
-        "lint-staged": "^15.5.2",
-        "prettier": "^3.5.3",
-        "prettier-plugin-packagejson": "^2.5.15",
-        "prettier-plugin-tailwindcss": "^0.6.12",
-        "syncpack": "^13.0.4",
-        "turbo": "2.5.1",
-        "typescript": "~5.8.3"
+        "@types/node": "^24.10.1",
+        "postcss-import": "^17.0.0",
+        "syncpack": "^15.3.3",
+        "typescript": "~7.0.2",
+        "vite": "catalog:",
+        "vite-plus": "catalog:"
     },
-    "pnpm": {
-        "overrides": {
-            "@tanstack/db": "0.12.1",
-            "@types/node": "24.10.1"
-        }
-    },
-    "packageManager": "pnpm@9.6.0",
     "engines": {
         "node": "24.11.1"
-    }
+    },
+    "packageManager": "pnpm@10.34.6"
 }

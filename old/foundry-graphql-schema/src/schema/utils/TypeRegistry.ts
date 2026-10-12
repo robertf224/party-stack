@@ -15,6 +15,7 @@ export class TypeRegistry {
         this.#types.set(type.name, type);
     };
 
+    // oxlint-disable-next-line typescript/no-explicit-any -- GraphQL registries erase heterogeneous resolver types.
     use = <T extends GraphQLFieldConfig<any, any> | GraphQLInputFieldConfig | GraphQLInterfaceType>(
         fields: (
             getTypeReference: GetTypeReference

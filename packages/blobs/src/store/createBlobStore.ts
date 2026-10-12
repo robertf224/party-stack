@@ -175,7 +175,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                 }))
                 .findOne()
         );
-        return result as BlobMetadataRecord | undefined;
+        return result;
     };
 
     const putRef = async (ref: BlobMetadataRecord): Promise<void> => {

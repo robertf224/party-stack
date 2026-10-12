@@ -1,6 +1,9 @@
 {
     "name": "@party-stack/salesforce-ontology",
     "version": "0.4.0",
+    "files": [
+        "lib"
+    ],
     "type": "module",
     "exports": {
         ".": {
@@ -20,33 +23,24 @@
             "default": "./lib/meta/index.js"
         }
     },
-    "files": [
-        "lib"
-    ],
-    "scripts": {
-        "build": "tsc",
-        "lint": "eslint",
-        "test": "vitest run --pass-with-no-tests"
-    },
     "dependencies": {
         "@bobbyfidz/panic": "^0.1.0",
-        "@party-stack/connections": "workspace:^",
-        "@party-stack/errors": "workspace:^",
-        "@party-stack/icons-salesforce-lightning": "workspace:^",
-        "@party-stack/oauth": "workspace:^",
+        "@party-stack/connections": "workspace:*",
+        "@party-stack/errors": "workspace:*",
+        "@party-stack/icons-salesforce-lightning": "workspace:*",
+        "@party-stack/oauth": "workspace:*",
         "@party-stack/ontology": "workspace:*",
-        "@party-stack/runtime": "workspace:^",
+        "@party-stack/runtime": "workspace:*",
         "@party-stack/salesforce-client": "workspace:*",
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
-        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@party-stack/build-config": "workspace:*",
         "@tanstack/db": "0.12.1",
         "@tanstack/query-core": "^5.102.8",
         "@tanstack/query-db-collection": "1.4.0",
-        "eslint": "^9.25.0",
-        "typescript": "~5.8.3",
-        "vitest": "^3.1.1"
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
     },
     "peerDependencies": {
         "@tanstack/db": "0.12.1",

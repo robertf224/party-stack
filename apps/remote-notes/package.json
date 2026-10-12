@@ -4,10 +4,6 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "build": "tsc",
-        "dev": "vite dev",
-        "dist": "vite build",
-        "lint": "eslint",
         "ontology:generate": "ontology generate --no-js-extensions"
     },
     "dependencies": {
@@ -19,29 +15,27 @@
         "@tanstack/db": "0.12.1",
         "@tanstack/query-core": "^5.102.8",
         "@tanstack/query-db-collection": "1.4.0",
-        "@tanstack/react-db": "~0.5.5",
+        "@tanstack/react-db": "0.5.5",
         "@tanstack/react-devtools": "^0.10.9",
         "@tanstack/react-router": "^1.168.7",
         "@tanstack/react-start": "^1.167.12",
-        "better-sqlite3": "^12.4.6",
-        "react": "^19.2.0",
-        "react-dom": "^19.2.0",
+        "better-sqlite3": "^12.9.0",
+        "react": "^19.3.0",
+        "react-dom": "^19.3.0",
         "react-markdown": "^10.1.0",
         "remark-gfm": "^4.0.1",
         "temporal-polyfill": "^0.3.0",
         "zod": "^4.4.3"
     },
     "devDependencies": {
-        "@tailwindcss/vite": "^4",
-        "@tanstack/devtools-vite": "^0.6.0",
+        "@party-stack/tanstack-start-build-config": "workspace:*",
         "@types/better-sqlite3": "^7.6.13",
         "@types/node": "^24.10.1",
-        "@types/react": "^19.2.6",
-        "@types/react-dom": "^19.2.3",
-        "@vitejs/plugin-react": "^4.7.0",
-        "eslint": "^9.25.0",
-        "tailwindcss": "^4.0.6",
-        "typescript": "~5.8.3",
-        "vite": "^7.2.4"
+        "@types/react": "^19.3.0",
+        "@types/react-dom": "^19.3.0",
+        "tailwindcss": "^4.1.17",
+        "typescript": "~7.0.2",
+        "vite": "catalog:",
+        "vite-plus": "catalog:"
     }
 }

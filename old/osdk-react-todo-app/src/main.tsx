@@ -1,15 +1,15 @@
+import { OsdkEnvironmentProvider } from "@bobbyfidz/osdk-react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Suspense } from "react";
 import { createRoot } from "react-dom/client";
-import { OsdkEnvironmentProvider } from "@bobbyfidz/osdk-react";
 import { createBrowserRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import App from "./App";
-import Login from "./Login";
 import AuthCallback from "./AuthCallback";
-import TaskPage from "./TaskPage";
-import "./globals.css";
 import { client } from "./client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import "./globals.css";
+import Login from "./Login";
+import TaskPage from "./TaskPage";
 
 const queryClient = new QueryClient();
 

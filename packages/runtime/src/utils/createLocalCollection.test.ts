@@ -2,10 +2,10 @@ import { SingleProcessCoordination, type Coordination } from "@party-stack/coord
 import {
     SharedWorkerCoordinationClient,
     SharedWorkerCoordinationHost,
-    type CoordinationMessagePort,
 } from "@party-stack/coordination/shared-worker";
+import { queryOnce } from "@tanstack/db";
 import { SingleProcessCoordinator } from "@tanstack/db-sqlite-persistence-core";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { createPersistedCollectionCoordinator } from "../coordinator/createPersistedCollectionCoordinator.js";
 import { MemoryBlobBytesStore } from "../memory/MemoryBlobBytesStore.js";
 import { createLocalCollection } from "./createLocalCollection.js";
@@ -125,6 +125,14 @@ describe("createLocalCollection", () => {
             id: "one",
             title: "In memory",
         });
+        const first = await queryOnce((query) =>
+            query
+                .from({ item: collection })
+                .orderBy(({ item }) => item.title, "asc")
+                .findOne()
+        );
+        expect(first?.id).toBe("one");
+        expect(collection.indexes.size).toBeGreaterThan(0);
         await collection.cleanup();
         await coordination.close();
     });
@@ -180,6 +188,14 @@ describe("createLocalCollection", () => {
             id: "one",
             title: "Persisted",
         });
+        const first = await queryOnce((query) =>
+            query
+                .from({ item: collection })
+                .orderBy(({ item }) => item.title, "asc")
+                .findOne()
+        );
+        expect(first?.id).toBe("one");
+        expect(collection.indexes.size).toBeGreaterThan(0);
         await collection.cleanup();
         await coordination.close();
     });
@@ -277,8 +293,14 @@ describe("createLocalCollection", () => {
         const secondLoad = vi.fn(() => Promise.resolve());
         const firstUnload = vi.fn();
         const secondUnload = vi.fn();
-        const unregisterFirst = coordinator.registerRemoteSubsetOwner("first", Object.assign(firstLoad, { unloadSubset: firstUnload, onError: vi.fn() }));
-        const unregisterSecond = coordinator.registerRemoteSubsetOwner("second", Object.assign(secondLoad, { unloadSubset: secondUnload, onError: vi.fn() }));
+        const unregisterFirst = coordinator.registerRemoteSubsetOwner(
+            "first",
+            Object.assign(firstLoad, { unloadSubset: firstUnload, onError: vi.fn() })
+        );
+        const unregisterSecond = coordinator.registerRemoteSubsetOwner(
+            "second",
+            Object.assign(secondLoad, { unloadSubset: secondUnload, onError: vi.fn() })
+        );
         const sharedOptions = { limit: 10 };
         const otherOptions = { limit: 10 };
         try {
@@ -307,10 +329,15 @@ describe("createLocalCollection", () => {
         const load = vi.fn<() => Promise<void>>(() => Promise.reject(new Error("load failed")));
         const unloadSubset = vi.fn();
         const onError = vi.fn();
-        const unregister = coordinator.registerRemoteSubsetOwner("items", Object.assign(load, { unloadSubset, onError }));
+        const unregister = coordinator.registerRemoteSubsetOwner(
+            "items",
+            Object.assign(load, { unloadSubset, onError })
+        );
         try {
             for (let index = 0; index < 20; index++) {
-                await expect(coordinator.requestEnsureRemoteSubset("items", { limit: index + 1 })).rejects.toThrow("load failed");
+                await expect(
+                    coordinator.requestEnsureRemoteSubset("items", { limit: index + 1 })
+                ).rejects.toThrow("load failed");
             }
             expect(unloadSubset).toHaveBeenCalledTimes(20);
             expect(onError).toHaveBeenCalledTimes(20);
@@ -333,11 +360,20 @@ describe("createLocalCollection", () => {
         const coordinator = createPersistedCollectionCoordinator(coordination, adapter);
         try {
             for (let index = 0; index < 160; index++) {
-                await coordinator.requestApplyLocalMutations!(`client-${index}`, [{ mutationId: "one", type: "insert", key: "one", value: { id: "one" } }]);
+                await coordinator.requestApplyLocalMutations!(`client-${index}`, [
+                    { mutationId: "one", type: "insert", key: "one", value: { id: "one" } },
+                ]);
             }
-            expect((Reflect.get(coordinator, "positions") as Map<string, unknown>).size).toBeLessThanOrEqual(128);
-            await coordinator.requestApplyLocalMutations!("client-0", [{ mutationId: "two", type: "insert", key: "two", value: { id: "two" } }]);
-            expect(apply).toHaveBeenLastCalledWith("client-0", expect.objectContaining({ seq: 2, rowVersion: 2 }));
+            expect((Reflect.get(coordinator, "positions") as Map<string, unknown>).size).toBeLessThanOrEqual(
+                128
+            );
+            await coordinator.requestApplyLocalMutations!("client-0", [
+                { mutationId: "two", type: "insert", key: "two", value: { id: "two" } },
+            ]);
+            expect(apply).toHaveBeenLastCalledWith(
+                "client-0",
+                expect.objectContaining({ seq: 2, rowVersion: 2 })
+            );
         } finally {
             await coordination.close();
         }
@@ -349,10 +385,10 @@ describe("createLocalCollection", () => {
         const hostCoordination = new SharedWorkerCoordinationHost({
             scope: "shared-worker-persistence",
         });
-        const disconnect = hostCoordination.connect(channel.port1 as unknown as CoordinationMessagePort);
+        const disconnect = hostCoordination.connect(channel.port1);
         const clientCoordination = new SharedWorkerCoordinationClient({
             scope: "shared-worker-persistence",
-            worker: channel.port2 as unknown as CoordinationMessagePort,
+            worker: channel.port2,
         });
         const host = createLocalCollection<Item, string>({
             name: "worker-items",
@@ -464,10 +500,16 @@ describe("collection-scoped persistence", () => {
         const selected = memoryAdapter();
         const rootApply = vi.spyOn(root, "applyCommittedTx");
         const apply = vi.spyOn(selected, "applyCommittedTx");
-        const resolvePersistenceForMode = vi.fn(() => ({ adapter: selected, coordinator: new SingleProcessCoordinator() }));
+        const resolvePersistenceForMode = vi.fn(() => ({
+            adapter: selected,
+            coordinator: new SingleProcessCoordinator(),
+        }));
         const collection = createLocalCollection<Item, string>({
             name: "mode-only",
-            runtime: coordinatedRuntime({ adapter: { adapter: root, resolvePersistenceForMode }, coordination }).runtime,
+            runtime: coordinatedRuntime({
+                adapter: { adapter: root, resolvePersistenceForMode },
+                coordination,
+            }).runtime,
             getKey: (item) => item.id,
         });
         try {
@@ -660,8 +702,11 @@ describe("worker schema fencing", () => {
     it("uses registered collection versions instead of the default adapter for worker RPCs", async () => {
         const channel = new MessageChannel();
         const hostCoordination = new SharedWorkerCoordinationHost({ scope: "resolved-worker-schema" });
-        const disconnect = hostCoordination.connect(channel.port1 as unknown as CoordinationMessagePort);
-        const clientCoordination = new SharedWorkerCoordinationClient({ scope: "resolved-worker-schema", worker: channel.port2 as unknown as CoordinationMessagePort });
+        const disconnect = hostCoordination.connect(channel.port1);
+        const clientCoordination = new SharedWorkerCoordinationClient({
+            scope: "resolved-worker-schema",
+            worker: channel.port2,
+        });
         const root = { ...memoryAdapter(), schemaVersion: 1 };
         const selected = { ...memoryAdapter(), schemaVersion: 2 };
         const apply = vi.spyOn(selected, "applyCommittedTx");
@@ -673,8 +718,18 @@ describe("worker schema fencing", () => {
         const unsubscribeHost = host.subscribe("items", () => {});
         const unsubscribeClient = client.subscribe("items", () => {});
         try {
-            await expect(client.requestApplyCommittedTx("items", { txId: "resolved", term: 1, seq: 1, rowVersion: 1, mutations: [] })).resolves.toMatchObject({ ok: true });
-            await expect(client.requestEnsurePersistedIndex("items", "resolved-index", { expressionSql: [] })).resolves.toBeUndefined();
+            await expect(
+                client.requestApplyCommittedTx("items", {
+                    txId: "resolved",
+                    term: 1,
+                    seq: 1,
+                    rowVersion: 1,
+                    mutations: [],
+                })
+            ).resolves.toMatchObject({ ok: true });
+            await expect(
+                client.requestEnsurePersistedIndex("items", "resolved-index", { expressionSql: [] })
+            ).resolves.toBeUndefined();
             expect(apply).toHaveBeenCalledOnce();
             expect(ensure).toHaveBeenCalledOnce();
         } finally {
@@ -689,10 +744,10 @@ describe("worker schema fencing", () => {
     it("rejects stale-schema worker writes and index requests", async () => {
         const channel = new MessageChannel();
         const hostCoordination = new SharedWorkerCoordinationHost({ scope: "schema-fencing" });
-        const disconnect = hostCoordination.connect(channel.port1 as unknown as CoordinationMessagePort);
+        const disconnect = hostCoordination.connect(channel.port1);
         const clientCoordination = new SharedWorkerCoordinationClient({
             scope: "schema-fencing",
-            worker: channel.port2 as unknown as CoordinationMessagePort,
+            worker: channel.port2,
         });
         const current = { ...memoryAdapter(), schemaVersion: 2 };
         const stale = { ...memoryAdapter(), schemaVersion: 1 };
@@ -726,12 +781,21 @@ describe("worker schema fencing", () => {
             // SQLite scheduling scopes expose storage methods without schema fields.
             // The registered adapter must still supply the RPC's expected version.
             const hydrationAdapter = { ...stale, schemaVersion: undefined };
-            await expect(client.requestApplyCommittedTx(
-                "items", { txId: "stale-scoped", term: 1, seq: 2, rowVersion: 2, mutations: [] }, hydrationAdapter
-            )).rejects.toThrow("schema mismatch");
-            await expect(client.requestEnsurePersistedIndex(
-                "items", "scoped-index", { expressionSql: [] }, hydrationAdapter
-            )).rejects.toThrow("schema mismatch");
+            await expect(
+                client.requestApplyCommittedTx(
+                    "items",
+                    { txId: "stale-scoped", term: 1, seq: 2, rowVersion: 2, mutations: [] },
+                    hydrationAdapter
+                )
+            ).rejects.toThrow("schema mismatch");
+            await expect(
+                client.requestEnsurePersistedIndex(
+                    "items",
+                    "scoped-index",
+                    { expressionSql: [] },
+                    hydrationAdapter
+                )
+            ).rejects.toThrow("schema mismatch");
             expect(apply).not.toHaveBeenCalled();
             expect(ensure).not.toHaveBeenCalled();
         } finally {
@@ -755,7 +819,8 @@ describe("persistence page resume", () => {
         const load = vi.spyOn(adapter, "loadSubset");
         const position = vi.spyOn(adapter, "getStreamPosition");
         const collection = createLocalCollection<Item, string>({
-            name: "items", getKey: (item) => item.id,
+            name: "items",
+            getKey: (item) => item.id,
             runtime: coordinatedRuntime({ adapter: { adapter }, coordination }).runtime,
         });
         try {
@@ -764,7 +829,10 @@ describe("persistence page resume", () => {
             load.mockClear();
             // A durable adapter commit without its notification models a missed broadcast.
             await adapter.applyCommittedTx(collection.id, {
-                txId: "missed", term: 1, seq: 2, rowVersion: 2,
+                txId: "missed",
+                term: 1,
+                seq: 2,
+                rowVersion: 2,
                 mutations: [{ type: "update", key: "one", value: { id: "one", title: "Final" } }],
             });
             expect(collection.get("one")?.title).toBe("Original");
@@ -798,7 +866,12 @@ describe("persistence page resume", () => {
         const coordination = new SingleProcessCoordination({ scope: "resume-cleanup" });
         const adapter = memoryAdapter();
         let finish!: (position: { latestTerm: number; latestSeq: number; latestRowVersion: number }) => void;
-        const read = vi.spyOn(adapter, "getStreamPosition").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+        const read = vi.spyOn(adapter, "getStreamPosition").mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+        );
         const shim = createPersistedCollectionCoordinator(coordination, adapter);
         const callback = vi.fn();
         const unsubscribe = shim.subscribe("items", callback);
@@ -827,12 +900,25 @@ describe("overlapping local mutation consumers", () => {
         const coordination = new SingleProcessCoordination({ scope: "overlapping-local-peers" });
         const adapter = memoryAdapter();
         const runtime = coordinatedRuntime({ adapter: { adapter }, coordination }).runtime;
-        const first = createLocalCollection<Item, string>({ name: "items", runtime, getKey: (item) => item.id });
-        const second = createLocalCollection<Item, string>({ name: "items", runtime, getKey: (item) => item.id });
-        const items = Array.from({ length: 20 }, (_, index) => ({ id: String(index), title: `Task ${index}` }));
+        const first = createLocalCollection<Item, string>({
+            name: "items",
+            runtime,
+            getKey: (item) => item.id,
+        });
+        const second = createLocalCollection<Item, string>({
+            name: "items",
+            runtime,
+            getKey: (item) => item.id,
+        });
+        const items = Array.from({ length: 20 }, (_, index) => ({
+            id: String(index),
+            title: `Task ${index}`,
+        }));
         try {
             await Promise.all([first.preload(), second.preload()]);
-            await Promise.all(items.map((item, index) => (index % 2 ? first : second).insert(item).isPersisted.promise));
+            await Promise.all(
+                items.map((item, index) => (index % 2 ? first : second).insert(item).isPersisted.promise)
+            );
             await vi.waitFor(() => {
                 expect(first.size).toBe(20);
                 expect(second.size).toBe(20);

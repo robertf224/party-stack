@@ -1,7 +1,7 @@
-import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
+import { access, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
     getIconPaths,
@@ -9,9 +9,9 @@ import {
     IconSize,
     type IconName as BlueprintIconName,
 } from "@blueprintjs/icons";
+import { icons as materialSymbols } from "@iconify-json/material-symbols";
 import { buildLucideSvg } from "@lucide/icons/build";
 import { lucideDynamicIconImports } from "@lucide/icons/dynamic";
-import { icons as materialSymbols } from "@iconify-json/material-symbols";
 import { IconNames, type IconName } from "@party-stack/icons";
 import { BlueprintIconNames } from "@party-stack/icons-blueprint";
 import { ExpoSymbolNames, MaterialSymbolArchiveNames } from "@party-stack/icons-expo";

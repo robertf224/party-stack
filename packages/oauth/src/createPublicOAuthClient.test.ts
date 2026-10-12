@@ -1,6 +1,6 @@
 import { isUnauthenticatedError } from "@party-stack/errors";
 import { createDefaultRuntime } from "@party-stack/runtime";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { createPublicOAuthClient } from "./createPublicOAuthClient.js";
 
 describe("createPublicOAuthClient", () => {

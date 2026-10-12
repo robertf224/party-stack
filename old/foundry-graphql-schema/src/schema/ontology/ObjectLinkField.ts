@@ -22,6 +22,7 @@ function create(
 
     const targetObjectType = ontology.objectTypes[linkType.objectTypeApiName]!.objectType;
 
+    // oxlint-disable-next-line typescript/no-explicit-any -- GraphQL registries erase heterogeneous resolver types.
     let field: GraphQLFieldConfig<any, any, any>;
     if (linkType.cardinality === "ONE") {
         field = objectFieldSpec<LoadedRecordStep<TypedOntologyObject> | LoadedObjectStep>(

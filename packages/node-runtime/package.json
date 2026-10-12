@@ -1,6 +1,9 @@
 {
     "name": "@party-stack/node-runtime",
     "version": "0.3.0",
+    "files": [
+        "lib"
+    ],
     "type": "module",
     "exports": {
         ".": {
@@ -8,32 +11,23 @@
             "default": "./lib/index.js"
         }
     },
-    "files": [
-        "lib"
-    ],
-    "scripts": {
-        "build": "tsc",
-        "lint": "eslint",
-        "test": "vitest run"
-    },
     "dependencies": {
         "@hono/node-server": "^2.1.1",
         "@party-stack/coordination": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "@tanstack/node-db-sqlite-persistence": "0.2.30",
-        "better-sqlite3": "^12.4.6",
+        "better-sqlite3": "^12.9.0",
         "cross-keychain": "^1.1.0",
         "hono": "^4.13.5",
         "open": "^11.0.1",
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
-        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@party-stack/build-config": "workspace:*",
         "@tanstack/db-sqlite-persistence-core": "0.4.5",
         "@types/better-sqlite3": "^7.6.13",
         "@types/node": "^24.10.1",
-        "eslint": "^9.25.0",
-        "typescript": "~5.8.3",
-        "vitest": "^3.1.1"
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
     }
 }

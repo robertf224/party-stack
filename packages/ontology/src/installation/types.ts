@@ -1,13 +1,13 @@
+import type { OntologyIR } from "../ir/index.js";
+import type { CreateLiveOntologyOpts, LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
+import type { OntologyBackendAdapterProvider } from "../live/OntologyBackendAdapter.js";
+import type { MetaOntology } from "../meta/generated/types.js";
 import type {
     BackendConnectionAdapterProvider,
     Connection,
     ConnectionEgress,
 } from "@party-stack/connections";
 import type { RuntimeAdapterProvider } from "@party-stack/runtime";
-import type { OntologyIR } from "../ir/index.js";
-import type { CreateLiveOntologyOpts, LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
-import type { OntologyBackendAdapterProvider } from "../live/OntologyBackendAdapter.js";
-import type { MetaOntology } from "../meta/generated/types.js";
 import type { Collection } from "@tanstack/db";
 
 export interface ConfigureOntologyOptions {

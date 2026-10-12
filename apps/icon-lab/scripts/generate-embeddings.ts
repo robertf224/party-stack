@@ -1,10 +1,11 @@
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
 import { AutoTokenizer, CLIPTextModelWithProjection, env } from "@xenova/transformers";
 import { strFromU8, unzipSync } from "fflate";
 import sharp from "sharp";
+import { cosineSimilarity, l2Normalize } from "../src/shared/math";
 import type {
     CatalogFile,
     CatalogIcon,
@@ -15,7 +16,6 @@ import type {
     MappingAuditFile,
     MappingPairScore,
 } from "../src/shared/types";
-import { cosineSimilarity, l2Normalize } from "../src/shared/math";
 
 env.allowLocalModels = false;
 env.useBrowserCache = false;
@@ -56,6 +56,8 @@ function svgToPng(svg: string, size = 224): Uint8Array {
         `<svg$1><rect width="100%" height="100%" fill="#f8fafc"/>`
     );
     return new Resvg(normalized, {
+        // Icon SVGs contain paths, so they do not need system fonts.
+        font: { loadSystemFonts: false },
         fitTo: { mode: "width", value: size },
         background: "white",
     })
@@ -72,7 +74,7 @@ async function visualDescriptor(bytes: Uint8Array, format: "svg" | "png", dims: 
         .raw()
         .toBuffer();
     const ink = Array.from(pixels, (value) => (255 - value) / 255);
-    const features = new Array<number>(512);
+    const features = Array.from({ length: 512 }, () => 0);
     for (let index = 0; index < 256; index++) {
         const x = index % 16;
         const y = Math.floor(index / 16);
@@ -292,7 +294,7 @@ async function main(): Promise<void> {
                 icon.id,
                 l2Normalize([
                     ...rows[index]!.map((value) => value * TEXT_WEIGHT),
-                    ...new Array<number>(VISUAL_DIMS).fill(0),
+                    ...Array.from({ length: VISUAL_DIMS }, () => 0),
                 ])
             );
             modalities.set(icon.id, "text");

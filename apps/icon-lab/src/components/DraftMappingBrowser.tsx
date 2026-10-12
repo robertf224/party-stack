@@ -1,7 +1,5 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { useEffect, useMemo, useState } from "react";
-import type { CatalogFile, CatalogIcon, DraftMappingsFile, IconProvider } from "../shared/types";
-import { IconTile } from "./IconTile";
 import {
     createMappingFeedbackFile,
     loadMappingConfirmations,
@@ -13,6 +11,8 @@ import {
     type MappingFeedback,
     type MappingFeedbackDecision,
 } from "../shared/mappingFeedback";
+import { IconTile } from "./IconTile";
+import type { CatalogFile, CatalogIcon, DraftMappingsFile, IconProvider } from "../shared/types";
 
 const PROVIDER_LABEL: Record<IconProvider, string> = {
     blueprint: "Blueprint / Foundry",
@@ -45,6 +45,11 @@ function ReplacementIconCombobox({
     onSelect: (icon: CatalogIcon) => void;
 }) {
     const [query, setQuery] = useState(selectedName ?? "");
+    const [previousSelectedName, setPreviousSelectedName] = useState(selectedName);
+    if (previousSelectedName !== selectedName) {
+        setPreviousSelectedName(selectedName);
+        setQuery(selectedName ?? "");
+    }
     const selectedIcon = icons.find((icon) => icon.name === selectedName);
     const candidates = useMemo(() => {
         const normalized = query.trim().toLowerCase();
@@ -57,10 +62,6 @@ function ReplacementIconCombobox({
             )
             .slice(0, 12);
     }, [icons, query]);
-
-    useEffect(() => {
-        setQuery(selectedName ?? "");
-    }, [selectedName]);
 
     return (
         <div className="mt-2">
@@ -103,7 +104,7 @@ function ReplacementIconCombobox({
                 </Combobox.InputGroup>
                 <Combobox.Portal>
                     <Combobox.Positioner align="start" sideOffset={4} className="z-50 outline-none">
-                        <Combobox.Popup className="data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0 w-[var(--anchor-width)] min-w-60 max-w-[var(--available-width)] origin-[var(--transform-origin)] rounded-lg border border-[var(--line)] bg-white shadow-xl transition-[transform,opacity] duration-100">
+                        <Combobox.Popup className="w-[var(--anchor-width)] max-w-[var(--available-width)] min-w-60 origin-[var(--transform-origin)] rounded-lg border border-[var(--line)] bg-white shadow-xl transition-[transform,opacity] duration-100 data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0">
                             <Combobox.Empty className="p-2 text-[11px] text-[var(--muted)]">
                                 No matching provider icons
                             </Combobox.Empty>
@@ -112,7 +113,7 @@ function ReplacementIconCombobox({
                                     <Combobox.Item
                                         key={candidate.id}
                                         value={candidate}
-                                        className="data-highlighted:bg-slate-100 flex cursor-default items-center gap-2 rounded-md p-1.5 text-left outline-none"
+                                        className="flex cursor-default items-center gap-2 rounded-md p-1.5 text-left outline-none data-highlighted:bg-slate-100"
                                     >
                                         <IconTile icon={candidate} size={24} />
                                         <span className="min-w-0 truncate text-[10px] font-[var(--font-mono)]">
@@ -231,6 +232,7 @@ export function DraftMappingBrowser({ catalog, draft }: { catalog: CatalogFile; 
             decision: update.decision ?? existing?.decision ?? "approve",
             replacementName: "replacementName" in update ? update.replacementName : existing?.replacementName,
             note: "note" in update ? update.note : existing?.note,
+            // oxlint-disable-next-line react/purity -- Feedback updates run from user event handlers, not during render.
             updatedAt: new Date().toISOString(),
         };
         const choiceChanged =
@@ -390,7 +392,7 @@ export function DraftMappingBrowser({ catalog, draft }: { catalog: CatalogFile; 
                                         {selected.concept}
                                     </h2>
                                     <span
-                                        className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                                        className={`rounded-full px-2 py-0.5 text-[10px] tracking-wide uppercase ${
                                             selected.status === "existing"
                                                 ? "bg-emerald-100 text-emerald-800"
                                                 : "bg-amber-100 text-amber-800"
@@ -486,11 +488,11 @@ export function DraftMappingBrowser({ catalog, draft }: { catalog: CatalogFile; 
                                         key={provider}
                                         className="min-w-0 rounded-xl border border-[var(--line)] bg-white/70 p-3"
                                     >
-                                        <div className="mb-2 text-[11px] uppercase tracking-wide text-[var(--muted)]">
+                                        <div className="mb-2 text-[11px] tracking-wide text-[var(--muted)] uppercase">
                                             {PROVIDER_LABEL[provider as IconProvider]}
                                         </div>
                                         <IconTile icon={icon} size={56} />
-                                        <div className="mt-3 break-all text-xs font-[var(--font-mono)]">
+                                        <div className="mt-3 text-xs font-[var(--font-mono)] break-all">
                                             {match.name}
                                         </div>
                                         <div className="mt-1 text-[11px] font-[var(--font-mono)] text-[var(--muted)]">
@@ -573,7 +575,7 @@ export function DraftMappingBrowser({ catalog, draft }: { catalog: CatalogFile; 
                                                 className="mt-2 w-full rounded-md border border-[var(--line)] bg-white px-2 py-1.5 text-[11px] outline-none focus:border-[var(--accent)] disabled:cursor-not-allowed disabled:bg-slate-100"
                                             />
                                             {providerFeedback && (
-                                                <div className="mt-2 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">
+                                                <div className="mt-2 text-[10px] font-medium tracking-wide text-[var(--muted)] uppercase">
                                                     recorded · {providerFeedback.decision}
                                                 </div>
                                             )}
@@ -585,7 +587,7 @@ export function DraftMappingBrowser({ catalog, draft }: { catalog: CatalogFile; 
                     </div>
 
                     <div className="rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-5 backdrop-blur">
-                        <h3 className="text-sm font-semibold uppercase tracking-wide">Full-set coverage</h3>
+                        <h3 className="text-sm font-semibold tracking-wide uppercase">Full-set coverage</h3>
                         <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
                             {catalog.providers.map((provider) => {
                                 const archive = catalog.archives[provider];

@@ -1,5 +1,9 @@
+import { createLiveOntology, waitForLiveOntologyReady } from "@party-stack/ontology";
+import { decode, encode } from "@party-stack/ontology/json";
+import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
 import {
     BaseQueryBuilder,
+    IR,
     queryOnce,
     type Collection,
     type InitialQueryBuilder,
@@ -8,22 +12,6 @@ import {
 } from "@tanstack/db";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
-import { createLiveOntology, waitForLiveOntologyReady } from "@party-stack/ontology";
-import { decode, encode } from "@party-stack/ontology/json";
-import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
-import type {
-    LiveOntology,
-    OntologyBackendAdapter,
-    OntologyApplyActionResult,
-    OntologyAttachmentUpload,
-    OntologyDefinition,
-    OntologyIR,
-    OntologyCollectionOptions,
-    PartialAttachmentMetadata,
-    Uncertain,
-    ValidationIssue,
-} from "@party-stack/ontology";
-import type { Result } from "@party-stack/ontology/values";
 import { remoteOntologyErrorFromUnknown, RemoteOntologyError, statusToCode } from "./errors.js";
 import {
     parseRemoteOntologyJson,
@@ -58,7 +46,19 @@ import type {
     RemoteOntologyRequestByEndpoint,
     RemoteOntologyResponseByEndpoint,
 } from "./protocol.js";
-import type { IR } from "@tanstack/db";
+import type {
+    LiveOntology,
+    OntologyBackendAdapter,
+    OntologyApplyActionResult,
+    OntologyAttachmentUpload,
+    OntologyDefinition,
+    OntologyIR,
+    OntologyCollectionOptions,
+    PartialAttachmentMetadata,
+    Uncertain,
+    ValidationIssue,
+} from "@party-stack/ontology";
+import type { Result } from "@party-stack/ontology/values";
 
 type ObjectTypeName<Ontology extends OntologyDefinition> = Extract<keyof Ontology["objectTypes"], string>;
 
@@ -360,15 +360,15 @@ function qualifyExpressionPaths<TExpression extends IR.BasicExpression>(
         return expression;
     }
     if (expression.type === "ref") {
-        return {
-            ...expression,
-            path: expression.path[0] === alias ? expression.path : [alias, ...expression.path],
-        } as TExpression;
+        return new IR.PropRef(
+            expression.path[0] === alias ? expression.path : [alias, ...expression.path],
+            expression.sourceAlias
+        ) as TExpression;
     }
-    return {
-        ...expression,
-        args: expression.args.map((arg) => qualifyExpressionPaths(arg, alias)),
-    } as TExpression;
+    return new IR.Func(
+        expression.name,
+        expression.args.map((arg) => qualifyExpressionPaths(arg, alias))
+    ) as TExpression;
 }
 
 function qualifyOrderByPaths(orderBy: IR.OrderBy | undefined, alias: string): IR.OrderBy | undefined {
@@ -535,64 +535,32 @@ async function handleLoadSubset<Context, Ontology extends OntologyDefinition = O
     }
 }
 
-function createPolicyReadBackendAdapter<
-    Context,
-    Ontology extends OntologyDefinition,
->(
+function createPolicyReadBackendAdapter<Context, Ontology extends OntologyDefinition>(
     ctx: Context,
-    opts: CreateRemoteOntologyServerOptions<
-        Context,
-        Ontology
-    >,
+    opts: CreateRemoteOntologyServerOptions<Context, Ontology>,
     ir: OntologyIR
 ): OntologyBackendAdapter {
     const queryClient = new QueryClient();
     return {
         name: "remote-policy-read",
         getCollectionOptions: (objectType) => {
-            const primaryKey = getObjectTypePrimaryKey(
-                ir,
-                objectType
-            );
-            return queryCollectionOptions<
-                Record<string, unknown>
-            >({
+            const primaryKey = getObjectTypePrimaryKey(ir, objectType);
+            return queryCollectionOptions<Record<string, unknown>>({
                 queryClient,
-                getKey: (object) =>
-                    object[primaryKey] as
-                        | string
-                        | number,
-                queryKey: [
-                    "remote-ontology",
-                    "resolve-action-parameters",
-                    objectType,
-                ],
+                getKey: (object) => object[primaryKey] as string | number,
+                queryKey: ["remote-ontology", "resolve-action-parameters", objectType],
                 syncMode: "on-demand",
                 queryFn: async (queryContext) =>
                     (
                         await handleLoadSubset(ctx, opts, {
                             objectType,
-                            options:
-                                serializeLoadSubsetOptions(
-                                    queryContext.meta
-                                        ?.loadSubsetOptions
-                                ),
+                            options: serializeLoadSubsetOptions(queryContext.meta?.loadSubsetOptions),
                         })
                     ).objects,
             }) as unknown as OntologyCollectionOptions;
         },
-        applyAction: () =>
-            Promise.reject(
-                new Error(
-                    "Policy read backend cannot apply actions."
-                )
-            ),
-        runQueryFunction: () =>
-            Promise.reject(
-                new Error(
-                    "Policy read backend cannot run query functions."
-                )
-            ),
+        applyAction: () => Promise.reject(new Error("Policy read backend cannot apply actions.")),
+        runQueryFunction: () => Promise.reject(new Error("Policy read backend cannot run query functions.")),
         cleanup: () => queryClient.clear(),
     };
 }
@@ -653,7 +621,7 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
         target: { kind: "actionParameters", actionType: request.actionType },
         value: request.parameters,
     }) as Record<string, unknown>;
-    const parameters = await applyFixedActionParameterValues({
+    const parameters = applyFixedActionParameterValues({
         ctx,
         actionType: request.actionType,
         parameters: hydratedRequestParameters,
@@ -710,7 +678,7 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
             idempotencyKey: executionId,
         });
     } finally {
-        coordination.close();
+        void coordination.close();
         await ontology.cleanup();
     }
 
@@ -760,7 +728,7 @@ async function handleValidateAction<Context, Ontology extends OntologyDefinition
         target: { kind: "actionParameters", actionType: request.actionType },
         value: request.parameters,
     }) as Record<string, unknown>;
-    const parameters = await applyFixedActionParameterValues({
+    const parameters = applyFixedActionParameterValues({
         ctx,
         actionType: request.actionType,
         parameters: hydratedRequestParameters,
@@ -789,9 +757,11 @@ async function handleValidateAction<Context, Ontology extends OntologyDefinition
                 certain: true,
                 value: {
                     kind: "err",
-                    value: [{
-                        message: `Action "${request.actionType}" is not allowed.`,
-                    }],
+                    value: [
+                        {
+                            message: `Action "${request.actionType}" is not allowed.`,
+                        },
+                    ],
                 },
             };
         }
@@ -806,7 +776,10 @@ async function handleValidateAction<Context, Ontology extends OntologyDefinition
     }
 }
 
-async function handleResolveActionParameters<Context, Ontology extends OntologyDefinition = OntologyDefinition>(
+async function handleResolveActionParameters<
+    Context,
+    Ontology extends OntologyDefinition = OntologyDefinition,
+>(
     ctx: Context,
     opts: CreateRemoteOntologyServerOptions<Context, Ontology>,
     request: RemoteResolveActionParametersRequest
@@ -823,58 +796,39 @@ async function handleResolveActionParameters<Context, Ontology extends OntologyD
         opts,
         {},
         {
-            projectFixedActionParameterValuesInDefaults:
-                true,
+            projectFixedActionParameterValuesInDefaults: true,
         }
     );
-    const resolutionProjectedAction =
-        resolutionDescription.ir.actionTypes.find(
-            (candidate) =>
-                candidate.name === request.actionType
-        );
+    const resolutionProjectedAction = resolutionDescription.ir.actionTypes.find(
+        (candidate) => candidate.name === request.actionType
+    );
     if (!resolutionProjectedAction) {
-        throw new RemoteOntologyForbiddenError(
-            `Action "${request.actionType}" is not allowed.`
-        );
+        throw new RemoteOntologyForbiddenError(`Action "${request.actionType}" is not allowed.`);
     }
 
     const ir = await resolveValue(opts.ir, ctx);
-    const sourceAction = ir.actionTypes.find(
-        (candidate) => candidate.name === request.actionType
-    );
+    const sourceAction = ir.actionTypes.find((candidate) => candidate.name === request.actionType);
     if (!sourceAction) {
-        throw new Error(
-            `Unknown action "${request.actionType}".`
-        );
+        throw new Error(`Unknown action "${request.actionType}".`);
     }
     const projectedParametersByName = new Map(
-        resolutionProjectedAction.parameters.map(
-            (parameter) => [
-                parameter.name,
-                parameter,
-            ]
-        )
+        resolutionProjectedAction.parameters.map((parameter) => [parameter.name, parameter])
     );
     const resolutionAction = {
         ...sourceAction,
-        parameters: sourceAction.parameters.map(
-            (parameter) =>
-                projectedParametersByName.get(
-                    parameter.name
-                )?.defaultValue
-                    ? parameter
-                    : {
-                          ...parameter,
-                          defaultValue: undefined,
-                      }
+        parameters: sourceAction.parameters.map((parameter) =>
+            projectedParametersByName.get(parameter.name)?.defaultValue
+                ? parameter
+                : {
+                      ...parameter,
+                      defaultValue: undefined,
+                  }
         ),
     };
     const resolutionIr: OntologyIR = {
         ...ir,
         actionTypes: ir.actionTypes.map((action) =>
-            action.name === request.actionType
-                ? resolutionAction
-                : action
+            action.name === request.actionType ? resolutionAction : action
         ),
     };
     const hydratedRequestParameters = decode({
@@ -882,7 +836,7 @@ async function handleResolveActionParameters<Context, Ontology extends OntologyD
         target: { kind: "actionParameters", actionType: request.actionType },
         value: request.parameters,
     }) as Record<string, unknown>;
-    const parameters = await applyFixedActionParameterValues({
+    const parameters = applyFixedActionParameterValues({
         ctx,
         actionType: request.actionType,
         parameters: hydratedRequestParameters,
@@ -890,12 +844,7 @@ async function handleResolveActionParameters<Context, Ontology extends OntologyD
     });
     const ontology = await createLiveOntology<Ontology>({
         ir: resolutionIr,
-        backend: () =>
-            createPolicyReadBackendAdapter(
-                ctx,
-                opts,
-                resolutionIr
-            ),
+        backend: () => createPolicyReadBackendAdapter(ctx, opts, resolutionIr),
         context: ctx as Record<string, unknown>,
     });
 

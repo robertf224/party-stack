@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
+/* oxlint-disable typescript/no-explicit-any */
 
 // Adapted from https://github.com/palantir/osdk-ts/blob/main/packages/client/src/observable/internal/objectMatchesWhereClause.ts
 
@@ -27,12 +27,12 @@ export function objectMatchesFilter<T extends ObjectOrInterfaceDefinition>(
 
     return Object.entries(filter).every(([key, filter]) => {
         if (typeof filter === "object") {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            // oxlint-disable-next-line typescript/no-unsafe-assignment
             const propertyValue = object[key as keyof typeof object] as any;
             const [firstFilter] = Object.keys(
                 filter as Record<string, any>
             ) as Array<PossibleWhereClauseFilters>;
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            // oxlint-disable-next-line typescript/no-unsafe-assignment
             const filterValue = (filter as Record<string, any>)[firstFilter!];
 
             switch (firstFilter) {

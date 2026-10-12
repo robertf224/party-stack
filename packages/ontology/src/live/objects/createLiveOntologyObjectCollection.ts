@@ -61,7 +61,7 @@ export function createLiveOntologyObjectCollection(opts: {
             (object as Record<string, string | number>)[opts.objectType.primaryKey] as string | number,
     };
     if (!opts.persistObjects) {
-        return createCollection(options) as OntologyCollection<OntologyObject>;
+        return createCollection(options);
     }
     if (!opts.runtime.persistence) {
         throw new Error(
@@ -75,5 +75,5 @@ export function createLiveOntologyObjectCollection(opts: {
             schemaVersion: 1,
             persistence: createCollectionPersistence(opts.runtime.coordination, opts.runtime.persistence),
         })
-    ) as OntologyCollection<OntologyObject>;
+    );
 }

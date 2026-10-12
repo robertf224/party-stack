@@ -1,5 +1,5 @@
 import { base64url } from "jose";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { getTokenDetails } from "./getTokenDetails.js";
 
 describe("getTokenDetails", () => {

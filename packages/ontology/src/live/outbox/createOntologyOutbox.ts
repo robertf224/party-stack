@@ -19,7 +19,6 @@ import {
     type Operation,
     type Task,
 } from "effection";
-import type { ConnectionMonitor } from "@party-stack/connections";
 import { runOutboxLeader, type OutboxLeaderOptions } from "./leaderExecutor.js";
 import { serveOntologyOutbox } from "./outboxService.js";
 import { OutboxProjectionManager, type OutboxProjection } from "./projectionManager.js";
@@ -35,6 +34,7 @@ import type {
     OntologyOutbox,
     OntologyOutboxEntry,
 } from "./types.js";
+import type { ConnectionMonitor } from "@party-stack/connections";
 import type { Collection } from "@tanstack/db";
 
 export type { OutboxProjection } from "./projectionManager.js";
@@ -141,9 +141,7 @@ export function useOntologyOutbox(
         let disposing = false;
         let reconciliationVersion = 0;
 
-        const deliverResult = async (
-            event: OutboxResultEvent
-        ) => {
+        const deliverResult = async (event: OutboxResultEvent) => {
             const completion = completions.get(event.id);
             if (event.type === "completed") {
                 await projections.discard(event.id);
@@ -155,23 +153,16 @@ export function useOntologyOutbox(
             }
 
             const error = eventError(event);
-            await projections.discard(
-                event.id,
-                error
-            );
+            await projections.discard(event.id, error);
             if (completion) {
                 completions.delete(event.id);
                 completion.reject(error);
             }
         };
         try {
-            lifetime.unsubscribeResults =
-                service.events.subscribe(
-                    "result",
-                    (event) => {
-                        void deliverResult(event);
-                    }
-                );
+            lifetime.unsubscribeResults = service.events.subscribe("result", (event) => {
+                void deliverResult(event);
+            });
 
             yield* until(repository.preload());
             if (isCoordinationHost(options.runtime.coordination)) {
@@ -190,15 +181,13 @@ export function useOntologyOutbox(
                 wake.send();
                 void reconcileProjections();
             });
-            lifetime.unsubscribeConnection =
-                options.connection
-                    ? {
-                          unsubscribe:
-                              options.connection.subscribe(() => {
-                                  wake.send();
-                              }),
-                      }
-                    : undefined;
+            lifetime.unsubscribeConnection = options.connection
+                ? {
+                      unsubscribe: options.connection.subscribe(() => {
+                          wake.send();
+                      }),
+                  }
+                : undefined;
 
             const existing = yield* until(repository.entries());
             yield* until(projections.restore(existing));
@@ -283,7 +272,7 @@ export function useOntologyOutbox(
                     };
                     const completion = deferred<Result>();
                     void completion.promise.catch(() => undefined);
-                    completions.set(proposed.id, completion as Deferred<unknown>);
+                    completions.set(proposed.id, completion);
 
                     let entry: OntologyOutboxEntry;
                     try {

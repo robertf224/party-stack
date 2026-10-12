@@ -1,6 +1,6 @@
 import { validate, type OntologyIR } from "@party-stack/ontology";
 import { Temporal } from "temporal-polyfill";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { convertFoundryMetaActionType } from "./convertMetaActionType.js";
 import type { ActionTypeOmsMetadata } from "./loadActionTypeOmsMetadata.js";
 import type { ActionParameterV2, ActionTypeFullMetadata } from "@osdk/foundry.ontologies";
@@ -1365,9 +1365,7 @@ describe("convertFoundryMetaActionType OMS struct field validations", () => {
         const result = convertFoundryMetaActionType(metadata, oms);
         let type = result.parameters[0]!.type;
         if (list) {
-            expect(type.kind).toBe("optional");
             if (type.kind !== "optional") throw new Error("Expected optional list");
-            expect(type.value.type.kind).toBe("list");
             if (type.value.type.kind !== "list") throw new Error("Expected list");
             type = type.value.type.value.elementType;
         }
@@ -1375,51 +1373,89 @@ describe("convertFoundryMetaActionType OMS struct field validations", () => {
         if (type.kind !== "struct") throw new Error("Expected struct");
         expect(type.value.fields).toEqual([
             {
-                name: "severity", displayName: "severity",
-                type: { kind: "optional", value: { type: {
-                    kind: "string", value: { constraint: { kind: "enum", value: { options } } },
-                } } },
+                name: "severity",
+                displayName: "severity",
+                type: {
+                    kind: "optional",
+                    value: {
+                        type: {
+                            kind: "string",
+                            value: { constraint: { kind: "enum", value: { options } } },
+                        },
+                    },
+                },
             },
             {
-                name: "category", displayName: "category",
-                type: { kind: "optional", value: { type: {
-                    kind: "string", value: { suggestions: options },
-                } } },
+                name: "category",
+                displayName: "category",
+                type: {
+                    kind: "optional",
+                    value: {
+                        type: {
+                            kind: "string",
+                            value: { suggestions: options },
+                        },
+                    },
+                },
             },
             {
-                name: "tags", displayName: "tags",
-                type: { kind: "optional", value: { type: {
-                    kind: "list", value: { elementType: {
-                        kind: "string", value: { suggestions: options },
-                    } },
-                } } },
+                name: "tags",
+                displayName: "tags",
+                type: {
+                    kind: "optional",
+                    value: {
+                        type: {
+                            kind: "list",
+                            value: {
+                                elementType: {
+                                    kind: "string",
+                                    value: { suggestions: options },
+                                },
+                            },
+                        },
+                    },
+                },
             },
             {
-                name: "code", displayName: "code",
-                type: { kind: "string", value: {
-                    constraint: { kind: "regex", value: { regex: "^[A-Z]+$" } },
-                } },
+                name: "code",
+                displayName: "code",
+                type: {
+                    kind: "string",
+                    value: {
+                        constraint: { kind: "regex", value: { regex: "^[A-Z]+$" } },
+                    },
+                },
             },
         ]);
         expect(convertFoundryMetaActionType(metadata).parameters[0]?.type).toEqual(
-            convertFoundryMetaActionType(metadata, { ...oms, actionType: {
-                ...oms.actionType,
-                actionTypeLogic: { ...oms.actionType.actionTypeLogic, validation: {
-                    ...oms.actionType.actionTypeLogic.validation, parameterValidations: {},
-                } },
-            } }).parameters[0]?.type
+            convertFoundryMetaActionType(metadata, {
+                ...oms,
+                actionType: {
+                    ...oms.actionType,
+                    actionTypeLogic: {
+                        ...oms.actionType.actionTypeLogic,
+                        validation: {
+                            ...oms.actionType.actionTypeLogic.validation,
+                            parameterValidations: {},
+                        },
+                    },
+                },
+            }).parameters[0]?.type
         );
     });
 
     it.each([false, true])("retains top-level open string suggestions, list: %s", (list) => {
-        const result = convertFoundryMetaActionType(actionType({
-            tags: {
-                displayName: "Tags",
-                dataType: list ? { type: "array", subType: { type: "string" } } : { type: "string" },
-                required: false,
-                typeClasses: [],
-            },
-        }), omsActionMetadata("tags", omsOneOf(options, true)));
+        const result = convertFoundryMetaActionType(
+            actionType({
+                tags: {
+                    displayName: "Tags",
+                    dataType: list ? { type: "array", subType: { type: "string" } } : { type: "string" },
+                    required: false,
+                    typeClasses: [],
+                },
+            }),
+            omsActionMetadata("tags", omsOneOf(options, true))
+        );
         let type = result.parameters[0]!.type;
         if (type.kind !== "optional") throw new Error("Expected optional type");
         type = type.value.type;

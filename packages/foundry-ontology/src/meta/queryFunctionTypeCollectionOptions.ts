@@ -2,11 +2,11 @@ import { QueryTypes } from "@osdk/foundry.ontologies";
 import { FieldPath, LoadSubsetOptions, parseWhereExpression } from "@tanstack/db";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
-import type { OntologyClient } from "@party-stack/foundry-client";
-import type { OntologyCollectionOptions, QueryFunctionTypeDef } from "@party-stack/ontology";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import { convertFoundryMetaQueryFunctionType } from "./convertMetaQueryFunctionType.js";
 import type { QueryTypeV2 } from "@osdk/foundry.ontologies";
+import type { OntologyClient } from "@party-stack/foundry-client";
+import type { OntologyCollectionOptions, QueryFunctionTypeDef } from "@party-stack/ontology";
 
 export interface QueryFunctionTypeCollectionOpts {
     client: OntologyClient;

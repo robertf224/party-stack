@@ -1,5 +1,6 @@
 # Dependencies
 node_modules
+.pnpm-store/
 
 # Local env files
 .env
@@ -45,3 +46,7 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+
+# Vite+
+.vitest/
+/.vite-hooks/_/

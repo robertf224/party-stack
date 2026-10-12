@@ -12,5 +12,11 @@ runPersistenceContract("upstream contract / IndexedDB", (options) => {
 runPersistenceContract("upstream contract / SQLite control", (options) => {
     const database = new Database(":memory:");
     const { adapter } = createNodeSQLitePersistence({ database, ...options });
-    return { adapter: adapter as ContractAdapter, unserializable: new Date(Number.NaN), cleanup: () => { database.close(); } };
+    return {
+        adapter: adapter as ContractAdapter,
+        unserializable: new Date(Number.NaN),
+        cleanup: () => {
+            database.close();
+        },
+    };
 });

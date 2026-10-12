@@ -1,13 +1,8 @@
 import { eq } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
-import {
-    isLinkHopFromForeignKeySource,
-    resolveLinkHop,
-} from "../utils/links.js";
+import { isLinkHopFromForeignKeySource, resolveLinkHop } from "../utils/links.js";
 import { getAtPath } from "../utils/paths.js";
 import { resolveType, unwrapType } from "../utils/types.js";
-import type { OntologyReadTx } from "./mutators/types.js";
-import type { OntologyObject } from "./objects/OntologyObject.js";
 import type {
     Expression,
     ObjectTypeDef,
@@ -15,6 +10,8 @@ import type {
     TypeDef,
     InputReferenceExpression,
 } from "../ir/index.js";
+import type { OntologyReadTx } from "./mutators/types.js";
+import type { OntologyObject } from "./objects/OntologyObject.js";
 
 function getActionType(ir: OntologyIR, actionTypeName: string) {
     return ir.actionTypes.find((actionType) => actionType.name === actionTypeName)!;
@@ -45,49 +42,28 @@ interface EvaluatedOntologyObject {
     value: OntologyObject;
 }
 
-function isEvaluatedObjectReference(
-    value: unknown
-): value is EvaluatedObjectReference {
-    return (
-        typeof value === "object" &&
-        value !== null &&
-        ontologyReference in value
-    );
+function isEvaluatedObjectReference(value: unknown): value is EvaluatedObjectReference {
+    return typeof value === "object" && value !== null && ontologyReference in value;
 }
 
-function isEvaluatedOntologyObject(
-    value: unknown
-): value is EvaluatedOntologyObject {
-    return (
-        typeof value === "object" &&
-        value !== null &&
-        ontologyObject in value
-    );
+function isEvaluatedOntologyObject(value: unknown): value is EvaluatedOntologyObject {
+    return typeof value === "object" && value !== null && ontologyObject in value;
 }
 
 function unwrapEvaluatedValue(value: unknown): unknown {
     if (isEvaluatedObjectReference(value)) return value.key;
     if (isEvaluatedOntologyObject(value)) return value.value;
     if (Array.isArray(value)) return value.map(unwrapEvaluatedValue);
-    if (
-        value !== null &&
-        typeof value === "object" &&
-        Object.getPrototypeOf(value) === Object.prototype
-    ) {
+    if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
         return Object.fromEntries(
-            Object.entries(value).map(([key, entry]) => [
-                key,
-                unwrapEvaluatedValue(entry),
-            ])
+            Object.entries(value).map(([key, entry]) => [key, unwrapEvaluatedValue(entry)])
         );
     }
     return value;
 }
 
 export async function evaluateExpression(options: EvaluateExpressionOptions): Promise<unknown> {
-    return unwrapEvaluatedValue(
-        await evaluateExpressionWithLocals(options, new Map())
-    );
+    return unwrapEvaluatedValue(await evaluateExpressionWithLocals(options, new Map()));
 }
 
 async function evaluateExpressionWithLocals(
@@ -98,17 +74,12 @@ async function evaluateExpressionWithLocals(
 
     switch (expression.kind) {
         case "inputReference": {
-            const parameterValue = await resolveParameter(
-                expression.value.name
-            );
+            const parameterValue = await resolveParameter(expression.value.name);
             const actionType = getActionType(ir, actionTypeName);
             const parameter = actionType.parameters.find(
-                (candidate) =>
-                    candidate.name === expression.value.name
+                (candidate) => candidate.name === expression.value.name
             )!;
-            const { type: parameterType, isOptional } = unwrapType(
-                resolveType(ir, parameter.type)
-            );
+            const { type: parameterType, isOptional } = unwrapType(resolveType(ir, parameter.type));
             if (parameterType.kind === "objectReference") {
                 return {
                     [ontologyReference]: true,
@@ -142,9 +113,7 @@ async function evaluateExpressionWithLocals(
                 );
             }
             return getAtPath(
-                isEvaluatedOntologyObject(source)
-                    ? source.value
-                    : source,
+                isEvaluatedOntologyObject(source) ? source.value : source,
                 expression.value.path
             );
         }
@@ -157,37 +126,25 @@ async function evaluateExpressionWithLocals(
                 locals
             );
             if (!isEvaluatedObjectReference(reference)) {
-                throw new Error(
-                    "Object lookup source must resolve to an object reference."
-                );
+                throw new Error("Object lookup source must resolve to an object reference.");
             }
             if (reference.key === undefined || reference.key === null) {
                 return undefined;
             }
             const referencedType = ir.objectTypes.find(
-                (candidate) =>
-                    candidate.name === reference.objectType
+                (candidate) => candidate.name === reference.objectType
             )!;
-            const referencedObject =
-                await tx.query<OntologyObject | undefined>(
-                    (query, objects) =>
-                        query
-                            .from({
-                                object: objects[referencedType.name]!,
-                            })
-                            .where(({ object }) =>
-                                eq(
-                                    object[referencedType.primaryKey],
-                                    reference.key
-                                )
-                            )
-                            .select(({ object }) => object)
-                            .findOne()
-                );
+            const referencedObject = await tx.query<OntologyObject | undefined>((query, objects) =>
+                query
+                    .from({
+                        object: objects[referencedType.name]!,
+                    })
+                    .where(({ object }) => eq(object[referencedType.primaryKey], reference.key))
+                    .select(({ object }) => object)
+                    .findOne()
+            );
             if (!referencedObject && !reference.optional) {
-                throw new Error(
-                    `Missing loaded "${referencedType.name}" object.`
-                );
+                throw new Error(`Missing loaded "${referencedType.name}" object.`);
             }
             return referencedObject
                 ? {
@@ -206,44 +163,29 @@ async function evaluateExpressionWithLocals(
                 locals
             );
             if (!isEvaluatedOntologyObject(source)) {
-                throw new Error(
-                    "Link hop source must resolve to an ontology object."
-                );
+                throw new Error("Link hop source must resolve to an ontology object.");
             }
-            const link = resolveLinkHop(
-                ir,
-                source.objectType,
-                expression.value.link
-            );
+            const link = resolveLinkHop(ir, source.objectType, expression.value.link);
             if (!link) {
                 throw new Error(
                     `Unknown link "${expression.value.link}" on object type "${source.objectType}".`
                 );
             }
-            const foreignKeyOnSource =
-                isLinkHopFromForeignKeySource(
-                    link,
-                    source.objectType,
-                    expression.value.link
-                );
-            const cardinality = foreignKeyOnSource
-                ? "one"
-                : link.cardinality;
+            const foreignKeyOnSource = isLinkHopFromForeignKeySource(
+                link,
+                source.objectType,
+                expression.value.link
+            );
+            const cardinality = foreignKeyOnSource ? "one" : link.cardinality;
             if (cardinality === "many") {
                 throw new Error(
                     `Link "${expression.value.link}" on object type "${source.objectType}" is to-many.`
                 );
             }
-            const sourceType = ir.objectTypes.find(
-                (candidate) =>
-                    candidate.name === source.objectType
-            )!;
+            const sourceType = ir.objectTypes.find((candidate) => candidate.name === source.objectType)!;
             const targetType = ir.objectTypes.find(
                 (candidate) =>
-                    candidate.name ===
-                    (foreignKeyOnSource
-                        ? link.target.objectType
-                        : link.source.objectType)
+                    candidate.name === (foreignKeyOnSource ? link.target.objectType : link.source.objectType)
             )!;
             const foreignKeyPath = link.foreignKey.split(".");
             const sourceKey = foreignKeyOnSource
@@ -252,22 +194,16 @@ async function evaluateExpressionWithLocals(
             if (sourceKey === undefined || sourceKey === null) {
                 return undefined;
             }
-            const targetProperty = foreignKeyOnSource
-                ? targetType.primaryKey
-                : link.foreignKey;
-            const linkedObject =
-                await tx.query<OntologyObject | undefined>(
-                    (query, objects) =>
-                        query
-                            .from({
-                                object: objects[targetType.name]!,
-                            })
-                            .where(({ object }) =>
-                                eq(object[targetProperty], sourceKey)
-                            )
-                            .select(({ object }) => object)
-                            .findOne()
-                );
+            const targetProperty = foreignKeyOnSource ? targetType.primaryKey : link.foreignKey;
+            const linkedObject = await tx.query<OntologyObject | undefined>((query, objects) =>
+                query
+                    .from({
+                        object: objects[targetType.name]!,
+                    })
+                    .where(({ object }) => eq(object[targetProperty], sourceKey))
+                    .select(({ object }) => object)
+                    .findOne()
+            );
             return linkedObject
                 ? {
                       [ontologyObject]: true,
@@ -383,9 +319,7 @@ export function getObjectReferenceObjectType(
     reference: InputReferenceExpression
 ): ObjectTypeDef {
     const actionType = getActionType(ir, actionTypeName);
-    const parameter = actionType.parameters.find(
-        (candidate) => candidate.name === reference.name
-    )!;
+    const parameter = actionType.parameters.find((candidate) => candidate.name === reference.name)!;
     const resolvedType = unwrapType(resolveType(ir, parameter.type)).type as Extract<
         TypeDef,
         { kind: "objectReference" }

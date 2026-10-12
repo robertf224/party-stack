@@ -1,5 +1,5 @@
 import { and, eq, ilike, inArray, IR, like, or } from "@tanstack/db";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
     convertActionTypeLoadSubsetFilter,
     convertActionTypeLoadSubsetOrderBy,
@@ -9,10 +9,7 @@ describe("convertActionTypeLoadSubsetFilter", () => {
     it("converts id equality to an exact RID predicate", () => {
         expect(
             convertActionTypeLoadSubsetFilter(
-                eq(
-                    new IR.PropRef<string>(["id"]),
-                    "ri.actions.main.action-type.create-task"
-                )
+                eq(new IR.PropRef<string>(["id"]), "ri.actions.main.action-type.create-task")
             )
         ).toEqual({
             type: "actionTypeRid",
@@ -33,10 +30,7 @@ describe("convertActionTypeLoadSubsetFilter", () => {
 
     it("preserves single-letter word boundaries in exact apiName predicates", () => {
         const filter = convertActionTypeLoadSubsetFilter(
-            eq(
-                new IR.PropRef<string>(["name"]),
-                "createWarrantySubmissionForBBStreamline"
-            )
+            eq(new IR.PropRef<string>(["name"]), "createWarrantySubmissionForBBStreamline")
         );
 
         expect(filter).toEqual({
@@ -87,10 +81,7 @@ describe("convertActionTypeLoadSubsetFilter", () => {
     it("rejects LIKE predicates for ID fields", () => {
         expect(() =>
             convertActionTypeLoadSubsetFilter(
-                like(
-                    new IR.PropRef<string>(["id"]),
-                    "%ri.actions.main.action-type%"
-                )
+                like(new IR.PropRef<string>(["id"]), "%ri.actions.main.action-type%")
             )
         ).toThrow(/does not support LIKE filtering/);
     });

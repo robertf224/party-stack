@@ -1,7 +1,7 @@
-import React from "react";
 import { useAction } from "@bobbyfidz/osdk-react";
 import { editTask, Task } from "@gtd/sdk";
 import { Osdk } from "@osdk/client";
+import React from "react";
 import { Link } from "react-router";
 import { UserAvatar } from "./UserAvatar";
 
@@ -30,8 +30,10 @@ function TaskItem({ task }: TaskItemProps) {
         >
             <div className="flex w-full items-center justify-between">
                 <div className="flex items-center">
-                    <div onClick={(e) => e.stopPropagation()}>
+                    <div>
                         <input
+                            aria-label={`Mark ${task.title ?? "task"} ${task.completedAt ? "incomplete" : "complete"}`}
+                            onClick={(e) => e.stopPropagation()}
                             type="checkbox"
                             checked={!!task.completedAt}
                             onChange={handleToggle}

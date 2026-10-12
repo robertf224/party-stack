@@ -23,8 +23,6 @@ import {
 import { resolveType, unwrapType } from "@party-stack/ontology/utils";
 import { Collection } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
-import type { OntologyClient } from "@party-stack/foundry-client";
-import type { attachment } from "@party-stack/ontology/values";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { getFoundryAttachmentKind } from "../meta/foundryAttachmentMetadata.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
@@ -36,6 +34,8 @@ import {
 import { createFoundryCodec } from "./foundryCodec.js";
 import { decodeFoundryMediaId, mediaReferenceToFoundryMediaId } from "./foundryMediaId.js";
 import { objectCollectionOptions, type ObjectCollectionUtils } from "./objectCollectionOptions.js";
+import type { OntologyClient } from "@party-stack/foundry-client";
+import type { attachment } from "@party-stack/ontology/values";
 
 function isFoundryAttachmentRid(value: string): value is AttachmentRid {
     return /^ri\.attachments\.[^.]+\.attachment\..+$/.test(value);
@@ -62,8 +62,6 @@ export interface FoundryUsersIntegration {
         selection: readonly (keyof PartialAttachmentMetadata)[]
     ): Promise<PartialAttachmentMetadata | undefined>;
 }
-
-type FoundryObject = Record<string, unknown>;
 
 type CollectionWithUtils = Collection<Record<string, unknown>, string | number, ObjectCollectionUtils>;
 type ApplyActionResult = Awaited<ReturnType<typeof Actions.applyWithOverrides>> & {
@@ -94,10 +92,9 @@ function serializeActionExecutionTime(value: unknown): string {
         const candidate = value instanceof Date ? value.toISOString() : String(value);
         return Temporal.Instant.from(candidate).toString();
     } catch (cause) {
-        throw new TypeError(
-            "Invalid action execution time: expected a Date or Temporal-like ISO instant.",
-            { cause }
-        );
+        throw new TypeError("Invalid action execution time: expected a Date or Temporal-like ISO instant.", {
+            cause,
+        });
     }
 }
 
@@ -212,10 +209,7 @@ export function createFoundryOntologyBackendAdapter(
                 target,
                 "A property target must be passed to generateAttachmentId in the Foundry adapter so that we know whether to target attachments or media."
             );
-            if (
-                getFoundryAttachmentKind(target.meta) ===
-                "attachment"
-            ) {
+            if (getFoundryAttachmentKind(target.meta) === "attachment") {
                 return `ri.attachments.main.attachment.${crypto.randomUUID()}`;
             }
             return crypto.randomUUID();
@@ -271,7 +265,7 @@ export function createFoundryOntologyBackendAdapter(
                 );
                 return response.blob();
             }
-            const contents = await Attachments.read(opts.client, attachment.id as AttachmentRid);
+            const contents = await Attachments.read(opts.client, attachment.id);
             return contents.blob();
         },
         getAttachmentMetadata: async (attachment, selection) => {
@@ -325,7 +319,7 @@ export function createFoundryOntologyBackendAdapter(
                     name: info.path,
                 };
             }
-            const metadata = await Attachments.get(opts.client, attachment.id as AttachmentRid);
+            const metadata = await Attachments.get(opts.client, attachment.id);
             return {
                 id: attachment.id,
                 size: Number(metadata.sizeBytes),
@@ -349,15 +343,11 @@ export function createFoundryOntologyBackendAdapter(
                 primaryKeyProperty: objectTypeDef.primaryKey,
                 selectedProperties: objectTypeDef.properties.map((property) => property.name),
                 live: opts.live,
-                decodeObject: (object) => codec.decodeObject(objectType, object) as FoundryObject,
-                decodeEditObject: (object) =>
-                    codec.decodeEditObject(objectType, object) as FoundryObject,
+                decodeObject: (object) => codec.decodeObject(objectType, object),
+                decodeEditObject: (object) => codec.decodeEditObject(objectType, object),
             });
         },
-        validateAction: async (
-            name: string,
-            parameters: Record<string, unknown>
-        ) => {
+        validateAction: async (name: string, parameters: Record<string, unknown>) => {
             const invocation = prepareFoundryActionInvocation({
                 ir: opts.ir,
                 name,
@@ -380,11 +370,11 @@ export function createFoundryOntologyBackendAdapter(
                         },
                         overrides: invocation.overrides,
                     },
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+                    // oxlint-disable-next-line typescript/no-unsafe-argument
                     {
                         preview: true,
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    } as any
+                        // oxlint-disable-next-line typescript/no-explicit-any
+                    }
                 );
             } catch (error) {
                 if (isFoundryNotFoundError(error)) {
@@ -424,9 +414,7 @@ export function createFoundryOntologyBackendAdapter(
             }
             const knownParameters = new Set([
                 ...Object.entries(parameters).flatMap(([parameterName, value]) =>
-                    value === undefined
-                        ? []
-                        : [parameterName]
+                    value === undefined ? [] : [parameterName]
                 ),
                 ...live.knownParameters,
             ]);
@@ -439,27 +427,21 @@ export function createFoundryOntologyBackendAdapter(
             if (missingKnownRequiredParameters.length > 0) {
                 return certain({
                     kind: "err",
-                    value: missingKnownRequiredParameters.map(
-                        (parameter) => ({
-                            message: `Required action parameter "${parameter.name}" is missing.`,
-                            path: [parameter.name],
-                        })
-                    ),
+                    value: missingKnownRequiredParameters.map((parameter) => ({
+                        message: `Required action parameter "${parameter.name}" is missing.`,
+                        path: [parameter.name],
+                    })),
                 });
             }
             const hasUnknownParameters = actionType.parameters.some(
                 (parameter) =>
-                    parameters[parameter.name] === undefined &&
-                    !knownParameters.has(parameter.name)
+                    parameters[parameter.name] === undefined && !knownParameters.has(parameter.name)
             );
             if (!hasUnknownParameters) {
                 return adapter.validateAction!(name, parameters, live);
             }
 
-            const userId =
-                typeof live.context?.user === "string"
-                    ? live.context.user
-                    : undefined;
+            const userId = typeof live.context?.user === "string" ? live.context.user : undefined;
             if (!userId) {
                 return uncertain();
             }
@@ -525,11 +507,11 @@ export function createFoundryOntologyBackendAdapter(
                         },
                         overrides: invocation.overrides,
                     },
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+                    // oxlint-disable-next-line typescript/no-unsafe-argument
                     {
                         preview: true,
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    } as any
+                        // oxlint-disable-next-line typescript/no-explicit-any
+                    }
                 );
             } catch (error) {
                 if (isFoundryNotFoundError(error)) {

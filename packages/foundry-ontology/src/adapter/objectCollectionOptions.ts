@@ -18,13 +18,13 @@ import {
     UtilsRecord,
 } from "@tanstack/db";
 import { Store } from "@tanstack/store";
-import type { OntologyClient } from "@party-stack/foundry-client";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import {
     convertLoadSubsetFilter,
     convertLoadSubsetOrderBy,
     isAlwaysFalseFilter,
 } from "./convertLoadSubsetOptions.js";
+import type { OntologyClient } from "@party-stack/foundry-client";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -258,11 +258,9 @@ function createSyncConfig(
     decodeEditObject: (object: FoundryObject) => FoundryObject = decodeObject,
     live: boolean = true
 ): { sync: SyncConfig<Record<string, unknown>, string | number>; utils: ObjectCollectionUtils } {
-    const seenOperationIds =
-        new Store<Set<string>>(new Set<string>());
+    const seenOperationIds = new Store<Set<string>>(new Set<string>());
     const syncDisposed = new Store(false);
-    const directWebsocketSyncVersion =
-        new Store(0);
+    const directWebsocketSyncVersion = new Store(0);
     let editHistoryUnavailable = false;
     let requestFullRefresh: (() => void) | undefined;
     let requestEditHistoryCatchUp: (() => void) | undefined;
@@ -275,9 +273,7 @@ function createSyncConfig(
             throw new Error("Foundry operationId must be a non-empty string.");
         }
 
-        if (
-            seenOperationIds.state.has(operationId)
-        ) {
+        if (seenOperationIds.state.has(operationId)) {
             return;
         }
 
@@ -292,8 +288,7 @@ function createSyncConfig(
             return;
         }
 
-        const directSyncVersionAtStart =
-            directWebsocketSyncVersion.state;
+        const directSyncVersionAtStart = directWebsocketSyncVersion.state;
         requestEditHistoryCatchUp();
 
         return new Promise<void>((resolve, reject) => {
@@ -306,48 +301,26 @@ function createSyncConfig(
 
             const timeoutId = setTimeout(() => {
                 cleanup();
-                reject(
-                    new TimeoutWaitingForOperationIdError(
-                        operationId,
-                        objectType
-                    )
-                );
+                reject(new TimeoutWaitingForOperationIdError(operationId, objectType));
             }, timeout);
-            const seenOperationIdsSubscription =
-                seenOperationIds.subscribe(() => {
-                    if (
-                        seenOperationIds.state.has(
-                            operationId
-                        )
-                    ) {
-                        cleanup();
-                        resolve();
-                    }
-                });
-            const directWebsocketSyncVersionSubscription =
-                directWebsocketSyncVersion.subscribe(
-                    () => {
-                        if (
-                            editHistoryUnavailable &&
-                            directWebsocketSyncVersion.state >
-                                directSyncVersionAtStart
-                        ) {
-                            cleanup();
-                            resolve();
-                        }
-                    }
-                );
-            const disposedSubscription =
-                syncDisposed.subscribe(() => {
-                    if (syncDisposed.state) {
-                        cleanup();
-                        reject(
-                            new ObjectCollectionSyncAbortedError(
-                                objectType
-                            )
-                        );
-                    }
-                });
+            const seenOperationIdsSubscription = seenOperationIds.subscribe(() => {
+                if (seenOperationIds.state.has(operationId)) {
+                    cleanup();
+                    resolve();
+                }
+            });
+            const directWebsocketSyncVersionSubscription = directWebsocketSyncVersion.subscribe(() => {
+                if (editHistoryUnavailable && directWebsocketSyncVersion.state > directSyncVersionAtStart) {
+                    cleanup();
+                    resolve();
+                }
+            });
+            const disposedSubscription = syncDisposed.subscribe(() => {
+                if (syncDisposed.state) {
+                    cleanup();
+                    reject(new ObjectCollectionSyncAbortedError(objectType));
+                }
+            });
         });
     };
 
@@ -355,14 +328,7 @@ function createSyncConfig(
 
     const sync: SyncConfig<Record<string, unknown>, string | number> = {
         sync: (params) => {
-            const {
-                begin,
-                write,
-                commit,
-                markError,
-                markReady,
-                truncate,
-            } = params;
+            const { begin, write, commit, markError, markReady, truncate } = params;
             const collectionMetadata = params.metadata?.collection;
 
             syncDisposed.setState(() => false);
@@ -428,10 +394,10 @@ function createSyncConfig(
                     client.ontologyRid,
                     objectType,
                     body,
-                    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+                    // oxlint-disable-next-line typescript/no-unsafe-argument
                     {
                         preview: true,
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        // oxlint-disable-next-line typescript/no-explicit-any
                     } as unknown as any
                 );
 
@@ -442,7 +408,7 @@ function createSyncConfig(
                 decodeEditObject({
                     ...properties,
                     [primaryKeyProperty]: primaryKey,
-                } as FoundryObject);
+                });
 
             const decodeWatcherObject = (object: FoundryObject, primaryKey: string | number): FoundryObject =>
                 decodeObject({
@@ -461,7 +427,7 @@ function createSyncConfig(
                     if (update.type !== "object") continue;
 
                     observedObjectUpdate = true;
-                    const object = update.object as FoundryObject;
+                    const object = update.object;
                     const primaryKey = getWatcherObjectKey(object);
 
                     switch (update.state) {
@@ -494,9 +460,7 @@ function createSyncConfig(
                 const receipt = transactionStarted ? commit() : true;
 
                 if (observedObjectUpdate) {
-                    directWebsocketSyncVersion.setState(
-                        (version) => version + 1
-                    );
+                    directWebsocketSyncVersion.setState((version) => version + 1);
                 }
 
                 if (receipt !== true) await receipt;
@@ -512,18 +476,11 @@ function createSyncConfig(
                     editHistoryUnavailable = true;
                 }
 
-                if (
-                    pendingDirectWatcherUpdates.length >
-                    0
-                ) {
-                    const updates =
-                        pendingDirectWatcherUpdates;
+                if (pendingDirectWatcherUpdates.length > 0) {
+                    const updates = pendingDirectWatcherUpdates;
                     pendingDirectWatcherUpdates = [];
                     void applyDirectWatcherUpdates(updates).catch((applyError: unknown) => {
-                        console.warn(
-                            `Failed to apply direct Foundry updates for ${objectType}.`,
-                            applyError
-                        );
+                        console.warn(`Failed to apply direct Foundry updates for ${objectType}.`, applyError);
                     });
                 }
                 requestFullRefresh?.();
@@ -612,13 +569,7 @@ function createSyncConfig(
                 }
 
                 if (newOperationIds.size > 0) {
-                    seenOperationIds.setState(
-                        (current) =>
-                            new Set([
-                                ...current,
-                                ...newOperationIds,
-                            ])
-                    );
+                    seenOperationIds.setState((current) => new Set([...current, ...newOperationIds]));
                 }
 
                 pendingDirectWatcherUpdates = [];
@@ -651,9 +602,7 @@ function createSyncConfig(
                     pendingDirectWatcherUpdates = [];
                     await applyDirectWatcherUpdates(updates);
                 }
-                directWebsocketSyncVersion.setState(
-                    (version) => version + 1
-                );
+                directWebsocketSyncVersion.setState((version) => version + 1);
 
                 if (receipt !== true) await receipt;
             };
@@ -724,51 +673,48 @@ function createSyncConfig(
 
             const loadSubsetDedupe = new DeduplicatedLoadSubset({ loadSubset });
             const unsubscribe = live
-                ? getObjectSetWatcherManager(client).subscribe(
-                      { type: "base", objectType },
-                      (message) => {
-                          switch (message.type) {
-                              case "change": {
-                                  if (editHistoryUnavailable) {
-                                      if (fullRefreshTask) {
-                                          pendingDirectWatcherUpdates.push(...message.updates);
-                                      } else {
-                                          void applyDirectWatcherUpdates(message.updates).catch(
-                                              (error: unknown) => {
-                                                  console.warn(
-                                                      `Failed to apply direct Foundry updates for ${objectType}.`,
-                                                      error
-                                                  );
-                                                  requestFullRefresh?.();
-                                              }
-                                          );
-                                      }
-                                  } else {
+                ? getObjectSetWatcherManager(client).subscribe({ type: "base", objectType }, (message) => {
+                      switch (message.type) {
+                          case "change": {
+                              if (editHistoryUnavailable) {
+                                  if (fullRefreshTask) {
                                       pendingDirectWatcherUpdates.push(...message.updates);
-                                      requestEditHistoryCatchUp?.();
-                                  }
-                                  break;
-                              }
-                              case "refresh": {
-                                  if (editHistoryUnavailable) {
-                                      requestFullRefresh?.();
                                   } else {
-                                      requestEditHistoryCatchUp?.();
+                                      void applyDirectWatcherUpdates(message.updates).catch(
+                                          (error: unknown) => {
+                                              console.warn(
+                                                  `Failed to apply direct Foundry updates for ${objectType}.`,
+                                                  error
+                                              );
+                                              requestFullRefresh?.();
+                                          }
+                                      );
                                   }
-                                  break;
+                              } else {
+                                  pendingDirectWatcherUpdates.push(...message.updates);
+                                  requestEditHistoryCatchUp?.();
                               }
-                              case "state": {
-                                  if (message.status !== "open") break;
-                                  if (editHistoryUnavailable) {
-                                      requestFullRefresh?.();
-                                  } else {
-                                      requestEditHistoryCatchUp?.();
-                                  }
-                                  break;
+                              break;
+                          }
+                          case "refresh": {
+                              if (editHistoryUnavailable) {
+                                  requestFullRefresh?.();
+                              } else {
+                                  requestEditHistoryCatchUp?.();
                               }
+                              break;
+                          }
+                          case "state": {
+                              if (message.status !== "open") break;
+                              if (editHistoryUnavailable) {
+                                  requestFullRefresh?.();
+                              } else {
+                                  requestEditHistoryCatchUp?.();
+                              }
+                              break;
                           }
                       }
-                  )
+                  })
                 : () => {};
 
             // start task here, cleanup can stop it
@@ -814,7 +760,8 @@ export interface ObjectCollectionOpts {
 }
 
 export interface ObjectCollectionConfig<TSchema extends StandardSchema<OntologyObject>>
-    extends ObjectCollectionOpts,
+    extends
+        ObjectCollectionOpts,
         Omit<
             CollectionConfig<InferSchemaOutput<TSchema>, string | number, TSchema>,
             "sync" | "syncMode" | "getKey" | "onInsert" | "onUpdate" | "onDelete"
@@ -837,7 +784,7 @@ export function objectCollectionOptions(config: ObjectCollectionOpts): {
     sync: SyncConfig<Record<string, unknown>, string | number>;
     utils: ObjectCollectionUtils;
 };
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// oxlint-disable-next-line typescript/no-explicit-any
 export function objectCollectionOptions(config: any): any {
     const {
         client,
@@ -849,11 +796,10 @@ export function objectCollectionOptions(config: any): any {
         decodeEditObject,
         schema,
         ...rest
-    } =
-        config as ObjectCollectionOpts & { schema?: StandardSchema<OntologyObject> } & Record<
-                string,
-                unknown
-            >;
+    } = config as ObjectCollectionOpts & { schema?: StandardSchema<OntologyObject> } & Record<
+            string,
+            unknown
+        >;
     const { sync, utils } = createSyncConfig(
         client,
         objectType,

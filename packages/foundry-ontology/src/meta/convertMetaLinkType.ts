@@ -1,6 +1,10 @@
 import { invariant } from "@bobbyfidz/panic";
+import type {
+    LinkTypeSideCardinality,
+    LinkTypeSideV2,
+    ObjectTypeFullMetadata,
+} from "@osdk/foundry.ontologies";
 import type { MetaLinkType } from "@party-stack/ontology";
-import type { LinkTypeSideCardinality, LinkTypeSideV2, ObjectTypeFullMetadata } from "@osdk/foundry.ontologies";
 
 export function convertFoundryMetaLinkTypes(objectTypes: ObjectTypeFullMetadata[]): MetaLinkType[] {
     const sidesByRid = new Map<string, LinkTypeSideV2[]>();

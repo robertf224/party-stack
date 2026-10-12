@@ -28,9 +28,7 @@ try {
     const tasks = await client.query(
         "SELECT Id, Status, Priority, ActivityDate, CreatedDate FROM Task ORDER BY CreatedDate DESC LIMIT 5"
     );
-    console.log(
-        `✓ Task SOQL query succeeded (${tasks.records.length} returned, ${tasks.totalSize} total)`
-    );
+    console.log(`✓ Task SOQL query succeeded (${tasks.records.length} returned, ${tasks.totalSize} total)`);
 
     try {
         const flowActions = await client.listFlowActions();

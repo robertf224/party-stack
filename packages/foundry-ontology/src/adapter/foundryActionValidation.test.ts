@@ -1,11 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { OntologyClient } from "@party-stack/foundry-client";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
     type FoundrySubmissionCriterion,
     getFoundryValidationIssues,
     validateFoundryActionDraftCriteria,
 } from "./foundryActionValidation.js";
 import type { Condition, ConditionValue } from "@osdk/client.unstable";
+import type { OntologyClient } from "@party-stack/foundry-client";
 
 const adminMocks = vi.hoisted(() => ({
     listGroupMemberships: vi.fn(),
@@ -180,9 +180,11 @@ describe("validateFoundryActionDraftCriteria", () => {
     });
 
     it("returns uncertain when no criterion is provably impossible", async () => {
-        await expect(validate({
-            "Only administrators may submit.": unknown(),
-        })).resolves.toEqual({
+        await expect(
+            validate({
+                "Only administrators may submit.": unknown(),
+            })
+        ).resolves.toEqual({
             certain: false,
         });
     });
@@ -234,32 +236,21 @@ describe("validateFoundryActionDraftCriteria", () => {
                 kind: "err",
                 value: [
                     {
-                        message:
-                            "Impossible submission criterion: Only administrators may submit.",
+                        message: "Impossible submission criterion: Only administrators may submit.",
                     },
                 ],
             },
         });
-        expect(adminMocks.listGroupMemberships).toHaveBeenNthCalledWith(
-            1,
-            expect.anything(),
-            "user-1",
-            {
-                pageSize: 1_000,
-                pageToken: undefined,
-                transitive: true,
-            }
-        );
-        expect(adminMocks.listGroupMemberships).toHaveBeenNthCalledWith(
-            2,
-            expect.anything(),
-            "user-1",
-            {
-                pageSize: 1_000,
-                pageToken: "next-page",
-                transitive: true,
-            }
-        );
+        expect(adminMocks.listGroupMemberships).toHaveBeenNthCalledWith(1, expect.anything(), "user-1", {
+            pageSize: 1_000,
+            pageToken: undefined,
+            transitive: true,
+        });
+        expect(adminMocks.listGroupMemberships).toHaveBeenNthCalledWith(2, expect.anything(), "user-1", {
+            pageSize: 1_000,
+            pageToken: "next-page",
+            transitive: true,
+        });
     });
 });
 

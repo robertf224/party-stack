@@ -39,8 +39,7 @@ export interface SalesforceSObjectDescribe {
     [key: string]: unknown;
 }
 
-export type DescribeSObjectResult =
-    SalesforceSObjectDescribe;
+export type DescribeSObjectResult = SalesforceSObjectDescribe;
 
 export interface SalesforceGlobalSObjectSummary {
     label: string;
@@ -56,8 +55,7 @@ export interface SalesforceGlobalDescribeResponse {
     sobjects: SalesforceGlobalSObjectSummary[];
 }
 
-export type DescribeGlobalResult =
-    SalesforceGlobalDescribeResponse;
+export type DescribeGlobalResult = SalesforceGlobalDescribeResponse;
 
 export interface SalesforceRecord {
     attributes?: {
@@ -67,18 +65,14 @@ export interface SalesforceRecord {
     [key: string]: unknown;
 }
 
-export interface SalesforceQueryResponse<
-    T extends SalesforceRecord = SalesforceRecord,
-> {
+export interface SalesforceQueryResponse<T extends SalesforceRecord = SalesforceRecord> {
     done: boolean;
     nextRecordsUrl?: string;
     records: T[];
     totalSize: number;
 }
 
-export type QueryResult<
-    T extends SalesforceRecord = SalesforceRecord,
-> = SalesforceQueryResponse<T>;
+export type QueryResult<T extends SalesforceRecord = SalesforceRecord> = SalesforceQueryResponse<T>;
 
 export interface SalesforceSaveResult {
     errors: Array<{
@@ -159,9 +153,7 @@ export interface SalesforceChangeEventHeader {
     transactionKey?: string;
 }
 
-export interface SalesforceChangeEvent<
-    Payload extends Record<string, unknown> = Record<string, unknown>,
-> {
+export interface SalesforceChangeEvent<Payload extends Record<string, unknown> = Record<string, unknown>> {
     event?: {
         replayId?: number;
     };

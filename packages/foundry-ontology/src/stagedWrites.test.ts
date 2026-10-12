@@ -1,8 +1,8 @@
 import { o } from "@party-stack/ontology";
-import { describe, expect, it } from "vitest";
-import type { OntologyIR } from "@party-stack/ontology";
+import { describe, expect, it } from "vite-plus/test";
 import { runFoundryOntologyMutator } from "./stagedWrites.js";
 import type { FoundryStagedWriteClient } from "./stagedWrites.js";
+import type { OntologyIR } from "@party-stack/ontology";
 
 const ir: OntologyIR = {
     types: [],

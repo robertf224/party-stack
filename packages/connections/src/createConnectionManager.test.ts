@@ -1,19 +1,15 @@
 import { unauthenticated } from "@party-stack/errors";
 import { createDefaultRuntime } from "@party-stack/runtime";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { createConnectionManager } from "./createConnectionManager.js";
 import { createConnectionMonitor } from "./createConnectionMonitor.js";
-import type {
-    BackendConnectionAdapter,
-    ConnectionEgressHandlers,
-} from "./types.js";
+import type { BackendConnectionAdapter, ConnectionEgressHandlers } from "./types.js";
 
 describe("createConnectionManager", () => {
     it("loads, connects, and disconnects stable user connections", async () => {
         const handlers: ConnectionEgressHandlers = {
             fetch: () => Promise.resolve(new Response()),
-            createWebSocket: () =>
-                Promise.reject(new Error("unexpected websocket")),
+            createWebSocket: () => Promise.reject(new Error("unexpected websocket")),
         };
         const disconnect = vi.fn(() => Promise.resolve());
         const adapter: BackendConnectionAdapter<{
@@ -37,10 +33,7 @@ describe("createConnectionManager", () => {
             }),
             restoreConnections: () => Promise.resolve([]),
         };
-        const runtime = createDefaultRuntime(
-            "installation",
-            "connections-test"
-        );
+        const runtime = createDefaultRuntime("installation", "connections-test");
         const manager = await createConnectionManager({
             installationId: "test-installation",
             runtime,
@@ -48,8 +41,7 @@ describe("createConnectionManager", () => {
         });
 
         await manager.authentication.signIn("user-1");
-        const connection =
-            manager.connections.get("user-1")!;
+        const connection = manager.connections.get("user-1")!;
 
         expect(connection).toMatchObject({
             userId: "user-1",
@@ -57,10 +49,7 @@ describe("createConnectionManager", () => {
         expect(connection.state.status).toBe("active");
         expect(manager.connections.get("user-1")).toEqual(connection);
 
-        const monitor = createConnectionMonitor(
-            manager,
-            "user-1"
-        );
+        const monitor = createConnectionMonitor(manager, "user-1");
         const listener = vi.fn();
         const unsubscribe = monitor.subscribe(listener);
         await manager.authentication.signIn("user-2");
@@ -70,27 +59,19 @@ describe("createConnectionManager", () => {
         await manager.disconnect("user-1");
         await Promise.resolve();
         expect(disconnect).toHaveBeenCalledOnce();
-        expect(
-            manager.connections.get("user-1")?.state.status
-        ).toBe("inactive");
+        expect(manager.connections.get("user-1")?.state.status).toBe("inactive");
         expect(listener).toHaveBeenLastCalledWith({
             status: "inactive",
         });
         unsubscribe();
 
-        await monitor.reportUnauthenticated(
-            unauthenticated("Session expired.")
-        );
+        await monitor.reportUnauthenticated(unauthenticated("Session expired."));
         expect(monitor.state).toEqual({
             status: "needs-auth",
             error: "Session expired.",
         });
         await manager.forget("user-1");
-        expect(
-            manager.connections.get(
-                "user-1"
-            )
-        ).toBeUndefined();
+        expect(manager.connections.get("user-1")).toBeUndefined();
         expect(monitor.state).toEqual({
             status: "inactive",
         });
@@ -100,54 +81,47 @@ describe("createConnectionManager", () => {
     });
 
     it("preserves persisted needs-auth connections when restoration omits them", async () => {
-        const runtime = createDefaultRuntime(
-            "installation",
-            `connections-needs-auth-${crypto.randomUUID()}`
-        );
-        const applyCommittedTx = vi.fn(() =>
-            Promise.resolve()
-        );
-        const rows = [{
-            key: "user-1",
-            value: { userId: "user-1", state: { status: "needs-auth", error: "Session expired." } },
-        }];
-        const manager =
-            await createConnectionManager({
-                installationId:
-                    "test-installation",
-                runtime: {
-                    ...runtime,
-                    persistence: {
-                        adapter: {
-                            loadSubset: () => Promise.resolve(rows),
-                            loadResumeSnapshot: () => Promise.resolve({
-                                rows, collectionMetadata: [], latestTerm: 0, latestSeq: 0, latestRowVersion: 0, resetEpoch: 0,
+        const runtime = createDefaultRuntime("installation", `connections-needs-auth-${crypto.randomUUID()}`);
+        const applyCommittedTx = vi.fn(() => Promise.resolve());
+        const rows = [
+            {
+                key: "user-1",
+                value: { userId: "user-1", state: { status: "needs-auth", error: "Session expired." } },
+            },
+        ];
+        const manager = await createConnectionManager({
+            installationId: "test-installation",
+            runtime: {
+                ...runtime,
+                persistence: {
+                    adapter: {
+                        loadSubset: () => Promise.resolve(rows),
+                        loadResumeSnapshot: () =>
+                            Promise.resolve({
+                                rows,
+                                collectionMetadata: [],
+                                latestTerm: 0,
+                                latestSeq: 0,
+                                latestRowVersion: 0,
+                                resetEpoch: 0,
                             }),
-                            applyCommittedTx,
-                            ensureIndex: () =>
-                                Promise.resolve(),
-                        },
+                        applyCommittedTx,
+                        ensureIndex: () => Promise.resolve(),
                     },
                 },
-                adapter: () => ({
-                    name: "test",
-                    createAuthenticationClient:
-                        () => ({}),
-                    restoreConnections: () =>
-                        Promise.resolve([]),
-                }),
-            });
+            },
+            adapter: () => ({
+                name: "test",
+                createAuthenticationClient: () => ({}),
+                restoreConnections: () => Promise.resolve([]),
+            }),
+        });
 
-        expect(
-            manager.connections.get("user-1")
-                ?.state
-        ).toEqual({
+        expect(manager.connections.get("user-1")?.state).toEqual({
             status: "needs-auth",
             error: "Session expired.",
         });
-        expect(
-            applyCommittedTx
-        ).not.toHaveBeenCalled();
+        expect(applyCommittedTx).not.toHaveBeenCalled();
         await manager.cleanup();
         await runtime.cleanup?.();
     });
@@ -165,26 +139,19 @@ describe("createConnectionManager", () => {
                             state: {
                                 status: "active",
                                 expiration: {
-                                    expiresAt:
-                                        Date.now() -
-                                        1,
-                                    refreshable:
-                                        false,
+                                    expiresAt: Date.now() - 1,
+                                    refreshable: false,
                                 },
                             },
                         },
                         session: {
-                            disconnect: () =>
-                                Promise.resolve(),
+                            disconnect: () => Promise.resolve(),
                         },
                     }),
             }),
             restoreConnections: () => Promise.resolve([]),
         };
-        const runtime = createDefaultRuntime(
-            "installation",
-            `connections-expiry-${crypto.randomUUID()}`
-        );
+        const runtime = createDefaultRuntime("installation", `connections-expiry-${crypto.randomUUID()}`);
         const manager = await createConnectionManager({
             installationId: "test-installation",
             runtime,
@@ -194,10 +161,7 @@ describe("createConnectionManager", () => {
         await manager.authentication.signIn();
 
         await vi.waitFor(() => {
-            expect(
-                manager.connections.get("user-1")
-                    ?.state.status
-            ).toBe("needs-auth");
+            expect(manager.connections.get("user-1")?.state.status).toBe("needs-auth");
         });
         await manager.cleanup();
         await runtime.cleanup?.();
@@ -211,16 +175,13 @@ describe("createConnectionManager", () => {
                     state: {
                         status: "active" as const,
                         expiration: {
-                            expiresAt:
-                                Date.now() +
-                                60 * 60 * 1_000,
+                            expiresAt: Date.now() + 60 * 60 * 1_000,
                             refreshable: true,
                         },
                     },
                 },
                 session: {
-                    disconnect: () =>
-                        Promise.resolve(),
+                    disconnect: () => Promise.resolve(),
                 },
             })
         );
@@ -233,29 +194,21 @@ describe("createConnectionManager", () => {
                         connection: {
                             userId: "user-1",
                             state: {
-                                status:
-                                    "active",
+                                status: "active",
                                 expiration: {
-                                    expiresAt:
-                                        Date.now() -
-                                        1,
-                                    refreshable:
-                                        true,
+                                    expiresAt: Date.now() - 1,
+                                    refreshable: true,
                                 },
                             },
                         },
                         session: {
                             refresh,
-                            disconnect: () =>
-                                Promise.resolve(),
+                            disconnect: () => Promise.resolve(),
                         },
                     },
                 ]),
         };
-        const runtime = createDefaultRuntime(
-            "installation",
-            `connections-refresh-${crypto.randomUUID()}`
-        );
+        const runtime = createDefaultRuntime("installation", `connections-refresh-${crypto.randomUUID()}`);
         const manager = await createConnectionManager({
             installationId: "test-installation",
             runtime,
@@ -265,9 +218,7 @@ describe("createConnectionManager", () => {
         await vi.waitFor(() => {
             expect(refresh).toHaveBeenCalledOnce();
         });
-        expect(
-            manager.connections.get("user-1")?.state
-        ).toMatchObject({
+        expect(manager.connections.get("user-1")?.state).toMatchObject({
             status: "active",
             expiration: {
                 refreshable: true,

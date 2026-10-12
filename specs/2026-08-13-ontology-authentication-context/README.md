@@ -66,13 +66,7 @@ export const foundryUserToUser = {
             to: ["avatar"],
         }),
         o.LensOp.select({
-            properties: [
-                "id",
-                "givenName",
-                "familyName",
-                "email",
-                "avatar",
-            ],
+            properties: ["id", "givenName", "familyName", "email", "avatar"],
         }),
     ],
 } satisfies Lens;
@@ -150,7 +144,7 @@ No per-field authority/exposure/lifetime metadata is added now.
 `contextReference` validation traverses `contextType`, so:
 
 ```ts
-o.Expression.contextReference({ path: ["user"] })
+o.Expression.contextReference({ path: ["user"] });
 ```
 
 generates the referenced object's key type, while other fields receive their
@@ -166,9 +160,7 @@ Remote ontology keeps its existing projection boundary:
 ```ts
 type RemoteOntologyClientContextPolicy<Context> =
     | "forward"
-    | ((ctx: Context) =>
-          Record<string, unknown> | undefined |
-          Promise<Record<string, unknown> | undefined>);
+    | ((ctx: Context) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>);
 ```
 
 - `"forward"` sends the full safe context.
@@ -193,10 +185,7 @@ interface IssueTrackerContext {
 and:
 
 ```ts
-interface LiveOntology<
-    Ontology extends OntologyDefinition,
-    Context,
-> {
+interface LiveOntology<Ontology extends OntologyDefinition, Context> {
     readonly context: Readonly<Context>;
     // existing fields...
 }
@@ -229,16 +218,12 @@ type ConnectionState =
 
 type ConnectionStatus = ConnectionState["status"];
 
-interface Connection<
-    Status extends ConnectionStatus = ConnectionStatus
-> {
+interface Connection<Status extends ConnectionStatus = ConnectionStatus> {
     userId: string;
     state: ConnectionState & { status: Status };
 }
 
-interface ConnectionManager<
-    AuthenticationClient extends object = object
-> {
+interface ConnectionManager<AuthenticationClient extends object = object> {
     readonly authentication: AuthenticationClient;
     readonly connections: Collection<Connection, string>;
     disconnect(userId: string): Promise<void>;
@@ -247,12 +232,8 @@ interface ConnectionManager<
 
 interface ConnectionMonitor {
     readonly state: ConnectionState;
-    subscribe(
-        listener: (state: ConnectionState) => void
-    ): () => void;
-    reportUnauthenticated(
-        error: UnauthenticatedError
-    ): Promise<void>;
+    subscribe(listener: (state: ConnectionState) => void): () => void;
+    reportUnauthenticated(error: UnauthenticatedError): Promise<void>;
 }
 ```
 
@@ -294,7 +275,7 @@ const { data: currentUser } = useLiveQuery(
             .where(({ user }) => eq(user.id, userId))
             .findOne();
     },
-    [userId],
+    [userId]
 );
 ```
 
@@ -305,10 +286,7 @@ shape:
 
 ```ts
 function getUserDisplayName(user: User): string {
-    const fullName = [
-        user.givenName,
-        user.familyName,
-    ].filter(Boolean).join(" ");
+    const fullName = [user.givenName, user.familyName].filter(Boolean).join(" ");
 
     return fullName || user.id;
 }
@@ -319,8 +297,7 @@ function getUserInitials(user: User): string {
             .filter(Boolean)
             .map((name) => name![0])
             .join("")
-            .toUpperCase() ||
-        user.id.slice(0, 2).toUpperCase()
+            .toUpperCase() || user.id.slice(0, 2).toUpperCase()
     );
 }
 ```
@@ -453,8 +430,8 @@ branch keeps today's flow. No backend-specific credential storage is added.
 The pull API names the provider-specific metadata source directly:
 
 ```ts
-OntologyPullSource
-OntologyPullConfig.source
+OntologyPullSource;
+OntologyPullConfig.source;
 ```
 
 and distinguish provider normalization from app transforms:
@@ -462,17 +439,12 @@ and distinguish provider normalization from app transforms:
 ```ts
 interface OntologyPullSource<Options> {
     createBackend(options: Options): Promise<OntologyBackendAdapter>;
-    transformPulledOntology?(
-        ontology: OntologyIR,
-        options: Options,
-    ): OntologyIR | Promise<OntologyIR>;
+    transformPulledOntology?(ontology: OntologyIR, options: Options): OntologyIR | Promise<OntologyIR>;
 }
 
 interface OntologyPullConfig {
     source: OntologyPullSource;
-    transformOntology?(
-        ontology: OntologyIR,
-    ): OntologyIR | Promise<OntologyIR>;
+    transformOntology?(ontology: OntologyIR): OntologyIR | Promise<OntologyIR>;
 }
 ```
 
@@ -513,9 +485,7 @@ networking capability separately from ontology context:
 interface ConnectionSession {
     refresh?(): Promise<EstablishedConnection>;
     disconnect(): Promise<void>;
-    egress?(
-        handlers: ConnectionEgressHandlers
-    ): ConnectionEgressHandlers;
+    egress?(handlers: ConnectionEgressHandlers): ConnectionEgressHandlers;
     cleanup?(): void | Promise<void>;
 }
 
@@ -529,13 +499,9 @@ interface ConnectionController {
     disconnect(userId: string): Promise<void>;
 }
 
-interface BackendConnectionAdapter<
-    AuthenticationClient extends object = object
-> {
+interface BackendConnectionAdapter<AuthenticationClient extends object = object> {
     readonly name: string;
-    createAuthenticationClient(
-        controller: ConnectionController
-    ): AuthenticationClient;
+    createAuthenticationClient(controller: ConnectionController): AuthenticationClient;
     restoreConnections(): Promise<readonly EstablishedConnection[]>;
     cleanup?(): void | Promise<void>;
 }
@@ -546,18 +512,12 @@ type BackendConnectionAdapterProvider = (
 
 interface ConnectionEgressHandlers {
     fetch(request: Request): Promise<Response>;
-    createWebSocket(
-        url: string | URL,
-        protocols?: string | string[]
-    ): Promise<WebSocket>;
+    createWebSocket(url: string | URL, protocols?: string | string[]): Promise<WebSocket>;
 }
 
 interface ConnectionEgress {
     fetch: typeof globalThis.fetch;
-    createWebSocket(
-        url: string | URL,
-        protocols?: string | string[]
-    ): Promise<WebSocket>;
+    createWebSocket(url: string | URL, protocols?: string | string[]): Promise<WebSocket>;
 }
 ```
 
@@ -634,7 +594,7 @@ manages stable per-user Connections, and each Connection may open multiple
 ontology IDs using the same transport:
 
 ```ts
-const foundry = await createFoundryBackendInstallation({ /* ... */ });
+const foundry = await createFoundryBackendInstallation({/* ... */});
 const connection = await foundry.authentication.signIn.oauth();
 const admin = await foundry.openOntology({ connection, ontologyId: "admin" });
 const app = await foundry.openOntology({ connection, ontologyId: appRid });

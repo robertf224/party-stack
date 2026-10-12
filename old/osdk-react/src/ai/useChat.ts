@@ -80,7 +80,7 @@ export function useChat<Status extends "submitted" | "streaming" | "ready" | "er
                 setState({ type: "error", error: error as Error });
             }
         },
-        [client, agentRid, opts.sessionRid]
+        [client, agentRid, opts.sessionRid, queryClient]
     );
 
     return {

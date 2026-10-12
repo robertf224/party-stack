@@ -190,9 +190,13 @@ function mapPersistedContainer(
         const mapped: unknown[] = [];
         seen.set(value, mapped);
         mapped.length = value.length;
-        for (const key of Object.keys(value)) Object.defineProperty(mapped, key, {
-            value: visit(Reflect.get(value, key), seen), enumerable: true, writable: true, configurable: true,
-        });
+        for (const key of Object.keys(value))
+            Object.defineProperty(mapped, key, {
+                value: visit(Reflect.get(value, key), seen),
+                enumerable: true,
+                writable: true,
+                configurable: true,
+            });
         return mapped;
     }
     if (value instanceof Map) {
@@ -211,9 +215,13 @@ function mapPersistedContainer(
     if (prototype === Object.prototype || prototype === null) {
         const mapped = target ?? {};
         if (!seen.has(value)) seen.set(value, mapped);
-        for (const [key, entry] of Object.entries(value)) Object.defineProperty(mapped, key, {
-            value: visit(entry, seen), enumerable: true, writable: true, configurable: true,
-        });
+        for (const [key, entry] of Object.entries(value))
+            Object.defineProperty(mapped, key, {
+                value: visit(entry, seen),
+                enumerable: true,
+                writable: true,
+                configurable: true,
+            });
         return mapped;
     }
     return value;
@@ -251,9 +259,14 @@ function decodePersistedValue(value: unknown, seen = new WeakMap<object, unknown
     if (PERSISTED_TYPE in value && "value" in value) {
         const persisted = value as Record<string, unknown>;
         const tag = persisted[PERSISTED_TYPE];
-        if ((tag === "Temporal.Instant" || tag === "Temporal.PlainDate") && typeof persisted.value === "string") {
-            const decoded = tag === "Temporal.Instant"
-                ? Temporal.Instant.from(persisted.value) : Temporal.PlainDate.from(persisted.value);
+        if (
+            (tag === "Temporal.Instant" || tag === "Temporal.PlainDate") &&
+            typeof persisted.value === "string"
+        ) {
+            const decoded =
+                tag === "Temporal.Instant"
+                    ? Temporal.Instant.from(persisted.value)
+                    : Temporal.PlainDate.from(persisted.value);
             seen.set(value, decoded);
             return decoded;
         }
@@ -267,9 +280,11 @@ function decodePersistedValue(value: unknown, seen = new WeakMap<object, unknown
 }
 
 function hasCurrentIndexEncoding(definition: IndexDefinitionRecord): boolean {
-    return definition.encodingVersion === INDEX_ENCODING_VERSION ||
+    return (
+        definition.encodingVersion === INDEX_ENCODING_VERSION ||
         // Version 3 changes only bigint keys. Reuse other version 2 indexes.
-        (definition.encodingVersion === 2 && !definition.valueTypes.includes("bigint"));
+        (definition.encodingVersion === 2 && !definition.valueTypes.includes("bigint"))
+    );
 }
 
 function encodeBigIntIndexValue(value: bigint): [number, number, string] {
@@ -504,10 +519,7 @@ function rangeAfter(range: IDBKeyRange, entry: IndexEntryRecord): IDBKeyRange | 
 }
 
 function compatibleRangeType(definition: IndexDefinitionRecord, valueType: IndexValueType): boolean {
-    if (
-        definition.hasUnsupportedValues ||
-        ["nan", "null", "string-ci", "undefined"].includes(valueType)
-    ) {
+    if (definition.hasUnsupportedValues || ["nan", "null", "string-ci", "undefined"].includes(valueType)) {
         return false;
     }
     return definition.valueTypes
@@ -722,8 +734,7 @@ function compareOrderValues(
             options.stringSort === "locale" ? options.locale : undefined,
             options.stringSort === "locale" ? options.localeOptions : undefined
         );
-    else if (a.type === b.type)
-        comparison = indexedDB.cmp(a.value, b.value);
+    else if (a.type === b.type) comparison = indexedDB.cmp(a.value, b.value);
     else
         comparison =
             (left as string | number | bigint | boolean) < (right as string | number | bigint | boolean)
@@ -779,7 +790,10 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
     private readonly initialized = new Map<string, Promise<number>>();
     readonly schemaVersion: number;
 
-    constructor(private readonly options: IndexedDBPersistenceAdapterOptions, connection?: IndexedDBConnection) {
+    constructor(
+        private readonly options: IndexedDBPersistenceAdapterOptions,
+        connection?: IndexedDBConnection
+    ) {
         this.ownsConnection = connection === undefined;
         this.connection = connection ?? new IndexedDBConnection(options);
         this.schemaVersion = options.schemaVersion ?? 1;
@@ -797,9 +811,12 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         }
     }
 
-    private async collectionDatabase(collectionId: string): Promise<{ database: IDBPDatabase<IndexedDBPersistenceDB>; epoch: number }> {
+    private async collectionDatabase(
+        collectionId: string
+    ): Promise<{ database: IDBPDatabase<IndexedDBPersistenceDB>; epoch: number }> {
         const database = await this.database();
-        if (this.closed || this.connection.closed) throw new Error("IndexedDB persistence adapter is closed.");
+        if (this.closed || this.connection.closed)
+            throw new Error("IndexedDB persistence adapter is closed.");
         let initialized = this.initialized.get(collectionId);
         if (!initialized) {
             initialized = this.initializeCollection(database, collectionId);
@@ -996,10 +1013,7 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             .getAll(collectionId);
         // Older Temporal/bigint encodings can omit valid candidates. Ignore
         // incompatible indexes until ensureIndex or a write rebuilds them.
-        const plan = selectIndexPlan(
-            definitions.filter(hasCurrentIndexEncoding),
-            options
-        );
+        const plan = selectIndexPlan(definitions.filter(hasCurrentIndexEncoding), options);
 
         const orderedClause = options.orderBy?.length === 1 ? options.orderBy[0] : undefined;
         const orderedDefinition =
@@ -1202,17 +1216,28 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             const transactionId = id(collectionId, committed.txId);
             const [previous, duplicatePosition] = await Promise.all([
                 transaction.objectStore(TRANSACTIONS).get(transactionId),
-                transaction.objectStore(TRANSACTIONS).index(BY_POSITION).getKey([collectionId, committed.term, committed.seq]),
+                transaction
+                    .objectStore(TRANSACTIONS)
+                    .index(BY_POSITION)
+                    .getKey([collectionId, committed.term, committed.seq]),
             ]);
             if (previous || duplicatePosition !== undefined) {
                 await transaction.done;
                 return;
             }
-            if (stream && stream.latestRowVersion > 0 && stream.latestTerm === committed.term && stream.latestSeq === committed.seq) {
+            if (
+                stream &&
+                stream.latestRowVersion > 0 &&
+                stream.latestTerm === committed.term &&
+                stream.latestSeq === committed.seq
+            ) {
                 await transaction.done;
                 return;
             }
-            const definitions = await transaction.objectStore(INDEX_DEFINITIONS).index(BY_COLLECTION).getAll(collectionId);
+            const definitions = await transaction
+                .objectStore(INDEX_DEFINITIONS)
+                .index(BY_COLLECTION)
+                .getAll(collectionId);
             const rowStore = transaction.objectStore(ROWS);
             const changedKeys = new Set(committed.mutations.map((mutation) => mutation.key));
             const touchedKeys = new Set([
@@ -1624,11 +1649,19 @@ export class IndexedDBConnection {
     private databasePromise?: Promise<IDBPDatabase<IndexedDBPersistenceDB>>;
     closed = false;
 
-    constructor(private readonly options: Pick<IndexedDBPersistenceAdapterOptions, "databaseName" | "onBlocked" | "onVersionChange">) {}
+    constructor(
+        private readonly options: Pick<
+            IndexedDBPersistenceAdapterOptions,
+            "databaseName" | "onBlocked" | "onVersionChange"
+        >
+    ) {}
 
     close(): void {
         this.closed = true;
-        void this.databasePromise?.then((database) => database.close(), () => undefined);
+        void this.databasePromise?.then(
+            (database) => database.close(),
+            () => undefined
+        );
         this.databasePromise = undefined;
     }
 
@@ -1689,7 +1722,9 @@ export class IndexedDBConnection {
                 if (oldVersion < 3) {
                     // Older journal records retain tx-id deduplication; new records also
                     // retain the coordinator stream identity, matching SQLite's contract.
-                    transaction.objectStore(TRANSACTIONS).createIndex(BY_POSITION, ["collectionId", "term", "seq"]);
+                    transaction
+                        .objectStore(TRANSACTIONS)
+                        .createIndex(BY_POSITION, ["collectionId", "term", "seq"]);
                 }
             },
             blocked: () => this.options.onBlocked?.(),

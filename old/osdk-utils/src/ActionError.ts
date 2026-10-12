@@ -3,7 +3,7 @@ import { ActionValidationError, PalantirApiError } from "@osdk/client";
 export type ObjectAlreadyExistsError = Omit<PalantirApiError, "parameters"> & {
     errorName: "ObjectAlreadyExists";
     errorCode: "CONFLICT";
-    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+    // oxlint-disable-next-line typescript/no-empty-object-type
     parameters: {};
 };
 

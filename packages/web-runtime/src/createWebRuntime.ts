@@ -1,11 +1,10 @@
 import { LockBroadcastCoordination } from "@party-stack/coordination";
 import { createIndexedDBPersistence } from "@party-stack/db-indexeddb-persistence";
 import { defineRuntime } from "@party-stack/runtime";
-import {
-    createWebBrowserAuthentication,
-} from "./createWebBrowserAuthentication.js";
+import { createWebBrowserAuthentication } from "./createWebBrowserAuthentication.js";
 import { NavigatorNetworkConnectivity } from "./NavigatorNetworkConnectivity.js";
 import { OPFSBlobBytesStore } from "./OPFSBlobBytesStore.js";
+import type { RuntimeAdapter } from "@party-stack/runtime";
 
 function deleteIndexedDB(name: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -22,40 +21,35 @@ function deleteIndexedDB(name: string): Promise<void> {
     });
 }
 
-export const createWebRuntime = defineRuntime((
-    owner,
-    namespace
-) => {
-    const name = `party-stack:${owner}:${namespace}`;
-    const persistence = createIndexedDBPersistence({
-        databaseName: name,
-    });
-    const connectivity = NavigatorNetworkConnectivity.create();
-    const coordination = new LockBroadcastCoordination({
-        scope: name,
-    });
-    const blobBytes = new OPFSBlobBytesStore({
-        directoryName: `${name}:blobs`,
-    });
-    return {
-        owner,
-        namespace,
-        blobBytes,
-        coordination,
-        connectivity,
-        browserAuthentication:
-            createWebBrowserAuthentication(),
-        persistence,
-        destroy: async () => {
-            await Promise.all([
-                deleteIndexedDB(name),
-                blobBytes.clear(),
-            ]);
-        },
-        cleanup: async () => {
-            await coordination.close();
-            await connectivity.close();
-            persistence.close();
-        },
-    };
-});
+export const createWebRuntime: (owner: string, namespace: string) => RuntimeAdapter = defineRuntime(
+    (owner, namespace) => {
+        const name = `party-stack:${owner}:${namespace}`;
+        const persistence = createIndexedDBPersistence({
+            databaseName: name,
+        });
+        const connectivity = NavigatorNetworkConnectivity.create();
+        const coordination = new LockBroadcastCoordination({
+            scope: name,
+        });
+        const blobBytes = new OPFSBlobBytesStore({
+            directoryName: `${name}:blobs`,
+        });
+        return {
+            owner,
+            namespace,
+            blobBytes,
+            coordination,
+            connectivity,
+            browserAuthentication: createWebBrowserAuthentication(),
+            persistence,
+            destroy: async () => {
+                await Promise.all([deleteIndexedDB(name), blobBytes.clear()]);
+            },
+            cleanup: async () => {
+                await coordination.close();
+                await connectivity.close();
+                persistence.close();
+            },
+        };
+    }
+);

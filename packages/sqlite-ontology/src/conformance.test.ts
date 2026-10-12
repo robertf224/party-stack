@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { describe, it } from "vitest";
+import { describe, it } from "vite-plus/test";
 import { runSQLiteOntologyConformanceCase, sqliteOntologyConformanceCases } from "./testing/index.js";
 import type { SQLiteDatabase } from "./database.js";
 
@@ -12,7 +12,7 @@ const BetterSqlite3 = require("better-sqlite3") as new (path: string) => BetterS
 
 describe("better-sqlite3 ontology conformance", () => {
     for (const testCase of sqliteOntologyConformanceCases) {
-        it(testCase.name, async () => {
+        it(`${testCase.name}`, async () => {
             const database = new BetterSqlite3(":memory:");
             try {
                 await runSQLiteOntologyConformanceCase(testCase.id, database);

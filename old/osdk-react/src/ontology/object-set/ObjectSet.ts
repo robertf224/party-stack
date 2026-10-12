@@ -35,7 +35,7 @@ function toOSDK<T extends ObjectOrInterfaceDefinition>(
 ): ObjectSetClient<T> {
     // Getting a type error like `Type 'ObjectTypeDefinition' is not assignable to type 'Experiment<"2.0.8"> | Experiment<"2.1.0">'.`
     // think something needs to get fixed upstream.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // oxlint-disable-next-line typescript/no-explicit-any
     const objectSetClient = client(objectSet.type as any) as ObjectSetClient<T>;
     return objectSet.filter ? objectSetClient.where(objectSet.filter) : objectSetClient;
 }

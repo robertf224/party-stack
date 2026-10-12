@@ -1,7 +1,6 @@
 import { isUnauthenticatedError, unauthenticated, type UnauthenticatedError } from "@party-stack/errors";
 import { createLocalCollection, isCoordinationHost } from "@party-stack/runtime";
 import { createSignal, race, run, sleep, until, type Task } from "effection";
-import type { RuntimeAdapter } from "@party-stack/runtime";
 import { createDefaultConnectionEgressHandlers } from "./createDefaultConnectionEgressHandlers.js";
 import {
     type BackendConnectionAdapter,
@@ -13,6 +12,7 @@ import {
     type ConnectionSession,
     type EstablishedConnection,
 } from "./types.js";
+import type { RuntimeAdapter } from "@party-stack/runtime";
 
 const REFRESH_POLL_MS = 30_000;
 const REFRESH_WINDOW_MS = 60_000;
@@ -212,12 +212,10 @@ export async function createConnectionManager<AuthenticationClient extends objec
             if (!connections.get(userId)) {
                 return;
             }
-            const transaction =
-                connections.delete(userId, {
-                    optimistic: false,
-                });
-            await transaction.isPersisted
-                .promise;
+            const transaction = connections.delete(userId, {
+                optimistic: false,
+            });
+            await transaction.isPersisted.promise;
         },
         reportUnauthenticated,
         egress(userId) {
@@ -276,13 +274,7 @@ export async function createConnectionManager<AuthenticationClient extends objec
             await applyEstablishedConnection(established);
         }
         for (const connection of connections.values()) {
-            if (
-                !restoredUserIds.has(
-                    connection.userId
-                ) &&
-                connection.state.status !==
-                    "needs-auth"
-            ) {
+            if (!restoredUserIds.has(connection.userId) && connection.state.status !== "needs-auth") {
                 await updateConnection(connection.userId, (draft) => {
                     draft.state = { status: "inactive" };
                 });

@@ -1,9 +1,4 @@
-import type {
-    ImageMediaType,
-    NamedTypeDef,
-    OntologyIR,
-    TypeDef,
-} from "./ir/generated/types.js";
+import type { ImageMediaType, NamedTypeDef, OntologyIR, TypeDef } from "./ir/generated/types.js";
 import type { OntologyDefinition } from "./live/LiveOntology.js";
 import type {
     ActionTypeName,
@@ -87,10 +82,7 @@ type StructField<Fields> = ArrayElement<Fields>;
 
 type FieldName<Field> = Field extends { readonly name: infer Name extends PropertyKey } ? Name : never;
 
-type FieldByName<Fields, Name extends PropertyKey> = Extract<
-    StructField<Fields>,
-    { readonly name: Name }
->;
+type FieldByName<Fields, Name extends PropertyKey> = Extract<StructField<Fields>, { readonly name: Name }>;
 
 type FieldType<Fields, Name extends PropertyKey> =
     FieldByName<Fields, Name> extends { readonly type: infer Type } ? Type : never;
@@ -144,7 +136,13 @@ type ObjectPrimaryKey<ObjectType> = ObjectType extends {
 type InferObjectReference<Value, Ontology> = Value extends {
     readonly objectType: infer Name extends PropertyKey;
 }
-    ? InferType<FieldType<ObjectTypeProperties<ObjectTypeByName<Ontology, Name>>, ObjectPrimaryKey<ObjectTypeByName<Ontology, Name>>>, Ontology>
+    ? InferType<
+          FieldType<
+              ObjectTypeProperties<ObjectTypeByName<Ontology, Name>>,
+              ObjectPrimaryKey<ObjectTypeByName<Ontology, Name>>
+          >,
+          Ontology
+      >
     : never;
 
 type InferImageAttachment<Value> = Value extends { readonly mediaTypes: infer MediaTypes }
@@ -182,7 +180,9 @@ type InferByKind<Type, Ontology> = {
     map: TypeValue<Type> extends { readonly valueType: infer ValueType }
         ? Record<string, InferType<ValueType, Ontology>>
         : never;
-    struct: TypeValue<Type> extends { readonly fields: infer Fields } ? InferStructFields<Fields, Ontology> : never;
+    struct: TypeValue<Type> extends { readonly fields: infer Fields }
+        ? InferStructFields<Fields, Ontology>
+        : never;
     union: TypeValue<Type> extends { readonly variants: infer Variants }
         ? InferUnionVariant<ArrayElement<Variants>, Ontology>
         : never;
@@ -363,7 +363,10 @@ export type InferOntology<Ontology> = {
     };
     queryFunctionTypes: {
         [Name in QueryFunctionTypeName<Ontology>]: {
-            parameters: InferQueryParameters<QueryParameters<QueryFunctionTypeByName<Ontology, Name>>, Ontology>;
+            parameters: InferQueryParameters<
+                QueryParameters<QueryFunctionTypeByName<Ontology, Name>>,
+                Ontology
+            >;
             returnType: InferType<QueryReturnType<QueryFunctionTypeByName<Ontology, Name>>, Ontology>;
         };
     };

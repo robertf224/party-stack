@@ -1,6 +1,6 @@
-import type { MetaValueType } from "@party-stack/ontology";
 import { convertFoundryValueTypeFieldType } from "./convertMetaTypeDef.js";
 import type { OntologyValueType } from "@osdk/foundry.ontologies";
+import type { MetaValueType } from "@party-stack/ontology";
 
 export function convertFoundryMetaValueType(valueType: OntologyValueType): MetaValueType {
     return {

@@ -15,6 +15,7 @@ const UserProfilePicture: React.FC<{ user: User }> = ({ user }) => {
     return avatarUrl ? (
         <div className="h-8 w-8 overflow-hidden rounded-full">
             <img
+                alt={[user.givenName, user.familyName].filter(Boolean).join(" ") || "User avatar"}
                 src={avatarUrl}
                 className="animate-fade-in h-full w-full object-cover opacity-0 transition-opacity duration-300 ease-in-out"
                 onLoad={(e) => e.currentTarget.classList.remove("opacity-0")}

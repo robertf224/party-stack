@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
-import type { SalesforceSObjectDescribe } from "@party-stack/salesforce-client";
+import { describe, expect, it } from "vite-plus/test";
 import { convertSalesforceMetaLinkTypes } from "./convertMetaLinkType.js";
 import { convertSalesforceMetaObjectType } from "./convertMetaObjectType.js";
+import type { SalesforceSObjectDescribe } from "@party-stack/salesforce-client";
 
 const accountDescribe = {
     name: "Account",

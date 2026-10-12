@@ -4,9 +4,6 @@ export function createDefaultConnectionEgressHandlers(): ConnectionEgressHandler
     const fetchImpl = globalThis.fetch.bind(globalThis);
     return {
         fetch: (request) => fetchImpl(request),
-        createWebSocket: (url, protocols) =>
-            Promise.resolve(
-                new WebSocket(url, protocols)
-            ),
+        createWebSocket: (url, protocols) => Promise.resolve(new WebSocket(url, protocols)),
     };
 }

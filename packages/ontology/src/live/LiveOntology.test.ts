@@ -1,9 +1,9 @@
 import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { o } from "../ir/index.js";
 import { createLiveOntology, waitForLiveOntologyReady, type OntologyDefinition } from "./LiveOntology.js";
-import type { OntologyBackendAdapter } from "./OntologyBackendAdapter.js";
 import type { OntologyIR } from "../ir/index.js";
+import type { OntologyBackendAdapter } from "./OntologyBackendAdapter.js";
 
 const ir: OntologyIR = {
     types: [],
@@ -136,26 +136,15 @@ describe("createLiveOntology", () => {
         expect(ontology.outbox).toBeDefined();
         await expect(ontology.queryFunctions.currentUser!({})).resolves.toBe("user-1");
         expect(receivedContext).toBe(context);
-        const firstDestroy =
-            ontology.destroy();
-        const secondDestroy =
-            ontology.destroy();
-        expect(firstDestroy).toBe(
-            secondDestroy
-        );
+        const firstDestroy = ontology.destroy();
+        const secondDestroy = ontology.destroy();
+        expect(firstDestroy).toBe(secondDestroy);
         await firstDestroy;
         expect(backend).toHaveBeenCalledOnce();
         expect(closeCoordination).toHaveBeenCalledOnce();
         expect(cleanupRuntime).toHaveBeenCalledOnce();
-        expect(
-            destroyRuntime
-        ).toHaveBeenCalledOnce();
-        expect(cleanupOrder).toEqual([
-            "backend",
-            "runtime",
-            "coordination",
-            "destroy",
-        ]);
+        expect(destroyRuntime).toHaveBeenCalledOnce();
+        expect(cleanupOrder).toEqual(["backend", "runtime", "coordination", "destroy"]);
     });
 
     it("routes individual writes independently of the defaults", async () => {
@@ -277,16 +266,16 @@ describe("createLiveOntology", () => {
         expect(projectedParameters).toEqual([{ label: "resolved" }]);
         expect(applyAction.mock.calls[0]?.[1]).toEqual({});
 
-        const queued = ontology.actions.save!({}, {
-            mode: "outbox",
-            visibility: "optimistic",
-        });
+        const queued = ontology.actions.save!(
+            {},
+            {
+                mode: "outbox",
+                visibility: "optimistic",
+            }
+        );
         void queued.catch(() => undefined);
         await vi.waitFor(() => {
-            expect(projectedParameters).toEqual([
-                { label: "resolved" },
-                { label: "resolved" },
-            ]);
+            expect(projectedParameters).toEqual([{ label: "resolved" }, { label: "resolved" }]);
         });
         expect(Array.from(ontology.outbox.collection.values())[0]?.request.parameters).toEqual({});
 
@@ -319,9 +308,7 @@ describe("createLiveOntology", () => {
             }),
         });
 
-        await expect(
-            ontology.actions.save!({}, { visibility: "optimistic" })
-        ).rejects.toThrow(
+        await expect(ontology.actions.save!({}, { visibility: "optimistic" })).rejects.toThrow(
             'Ontology backend adapter "non-live" is not live and cannot reconcile optimistic actions.'
         );
         expect(applyAction).not.toHaveBeenCalled();
@@ -378,18 +365,29 @@ describe("createLiveOntology", () => {
                 value: [{ message: "Invalid action." }],
             },
         });
-        expect(validateAction).toHaveBeenCalledWith("save", {}, {
-            objects: {},
-            context,
-        });
-        await ontology.actions.save!.validateDraft({}, {
-            knownParameters: [],
-        });
-        expect(validateActionDraft).toHaveBeenCalledWith("save", {}, {
-            objects: {},
-            context,
-            knownParameters: [],
-        });
+        expect(validateAction).toHaveBeenCalledWith(
+            "save",
+            {},
+            {
+                objects: {},
+                context,
+            }
+        );
+        await ontology.actions.save!.validateDraft(
+            {},
+            {
+                knownParameters: [],
+            }
+        );
+        expect(validateActionDraft).toHaveBeenCalledWith(
+            "save",
+            {},
+            {
+                objects: {},
+                context,
+                knownParameters: [],
+            }
+        );
         expect(applyAction).not.toHaveBeenCalled();
         await ontology.cleanup();
     });

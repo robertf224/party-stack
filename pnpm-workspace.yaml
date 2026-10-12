@@ -2,3 +2,28 @@ packages:
     - "packages/*"
     - "apps/*"
     - "old/*"
+# Shared Vite+ toolchain versions used by catalog: references.
+# https://viteplus.dev/guide/migrate-rules#version-selection
+catalog:
+    vite: npm:@voidzero-dev/vite-plus-core@1.1.0
+    vitest: 5.0.3
+    vite-plus: 1.1.0
+    "@vitest/browser-playwright": 5.0.3
+# Apply toolchain versions to transitive dependencies as well.
+# https://viteplus.dev/guide/migrate-rules#vite-and-overrides
+overrides:
+    "vite@*": "npm:@voidzero-dev/vite-plus-core@1.1.0"
+    "vitest@*": "5.0.3"
+# Plugins may still declare peer ranges for upstream Vite or older Vitest.
+# https://pnpm.io/settings/peer-dependencies#peerdependencyrulesallowany
+peerDependencyRules:
+    allowAny:
+        - "vite"
+        - "vitest"
+# Packages allowed to run native build or binary-install scripts.
+# https://pnpm.io/10.x/settings#onlybuiltdependencies
+onlyBuiltDependencies:
+    - "@swc/core"
+    - "better-sqlite3"
+    - "esbuild"
+    - "workerd"

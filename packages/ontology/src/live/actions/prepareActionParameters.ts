@@ -1,5 +1,4 @@
 import { invariant } from "@bobbyfidz/panic";
-import type { BlobManager } from "@party-stack/blobs";
 import { resolveType } from "../../utils/types.js";
 import type {
     AttachmentTypeDef,
@@ -15,6 +14,7 @@ import type {
     OntologyAttachmentUpload,
     OntologyBackendAdapter,
 } from "../OntologyBackendAdapter.js";
+import type { BlobManager } from "@party-stack/blobs";
 
 interface MaterializeValueOptions {
     ir: OntologyIR;

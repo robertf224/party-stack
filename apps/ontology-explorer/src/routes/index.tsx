@@ -1,7 +1,7 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
 import { useLiveQuery } from "@tanstack/react-db";
-import type { MetaLinkType } from "@party-stack/ontology";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useOntology } from "../ontology/OntologyProvider";
+import type { MetaLinkType } from "@party-stack/ontology";
 
 export const Route = createFileRoute("/")({
     component: Dashboard,
@@ -16,7 +16,7 @@ function Dashboard() {
                 .from({ ot: meta.objects.ObjectType })
                 .select(({ ot }) => ({ ...ot }))
                 .orderBy(({ ot }) => ot.displayName, "asc"),
-        [],
+        []
     );
 
     const { data: linkTypes } = useLiveQuery(
@@ -25,7 +25,7 @@ function Dashboard() {
                 .from({ lt: meta.objects.LinkType })
                 .select(({ lt }) => ({ ...lt }))
                 .orderBy(({ lt }) => lt.id, "asc"),
-        [],
+        []
     );
 
     return (
@@ -57,7 +57,9 @@ function Dashboard() {
                             </div>
                             <div className="mb-2 text-xs text-zinc-500">{ot.name}</div>
                             {ot.description && (
-                                <p className="mb-2 line-clamp-2 text-xs text-zinc-400">{ot.description as string}</p>
+                                <p className="mb-2 line-clamp-2 text-xs text-zinc-400">
+                                    {ot.description as string}
+                                </p>
                             )}
                             <div className="flex items-center gap-3 text-xs text-zinc-500">
                                 <span>{(ot.properties as unknown[]).length} properties</span>
@@ -73,8 +75,8 @@ function Dashboard() {
                     <h2 className="text-lg font-semibold text-zinc-200">Action Types</h2>
                 </div>
                 <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-400">
-                    Action types can be browsed by navigating directly to a specific action type.
-                    The Foundry adapter loads action types on-demand by name.
+                    Action types can be browsed by navigating directly to a specific action type. The Foundry
+                    adapter loads action types on-demand by name.
                 </div>
             </section>
 
@@ -97,9 +99,13 @@ function Dashboard() {
                                 {lt.id as string}
                             </div>
                             <div className="flex items-center gap-2 text-xs text-zinc-400">
-                                <span className="text-zinc-300">{(lt.source as MetaLinkType["source"]).objectType}</span>
+                                <span className="text-zinc-300">
+                                    {(lt.source as MetaLinkType["source"]).objectType}
+                                </span>
                                 <span className="text-zinc-600">→</span>
-                                <span className="text-zinc-300">{(lt.target as MetaLinkType["target"]).objectType}</span>
+                                <span className="text-zinc-300">
+                                    {(lt.target as MetaLinkType["target"]).objectType}
+                                </span>
                                 <span className="ml-auto rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-500">
                                     {lt.cardinality as string}
                                 </span>

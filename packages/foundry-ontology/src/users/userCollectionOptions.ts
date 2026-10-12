@@ -3,10 +3,10 @@ import { applyLensToObject, mapTargetPathToSourceWithLens, type Lens } from "@pa
 import { FieldPath, LoadSubsetOptions, parseOrderByExpression, parseWhereExpression } from "@tanstack/db";
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
-import type { Client } from "@party-stack/foundry-client";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import { chunk } from "../utils/chunk.js";
 import { foundryUserProfilePictureAttachment } from "./foundryUser.js";
+import type { Client } from "@party-stack/foundry-client";
 
 type UsersQuery = { type: "getBatch"; ids: string[] } | { type: "search"; query: string } | { type: "list" };
 

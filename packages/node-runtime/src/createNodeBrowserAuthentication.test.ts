@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
 import { BrowserAuthenticationCancelledError } from "@party-stack/runtime";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { createNodeBrowserAuthentication } from "./createNodeBrowserAuthentication.js";
 
 async function availablePort(): Promise<number> {

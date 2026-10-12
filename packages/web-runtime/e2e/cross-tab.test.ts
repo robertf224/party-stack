@@ -1,24 +1,37 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
 import { chromium, type Browser, type Page } from "playwright";
 import { createServer, type ViteDevServer } from "vite";
-import { fileURLToPath } from "node:url";
+import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 let server: ViteDevServer;
 let browser: Browser;
 let origin: string;
 beforeAll(async () => {
-    server = await createServer({ root: fileURLToPath(new URL("../", import.meta.url)), server: { host: "127.0.0.1", port: 0 }, logLevel: "error" });
+    server = await createServer({
+        root: fileURLToPath(new URL("../", import.meta.url)),
+        server: { host: "127.0.0.1", port: 0 },
+        logLevel: "error",
+    });
     await server.listen();
     origin = server.resolvedUrls!.local[0]!;
     browser = await chromium.launch();
 }, 30_000);
-afterAll(async () => { await browser?.close(); await server?.close(); });
+afterAll(async () => {
+    await browser?.close();
+    await server?.close();
+});
 
 async function run(page: Page, method: string, ...args: unknown[]) {
-    return page.evaluate(async ({ method, args }) => {
-        const api = Reflect.get(window, "persistenceTest") as Record<string, (...args: unknown[]) => unknown>;
-        return await api[method]!(...args);
-    }, { method, args });
+    return page.evaluate(
+        async ({ method, args }) => {
+            const api = Reflect.get(window, "persistenceTest") as Record<
+                string,
+                (...args: unknown[]) => unknown
+            >;
+            return await api[method]!(...args);
+        },
+        { method, args }
+    );
 }
 async function tabs(test: (writer: Page, reader: Page) => Promise<void>, coordinator = "party") {
     const context = await browser.newContext();
@@ -105,13 +118,22 @@ describe("real IndexedDB / Web Locks / BroadcastChannel tabs", () => {
     });
     it("keeps simultaneous writes from both tabs and reloads durable state", async () => {
         await tabs(async (writer, reader) => {
-            const items = Array.from({ length: 20 }, (_, score) => ({ id: String(score), title: `Task ${score}`, score }));
+            const items = Array.from({ length: 20 }, (_, score) => ({
+                id: String(score),
+                title: `Task ${score}`,
+                score,
+            }));
             await Promise.all(items.map((item, index) => run(index % 2 ? reader : writer, "insert", item)));
-            expect(await run(writer, "durable")).toMatchObject({ position: { latestSeq: 20, latestRowVersion: 20 }, keys: expect.arrayContaining(items.map((item) => item.id)) });
+            expect(await run(writer, "durable")).toMatchObject({
+                position: { latestSeq: 20, latestRowVersion: 20 },
+                keys: expect.arrayContaining(items.map((item) => item.id)),
+            });
             await expect.poll(() => run(reader, "rows")).toEqual(items);
             await expect.poll(() => run(writer, "rows")).toEqual(items);
             await reader.reload();
-            await reader.waitForFunction(() => Reflect.has(window, "persistenceTest"), null, { timeout: 10_000 });
+            await reader.waitForFunction(() => Reflect.has(window, "persistenceTest"), null, {
+                timeout: 10_000,
+            });
             expect(await run(reader, "rows")).toEqual(items);
         });
     });
@@ -134,11 +156,17 @@ describe("real IndexedDB / Web Locks / BroadcastChannel tabs", () => {
 
     it.fails("upstream reference: local acknowledgements can skip concurrent remote commits", async () => {
         await tabs(async (writer, reader) => {
-            const items = Array.from({ length: 20 }, (_, score) => ({ id: String(score), title: `Task ${score}`, score }));
+            const items = Array.from({ length: 20 }, (_, score) => ({
+                id: String(score),
+                title: `Task ${score}`,
+                score,
+            }));
             await Promise.all(items.map((item, index) => run(index % 2 ? reader : writer, "insert", item)));
-            expect(await run(writer, "durable")).toMatchObject({ position: { latestSeq: 20, latestRowVersion: 20 }, keys: expect.arrayContaining(items.map((item) => item.id)) });
+            expect(await run(writer, "durable")).toMatchObject({
+                position: { latestSeq: 20, latestRowVersion: 20 },
+                keys: expect.arrayContaining(items.map((item) => item.id)),
+            });
             await expect.poll(() => run(reader, "rows"), { timeout: 1000 }).toEqual(items);
         }, "upstream");
     });
-
 });

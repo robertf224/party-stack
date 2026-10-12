@@ -1,9 +1,8 @@
 import { Users } from "@osdk/foundry.admin";
-import type { Client } from "@party-stack/foundry-client";
-import type { Lens, OntologyCollectionOptions } from "@party-stack/ontology";
 import { decodeFoundryUserProfilePictureAttachment } from "./foundryUser.js";
 import { userCollectionOptions } from "./userCollectionOptions.js";
 import type { FoundryUsersIntegration } from "../adapter/createFoundryOntologyBackendAdapter.js";
+import type { Lens, OntologyCollectionOptions } from "@party-stack/ontology";
 
 export function createFoundryUsersIntegration(options: {
     objectType: string;
@@ -12,18 +11,16 @@ export function createFoundryUsersIntegration(options: {
     return {
         objectType: options.objectType,
         getCollectionOptions: (client) =>
+            // oxlint-disable-next-line typescript/no-unnecessary-type-assertion -- TypeScript 5 needs this variance boundary.
             userCollectionOptions({
-                client: client as Client,
+                client: client,
                 lens: options.lens,
             }) as unknown as OntologyCollectionOptions,
         async getAttachmentContent(client, attachment) {
             const userId = decodeFoundryUserProfilePictureAttachment(attachment.id);
             if (!userId) return;
             const profilePicture = await Users.profilePicture(client, userId);
-            if (
-                profilePicture.status ===
-                204
-            ) {
+            if (profilePicture.status === 204) {
                 return new Blob();
             }
             return profilePicture.blob();

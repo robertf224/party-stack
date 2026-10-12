@@ -1,6 +1,9 @@
 {
     "name": "@party-stack/foundry-object-set-watcher",
     "version": "0.5.1",
+    "files": [
+        "lib"
+    ],
     "type": "module",
     "exports": {
         ".": {
@@ -11,14 +14,6 @@
             "types": "./lib/effection.d.ts",
             "default": "./lib/effection.js"
         }
-    },
-    "files": [
-        "lib"
-    ],
-    "scripts": {
-        "build": "tsc",
-        "lint": "eslint",
-        "test": "vitest run --pass-with-no-tests"
     },
     "dependencies": {
         "@bobbyfidz/panic": "^0.1.0",
@@ -31,12 +26,11 @@
         "effection": "^4.0.2"
     },
     "devDependencies": {
-        "@bobbyfidz/react-build-config": "^0.1.1",
+        "@party-stack/build-config": "workspace:*",
         "@types/node": "^24.10.1",
-        "@types/react": "^19.2.6",
-        "eslint": "^9.25.0",
-        "react": "^19.2.0",
-        "typescript": "~5.8.3",
-        "vitest": "^3.1.1"
+        "@types/react": "^19.3.0",
+        "react": "^19.3.0",
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
     }
 }

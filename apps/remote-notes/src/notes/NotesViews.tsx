@@ -1,21 +1,18 @@
-import { use, useEffect, useMemo, useState, type DragEvent } from "react";
-import { TanStackDevtools } from "@tanstack/react-devtools";
-import { Link, useNavigate } from "@tanstack/react-router";
-import { debounceStrategy, useLiveQuery, usePacedMutations } from "@tanstack/react-db";
-import { ilike, or } from "@tanstack/db";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { Temporal } from "temporal-polyfill";
-import type { attachment } from "@party-stack/ontology/values";
-import {
-    createOntologyDevtoolsPlugin,
-    ontologyDevtoolsTrigger,
-} from "@party-stack/ontology-devtools";
+import { createOntologyDevtoolsPlugin, ontologyDevtoolsTrigger } from "@party-stack/ontology-devtools";
 import { createRemoteOntologyBackend } from "@party-stack/remote-ontology/client";
 import { createHttpRemoteOntologyTransport } from "@party-stack/remote-ontology/http";
 import { createWebRuntime } from "@party-stack/web-runtime";
+import { ilike, or } from "@tanstack/db";
+import { debounceStrategy, useLiveQuery, usePacedMutations } from "@tanstack/react-db";
+import { TanStackDevtools } from "@tanstack/react-devtools";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { use, useEffect, useMemo, useState, type DragEvent } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Temporal } from "temporal-polyfill";
 import { createRemoteNotesLiveOntology } from "../ontology/generated/live";
 import type { Note } from "../ontology/generated/types";
+import type { attachment } from "@party-stack/ontology/values";
 
 const demoUsers = ["ada@example.com", "grace@example.com", "linus@example.com"];
 
@@ -95,13 +92,13 @@ function MarkdownPreview({ markdown }: { markdown: string }) {
             remarkPlugins={[remarkGfm]}
             components={{
                 h1: ({ children }) => (
-                    <h1 className="mb-4 mt-6 text-3xl font-semibold text-slate-100 first:mt-0">{children}</h1>
+                    <h1 className="mt-6 mb-4 text-3xl font-semibold text-slate-100 first:mt-0">{children}</h1>
                 ),
                 h2: ({ children }) => (
-                    <h2 className="mb-3 mt-5 text-2xl font-semibold text-slate-100 first:mt-0">{children}</h2>
+                    <h2 className="mt-5 mb-3 text-2xl font-semibold text-slate-100 first:mt-0">{children}</h2>
                 ),
                 h3: ({ children }) => (
-                    <h3 className="mb-2 mt-4 text-xl font-semibold text-slate-100 first:mt-0">{children}</h3>
+                    <h3 className="mt-4 mb-2 text-xl font-semibold text-slate-100 first:mt-0">{children}</h3>
                 ),
                 p: ({ children }) => <p className="my-3 leading-7 text-slate-300">{children}</p>,
                 a: ({ children, href }) => (
@@ -207,10 +204,7 @@ function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: N
     const [userEmail, setUserEmail] = useState(getInitialUserEmail);
     const [searchQuery, setSearchQuery] = useState("");
     const ontology = use(useMemo(() => createClientOntology(userEmail), [userEmail]));
-    const ontologyDevtoolsPlugin = useMemo(
-        () => createOntologyDevtoolsPlugin({ ontology }),
-        [ontology]
-    );
+    const ontologyDevtoolsPlugin = useMemo(() => createOntologyDevtoolsPlugin({ ontology }), [ontology]);
 
     useEffect(
         () => () => {
@@ -282,7 +276,7 @@ function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: N
                             <select
                                 value={userEmail}
                                 onChange={(event) => void switchUser(event.target.value)}
-                                className="w-full appearance-none rounded-xl border border-white/10 bg-slate-950 py-2 pl-3 pr-10 text-sm text-slate-100 outline-none transition focus:border-cyan-300"
+                                className="w-full appearance-none rounded-xl border border-white/10 bg-slate-950 py-2 pr-10 pl-3 text-sm text-slate-100 transition outline-none focus:border-cyan-300"
                             >
                                 {demoUsers.map((email) => (
                                     <option key={email} value={email}>
@@ -290,14 +284,14 @@ function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: N
                                     </option>
                                 ))}
                             </select>
-                            <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+                            <div className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2">
                                 <SelectChevron />
                             </div>
                         </div>
                     </label>
 
                     <div className="relative mt-4 text-slate-500">
-                        <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
+                        <div className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2">
                             <SearchIcon />
                         </div>
                         <input
@@ -306,7 +300,7 @@ function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: N
                             value={searchQuery}
                             onChange={(event) => setSearchQuery(event.target.value)}
                             placeholder="Search..."
-                            className="w-full rounded-xl border border-white/10 bg-slate-950 py-2 pl-9 pr-3 text-sm text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-cyan-300"
+                            className="w-full rounded-xl border border-white/10 bg-slate-950 py-2 pr-3 pl-9 text-sm text-slate-100 transition outline-none placeholder:text-slate-600 focus:border-cyan-300"
                         />
                     </div>
                 </div>
@@ -325,7 +319,7 @@ function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: N
                                 className={`mb-2 block w-full rounded-2xl border p-4 text-left transition ${
                                     note.id === selectedNoteId
                                         ? "border-cyan-300/70 bg-cyan-300/10"
-                                        : "bg-white/3 hover:bg-white/6 border-white/10 hover:border-white/20"
+                                        : "border-white/10 bg-white/3 hover:border-white/20 hover:bg-white/6"
                                 }`}
                             >
                                 <div className="truncate font-medium text-slate-100">{note.title}</div>
@@ -375,23 +369,29 @@ function NoteEditor({
     userEmail: string;
 }) {
     const navigate = useNavigate();
-    const [draftTitle, setDraftTitle] = useState("");
-    const [draftBody, setDraftBody] = useState("");
+    const [draftTitle, setDraftTitle] = useState(note?.title ?? "");
+    const [draftBody, setDraftBody] = useState(note?.bodyMarkdown ?? "");
     const [showPreview, setShowPreview] = useState(true);
     const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
     const [isDraggingImage, setIsDraggingImage] = useState(false);
 
-    useEffect(() => {
-        setSaveStatus("idle");
-        setDraftTitle("");
-        setDraftBody("");
-    }, [noteId]);
-
-    useEffect(() => {
-        if (!note || (saveStatus !== "idle" && saveStatus !== "saved")) return;
-        setDraftTitle(note.title);
-        setDraftBody(note.bodyMarkdown);
-    }, [note, saveStatus]);
+    const [draftSource, setDraftSource] = useState({ noteId, note, saveStatus });
+    if (draftSource.noteId !== noteId || draftSource.note !== note || draftSource.saveStatus !== saveStatus) {
+        setDraftSource({ noteId, note, saveStatus });
+        if (draftSource.noteId !== noteId) {
+            setSaveStatus("idle");
+            setDraftTitle("");
+            setDraftBody("");
+        }
+        if (
+            (draftSource.note !== note || draftSource.saveStatus !== saveStatus) &&
+            note &&
+            (saveStatus === "idle" || saveStatus === "saved")
+        ) {
+            setDraftTitle(note.title);
+            setDraftBody(note.bodyMarkdown);
+        }
+    }
 
     const autosaveNote = usePacedMutations<{
         id: string;
@@ -536,7 +536,7 @@ function NoteEditor({
                         <input
                             value={draftTitle}
                             onChange={(event) => updateDraftTitle(event.target.value)}
-                            className="bg-white/3 w-full max-w-2xl rounded-2xl border border-white/10 px-4 py-3 text-2xl font-semibold outline-none transition placeholder:text-slate-600 focus:border-cyan-300"
+                            className="w-full max-w-2xl rounded-2xl border border-white/10 bg-white/3 px-4 py-3 text-2xl font-semibold transition outline-none placeholder:text-slate-600 focus:border-cyan-300"
                             placeholder="Untitled note"
                         />
                     </div>
@@ -558,7 +558,7 @@ function NoteEditor({
                         <button
                             type="button"
                             onClick={() => setShowPreview((current) => !current)}
-                            className="hover:bg-white/6 rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-200 transition hover:border-white/20"
+                            className="rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-200 transition hover:border-white/20 hover:bg-white/6"
                         >
                             {showPreview ? "Hide preview" : "Show preview"}
                         </button>
@@ -578,7 +578,7 @@ function NoteEditor({
             >
                 <section
                     className={`relative flex min-h-[45vh] min-w-0 flex-col p-4 sm:p-6 ${
-                        showPreview ? "border-b border-white/10 lg:border-b-0 lg:border-r" : ""
+                        showPreview ? "border-b border-white/10 lg:border-r lg:border-b-0" : ""
                     }`}
                     onDragLeave={handleDragLeave}
                     onDragOver={handleDragOver}
@@ -590,7 +590,7 @@ function NoteEditor({
                         onDragLeave={handleDragLeave}
                         onDragOver={handleDragOver}
                         onDrop={handleDrop}
-                        className="min-h-88 bg-white/3 flex-1 resize-none rounded-2xl border border-white/10 p-4 font-mono text-sm leading-6 text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-cyan-300"
+                        className="min-h-88 flex-1 resize-none rounded-2xl border border-white/10 bg-white/3 p-4 font-mono text-sm leading-6 text-slate-200 transition outline-none placeholder:text-slate-600 focus:border-cyan-300"
                         placeholder="Write markdown..."
                     />
                     {isDraggingImage ? (

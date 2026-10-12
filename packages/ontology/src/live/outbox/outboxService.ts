@@ -1,14 +1,14 @@
-import type {
-    CoordinationHost,
-    CoordinationServiceHandlers,
-    CoordinationServiceServer,
-} from "@party-stack/runtime";
 import { OntologyOutboxRepository } from "./repository.js";
 import {
     OUTBOX_COORDINATION_SERVICE,
     type OutboxCoordinationService,
     type OutboxResultEvent,
 } from "./service.js";
+import type {
+    CoordinationHost,
+    CoordinationServiceHandlers,
+    CoordinationServiceServer,
+} from "@party-stack/runtime";
 
 export function serveOntologyOutbox(
     host: CoordinationHost,
@@ -30,15 +30,8 @@ export function serveOntologyOutbox(
             });
         },
         retry: ({ id }) => repository.retry(id),
-        recover: async ({
-            failureStrategy,
-            maxRetries,
-        }) => {
-            const discarded =
-                await repository.recover(
-                    failureStrategy,
-                    maxRetries
-                );
+        recover: async ({ failureStrategy, maxRetries }) => {
+            const discarded = await repository.recover(failureStrategy, maxRetries);
             for (const entry of discarded) {
                 publishResult({
                     type: "rejected",
@@ -52,8 +45,7 @@ export function serveOntologyOutbox(
             }
         },
         claim: () => repository.claim(),
-        nextRetryAt: () =>
-            repository.nextRetryAt(),
+        nextRetryAt: () => repository.nextRetryAt(),
         complete: async ({ id, executionId, result }) => {
             await repository.complete(id, executionId);
             publishResult({
@@ -62,20 +54,8 @@ export function serveOntologyOutbox(
                 result,
             });
         },
-        fail: async ({
-            id,
-            executionId,
-            retryable,
-            retryAt,
-            error,
-        }) => {
-            const entry = await repository.fail(
-                id,
-                executionId,
-                retryable,
-                error,
-                retryAt
-            );
+        fail: async ({ id, executionId, retryable, retryAt, error }) => {
+            const entry = await repository.fail(id, executionId, retryable, error, retryAt);
             if (!retryable) {
                 publishResult({
                     type: "rejected",
@@ -85,16 +65,8 @@ export function serveOntologyOutbox(
             }
             return entry;
         },
-        discardAll: async ({
-            id,
-            executionId,
-            error,
-        }) => {
-            const discarded =
-                await repository.discardAll(
-                    id,
-                    executionId
-                );
+        discardAll: async ({ id, executionId, error }) => {
+            const discarded = await repository.discardAll(id, executionId);
             for (const entry of discarded) {
                 publishResult({
                     type: "rejected",

@@ -1,9 +1,5 @@
 import { invariant } from "@bobbyfidz/panic";
-import type {
-    AttachmentConstraint,
-    OntologyIR,
-    TypeDef,
-} from "@party-stack/ontology";
+import type { AttachmentConstraint, OntologyIR, TypeDef } from "@party-stack/ontology";
 import type { OntologyAttachmentBindingTarget } from "@party-stack/ontology/utils";
 
 // TODO: Remove these overrides once Foundry datasources expose mediaSetRid and
@@ -15,10 +11,7 @@ export interface FoundryAttachmentConstraintOverride {
     constraint: AttachmentConstraint;
 }
 
-function withAttachmentConstraint(
-    type: TypeDef,
-    constraint: AttachmentConstraint
-): TypeDef {
+function withAttachmentConstraint(type: TypeDef, constraint: AttachmentConstraint): TypeDef {
     switch (type.kind) {
         case "attachment":
             return {
@@ -39,10 +32,7 @@ function withAttachmentConstraint(
             return {
                 ...type,
                 value: {
-                    elementType: withAttachmentConstraint(
-                        type.value.elementType,
-                        constraint
-                    ),
+                    elementType: withAttachmentConstraint(type.value.elementType, constraint),
                 },
             };
         default:
@@ -74,10 +64,7 @@ export function applyAttachmentConstraintOverrides(
                     property,
                     `Unknown property "${target.property}" on "${target.objectType}" in attachment constraint override.`
                 );
-                property.type = withAttachmentConstraint(
-                    property.type,
-                    override.constraint
-                );
+                property.type = withAttachmentConstraint(property.type, override.constraint);
                 break;
             }
             case "actionParameter": {
@@ -95,10 +82,7 @@ export function applyAttachmentConstraintOverrides(
                     parameter,
                     `Unknown parameter "${target.parameter}" on "${target.actionType}" in attachment constraint override.`
                 );
-                parameter.type = withAttachmentConstraint(
-                    parameter.type,
-                    override.constraint
-                );
+                parameter.type = withAttachmentConstraint(parameter.type, override.constraint);
                 break;
             }
         }

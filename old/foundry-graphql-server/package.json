@@ -3,25 +3,20 @@
     "version": "0.0.7",
     "private": true,
     "type": "module",
-    "scripts": {
-        "build": "tsc",
-        "dev": "tsx watch src/index.ts",
-        "lint": "eslint"
-    },
     "dependencies": {
         "@bobbyfidz/foundry-graphql-schema": "workspace:*",
         "@bobbyfidz/panic": "^0.1.0",
         "@osdk/client": "^2.5.2",
         "@osdk/oauth": "^1.5.0",
         "dotenv": "^17.2.3",
-        "grafast": "0.1.1-beta.21",
-        "grafserv": "0.1.1-beta.21"
+        "grafast": "^0.1.1-beta.21",
+        "grafserv": "^0.1.1-beta.21"
     },
     "devDependencies": {
-        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@party-stack/build-config": "workspace:*",
         "@types/node": "^24.10.1",
-        "eslint": "^9.25.0",
-        "typescript": "~5.8.3",
-        "tsx": "^4.20.6"
+        "tsx": "^4.20.6",
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
     }
 }

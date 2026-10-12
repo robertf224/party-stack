@@ -1,0 +1,52 @@
+import { defineConfig } from "vite-plus";
+
+export default defineConfig({
+    run: {
+        tasks: {
+            test: { command: "vp run -r test" },
+            "check-versions": { command: "syncpack lint" },
+            ci: { command: [], dependsOn: ["test", "check-versions"] },
+        },
+    },
+    lint: {
+        plugins: ["typescript", "react", "unicorn", "oxc", "vitest", "jsx-a11y"],
+        options: { typeAware: true, typeCheck: true },
+        rules: {
+            "vitest/require-mock-type-parameters": "off",
+            "vitest/expect-expect": "off",
+            "vitest/valid-expect": ["warn", { maxArgs: 2 }],
+        },
+        ignorePatterns: [
+            // TanStack owns this generated output.
+            // https://tanstack.com/router/latest/docs/installation/with-vite#ignoring-the-generated-route-tree-file
+            "**/routeTree.gen.ts",
+        ],
+    },
+    fmt: {
+        printWidth: 110,
+        trailingComma: "es5",
+        tabWidth: 4,
+        sortTailwindcss: {},
+        ignorePatterns: [
+            // TanStack owns this generated output; regeneration would undo our formatting.
+            // https://tanstack.com/router/latest/docs/installation/with-vite#ignoring-the-generated-route-tree-file
+            "**/routeTree.gen.ts",
+        ],
+        sortImports: {
+            groups: [
+                "value-builtin",
+                "value-external",
+                "value-internal",
+                "value-parent",
+                "value-sibling",
+                "value-index",
+                "type-import",
+                "unknown",
+            ],
+            newlinesBetween: false,
+        },
+    },
+    staged: {
+        "*": "vp check --fix",
+    },
+});

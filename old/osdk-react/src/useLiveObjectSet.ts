@@ -18,7 +18,7 @@ export function useLiveObjectSet<T extends ObjectOrInterfaceDefinition>(type: T)
         status: "connecting",
     });
     React.useEffect(() => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         const objectSet = client(type as any) as ObjectSet<T>;
         const subscription = objectSet.subscribe({
             onSuccessfulSubscription: () => {

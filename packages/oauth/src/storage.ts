@@ -1,8 +1,4 @@
-import {
-    createLocalCollection,
-    type RuntimeAdapter,
-    type SecretStore,
-} from "@party-stack/runtime";
+import { createLocalCollection, type RuntimeAdapter, type SecretStore } from "@party-stack/runtime";
 
 interface StoredSecret {
     key: string;
@@ -21,10 +17,8 @@ export async function resolveOAuthSecretStore(options: {
     if (options.runtime.secrets) {
         return {
             get: (key) => options.runtime.secrets!.get(key),
-            set: (key, value) =>
-                options.runtime.secrets!.set(key, value),
-            delete: (key) =>
-                options.runtime.secrets!.delete(key),
+            set: (key, value) => options.runtime.secrets!.set(key, value),
+            delete: (key) => options.runtime.secrets!.delete(key),
             cleanup: () => Promise.resolve(),
         };
     }
@@ -34,14 +28,9 @@ export async function resolveOAuthSecretStore(options: {
         );
     }
     if (!options.runtime.persistence) {
-        throw new Error(
-            "The OAuth secret fallback requires runtime persistence."
-        );
+        throw new Error("The OAuth secret fallback requires runtime persistence.");
     }
-    const records = createLocalCollection<
-        StoredSecret,
-        string
-    >({
+    const records = createLocalCollection<StoredSecret, string>({
         name: `oauth:${encodeURIComponent(options.clientId)}:secrets`,
         getKey: (record) => record.key,
         runtime: options.runtime,
@@ -49,21 +38,13 @@ export async function resolveOAuthSecretStore(options: {
     });
     await records.preload();
     return {
-        get: (key) =>
-            Promise.resolve(records.get(key)?.value),
+        get: (key) => Promise.resolve(records.get(key)?.value),
         async set(key, value) {
             const transaction = records.get(key)
-                ? records.update(
-                      key,
-                      { optimistic: false },
-                      (record) => {
-                          record.value = value;
-                      }
-                  )
-                : records.insert(
-                      { key, value },
-                      { optimistic: false }
-                  );
+                ? records.update(key, { optimistic: false }, (record) => {
+                      record.value = value;
+                  })
+                : records.insert({ key, value }, { optimistic: false });
             await transaction.isPersisted.promise;
         },
         async delete(key) {

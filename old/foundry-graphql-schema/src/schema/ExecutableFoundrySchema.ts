@@ -39,6 +39,7 @@ export type FoundryExecutor = (opts: {
     operationName?: string;
     variables: Record<string, unknown>;
     token: string;
+    // oxlint-disable-next-line typescript/no-explicit-any -- GraphQL registries erase heterogeneous resolver types.
 }) => Promise<any>;
 
 function createExecutor(executableFoundrySchema: ExecutableFoundrySchema): FoundryExecutor {
@@ -54,7 +55,7 @@ function createExecutor(executableFoundrySchema: ExecutableFoundrySchema): Found
     });
 
     return async ({ query, operationName, variables, token }) => {
-        /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
+        /* oxlint-disable typescript/no-unsafe-assignment, typescript/no-unsafe-member-access */
         const { parse, validate, execute, schema } = getEnveloped();
 
         const document = parse(query);
@@ -74,7 +75,7 @@ function createExecutor(executableFoundrySchema: ExecutableFoundrySchema): Found
             contextValue,
         });
 
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        // oxlint-disable-next-line typescript/no-unsafe-return
         return result;
     };
 }

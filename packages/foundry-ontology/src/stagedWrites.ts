@@ -12,10 +12,7 @@ import type { InitialQueryBuilder } from "@tanstack/db";
  * Generated Foundry clients can be passed directly.
  */
 export interface FoundryStagedWriteClient {
-    create(
-        objectType: unknown,
-        object: Record<string, unknown>
-    ): Promise<unknown>;
+    create(objectType: unknown, object: Record<string, unknown>): Promise<unknown>;
     update(
         object: {
             $apiName: string;
@@ -23,16 +20,8 @@ export interface FoundryStagedWriteClient {
         },
         changes: Record<string, unknown>
     ): Promise<unknown>;
-    delete(object: {
-        $apiName: string;
-        $primaryKey: string | number;
-    }): Promise<unknown>;
-    query?<T>(
-        build: (
-            query: InitialQueryBuilder,
-            objects: OntologyMutatorObjects
-        ) => unknown
-    ): Promise<T>;
+    delete(object: { $apiName: string; $primaryKey: string | number }): Promise<unknown>;
+    query?<T>(build: (query: InitialQueryBuilder, objects: OntologyMutatorObjects) => unknown): Promise<T>;
 }
 
 export interface CreateFoundryStagedWriteMutatorTxOptions {
@@ -44,19 +33,11 @@ export interface CreateFoundryStagedWriteMutatorTxOptions {
     objectTypes?: Record<string, unknown>;
 }
 
-function setPath(
-    object: Record<string, unknown>,
-    path: string[],
-    value: unknown
-): void {
+function setPath(object: Record<string, unknown>, path: string[], value: unknown): void {
     let target = object;
     for (const segment of path.slice(0, -1)) {
         const existing = target[segment];
-        if (
-            typeof existing !== "object" ||
-            existing === null ||
-            Array.isArray(existing)
-        ) {
+        if (typeof existing !== "object" || existing === null || Array.isArray(existing)) {
             target[segment] = {};
         }
         target = target[segment] as Record<string, unknown>;
@@ -65,9 +46,7 @@ function setPath(
 }
 
 function changesToRecord(
-    changes:
-        | Record<string, unknown>
-        | OntologyPropertyChange[]
+    changes: Record<string, unknown> | OntologyPropertyChange[]
 ): Record<string, unknown> {
     if (!Array.isArray(changes)) return changes;
     const record: Record<string, unknown> = {};
@@ -97,13 +76,9 @@ export function createFoundryStagedWriteMutatorTx(
                         return undefined;
                     }
                     return {
-                        create: async (
-                            object: Record<string, unknown>
-                        ) => {
+                        create: async (object: Record<string, unknown>) => {
                             await options.client.create(
-                                options.objectTypes?.[
-                                    objectType
-                                ] ?? {
+                                options.objectTypes?.[objectType] ?? {
                                     $apiName: objectType,
                                 },
                                 object
@@ -111,9 +86,7 @@ export function createFoundryStagedWriteMutatorTx(
                         },
                         update: async (
                             key: string | number,
-                            changes:
-                                | Record<string, unknown>
-                                | OntologyPropertyChange[]
+                            changes: Record<string, unknown> | OntologyPropertyChange[]
                         ) => {
                             await options.client.update(
                                 {
@@ -123,9 +96,7 @@ export function createFoundryStagedWriteMutatorTx(
                                 changesToRecord(changes)
                             );
                         },
-                        delete: async (
-                            key: string | number
-                        ) => {
+                        delete: async (key: string | number) => {
                             await options.client.delete({
                                 $apiName: objectType,
                                 $primaryKey: key,
@@ -134,7 +105,7 @@ export function createFoundryStagedWriteMutatorTx(
                     };
                 },
             }
-        ) as OntologyMutatorTx["mutate"],
+        ),
     };
 }
 

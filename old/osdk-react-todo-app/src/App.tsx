@@ -7,8 +7,8 @@ import {
 } from "@bobbyfidz/osdk-react";
 import { createTask, Task } from "@gtd/sdk";
 import React, { Suspense } from "react";
-import TaskItem from "./TaskItem";
 import FlipMove from "react-flip-move";
+import TaskItem from "./TaskItem";
 import { UserMenu } from "./UserMenu";
 // import ChatWindow from "./ChatWindow";
 
@@ -55,7 +55,7 @@ function App() {
 
     return (
         <div className="min-h-screen bg-gray-100">
-            <div className="absolute right-4 top-4">
+            <div className="absolute top-4 right-4">
                 <Suspense fallback={<div>Loading...</div>}>
                     <UserMenu />
                 </Suspense>
@@ -71,7 +71,7 @@ function App() {
                             value={newTaskTitle}
                             onChange={(e) => setNewTaskTitle(e.target.value)}
                             placeholder="Add a new task"
-                            className="flex-grow rounded-l-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            className="flex-grow rounded-l-lg border border-gray-300 px-4 py-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
                         />
                         <button
                             onClick={handleAddTask}

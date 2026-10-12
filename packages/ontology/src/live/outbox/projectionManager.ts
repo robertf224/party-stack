@@ -16,11 +16,7 @@ function normalizeError(error: unknown): Error {
 
 function desiredProjections(entries: readonly OntologyOutboxEntry[]): DesiredProjection[] {
     return [...entries]
-        .filter(
-            (entry) =>
-                entry.status !== "failed" ||
-                entry.retryable
-        )
+        .filter((entry) => entry.status !== "failed" || entry.retryable)
         .sort((left, right) => left.sequence - right.sequence)
         .map((entry) => ({
             entry,
@@ -47,24 +43,12 @@ export class OutboxProjectionManager {
         return this.disabledError;
     }
 
-    restore(
-        entries: readonly OntologyOutboxEntry[]
-    ): Promise<void> {
-        return this.schedule(() =>
-            this.applyDesired(
-                desiredProjections(entries)
-            )
-        );
+    restore(entries: readonly OntologyOutboxEntry[]): Promise<void> {
+        return this.schedule(() => this.applyDesired(desiredProjections(entries)));
     }
 
-    reconcile(
-        entries: readonly OntologyOutboxEntry[]
-    ): Promise<void> {
-        return this.schedule(() =>
-            this.applyDesired(
-                desiredProjections(entries)
-            )
-        );
+    reconcile(entries: readonly OntologyOutboxEntry[]): Promise<void> {
+        return this.schedule(() => this.applyDesired(desiredProjections(entries)));
     }
 
     ensure(entry: OntologyOutboxEntry): Promise<void> {
@@ -73,9 +57,7 @@ export class OutboxProjectionManager {
                 .filter((candidate) => candidate.entry.id !== entry.id)
                 .map((candidate) => candidate.entry);
             entries.push(entry);
-            return this.applyDesired(
-                desiredProjections(entries)
-            );
+            return this.applyDesired(desiredProjections(entries));
         });
     }
 
@@ -93,17 +75,9 @@ export class OutboxProjectionManager {
         if (this.closed) return Promise.resolve();
         this.closed = true;
         const error = new Error("Outbox disposed.");
-        const settlements = this.desired.map(
-            (candidate) =>
-                this.invalidate(
-                    candidate.entry.id,
-                    error
-                )
-        );
+        const settlements = this.desired.map((candidate) => this.invalidate(candidate.entry.id, error));
         this.desired = [];
-        return Promise.all(settlements).then(
-            () => undefined
-        );
+        return Promise.all(settlements).then(() => undefined);
     }
 
     private schedule(work: () => Promise<void>): Promise<void> {
@@ -130,9 +104,7 @@ export class OutboxProjectionManager {
                     try {
                         await this.install(candidate);
                     } catch (error) {
-                        await this.disable(
-                            normalizeError(error)
-                        );
+                        await this.disable(normalizeError(error));
                         return;
                     }
                 }
@@ -142,10 +114,7 @@ export class OutboxProjectionManager {
 
         for (let index = this.desired.length - 1; index >= divergence; index -= 1) {
             const removed = this.desired[index]!;
-            await this.invalidate(
-                removed.entry.id,
-                removalError(removed)
-            );
+            await this.invalidate(removed.entry.id, removalError(removed));
         }
         this.desired = next;
 
@@ -154,24 +123,15 @@ export class OutboxProjectionManager {
             try {
                 await this.install(candidate);
             } catch (error) {
-                await this.disable(
-                    normalizeError(error)
-                );
+                await this.disable(normalizeError(error));
                 return;
             }
         }
     }
 
     private async disable(error: Error): Promise<void> {
-        for (
-            let index = this.desired.length - 1;
-            index >= 0;
-            index -= 1
-        ) {
-            await this.invalidate(
-                this.desired[index]!.entry.id,
-                error
-            );
+        for (let index = this.desired.length - 1; index >= 0; index -= 1) {
+            await this.invalidate(this.desired[index]!.entry.id, error);
         }
         this.desired = [];
         this.disabledError = error;
@@ -200,12 +160,7 @@ export class OutboxProjectionManager {
             return;
         }
 
-        await this.invalidate(
-            candidate.entry.id,
-            new Error(
-                "Outbox optimistic projection replaced."
-            )
-        );
+        await this.invalidate(candidate.entry.id, new Error("Outbox optimistic projection replaced."));
         const version = this.versions.get(candidate.entry.id) ?? 0;
         const projection = await this.project?.(candidate.entry);
         if (this.closed || this.versions.get(candidate.entry.id) !== version) {
@@ -222,23 +177,14 @@ export class OutboxProjectionManager {
         this.installedFingerprints.set(candidate.entry.id, candidate.fingerprint);
     }
 
-    private async invalidate(
-        id: string,
-        error?: Error
-    ): Promise<void> {
+    private async invalidate(id: string, error?: Error): Promise<void> {
         this.versions.set(id, (this.versions.get(id) ?? 0) + 1);
-        await this.settle(
-            this.projections.get(id),
-            error
-        );
+        await this.settle(this.projections.get(id), error);
         this.projections.delete(id);
         this.installedFingerprints.delete(id);
     }
 
-    private async settle(
-        projection: OutboxProjection | undefined,
-        error?: Error
-    ): Promise<void> {
+    private async settle(projection: OutboxProjection | undefined, error?: Error): Promise<void> {
         try {
             await projection?.settle(error);
         } catch {

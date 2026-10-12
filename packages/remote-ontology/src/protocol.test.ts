@@ -1,15 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { Temporal } from "temporal-polyfill";
-import {
-    o,
-    type OntologyBackendAdapter,
-    type OntologyIR,
-} from "@party-stack/ontology";
+import { o, type OntologyBackendAdapter, type OntologyIR } from "@party-stack/ontology";
 import { eq, gt, IR } from "@tanstack/db";
-import {
-    createHttpRemoteOntologyTransport,
-    createInProcessHttpRemoteOntologyTransport,
-} from "./http.js";
+import { Temporal } from "temporal-polyfill";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { createHttpRemoteOntologyTransport, createInProcessHttpRemoteOntologyTransport } from "./http.js";
 import { parseRemoteOntologyRequest, serializeLoadSubsetOptions } from "./protocol.js";
 import { createRemoteOntologyServer } from "./server.js";
 
@@ -18,6 +11,41 @@ afterEach(() => {
 });
 
 describe("createHttpRemoteOntologyTransport", () => {
+    it.each([
+        { name: "record", headers: { authorization: "Bearer token", "Content-Type": "text/plain" } },
+        {
+            name: "Headers instance",
+            headers: new Headers({ authorization: "Bearer token", "Content-Type": "text/plain" }),
+        },
+        {
+            name: "header tuples",
+            headers: [
+                ["authorization", "Bearer token"],
+                ["Content-Type", "text/plain"],
+            ] as [string, string][],
+        },
+    ])("preserves $name headers for JSON and attachment requests", async ({ headers }) => {
+        const requests: Request[] = [];
+        const transport = createHttpRemoteOntologyTransport({
+            url: "https://example.test/remote/",
+            headers: () => headers,
+            fetch: async (input, init) => {
+                requests.push(new Request(input, init));
+                return new Response("{}");
+            },
+        });
+
+        await transport.describe();
+        await transport.getAttachmentContent({ attachment: { id: "attachment-1" } });
+
+        expect(requests).toHaveLength(2);
+        for (const request of requests) {
+            expect(request.headers.get("authorization")).toBe("Bearer token");
+            expect(request.headers.get("content-type")).toBe("application/json");
+        }
+        expect(new Headers(headers).get("content-type")).toBe("text/plain");
+    });
+
     it("serializes and hydrates typed ontology values", async () => {
         const ir: OntologyIR = {
             types: [],
@@ -50,7 +78,8 @@ describe("createHttpRemoteOntologyTransport", () => {
         let applyActionBody: unknown;
         let validateActionBody: unknown;
         const fetchImpl: typeof fetch = async (input, init) => {
-            const endpoint = String(input).split("/").pop();
+            const request = new Request(input, init);
+            const endpoint = new URL(request.url).pathname.split("/").pop();
             if (endpoint === "describe") {
                 return new Response(
                     JSON.stringify({
@@ -70,11 +99,11 @@ describe("createHttpRemoteOntologyTransport", () => {
                 );
             }
             if (endpoint === "apply-action") {
-                applyActionBody = JSON.parse(String(init?.body));
+                applyActionBody = await request.json();
                 return new Response(JSON.stringify({}));
             }
             if (endpoint === "validate-action") {
-                validateActionBody = JSON.parse(String(init?.body));
+                validateActionBody = await request.json();
                 return new Response(
                     JSON.stringify({
                         certain: true,
@@ -138,7 +167,7 @@ describe("createHttpRemoteOntologyTransport", () => {
         const legacyTransport = createHttpRemoteOntologyTransport({
             url: "https://legacy.example.test/remote/",
             fetch: async (input) => {
-                if (String(input).endsWith("/describe")) {
+                if (new Request(input).url.endsWith("/describe")) {
                     return new Response(JSON.stringify({ ir }));
                 }
                 requestedLegacyValidation = true;
@@ -188,7 +217,8 @@ describe("createHttpRemoteOntologyTransport", () => {
         });
         const arrayBuffer = vi.spyOn(originalFile, "arrayBuffer");
         const fetchImpl: typeof fetch = async (_input, init) => {
-            const uploadedFile = (init?.body as FormData).get("attachment:local-id");
+            if (!(init?.body instanceof FormData)) throw new Error("Expected a multipart request");
+            const uploadedFile = init.body.get("attachment:local-id");
             expect(uploadedFile).not.toBe(originalFile);
             expect(uploadedFile).toBeInstanceOf(File);
             if (!(uploadedFile instanceof File)) {
@@ -321,29 +351,20 @@ describe("createInProcessHttpRemoteOntologyTransport", () => {
             ],
             queryFunctionTypes: [],
         };
-        const server = createRemoteOntologyServer<
-            any,
-            any
-        >({
+        const server = createRemoteOntologyServer<any, any>({
             ir,
             backendAdapter: {
                 name: "test",
-                getCollectionOptions:
-                    (): ReturnType<
-                        OntologyBackendAdapter["getCollectionOptions"]
-                    > => ({
-                        syncMode: "eager",
-                        sync: {
-                            sync: ({
-                                markReady,
-                            }) => {
-                                markReady();
-                            },
+                getCollectionOptions: (): ReturnType<OntologyBackendAdapter["getCollectionOptions"]> => ({
+                    syncMode: "eager",
+                    sync: {
+                        sync: ({ markReady }) => {
+                            markReady();
                         },
-                    }),
+                    },
+                }),
                 applyAction: async () => {},
-                runQueryFunction: async () =>
-                    undefined,
+                runQueryFunction: async () => undefined,
             },
             getContext: () => ({
                 user: {
@@ -353,23 +374,17 @@ describe("createInProcessHttpRemoteOntologyTransport", () => {
             policy: {
                 fixedActionParameterValues: {
                     createNote: {
-                        ownerEmail:
-                            o.Expression.getAt({
-                                source: o.Expression.contextReference(
-                                    {
-                                        name: "user",
-                                    }
-                                ),
-                                path: ["email"],
+                        ownerEmail: o.Expression.getAt({
+                            source: o.Expression.contextReference({
+                                name: "user",
                             }),
+                            path: ["email"],
+                        }),
                     },
                 },
             },
         });
-        const transport =
-            createInProcessHttpRemoteOntologyTransport(
-                server
-            );
+        const transport = createInProcessHttpRemoteOntologyTransport(server);
 
         await transport.describe();
         await expect(
@@ -377,8 +392,7 @@ describe("createInProcessHttpRemoteOntologyTransport", () => {
                 actionType: "createNote",
                 parameters: {
                     title: "Hello",
-                    ownerEmail:
-                        "mallory@example.com",
+                    ownerEmail: "mallory@example.com",
                 },
             })
         ).resolves.toEqual({

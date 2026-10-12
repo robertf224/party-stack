@@ -1,7 +1,7 @@
-import { env } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
 import { sqliteOntologyConformanceCases } from "@party-stack/sqlite-ontology/testing";
-import { describe, expect, it } from "vitest";
+import { runInDurableObject } from "cloudflare:test";
+import { env } from "cloudflare:workers";
+import { describe, expect, it } from "vite-plus/test";
 import type { DurableObjectOntologyTest } from "./worker.js";
 
 interface TestEnvironment {
@@ -16,7 +16,7 @@ function createStub() {
 
 describe("Durable Object ontology", () => {
     for (const testCase of sqliteOntologyConformanceCases) {
-        it(testCase.name, async () => {
+        it(`${testCase.name}`, async () => {
             await runInDurableObject(createStub(), async (instance) => {
                 await instance.runConformance(testCase.id);
             });
@@ -43,15 +43,9 @@ describe("Durable Object ontology", () => {
     it("isolates ontologies by Durable Object", async () => {
         const first = createStub();
         const second = createStub();
-        await expect(
-            first.createAndListNote("same", "first")
-        ).resolves.toEqual(["first"]);
-        await expect(
-            second.createAndListNote("same", "second")
-        ).resolves.toEqual(["second"]);
-        await expect(
-            first.createAndListNote()
-        ).resolves.toEqual(["first"]);
+        await expect(first.createAndListNote("same", "first")).resolves.toEqual(["first"]);
+        await expect(second.createAndListNote("same", "second")).resolves.toEqual(["second"]);
+        await expect(first.createAndListNote()).resolves.toEqual(["first"]);
     });
 
     it("defaults authoritative attachment bytes to R2", async () => {

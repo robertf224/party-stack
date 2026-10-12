@@ -12,9 +12,9 @@ import { createHttpRemoteOntologyTransport } from "@party-stack/remote-ontology/
 import { createWebRuntime } from "@party-stack/web-runtime";
 import { eq } from "@tanstack/db";
 import ontology from "../ontology/ontology";
-import type { IssueTrackerOntology } from "../ontology/generated/types";
 import { foundryUserToUser } from "../ontology/user";
 import { authClient } from "./auth";
+import type { IssueTrackerOntology } from "../ontology/generated/types";
 
 export type ProfileKind = "foundry" | "sqlite";
 export type TrackerOntology = LiveOntology<IssueTrackerOntology>;

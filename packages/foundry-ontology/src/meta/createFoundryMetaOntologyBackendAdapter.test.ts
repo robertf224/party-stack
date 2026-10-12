@@ -1,7 +1,7 @@
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { OntologyClient } from "@party-stack/foundry-client";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { createFoundryMetaOntologyBackendAdapter } from "./createFoundryMetaOntologyBackendAdapter.js";
+import type { OntologyClient } from "@party-stack/foundry-client";
 
 vi.mock("@tanstack/query-db-collection", async (importOriginal) => {
     const original = await importOriginal<typeof import("@tanstack/query-db-collection")>();

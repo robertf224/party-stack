@@ -1,6 +1,6 @@
 import { invariant } from "@bobbyfidz/panic";
-import type { OntologyAttachmentCreateTarget } from "./targets.js";
 import type { OntologyIR, TypeDef } from "../ir/generated/types.js";
+import type { OntologyAttachmentCreateTarget } from "./targets.js";
 
 export function unwrapType(type: TypeDef): { type: TypeDef; isOptional: boolean } {
     if (type.kind === "optional") {

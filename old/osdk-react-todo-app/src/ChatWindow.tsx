@@ -1,5 +1,5 @@
-import React, { useState } from "react";
 import { useChat, SessionExchange } from "@bobbyfidz/osdk-react/ai";
+import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 
 interface ChatWindowProps {
@@ -23,9 +23,10 @@ export default function ChatWindow({ agentRid, sessionRid }: ChatWindowProps) {
     };
 
     return (
-        <div className="fixed bottom-4 right-4 z-50">
+        <div className="fixed right-4 bottom-4 z-50">
             {!isOpen ? (
                 <button
+                    aria-label="Open chat assistant"
                     onClick={() => setIsOpen(true)}
                     className="rounded-full bg-blue-500 p-4 text-white shadow-lg hover:bg-blue-600"
                 >
@@ -49,6 +50,7 @@ export default function ChatWindow({ agentRid, sessionRid }: ChatWindowProps) {
                     <div className="flex items-center justify-between border-b p-4">
                         <h3 className="text-lg font-semibold">Chat Assistant</h3>
                         <button
+                            aria-label="Close chat assistant"
                             onClick={() => setIsOpen(false)}
                             className="text-gray-500 hover:text-gray-700"
                         >
@@ -127,7 +129,7 @@ export default function ChatWindow({ agentRid, sessionRid }: ChatWindowProps) {
                                 value={message}
                                 onChange={(e) => setMessage(e.target.value)}
                                 placeholder="Type your message..."
-                                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 focus:ring-2 focus:ring-blue-400 focus:outline-none"
                             />
                             <button
                                 type="submit"

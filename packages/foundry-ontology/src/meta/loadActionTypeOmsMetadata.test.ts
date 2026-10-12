@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { OntologyClient } from "@party-stack/foundry-client";
 
 const { bulkLoadOntologyEntities } = vi.hoisted(() => ({
@@ -47,10 +47,7 @@ describe("loadActionTypeOmsMetadata", () => {
             },
             undefined,
             {
-                actionTypes: [
-                    { rid: "ri.action.one" },
-                    { rid: "ri.action.two" },
-                ],
+                actionTypes: [{ rid: "ri.action.one" }, { rid: "ri.action.two" }],
                 datasourceTypes: [],
                 linkTypes: [],
                 objectTypes: [],
@@ -125,26 +122,16 @@ describe("loadActionTypeOmsMetadata", () => {
             typeGroups: [],
         });
 
-        const loaded = (
-            await loadActionTypeOmsMetadata(client, ["ri.action.country"])
-        ).get("ri.action.country");
+        const loaded = (await loadActionTypeOmsMetadata(client, ["ri.action.country"])).get(
+            "ri.action.country"
+        );
 
         expect(
-            loaded?.actionType.actionTypeLogic.validation.parameterValidations
-                .country?.defaultValidation.validation.allowedValues
+            loaded?.actionType.actionTypeLogic.validation.parameterValidations.country?.defaultValidation
+                .validation.allowedValues
         ).toBeDefined();
-        expect(
-            convertOmsActionParameterStringConstraint(
-                loaded,
-                "country"
-            )
-        ).toBeUndefined();
-        expect(
-            convertOmsActionParameterStringSuggestions(
-                loaded,
-                "country"
-            )
-        ).toEqual([
+        expect(convertOmsActionParameterStringConstraint(loaded, "country")).toBeUndefined();
+        expect(convertOmsActionParameterStringSuggestions(loaded, "country")).toEqual([
             {
                 value: "US",
                 label: "United States",
@@ -166,13 +153,10 @@ describe("loadActionTypeOmsMetadata", () => {
                                 display: {
                                     prefill: {
                                         type: "objectParameterPropertyValue",
-                                        objectParameterPropertyValue:
-                                            {
-                                                parameterId:
-                                                    "project",
-                                                propertyTypeId:
-                                                    "project-color",
-                                            },
+                                        objectParameterPropertyValue: {
+                                            parameterId: "project",
+                                            propertyTypeId: "project-color",
+                                        },
                                     },
                                 },
                             },
@@ -217,14 +201,9 @@ describe("loadActionTypeOmsMetadata", () => {
                 ],
             });
 
-        const result = await loadActionTypeOmsMetadata(
-            client,
-            ["ri.action.update-project"]
-        );
+        const result = await loadActionTypeOmsMetadata(client, ["ri.action.update-project"]);
 
-        expect(
-            bulkLoadOntologyEntities
-        ).toHaveBeenNthCalledWith(
+        expect(bulkLoadOntologyEntities).toHaveBeenNthCalledWith(
             2,
             expect.anything(),
             undefined,
@@ -252,14 +231,10 @@ describe("loadActionTypeOmsMetadata", () => {
     });
 
     it("keeps public metadata usable when the private OMS endpoint fails", async () => {
-        const warn = vi
-            .spyOn(console, "warn")
-            .mockImplementation(() => undefined);
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
         bulkLoadOntologyEntities.mockRejectedValue(new Error("Unavailable"));
 
-        await expect(
-            loadActionTypeOmsMetadata(client, ["ri.action.one"])
-        ).resolves.toEqual(new Map());
+        await expect(loadActionTypeOmsMetadata(client, ["ri.action.one"])).resolves.toEqual(new Map());
         expect(warn).toHaveBeenCalledOnce();
         warn.mockRestore();
     });

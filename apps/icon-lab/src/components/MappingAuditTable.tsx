@@ -19,7 +19,7 @@ export function MappingAuditTable({
                 </p>
                 <div className="mt-4 max-h-[70vh] overflow-auto">
                     <table className="w-full text-left text-sm">
-                        <thead className="sticky top-0 bg-white/90 font-[var(--font-mono)] text-[11px] text-[var(--muted)]">
+                        <thead className="sticky top-0 bg-white/90 text-[11px] font-[var(--font-mono)] text-[var(--muted)]">
                             <tr>
                                 <th className="py-2 pr-3 font-medium">Concept</th>
                                 <th className="py-2 pr-3 font-medium">Min</th>
@@ -66,7 +66,7 @@ export function MappingAuditTable({
                 </p>
                 <div className="mt-4 max-h-[70vh] overflow-auto">
                     <table className="w-full text-left text-sm">
-                        <thead className="sticky top-0 bg-white/90 font-[var(--font-mono)] text-[11px] text-[var(--muted)]">
+                        <thead className="sticky top-0 bg-white/90 text-[11px] font-[var(--font-mono)] text-[var(--muted)]">
                             <tr>
                                 <th className="py-2 pr-3 font-medium">Concept</th>
                                 <th className="py-2 pr-3 font-medium">Pair</th>
@@ -88,7 +88,7 @@ export function MappingAuditTable({
                                             {pair.concept}
                                         </button>
                                     </td>
-                                    <td className="py-2 pr-3 font-[var(--font-mono)] text-xs">
+                                    <td className="py-2 pr-3 text-xs font-[var(--font-mono)]">
                                         {pair.left.provider}:{pair.left.name}
                                         <br />
                                         {pair.right.provider}:{pair.right.name}

@@ -1,7 +1,7 @@
 import { buildLucideSvg } from "@lucide/icons/build";
 import { lucideDynamicIconImports, type LucideIconName } from "@lucide/icons/dynamic";
-import type { IconName } from "@party-stack/icons";
 import type { LucideBuildParams, LucideIconData } from "@lucide/icons";
+import type { IconName } from "@party-stack/icons";
 
 export const LucideIconNames = {
     activity: "activity",

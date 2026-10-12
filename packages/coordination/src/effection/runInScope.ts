@@ -1,38 +1,18 @@
-import {
-    race,
-    type Operation,
-    type Scope,
-} from "effection";
-import {
-    normalizeError,
-} from "../internal.js";
+import { race, type Operation, type Scope } from "effection";
+import { normalizeError } from "../internal.js";
 import { waitForAbort } from "./waitForAbort.js";
 
 export function runInScope<Result>(
     scope: Scope,
     operation: () => Operation<Result>,
-    signals: readonly (
-        | AbortSignal
-        | undefined
-    )[] = []
+    signals: readonly (AbortSignal | undefined)[] = []
 ): Promise<Result> {
     const task = scope.run(function* () {
         const aborts = signals
-            .filter(
-                (
-                    signal
-                ): signal is AbortSignal =>
-                    signal !== undefined
-            )
+            .filter((signal): signal is AbortSignal => signal !== undefined)
             .map(waitForAbort);
         try {
-            const value =
-                aborts.length === 0
-                    ? yield* operation()
-                    : yield* race([
-                          operation(),
-                          ...aborts,
-                      ]);
+            const value = aborts.length === 0 ? yield* operation() : yield* race([operation(), ...aborts]);
             return {
                 ok: true as const,
                 value,

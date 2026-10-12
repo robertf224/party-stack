@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
-import { Temporal } from "temporal-polyfill";
 import { o, type OntologyIR } from "@party-stack/ontology";
 import { createCollection } from "@tanstack/db";
+import { Temporal } from "temporal-polyfill";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
     createRemoteLiveOntology,
     createRemoteOntologyBackendAdapter,
@@ -57,9 +57,7 @@ describe("createRemoteLiveOntology", () => {
     it("uses describe to construct a live ontology with projected context", async () => {
         let appliedParameters: Record<string, unknown> | undefined;
         let validatedParameters: Record<string, unknown> | undefined;
-        let resolutionRequest:
-            | Record<string, unknown>
-            | undefined;
+        let resolutionRequest: Record<string, unknown> | undefined;
         const transport: RemoteOntologyTransport = {
             describe: async () => ({
                 ir,
@@ -91,14 +89,14 @@ describe("createRemoteLiveOntology", () => {
                 return {
                     parameters: {
                         ...request.parameters,
-                        ownerEmail:
-                            "resolved@example.com",
+                        ownerEmail: "resolved@example.com",
                     },
                 };
             },
-            runQueryFunction: async (request) => ({
-                value: `Hello ${request.parameters.name}`,
-            }),
+            runQueryFunction: async (request) => {
+                if (typeof request.parameters.name !== "string") throw new Error("Expected a string name");
+                return { value: `Hello ${request.parameters.name}` };
+            },
             getAttachmentMetadata: async (request) => ({
                 ...request.attachment,
                 size: 0,
@@ -110,27 +108,18 @@ describe("createRemoteLiveOntology", () => {
 
         const ontology = await createRemoteLiveOntology({ transport });
         await expect(
-            ontology.actions.createNote!.resolveParameters(
-                {
-                    title: "Hello",
-                    dueDate:
-                        Temporal.PlainDate.from(
-                            "2026-06-15"
-                        ),
-                }
-            )
+            ontology.actions.createNote!.resolveParameters({
+                title: "Hello",
+                dueDate: Temporal.PlainDate.from("2026-06-15"),
+            })
         ).resolves.toEqual({
             title: "Hello",
             ownerEmail: "resolved@example.com",
-            dueDate: Temporal.PlainDate.from(
-                "2026-06-15"
-            ),
+            dueDate: Temporal.PlainDate.from("2026-06-15"),
         });
         expect(resolutionRequest).toEqual({
             title: "Hello",
-            dueDate: Temporal.PlainDate.from(
-                "2026-06-15"
-            ),
+            dueDate: Temporal.PlainDate.from("2026-06-15"),
         });
         resolutionRequest = undefined;
 
@@ -198,13 +187,17 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
         });
 
         await expect(
-            adapter.applyAction("createNote", { title: "one" }, {
-                objects: {
-                    Note: {
-                        utils: { refetch },
-                    } as never,
-                },
-            })
+            adapter.applyAction(
+                "createNote",
+                { title: "one" },
+                {
+                    objects: {
+                        Note: {
+                            utils: { refetch },
+                        } as never,
+                    },
+                }
+            )
         ).resolves.toMatchObject({
             invalidatedObjectTypes: ["Note"],
             attachmentIdMappings: [{ localId: "local", remoteId: "remote" }],
@@ -308,13 +301,17 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
 
         let confirmed = false;
         const confirmation = adapter
-            .applyAction("createNote", { title: "one" }, {
-                objects: {
-                    Note: {
-                        utils: { refetch },
-                    } as never,
-                },
-            })
+            .applyAction(
+                "createNote",
+                { title: "one" },
+                {
+                    objects: {
+                        Note: {
+                            utils: { refetch },
+                        } as never,
+                    },
+                }
+            )
             .then(() => {
                 confirmed = true;
             });
@@ -330,16 +327,10 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
 describe("createRemoteOntologyBackendAdapter.loadSubset", () => {
     it("keeps identical abortable requests on independent transports", async () => {
         const requests: Array<{
-            resolve: (response: {
-                objectType: string;
-                objects: Array<Record<string, unknown>>;
-            }) => void;
+            resolve: (response: { objectType: string; objects: Array<Record<string, unknown>> }) => void;
         }> = [];
         const loadSubset = vi.fn(
-            (
-                _request: unknown,
-                options?: { signal?: AbortSignal }
-            ) =>
+            (_request: unknown, options?: { signal?: AbortSignal }) =>
                 new Promise<{
                     objectType: string;
                     objects: Array<Record<string, unknown>>;
@@ -368,9 +359,7 @@ describe("createRemoteOntologyBackendAdapter.loadSubset", () => {
             getAttachmentContent: async () => new Blob(),
         };
         const adapter = createRemoteOntologyBackendAdapter({ ir, transport });
-        const collection = createCollection(
-            adapter.getCollectionOptions("Note") as never
-        );
+        const collection = createCollection(adapter.getCollectionOptions("Note") as never);
         collection.startSyncImmediate();
         const controllerA = new AbortController();
         const controllerB = new AbortController();
@@ -386,12 +375,8 @@ describe("createRemoteOntologyBackendAdapter.loadSubset", () => {
 
         expect(requestA).not.toBe(requestB);
         await vi.waitFor(() => expect(loadSubset).toHaveBeenCalledTimes(2));
-        expect(loadSubset.mock.calls[0]?.[1]?.signal).toBe(
-            controllerA.signal
-        );
-        expect(loadSubset.mock.calls[1]?.[1]?.signal).toBe(
-            controllerB.signal
-        );
+        expect(loadSubset.mock.calls[0]?.[1]?.signal).toBe(controllerA.signal);
+        expect(loadSubset.mock.calls[1]?.[1]?.signal).toBe(controllerB.signal);
 
         controllerA.abort(new DOMException("Request A canceled.", "AbortError"));
         requests[1]!.resolve({

@@ -1,6 +1,9 @@
 {
     "name": "@party-stack/oauth",
     "version": "0.3.0",
+    "files": [
+        "lib"
+    ],
     "type": "module",
     "exports": {
         ".": {
@@ -8,25 +11,16 @@
             "default": "./lib/index.js"
         }
     },
-    "files": [
-        "lib"
-    ],
-    "scripts": {
-        "build": "tsc",
-        "lint": "eslint",
-        "test": "vitest run"
-    },
     "dependencies": {
-        "@party-stack/errors": "workspace:^",
+        "@party-stack/errors": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "oauth4webapi": "^3.8.7"
     },
     "devDependencies": {
-        "@bobbyfidz/universal-build-config": "^0.1.1",
+        "@party-stack/build-config": "workspace:*",
         "@tanstack/db": "0.12.1",
-        "eslint": "^9.25.0",
-        "typescript": "~5.8.3",
-        "vitest": "^3.1.1"
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
     },
     "peerDependencies": {
         "@tanstack/db": "0.12.1"

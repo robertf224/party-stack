@@ -114,16 +114,9 @@ interface IndexedPayloadRecord<Metadata> {
 }
 
 interface IndexedPayloadStore<Metadata, Payload> {
-    readonly collection: Collection<
-        IndexedPayloadRecord<Metadata>,
-        string
-    >;
+    readonly collection: Collection<IndexedPayloadRecord<Metadata>, string>;
 
-    write(
-        id: string,
-        metadata: Metadata,
-        payload: Payload
-    ): Promise<void>;
+    write(id: string, metadata: Metadata, payload: Payload): Promise<void>;
 
     read(id: string): Promise<
         | {

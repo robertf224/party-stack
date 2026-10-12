@@ -8,9 +8,6 @@ import {
     type OntologyConfiguration,
     type OntologyRoute,
 } from "@party-stack/ontology";
-import type { BackendConnectionAdapterProvider, ConnectionEgress } from "@party-stack/connections";
-import type { OntologyIR } from "@party-stack/ontology";
-import type { RuntimeAdapterProvider } from "@party-stack/runtime";
 import {
     createFoundryOntologyBackend,
     type FoundryUsersIntegration,
@@ -21,6 +18,9 @@ import {
     type FoundryAuthenticationClient,
 } from "../connection.js";
 import { createFoundryMetaOntologyBackendAdapter } from "../meta/createFoundryMetaOntologyBackendAdapter.js";
+import type { BackendConnectionAdapterProvider, ConnectionEgress } from "@party-stack/connections";
+import type { OntologyIR } from "@party-stack/ontology";
+import type { RuntimeAdapterProvider } from "@party-stack/runtime";
 
 export type FoundryConnectionOptions = Omit<CreateFoundryConnectionAdapterOptions, "baseUrl">;
 export type FoundryOntologyRoute = (baseUrl: string) => OntologyRoute;

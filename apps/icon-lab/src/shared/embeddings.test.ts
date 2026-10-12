@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { QuantizedEmbeddingStore } from "./embeddings";
 import type { EmbeddingIndexFile } from "./types";
 
@@ -13,14 +13,7 @@ const index: EmbeddingIndexFile = {
 };
 
 describe("QuantizedEmbeddingStore", () => {
-    const store = new QuantizedEmbeddingStore(
-        index,
-        new Int8Array([
-            127, 0, 0,
-            120, 10, 0,
-            -127, 0, 0,
-        ])
-    );
+    const store = new QuantizedEmbeddingStore(index, new Int8Array([127, 0, 0, 120, 10, 0, -127, 0, 0]));
 
     it("looks up vectors and preserves cosine similarity", () => {
         expect(store.has("a")).toBe(true);

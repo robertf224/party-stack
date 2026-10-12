@@ -87,7 +87,7 @@ class ObjectListStep extends Step<ObjectListStepData> {
 
     execute({ values, indexMap }: ExecutionDetails): ExecutionResults<ObjectListStepData> {
         return indexMap(async (index) => {
-            /* eslint-disable @typescript-eslint/no-unsafe-assignment */
+            /* oxlint-disable typescript/no-unsafe-assignment */
             const context: FoundryContext = values[this.#contextStepId]!.at(index);
             const objectSet: ObjectSet = values[this.#objectSetStepId]!.at(index);
             const { pageSize, pageToken, orderBy }: ObjectListArgs = values[this.#argsStep]!.at(index);

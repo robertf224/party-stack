@@ -1,6 +1,6 @@
 import { o } from "@party-stack/ontology";
 import { Temporal } from "temporal-polyfill";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { createSalesforceCodec } from "./salesforceCodec.js";
 
 describe("createSalesforceCodec", () => {
@@ -54,14 +54,10 @@ describe("createSalesforceCodec", () => {
     });
 
     it("encodes multipicklist and temporal values for Flow inputs", () => {
-        expect(
-            codec.encodeValue(o.list({ elementType: o.string({}) }), ["a", "b"])
-        ).toBe("a;b");
-        expect(
-            codec.encodeValue(o.timestamp({}), Temporal.Instant.from("2026-08-06T12:00:00Z"))
-        ).toBe("2026-08-06T12:00:00Z");
-        expect(codec.encodeValue(o.date({}), Temporal.PlainDate.from("2026-08-07"))).toBe(
-            "2026-08-07"
+        expect(codec.encodeValue(o.list({ elementType: o.string({}) }), ["a", "b"])).toBe("a;b");
+        expect(codec.encodeValue(o.timestamp({}), Temporal.Instant.from("2026-08-06T12:00:00Z"))).toBe(
+            "2026-08-06T12:00:00Z"
         );
+        expect(codec.encodeValue(o.date({}), Temporal.PlainDate.from("2026-08-07"))).toBe("2026-08-07");
     });
 });

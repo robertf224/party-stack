@@ -1,11 +1,11 @@
 import { ObjectSet } from "@osdk/foundry.ontologies";
 import { each, run, suspend, Task, useScope } from "effection";
-import type { OntologyClient } from "@party-stack/foundry-client";
 import { ObjectSetSubscriptionMessage } from "./types.js";
 import {
     ObjectSetWatcherManager as EffectionObjectSetWatcherManager,
     useObjectSetWatcherManager,
 } from "./useObjectSetWatcherManager.js";
+import type { OntologyClient } from "@party-stack/foundry-client";
 import type { Scope } from "effection";
 
 export class ObjectSetWatcherManager {
@@ -14,7 +14,7 @@ export class ObjectSetWatcherManager {
     #manager: EffectionObjectSetWatcherManager | undefined;
 
     constructor(client: OntologyClient) {
-        // eslint-disable-next-line @typescript-eslint/no-this-alias
+        // oxlint-disable-next-line typescript/no-this-alias
         const manager = this;
         this.#task = run(function* () {
             manager.#scope = yield* useScope();

@@ -1,4 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { DraftMappingBrowser } from "./components/DraftMappingBrowser";
+import { EmbeddingScatter } from "./components/EmbeddingScatter";
+import { IconTile } from "./components/IconTile";
+import { MappingAuditTable } from "./components/MappingAuditTable";
+import { loadEmbeddingStore, type QuantizedEmbeddingStore } from "./shared/embeddings";
+import { projectTo2d } from "./shared/math";
 import type {
     CatalogFile,
     EmbeddingIndexFile,
@@ -7,12 +13,6 @@ import type {
     IconProvider,
     DraftMappingsFile,
 } from "./shared/types";
-import { projectTo2d } from "./shared/math";
-import { loadEmbeddingStore, type QuantizedEmbeddingStore } from "./shared/embeddings";
-import { IconTile } from "./components/IconTile";
-import { EmbeddingScatter } from "./components/EmbeddingScatter";
-import { MappingAuditTable } from "./components/MappingAuditTable";
-import { DraftMappingBrowser } from "./components/DraftMappingBrowser";
 
 type Tab = "draft" | "concepts" | "audit" | "map" | "neighbors";
 
@@ -45,7 +45,7 @@ export function App() {
 
     useEffect(() => {
         let cancelled = false;
-        (async () => {
+        void (async () => {
             try {
                 const [catalogRes, embeddingsRes, auditRes, draftRes] = await Promise.all([
                     fetch("/generated-data/catalog.json"),
@@ -174,7 +174,7 @@ export function App() {
             <header className="border-b border-[var(--line)] bg-[var(--panel)] backdrop-blur-md">
                 <div className="mx-auto flex max-w-[1600px] flex-wrap items-end justify-between gap-4 px-6 py-5">
                     <div>
-                        <p className="text-xs font-[var(--font-mono)] uppercase tracking-[0.18em] text-[var(--muted)]">
+                        <p className="text-xs font-[var(--font-mono)] tracking-[0.18em] text-[var(--muted)] uppercase">
                             party-stack / apps
                         </p>
                         <h1 className="mt-1 text-3xl font-semibold tracking-tight">Icon Lab</h1>
@@ -299,7 +299,7 @@ export function App() {
                                             className="rounded-xl border border-[var(--line)] bg-white/70 p-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm"
                                         >
                                             <div className="mb-2 flex items-center justify-between gap-2">
-                                                <span className="text-[11px] uppercase tracking-wide text-[var(--muted)]">
+                                                <span className="text-[11px] tracking-wide text-[var(--muted)] uppercase">
                                                     {PROVIDER_LABEL[icon.provider]}
                                                 </span>
                                                 <span
@@ -308,7 +308,7 @@ export function App() {
                                                 />
                                             </div>
                                             <IconTile icon={icon} size={56} />
-                                            <div className="mt-3 break-all text-xs font-[var(--font-mono)]">
+                                            <div className="mt-3 text-xs font-[var(--font-mono)] break-all">
                                                 {icon.name}
                                             </div>
                                             {icon.textOnly && (
@@ -322,7 +322,7 @@ export function App() {
                             </div>
 
                             <div className="rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-5 backdrop-blur">
-                                <h3 className="text-sm font-semibold uppercase tracking-wide">
+                                <h3 className="text-sm font-semibold tracking-wide uppercase">
                                     Pairwise similarities
                                 </h3>
                                 <div className="mt-3 overflow-auto">
@@ -427,7 +427,7 @@ export function App() {
                                         <span className="font-[var(--font-mono)]">{score.toFixed(3)}</span>
                                     </div>
                                     <IconTile icon={icon} size={44} />
-                                    <div className="mt-2 break-all text-xs font-[var(--font-mono)]">
+                                    <div className="mt-2 text-xs font-[var(--font-mono)] break-all">
                                         {icon.name}
                                     </div>
                                     <div className="mt-1 text-[11px] text-[var(--muted)]">

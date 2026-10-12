@@ -5,7 +5,6 @@ import {
     type OntologyPullConfig,
     type OntologyIR,
 } from "@party-stack/ontology";
-import type { Connection } from "@party-stack/connections";
 import { type FoundryAuthenticationClient, type FoundryOAuthConnectionOptions } from "../connection.js";
 import {
     createFoundryBackendInstallation,
@@ -16,6 +15,7 @@ import {
     applyAttachmentConstraintOverrides,
     type FoundryAttachmentConstraintOverride,
 } from "./applyAttachmentConstraintOverrides.js";
+import type { Connection } from "@party-stack/connections";
 
 export type { FoundryAttachmentConstraintOverride } from "./applyAttachmentConstraintOverrides.js";
 
@@ -73,9 +73,7 @@ export function createFoundryOntologyPullSource(
     return {
         ontologyId: options.ontologyRid,
         createInstallation: ({ runtime }) => {
-            const scopes =
-                options.connection.oauth?.scopes ??
-                DEFAULT_FOUNDRY_SCOPES;
+            const scopes = options.connection.oauth?.scopes ?? DEFAULT_FOUNDRY_SCOPES;
             return createFoundryBackendInstallation({
                 installationId: `foundry-pull:${options.baseUrl}:${options.ontologyRid}:${[...scopes].sort().join(",")}`,
                 baseUrl: options.baseUrl,
@@ -100,12 +98,10 @@ export function createFoundryOntologyPullSource(
             const configuredUserId = options.connection.userId;
             const activeConnections = [...installation.connections.values()]
                 .filter((connection) => connection.state.status === "active")
-                .map(
-                    (connection): Connection<"active"> => ({
-                        userId: connection.userId,
-                        state: connection.state as Connection<"active">["state"],
-                    })
-                );
+                .map((connection): Connection<"active"> => ({
+                    userId: connection.userId,
+                    state: connection.state as Connection<"active">["state"],
+                }));
 
             if (!options.connection.token && !configuredUserId && activeConnections.length > 1) {
                 throw new Error(

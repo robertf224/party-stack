@@ -18,13 +18,13 @@ import {
     type DragEndEvent,
     type KeyboardCoordinateGetter,
 } from "@dnd-kit/core";
+import { createOntologyDevtoolsPlugin, ontologyDevtoolsTrigger } from "@party-stack/ontology-devtools";
 import { eq, ilike, inArray, or, useLiveQuery } from "@tanstack/react-db";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import { useNavigate } from "@tanstack/react-router";
-import { createOntologyDevtoolsPlugin, ontologyDevtoolsTrigger } from "@party-stack/ontology-devtools";
-import type { AttachmentMetadata } from "@party-stack/ontology";
 import {
     useEffect,
+    useId,
     useMemo,
     useRef,
     useState,
@@ -33,13 +33,7 @@ import {
     type ReactNode,
 } from "react";
 import { Temporal } from "temporal-polyfill";
-import type {
-    CreateIssueParameters,
-    Issue,
-    Project,
-    UpdateIssueParameters,
-    User,
-} from "../ontology/generated/types";
+import { FormInput, FormSelect, FormTextarea } from "../components/FormControls";
 import {
     connectFoundryProfile,
     connectGoogleProfile,
@@ -50,7 +44,14 @@ import {
     type ConnectedProfile,
     type TrackerOntology,
 } from "./profiles";
-import { FormInput, FormSelect, FormTextarea } from "../components/FormControls";
+import type {
+    CreateIssueParameters,
+    Issue,
+    Project,
+    UpdateIssueParameters,
+    User,
+} from "../ontology/generated/types";
+import type { AttachmentMetadata } from "@party-stack/ontology";
 
 const STATUSES = ["Open", "In Progress", "Waiting", "Completed"] as const;
 type IssueStatus = (typeof STATUSES)[number];
@@ -336,7 +337,10 @@ function StatusMenu({
 
 function formatDate(value: unknown) {
     if (!value) return "";
-    const date = value instanceof Date ? value : new Date(String(value));
+    const input =
+        value instanceof Temporal.Instant || value instanceof Temporal.PlainDate ? value.toString() : value;
+    if (!(input instanceof Date) && typeof input !== "string" && typeof input !== "number") return "";
+    const date = input instanceof Date ? input : new Date(input);
     if (Number.isNaN(date.getTime())) return "";
     return new Intl.DateTimeFormat("en", {
         month: "short",
@@ -370,7 +374,18 @@ function UserAvatar({
     ontology: TrackerOntology;
     className?: string;
 }) {
-    const [src, setSrc] = useState<string>();
+    const [loadedAvatar, setLoadedAvatar] = useState<{
+        avatar: User["avatar"];
+        ontology: TrackerOntology;
+        src?: string;
+    }>();
+    if (loadedAvatar && (loadedAvatar.avatar !== user?.avatar || loadedAvatar.ontology !== ontology)) {
+        setLoadedAvatar(undefined);
+    }
+    const src =
+        loadedAvatar?.avatar === user?.avatar && loadedAvatar?.ontology === ontology
+            ? loadedAvatar.src
+            : undefined;
 
     useEffect(() => {
         let active = true;
@@ -381,18 +396,16 @@ function UserAvatar({
                 .then((blob) => {
                     if (blob.size === 0) {
                         if (active) {
-                            setSrc(undefined);
+                            setLoadedAvatar({ avatar: user?.avatar, ontology });
                         }
                         return;
                     }
                     url = URL.createObjectURL(blob);
-                    if (active) setSrc(url);
+                    if (active) setLoadedAvatar({ avatar: user?.avatar, ontology, src: url });
                 })
                 .catch(() => {
-                    if (active) setSrc(undefined);
+                    if (active) setLoadedAvatar({ avatar: user?.avatar, ontology });
                 });
-        } else {
-            setSrc(undefined);
         }
         return () => {
             active = false;
@@ -411,7 +424,7 @@ function UserAvatar({
 
 function useProfileUser(profile: ConnectedProfile): User | undefined {
     const ontology = profile.ontology;
-    const { data: users } = useLiveQuery((q) => q.from({ User: ontology.objects.User }), [ontology]);
+    const { data: users } = useLiveQuery({ query: (q) => q.from({ User: ontology.objects.User }) });
     return users.find((user) => user.id === ontology.context.user);
 }
 
@@ -443,11 +456,20 @@ const dialogPopupClass =
     "surface-overlay relative w-[min(560px,calc(100vw-32px))] rounded-xl border border-slate-200 bg-white shadow-2xl outline-none";
 
 function DialogFrame({ children }: { children: ReactNode }) {
+    const popupRef = useRef<HTMLDivElement>(null);
     return (
         <Dialog.Portal>
             <Dialog.Backdrop className="fixed inset-0 z-[100010] bg-slate-950/25 backdrop-blur-[1px]" />
             <Dialog.Viewport className="fixed inset-0 z-[100011] grid place-items-center p-4">
-                <Dialog.Popup className={dialogPopupClass}>{children}</Dialog.Popup>
+                <Dialog.Popup
+                    className={dialogPopupClass}
+                    ref={popupRef}
+                    initialFocus={() =>
+                        popupRef.current?.querySelector<HTMLElement>("[data-dialog-initial-focus]") ?? true
+                    }
+                >
+                    {children}
+                </Dialog.Popup>
             </Dialog.Viewport>
         </Dialog.Portal>
     );
@@ -504,6 +526,7 @@ function ProjectForm({
     project?: Project;
     onSave: (values: { title: string; description: string; color: string }) => void;
 }) {
+    const formId = useId();
     const [title, setTitle] = useState(project?.projectTitle ?? "");
     const [description, setDescription] = useState(project?.projectDescription ?? "");
     const [color, setColor] = useState(project?.projectColor || PROJECT_COLORS[0]);
@@ -520,18 +543,20 @@ function ProjectForm({
     return (
         <form onSubmit={handleSubmit}>
             <div className="space-y-4 px-5 py-5">
-                <label className="block">
+                <label htmlFor={`${formId}-field-1`} className="block">
                     <span className="mb-1.5 block text-xs font-medium text-slate-600">Project name</span>
                     <FormInput
-                        autoFocus
+                        id={`${formId}-field-1`}
+                        data-dialog-initial-focus
                         onChange={(event) => setTitle(event.target.value)}
                         placeholder="Website refresh"
                         value={title}
                     />
                 </label>
-                <label className="block">
+                <label htmlFor={`${formId}-field-2`} className="block">
                     <span className="mb-1.5 block text-xs font-medium text-slate-600">Description</span>
                     <FormTextarea
+                        id={`${formId}-field-2`}
                         className="min-h-20 resize-none"
                         onChange={(event) => setDescription(event.target.value)}
                         placeholder="What is this project about?"
@@ -544,7 +569,7 @@ function ProjectForm({
                         {PROJECT_COLORS.map((option) => (
                             <button
                                 aria-label={`Use ${option}`}
-                                className="grid size-7 place-items-center rounded-full outline-none ring-offset-2 focus-visible:ring-2 focus-visible:ring-indigo-500"
+                                className="grid size-7 place-items-center rounded-full ring-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                                 key={option}
                                 onClick={() => setColor(option)}
                                 type="button"
@@ -578,9 +603,11 @@ type PendingAttachment = {
 };
 
 function TagInput({
+    id,
     labels,
     onChange,
 }: {
+    id: string;
     labels: string[];
     onChange: (labels: string[]) => void;
 }) {
@@ -604,7 +631,7 @@ function TagInput({
     }
 
     return (
-        <div className="surface-raised flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 outline-none transition focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
+        <div className="surface-raised flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 transition outline-none focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
             {labels.map((label) => (
                 <span
                     className="inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700"
@@ -622,6 +649,7 @@ function TagInput({
                 </span>
             ))}
             <input
+                id={id}
                 aria-label="Add issue label"
                 className="min-w-28 flex-1 bg-transparent px-1 py-0.5 text-sm text-slate-900 outline-none placeholder:text-slate-400"
                 onBlur={() => addLabels(draft)}
@@ -756,6 +784,8 @@ function IssueForm({
         attachments: IssueAttachment[];
     }) => void;
 }) {
+    const formId = useId();
+    const labelsInputId = useId();
     const [title, setTitle] = useState(issue?.issueTitle ?? "");
     const [description, setDescription] = useState(issue?.issueDescription ?? "");
     const [status, setStatus] = useState<IssueStatus>(
@@ -787,18 +817,20 @@ function IssueForm({
     return (
         <form onSubmit={handleSubmit}>
             <div className="space-y-4 px-5 py-5">
-                <label className="block">
+                <label htmlFor={`${formId}-field-1`} className="block">
                     <span className="mb-1.5 block text-xs font-medium text-slate-600">Title</span>
                     <FormInput
-                        autoFocus
+                        id={`${formId}-field-1`}
+                        data-dialog-initial-focus
                         onChange={(event) => setTitle(event.target.value)}
                         placeholder="Issue title"
                         value={title}
                     />
                 </label>
-                <label className="block">
+                <label htmlFor={`${formId}-field-2`} className="block">
                     <span className="mb-1.5 block text-xs font-medium text-slate-600">Description</span>
                     <FormTextarea
+                        id={`${formId}-field-2`}
                         className="min-h-28 resize-y"
                         onChange={(event) => setDescription(event.target.value)}
                         placeholder="Add context, requirements, or notes…"
@@ -806,9 +838,10 @@ function IssueForm({
                     />
                 </label>
                 <div className="grid grid-cols-3 gap-3">
-                    <label>
+                    <label htmlFor={`${formId}-field-3`}>
                         <span className="mb-1.5 block text-xs font-medium text-slate-600">Status</span>
                         <FormSelect
+                            id={`${formId}-field-3`}
                             onChange={(event) => setStatus(event.target.value as IssueStatus)}
                             value={status}
                         >
@@ -817,9 +850,13 @@ function IssueForm({
                             ))}
                         </FormSelect>
                     </label>
-                    <label>
+                    <label htmlFor={`${formId}-field-4`}>
                         <span className="mb-1.5 block text-xs font-medium text-slate-600">Project</span>
-                        <FormSelect onChange={(event) => setProjectId(event.target.value)} value={projectId}>
+                        <FormSelect
+                            id={`${formId}-field-4`}
+                            onChange={(event) => setProjectId(event.target.value)}
+                            value={projectId}
+                        >
                             <option value="">No project</option>
                             {projects.map((project) => (
                                 <option key={project.projectId} value={project.projectId}>
@@ -828,9 +865,13 @@ function IssueForm({
                             ))}
                         </FormSelect>
                     </label>
-                    <label>
+                    <label htmlFor={`${formId}-field-5`}>
                         <span className="mb-1.5 block text-xs font-medium text-slate-600">Assignee</span>
-                        <FormSelect onChange={(event) => setAssignee(event.target.value)} value={assignee}>
+                        <FormSelect
+                            id={`${formId}-field-5`}
+                            onChange={(event) => setAssignee(event.target.value)}
+                            value={assignee}
+                        >
                             <option value="">Unassigned</option>
                             {users.map((user) => (
                                 <option key={user.id} value={user.id}>
@@ -840,13 +881,18 @@ function IssueForm({
                         </FormSelect>
                     </label>
                 </div>
-                <label className="block">
-                    <span className="mb-1.5 block text-xs font-medium text-slate-600">Labels</span>
-                    <TagInput labels={labels} onChange={setLabels} />
+                <div className="block">
+                    <label
+                        htmlFor={labelsInputId}
+                        className="mb-1.5 block text-xs font-medium text-slate-600"
+                    >
+                        Labels
+                    </label>
+                    <TagInput id={labelsInputId} labels={labels} onChange={setLabels} />
                     <span className="mt-1 block text-xs text-slate-400">
                         Press Enter or comma to add a label.
                     </span>
-                </label>
+                </div>
                 <AttachmentPicker
                     actionType={issue ? "updateIssue" : "createIssue"}
                     attachments={attachments}
@@ -928,7 +974,7 @@ function AttachmentCard({
                                 className="max-h-[85vh] max-w-[85vw] rounded-lg object-contain"
                                 src={preview.url}
                             />
-                            <Dialog.Close className="absolute right-4 top-4 grid size-8 place-items-center rounded-md bg-slate-950/80 text-white outline-none backdrop-blur hover:bg-slate-900 focus-visible:ring-2 focus-visible:ring-white">
+                            <Dialog.Close className="absolute top-4 right-4 grid size-8 place-items-center rounded-md bg-slate-950/80 text-white backdrop-blur outline-none hover:bg-slate-900 focus-visible:ring-2 focus-visible:ring-white">
                                 <Icon name="close" />
                             </Dialog.Close>
                         </Dialog.Popup>
@@ -940,6 +986,7 @@ function AttachmentCard({
 
     return (
         <a
+            aria-label={`Download ${preview.metadata.name ?? "attachment"}`}
             className="surface-raised group block overflow-hidden rounded-lg border border-slate-200 bg-white"
             download={preview.metadata.name}
             href={preview.url}
@@ -974,14 +1021,13 @@ function IssueDetails({
 }) {
     const { updateIssue, deleteIssue } = ontology.actions;
     const [editing, setEditing] = useState(false);
-    const { data: issue } = useLiveQuery(
-        (q) =>
+    const { data: issue } = useLiveQuery({
+        query: (q) =>
             q
                 .from({ Issue: ontology.objects.Issue })
                 .where(({ Issue }) => eq(Issue.issueId, issueId))
                 .findOne(),
-        [issueId]
-    );
+    });
 
     if (!issue) {
         return <div className="p-8 text-center text-sm text-slate-500">Loading issue…</div>;
@@ -1091,7 +1137,7 @@ function IssueDetails({
                         status={issue.issueStatus ?? "Open"}
                     />
                 </div>
-                <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                <p className="mt-4 text-sm leading-6 whitespace-pre-wrap text-slate-600">
                     {issue.issueDescription || "No description yet."}
                 </p>
                 <div className="mt-5 flex flex-wrap gap-4">
@@ -1106,7 +1152,7 @@ function IssueDetails({
                                 user={user as User | undefined}
                             />
                             <span>
-                                <span className="block text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                <span className="block text-[10px] font-semibold tracking-wide text-slate-400 uppercase">
                                     {label as string}
                                 </span>
                                 <span className="block text-xs font-medium text-slate-700">
@@ -1117,7 +1163,7 @@ function IssueDetails({
                     ))}
                 </div>
                 <div className="mt-8">
-                    <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold tracking-wide text-slate-500 uppercase">
                         <Icon name="attachment" />
                         Attachments
                         <span className="font-normal">{issue.issueAttachments?.length ?? 0}</span>
@@ -1187,24 +1233,15 @@ function KanbanCard({
     return (
         <DeleteContextMenu className="block" label="issue" onDelete={onDelete}>
             <article
-                className={`surface-raised cursor-pointer rounded-lg border border-slate-200 bg-white p-3 shadow-sm outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                className={`surface-raised cursor-pointer rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition-shadow outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
                     isDragging
                         ? "kanban-card-dragging z-20 opacity-80 shadow-lg will-change-transform"
                         : "hover:border-slate-300 hover:shadow"
                 }`}
-                onClick={onOpen}
-                onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        onOpen();
-                    }
-                }}
                 ref={setNodeRef}
-                role="button"
                 style={{
                     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
                 }}
-                tabIndex={0}
             >
                 <div className="flex items-start gap-2">
                     <button
@@ -1217,25 +1254,29 @@ function KanbanCard({
                     >
                         <Icon className="size-3.5" name="grip" />
                     </button>
-                    <div className="min-w-0 flex-1 text-left">
-                        <p className="mb-1 font-mono text-[11px] text-slate-400">
+                    <button
+                        className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                        onClick={onOpen}
+                        type="button"
+                    >
+                        <span className="mb-1 block font-mono text-[11px] text-slate-400">
                             {formatIssueIdentifier(issue.issueId)}
-                        </p>
-                        <h3
-                            className={`text-sm font-medium leading-5 ${
+                        </span>
+                        <span
+                            className={`block text-sm leading-5 font-medium ${
                                 issue.issueStatus === "Completed"
                                     ? "text-slate-400 line-through"
                                     : "text-slate-800"
                             }`}
                         >
                             {issue.issueTitle}
-                        </h3>
+                        </span>
                         {issue.issueDescription && (
-                            <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-400">
+                            <span className="mt-1 line-clamp-2 text-xs leading-5 text-slate-400">
                                 {issue.issueDescription}
-                            </p>
+                            </span>
                         )}
-                    </div>
+                    </button>
                 </div>
                 <div className="mt-3 flex items-center gap-2 pl-7">
                     {issue.projectTitle && (
@@ -1395,6 +1436,7 @@ function CommandPalette({
     open: boolean;
     projects: Project[];
 }) {
+    const searchInputRef = useRef<HTMLInputElement>(null);
     const [query, setQuery] = useState("");
     const [selectedIndex, setSelectedIndex] = useState(0);
 
@@ -1468,16 +1510,14 @@ function CommandPalette({
         query,
     ]);
 
-    useEffect(() => {
-        setSelectedIndex(0);
-    }, [query]);
-
-    useEffect(() => {
+    const [previousOpen, setPreviousOpen] = useState(open);
+    if (previousOpen !== open) {
+        setPreviousOpen(open);
         if (!open) {
             setQuery("");
             setSelectedIndex(0);
         }
-    }, [open]);
+    }
 
     function runCommand(command: (typeof commands)[number]) {
         onOpenChange(false);
@@ -1489,14 +1529,21 @@ function CommandPalette({
             <Dialog.Portal>
                 <Dialog.Backdrop className="fixed inset-0 z-[100010] bg-slate-950/30 backdrop-blur-[1px]" />
                 <Dialog.Viewport className="fixed inset-0 z-[100011] flex justify-center p-4 pt-[12vh]">
-                    <Dialog.Popup className="surface-overlay h-fit w-[min(640px,calc(100vw-32px))] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl outline-none">
+                    <Dialog.Popup
+                        initialFocus={searchInputRef}
+                        className="surface-overlay h-fit w-[min(640px,calc(100vw-32px))] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl outline-none"
+                    >
                         <Dialog.Title className="sr-only">Command menu</Dialog.Title>
                         <div className="flex items-center gap-3 border-b border-slate-100 px-4">
                             <Icon className="size-4 shrink-0 text-slate-400" name="search" />
                             <input
-                                autoFocus
+                                ref={searchInputRef}
+                                aria-label="Search commands"
                                 className="command-palette-input h-12 min-w-0 flex-1 text-sm text-slate-900 outline-none placeholder:text-slate-400"
-                                onChange={(event) => setQuery(event.target.value)}
+                                onChange={(event) => {
+                                    setQuery(event.target.value);
+                                    setSelectedIndex(0);
+                                }}
                                 onKeyDown={(event) => {
                                     if (event.key === "ArrowDown") {
                                         event.preventDefault();
@@ -1566,6 +1613,7 @@ function ConnectProfileDialog({
     error?: string;
     onConnect: (kind: "sqlite" | "google" | "foundry", values: Record<string, string>) => Promise<void>;
 }) {
+    const formId = useId();
     const [kind, setKind] = useState<"sqlite" | "google" | "foundry">("sqlite");
 
     function submit(event: FormEvent<HTMLFormElement>) {
@@ -1585,9 +1633,10 @@ function ConnectProfileDialog({
             />
             <form onSubmit={submit}>
                 <div className="space-y-4 px-5 py-5">
-                    <label className="block">
+                    <label htmlFor={`${formId}-field-1`} className="block">
                         <span className="mb-1.5 block text-xs font-medium text-slate-600">Profile type</span>
                         <FormSelect
+                            id={`${formId}-field-1`}
                             name="kind"
                             onChange={(event) =>
                                 setKind(event.target.value as "sqlite" | "google" | "foundry")
@@ -1601,21 +1650,28 @@ function ConnectProfileDialog({
                     </label>
                     {kind === "sqlite" ? (
                         <>
-                            <label className="block">
+                            <label htmlFor={`${formId}-field-2`} className="block">
                                 <span className="mb-1.5 block text-xs font-medium text-slate-600">Email</span>
                                 <FormInput
-                                    autoFocus
+                                    id={`${formId}-field-2`}
+                                    data-dialog-initial-focus
                                     defaultValue="ada@example.com"
                                     name="username"
                                     required
                                     type="email"
                                 />
                             </label>
-                            <label className="block">
+                            <label htmlFor={`${formId}-field-3`} className="block">
                                 <span className="mb-1.5 block text-xs font-medium text-slate-600">
                                     Password
                                 </span>
-                                <FormInput defaultValue="ada" name="password" required type="password" />
+                                <FormInput
+                                    id={`${formId}-field-3`}
+                                    defaultValue="ada"
+                                    name="password"
+                                    required
+                                    type="password"
+                                />
                             </label>
                             <p className="text-xs text-slate-400">
                                 Demo accounts: ada@example.com / ada or grace@example.com / grace.
@@ -1770,9 +1826,11 @@ function ConnectedIssueTracker({
         };
     }, [activeProfileId, profiles]);
 
-    useEffect(() => {
+    const [previousInitialProjectId, setPreviousInitialProjectId] = useState(initialProjectId);
+    if (previousInitialProjectId !== initialProjectId) {
+        setPreviousInitialProjectId(initialProjectId);
         setSelectedProjectId(initialProjectId);
-    }, [initialProjectId]);
+    }
 
     async function connectProfile(kind: "sqlite" | "google" | "foundry", values: Record<string, string>) {
         setConnectingProfile(true);
@@ -1819,38 +1877,32 @@ function ConnectedIssueTracker({
 
     const devtoolsPlugin = useMemo(() => createOntologyDevtoolsPlugin({ ontology }), [ontology]);
 
-    const { data: projects, isLoading: projectsLoading } = useLiveQuery(
-        (q) =>
+    const { data: projects, isLoading: projectsLoading } = useLiveQuery({
+        query: (q) =>
             q
                 .from({ Project: ontology.objects.Project })
                 .orderBy(({ Project }) => Project.projectTitle, "asc"),
-        [ontology]
-    );
+    });
 
-    const { data: users } = useLiveQuery(
-        (q) => q.from({ User: ontology.objects.User }).orderBy(({ User }) => User.familyName, "asc"),
-        [ontology]
-    );
+    const { data: users } = useLiveQuery({
+        query: (q) => q.from({ User: ontology.objects.User }).orderBy(({ User }) => User.familyName, "asc"),
+    });
     const currentUser = users.find((user) => user.id === ontology.context.user);
 
-    const { data: allIssueIds } = useLiveQuery(
-        (q) =>
+    const { data: allIssueIds } = useLiveQuery({
+        query: (q) =>
             q.from({ Issue: ontology.objects.Issue }).select(({ Issue }) => ({
                 issueId: Issue.issueId,
             })),
-        [ontology]
-    );
+    });
 
-    const { data: issues, isLoading: issuesLoading } = useLiveQuery(
-        (q) =>
+    const { data: issues, isLoading: issuesLoading } = useLiveQuery({
+        query: (q) =>
             q
                 .from({ Issue: ontology.objects.Issue })
                 .where(({ Issue }) =>
                     search
-                        ? or(
-                              ilike(Issue.issueTitle, `${search}%`),
-                              inArray(search, Issue.issueLabels)
-                          )
+                        ? or(ilike(Issue.issueTitle, `${search}%`), inArray(search, Issue.issueLabels))
                         : ilike(Issue.issueTitle, "%")
                 )
                 .where(({ Issue }) =>
@@ -1881,8 +1933,7 @@ function ConnectedIssueTracker({
                     projectColor: Project.projectColor,
                 }))
                 .orderBy(({ Issue }) => Issue.issueUpdatedAt, "desc"),
-        [ontology, search, selectedProjectId, statusFilter]
-    );
+    });
 
     // Persistence publishes cached rows while the remote subset is loading.
     // Keep those rows visible rather than replacing them with a refresh spinner.
@@ -2008,7 +2059,7 @@ function ConnectedIssueTracker({
                         <div className="grid size-7 shrink-0 place-items-center rounded-md bg-[#5e6ad2] text-white">
                             <Icon className="size-4" name="issue" />
                         </div>
-                        <span className="shrink-0 whitespace-nowrap text-sm font-semibold">
+                        <span className="shrink-0 text-sm font-semibold whitespace-nowrap">
                             Issue tracker
                         </span>
                     </div>
@@ -2028,7 +2079,7 @@ function ConnectedIssueTracker({
                         </button>
                     </nav>
                     <div className="mt-5 flex items-center justify-between px-4">
-                        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                        <span className="text-[11px] font-semibold tracking-wider text-slate-400 uppercase">
                             Projects
                         </span>
                         <Tooltip.Root>
@@ -2084,7 +2135,7 @@ function ConnectedIssueTracker({
                                     <Menu.Root>
                                         <Menu.Trigger
                                             aria-label={`${project.projectTitle} actions`}
-                                            className="-ml-7 mr-1 hidden size-6 place-items-center rounded text-slate-400 outline-none hover:bg-slate-300/60 group-hover:grid data-[popup-open]:grid"
+                                            className="mr-1 -ml-7 hidden size-6 place-items-center rounded text-slate-400 outline-none group-hover:grid hover:bg-slate-300/60 data-[popup-open]:grid"
                                         >
                                             <Icon className="size-3.5" name="dots" />
                                         </Menu.Trigger>
@@ -2144,7 +2195,7 @@ function ConnectedIssueTracker({
                                     sideOffset={8}
                                 >
                                     <Menu.Popup className="surface-overlay w-64 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl outline-none">
-                                        <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                                        <p className="px-2 pt-1 pb-1 text-[10px] font-semibold tracking-wider text-slate-400 uppercase">
                                             Connected profiles
                                         </p>
                                         {profiles.map((profile) => (
@@ -2243,7 +2294,7 @@ function ConnectedIssueTracker({
                     )}
                     <div className="flex h-12 shrink-0 items-center gap-2 px-3">
                         <div className="relative w-64">
-                            <Icon className="absolute left-2.5 top-2 size-4 text-slate-400" name="search" />
+                            <Icon className="absolute top-2 left-2.5 size-4 text-slate-400" name="search" />
                             <FormInput
                                 aria-label="Search issues"
                                 className="pl-8"
@@ -2282,14 +2333,14 @@ function ConnectedIssueTracker({
                         >
                             <Toggle
                                 aria-label="List view"
-                                className="data-pressed:bg-slate-100 data-pressed:text-slate-700 grid size-6 place-items-center rounded text-slate-400 outline-none hover:text-slate-600"
+                                className="grid size-6 place-items-center rounded text-slate-400 outline-none hover:text-slate-600 data-pressed:bg-slate-100 data-pressed:text-slate-700"
                                 value="list"
                             >
                                 <Icon className="size-3.5" name="list" />
                             </Toggle>
                             <Toggle
                                 aria-label="Kanban view"
-                                className="data-pressed:bg-slate-100 data-pressed:text-slate-700 grid size-6 place-items-center rounded text-slate-400 outline-none hover:text-slate-600"
+                                className="grid size-6 place-items-center rounded text-slate-400 outline-none hover:text-slate-600 data-pressed:bg-slate-100 data-pressed:text-slate-700"
                                 value="kanban"
                             >
                                 <Icon className="size-3.5" name="kanban" />
@@ -2342,7 +2393,7 @@ function ConnectedIssueTracker({
                                         >
                                             <button
                                                 aria-expanded={!collapsedSections.has(section.status)}
-                                                className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 px-5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500"
+                                                className="flex h-full min-w-0 flex-1 cursor-pointer items-center gap-2 px-5 text-left outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-inset"
                                                 onClick={() => toggleIssueSection(section.status)}
                                                 type="button"
                                             >
@@ -2374,19 +2425,8 @@ function ConnectedIssueTracker({
                                         {!collapsedSections.has(section.status) &&
                                             section.issues.map((issue) => (
                                                 <div
-                                                    className="group mx-3 flex min-h-12 w-auto cursor-pointer items-center gap-3 rounded-lg pl-10 pr-3 transition hover:bg-slate-50"
+                                                    className="group mx-3 flex min-h-12 w-auto items-center gap-3 rounded-lg pr-3 pl-10 transition hover:bg-slate-50"
                                                     key={issue.issueId}
-                                                    onClick={(event) => {
-                                                        if (
-                                                            event.target instanceof Element &&
-                                                            event.target.closest(
-                                                                "[data-status-trigger], [role='listbox'], [role='menu']"
-                                                            )
-                                                        ) {
-                                                            return;
-                                                        }
-                                                        setSelectedIssueId(issue.issueId);
-                                                    }}
                                                 >
                                                     <span className="w-14 shrink-0 font-mono text-[10px] text-slate-400">
                                                         {formatIssueIdentifier(issue.issueId)}

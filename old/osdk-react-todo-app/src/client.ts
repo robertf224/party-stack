@@ -1,6 +1,6 @@
+import { $ontologyRid } from "@gtd/sdk";
 import { createClient } from "@osdk/client";
 import { createPublicOauthClient } from "@osdk/oauth";
-import { $ontologyRid } from "@gtd/sdk";
 
 const url = import.meta.env.VITE_FOUNDRY_API_URL;
 const clientId = import.meta.env.VITE_FOUNDRY_CLIENT_ID;

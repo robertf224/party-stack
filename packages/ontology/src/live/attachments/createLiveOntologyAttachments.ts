@@ -1,16 +1,12 @@
 import { invariant } from "@bobbyfidz/panic";
-import type { BlobManager } from "@party-stack/blobs";
 import { ImageMediaTypeOptions } from "../../ir/generated/constants.js";
 import { getTargetValueType } from "../../utils/types.js";
 import * as v from "../../utils/values.js";
-import type {
-    AttachmentMetadata,
-    AttachmentMetadataSelection,
-    PartialAttachmentMetadata,
-} from "./types.js";
 import type { OntologyIR } from "../../ir/index.js";
 import type { OntologyAttachmentCreateTarget } from "../../utils/targets.js";
 import type { OntologyAttachmentsAdapter } from "../OntologyBackendAdapter.js";
+import type { AttachmentMetadata, AttachmentMetadataSelection, PartialAttachmentMetadata } from "./types.js";
+import type { BlobManager } from "@party-stack/blobs";
 
 export interface LiveOntologyEagerAttachmentCreation {
     attachment: v.attachment;
@@ -55,21 +51,17 @@ type AttachmentAtTarget<
         }
       ? ObjectType extends keyof Ontology["objectTypes"]
           ? Property extends keyof Ontology["objectTypes"][ObjectType]
-              ? ExtractAttachment<
-                    Ontology["objectTypes"][ObjectType][Property]
-                >
+              ? ExtractAttachment<Ontology["objectTypes"][ObjectType][Property]>
               : never
           : never
       : Target extends {
-            kind: "actionParameter";
-            actionType: infer ActionType;
-            parameter: infer Parameter;
-        }
+              kind: "actionParameter";
+              actionType: infer ActionType;
+              parameter: infer Parameter;
+          }
         ? ActionType extends keyof Ontology["actionTypes"]
             ? Parameter extends keyof Ontology["actionTypes"][ActionType]["parameters"]
-                ? ExtractAttachment<
-                      Ontology["actionTypes"][ActionType]["parameters"][Parameter]
-                  >
+                ? ExtractAttachment<Ontology["actionTypes"][ActionType]["parameters"][Parameter]>
                 : never
             : never
         : v.attachment;
@@ -81,9 +73,7 @@ type LiveOntologyAttachmentCreateResult<
     attachment: Options extends { target: infer Target }
         ? AttachmentAtTarget<Ontology, Target>
         : v.attachment;
-} & (Options extends { eager: true }
-    ? { isMaterialized?: Promise<void> }
-    : { isMaterialized?: never });
+} & (Options extends { eager: true } ? { isMaterialized?: Promise<void> } : { isMaterialized?: never });
 
 function satisfiesRange(value: number, range: { min?: number; max?: number }): boolean {
     return (range.min === undefined || value >= range.min) && (range.max === undefined || value <= range.max);
@@ -92,9 +82,7 @@ function satisfiesRange(value: number, range: { min?: number; max?: number }): b
 export interface LiveOntologyAttachments<
     Ontology extends AttachmentOntologyDefinition = AttachmentOntologyDefinition,
 > {
-    create: <
-        const Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined,
-    >(
+    create: <const Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined>(
         blob: Blob | File,
         opts?: Options
     ) => Promise<LiveOntologyAttachmentCreateResult<Ontology, Options>>;
@@ -117,14 +105,11 @@ export function createLiveOntologyAttachments<
 }): LiveOntologyAttachments<Ontology> {
     const { attachmentsAdapter, blobManager } = opts;
 
-    const create = async <
-        const Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined,
-    >(
+    const create = async <const Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined>(
         blob: Blob | File,
         createOpts?: Options
     ): Promise<LiveOntologyAttachmentCreateResult<Ontology, Options>> => {
-        const normalizedOpts: LiveOntologyAttachmentCreateOptions =
-            createOpts ?? {};
+        const normalizedOpts: LiveOntologyAttachmentCreateOptions = createOpts ?? {};
         const targetType = normalizedOpts.target
             ? getTargetValueType(opts.ir, normalizedOpts.target)
             : undefined;
@@ -197,10 +182,7 @@ export function createLiveOntologyAttachments<
     async function metadata<Type extends string>(
         attachment: v.attachment<Type>
     ): Promise<AttachmentMetadata<Type>>;
-    async function metadata<
-        Type extends string,
-        const Selection extends AttachmentMetadataSelection<Type>,
-    >(
+    async function metadata<Type extends string, const Selection extends AttachmentMetadataSelection<Type>>(
         attachment: v.attachment<Type>,
         options: { select: Selection }
     ): Promise<AttachmentMetadata<Type, Selection[number]>>;

@@ -1,7 +1,4 @@
-import {
-    isLinkHopFromForeignKeySource,
-    resolveLinkHop,
-} from "../utils/links.js";
+import { isLinkHopFromForeignKeySource, resolveLinkHop } from "../utils/links.js";
 import { unwrapType } from "../utils/types.js";
 import { ImageMediaTypeOptions } from "./generated/constants.js";
 import type { ValidationIssue } from "../utils/validation.js";
@@ -47,9 +44,7 @@ function validateNonNegativeRange(
     return errors;
 }
 
-function validateAttachmentConstraints(
-    type: Extract<TypeDef, { kind: "attachment" }>
-): ValidationIssue[] {
+function validateAttachmentConstraints(type: Extract<TypeDef, { kind: "attachment" }>): ValidationIssue[] {
     const constraint = type.value.constraint;
     if (!constraint) return [];
 
@@ -356,9 +351,7 @@ function resolveExpressionType(
                 const property = objectTypes
                     .get(sourceType.objectType)
                     ?.properties.find((candidate) => candidate.name === propertyName);
-                return property
-                    ? resolveFieldType(property.type, rest, valueTypes)
-                    : undefined;
+                return property ? resolveFieldType(property.type, rest, valueTypes) : undefined;
             }
             return resolveFieldType(sourceType, expression.value.path, valueTypes);
         }
@@ -372,11 +365,12 @@ function resolveExpressionType(
                 contextType,
                 locals
             );
-            const resolved = referenceType?.kind === "ontologyObject"
-                ? undefined
-                : referenceType
-                  ? unwrapOptionalType(referenceType, valueTypes)
-                  : undefined;
+            const resolved =
+                referenceType?.kind === "ontologyObject"
+                    ? undefined
+                    : referenceType
+                      ? unwrapOptionalType(referenceType, valueTypes)
+                      : undefined;
             return resolved?.kind === "objectReference"
                 ? {
                       kind: "ontologyObject",
@@ -406,23 +400,17 @@ function resolveExpressionType(
                 expression.value.link
             );
             if (!link) return undefined;
-            const foreignKeyOnSource =
-                isLinkHopFromForeignKeySource(
-                    link,
-                    sourceType.objectType,
-                    expression.value.link
-                );
-            if (
-                !foreignKeyOnSource &&
-                link.cardinality === "many"
-            ) {
+            const foreignKeyOnSource = isLinkHopFromForeignKeySource(
+                link,
+                sourceType.objectType,
+                expression.value.link
+            );
+            if (!foreignKeyOnSource && link.cardinality === "many") {
                 return undefined;
             }
             return {
                 kind: "ontologyObject",
-                objectType: foreignKeyOnSource
-                    ? link.target.objectType
-                    : link.source.objectType,
+                objectType: foreignKeyOnSource ? link.target.objectType : link.source.objectType,
             };
         }
         case "struct":
@@ -442,8 +430,7 @@ function resolveExpressionType(
                                 contextType,
                                 locals
                             );
-                            return resolved &&
-                                resolved.kind !== "ontologyObject"
+                            return resolved && resolved.kind !== "ontologyObject"
                                 ? resolved
                                 : {
                                       kind: "unknown" as const,
@@ -464,8 +451,7 @@ function resolveExpressionType(
                 locals
             );
             const listType =
-                sourceType &&
-                sourceType.kind !== "ontologyObject"
+                sourceType && sourceType.kind !== "ontologyObject"
                     ? unwrapOptionalType(sourceType, valueTypes)
                     : undefined;
             if (listType?.kind !== "list") {
@@ -550,9 +536,7 @@ function validateExpression(
         case "linkHop": {
             const childKey = expression.kind === "objectLookup" ? "reference" : "source";
             const child =
-                expression.kind === "objectLookup"
-                    ? expression.value.reference
-                    : expression.value.source;
+                expression.kind === "objectLookup" ? expression.value.reference : expression.value.source;
             const errors = validateExpression(
                 child,
                 parameters,
@@ -563,10 +547,7 @@ function validateExpression(
                 contextType,
                 locals
             );
-            if (
-                expression.kind === "getAt" &&
-                expression.value.path.length === 0
-            ) {
+            if (expression.kind === "getAt" && expression.value.path.length === 0) {
                 errors.push({
                     message: "Get-at expression paths must not be empty.",
                     path: [...path, "path"],
@@ -642,8 +623,7 @@ function validateExpression(
                 locals
             );
             const listType =
-                sourceType &&
-                sourceType.kind !== "ontologyObject"
+                sourceType && sourceType.kind !== "ontologyObject"
                     ? unwrapOptionalType(sourceType, valueTypes)
                     : undefined;
             if (sourceType && listType?.kind !== "list") {
@@ -1173,7 +1153,5 @@ export function validate(ontology: OntologyIR): ValidationResult {
         );
     }
 
-    return errors.length === 0
-        ? { kind: "ok", value: undefined }
-        : { kind: "err", value: errors };
+    return errors.length === 0 ? { kind: "ok", value: undefined } : { kind: "err", value: errors };
 }

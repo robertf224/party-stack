@@ -1,5 +1,5 @@
 import { Icon } from "@blueprintjs/core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { BlueprintIcon } from "./react.js";
 
 describe("BlueprintIcon", () => {

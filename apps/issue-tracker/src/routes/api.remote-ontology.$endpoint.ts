@@ -1,15 +1,14 @@
 import { mkdirSync } from "node:fs";
-import Database from "better-sqlite3";
-import { createFileRoute } from "@tanstack/react-router";
-import { eq } from "@tanstack/db";
 import { createRemoteOntologyServer } from "@party-stack/remote-ontology/server";
 import {
     createSQLiteOntologyBackendAdapter,
     type CreateSQLiteOntologyBackendAdapterOptions,
 } from "@party-stack/sqlite-ontology";
+import { createFileRoute } from "@tanstack/react-router";
+import Database from "better-sqlite3";
 import ontology from "../ontology/ontology";
-import type { IssueTrackerOntology } from "../ontology/generated/types";
 import { auth, issueTrackerUsers } from "../server/auth";
+import type { IssueTrackerOntology } from "../ontology/generated/types";
 
 mkdirSync("temp", { recursive: true });
 

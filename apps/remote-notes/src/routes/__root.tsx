@@ -1,6 +1,6 @@
+import { ClientOnly, createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 /// <reference types="vite/client" />
-import { useEffect, useState, type ReactNode } from "react";
-import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 import "../app.css";
 
 export const Route = createRootRoute({
@@ -22,25 +22,18 @@ export const Route = createRootRoute({
     component: RootComponent,
 });
 
-function ClientGate({ children }: { children: ReactNode }) {
-    const [ready, setReady] = useState(false);
-    useEffect(() => setReady(true), []);
-    if (!ready) {
-        return (
-            <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400">
-                Loading remote notes...
-            </div>
-        );
-    }
-    return <>{children}</>;
-}
-
 function RootComponent() {
     return (
         <RootDocument>
-            <ClientGate>
+            <ClientOnly
+                fallback={
+                    <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-400">
+                        Loading remote notes...
+                    </div>
+                }
+            >
                 <Outlet />
-            </ClientGate>
+            </ClientOnly>
         </RootDocument>
     );
 }

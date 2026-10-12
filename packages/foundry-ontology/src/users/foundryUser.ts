@@ -42,8 +42,7 @@ export const foundryUserObjectType: ObjectTypeDef = {
 };
 
 const PROFILE_PICTURE_PREFIX = "foundry-user-profile:";
-const PROFILE_PICTURE_CACHE_WINDOW_MS =
-    60 * 60 * 1_000;
+const PROFILE_PICTURE_CACHE_WINDOW_MS = 60 * 60 * 1_000;
 
 /**
  * Foundry exposes profile pictures through a mutable endpoint but does not
@@ -54,45 +53,23 @@ const PROFILE_PICTURE_CACHE_WINDOW_MS =
  * as empty blobs for that bucket and retried when the ID rotates.
  */
 export function foundryUserProfilePictureAttachment(userId: string): v.attachment {
-    const cacheBucket = Math.floor(
-        Date.now() /
-            PROFILE_PICTURE_CACHE_WINDOW_MS
-    );
+    const cacheBucket = Math.floor(Date.now() / PROFILE_PICTURE_CACHE_WINDOW_MS);
     return {
         id: `${PROFILE_PICTURE_PREFIX}${encodeURIComponent(userId)}:${cacheBucket}`,
     };
 }
 
 export function decodeFoundryUserProfilePictureAttachment(attachmentId: string): string | undefined {
-    if (
-        !attachmentId.startsWith(
-            PROFILE_PICTURE_PREFIX
-        )
-    ) {
+    if (!attachmentId.startsWith(PROFILE_PICTURE_PREFIX)) {
         return;
     }
-    const encoded = attachmentId.slice(
-        PROFILE_PICTURE_PREFIX.length
-    );
-    const separator =
-        encoded.lastIndexOf(":");
-    if (
-        separator >= 0 &&
-        !/^\d+$/.test(
-            encoded.slice(separator + 1)
-        )
-    ) {
+    const encoded = attachmentId.slice(PROFILE_PICTURE_PREFIX.length);
+    const separator = encoded.lastIndexOf(":");
+    if (separator >= 0 && !/^\d+$/.test(encoded.slice(separator + 1))) {
         return;
     }
     try {
-        return decodeURIComponent(
-            separator < 0
-                ? encoded
-                : encoded.slice(
-                      0,
-                      separator
-                  )
-        );
+        return decodeURIComponent(separator < 0 ? encoded : encoded.slice(0, separator));
     } catch {
         return;
     }

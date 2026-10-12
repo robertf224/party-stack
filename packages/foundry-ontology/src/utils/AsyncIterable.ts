@@ -15,18 +15,10 @@ export async function* fromBatches<T, R>(
     batchSize: number
 ): AsyncIterable<R> {
     if (!Number.isInteger(batchSize) || batchSize <= 0) {
-        throw new RangeError(
-            "Batch size must be a positive integer."
-        );
+        throw new RangeError("Batch size must be a positive integer.");
     }
-    for (
-        let index = 0;
-        index < values.length;
-        index += batchSize
-    ) {
-        const results = await getBatch(
-            values.slice(index, index + batchSize)
-        );
+    for (let index = 0; index < values.length; index += batchSize) {
+        const results = await getBatch(values.slice(index, index + batchSize));
         for (const result of results) {
             yield result;
         }

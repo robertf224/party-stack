@@ -1,5 +1,5 @@
 import { Temporal } from "temporal-polyfill";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { o } from "./ir/index.js";
 import { applyLensToObject, applyLensToObjectType, mapTargetPathToSourceWithLens } from "./lenses.js";
 import type { Lens, ObjectTypeDef } from "./ir/index.js";
@@ -14,7 +14,11 @@ const source: ObjectTypeDef = {
         { name: "givenName", displayName: "Given name", type: o.optional({ type: o.string({}) }) },
         { name: "familyName", displayName: "Family name", type: o.optional({ type: o.string({}) }) },
         { name: "email", displayName: "Email", type: o.optional({ type: o.string({}) }) },
-        { name: "profilePicture", displayName: "Profile picture", type: o.optional({ type: o.attachment({}) }) },
+        {
+            name: "profilePicture",
+            displayName: "Profile picture",
+            type: o.optional({ type: o.attachment({}) }),
+        },
         { name: "admin", displayName: "Admin", type: o.boolean({}) },
     ],
 };

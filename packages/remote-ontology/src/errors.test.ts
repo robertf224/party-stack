@@ -1,13 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { o, type OntologyBackendAdapter, type OntologyIR } from "@party-stack/ontology";
+import { describe, expect, it } from "vite-plus/test";
 import {
     parseRemoteOntologyErrorBody,
     RemoteOntologyError,
     remoteOntologyErrorFromUnknown,
 } from "./errors.js";
 import { createHttpRemoteOntologyTransport } from "./http.js";
-import { createRemoteOntologyServer } from "./server.js";
 import { serializeRemoteOntologyJson } from "./protocol.js";
-import { o, type OntologyBackendAdapter, type OntologyIR } from "@party-stack/ontology";
+import { createRemoteOntologyServer } from "./server.js";
 
 const ir: OntologyIR = {
     types: [],
@@ -110,15 +110,15 @@ describe("remote ontology error protocol", () => {
                     }),
             });
 
-            await expect(transport.applyAction({ actionType: "createNote", parameters: {} })).rejects.toMatchObject(
-                {
-                    name: testCase.envelope.name,
-                    code: testCase.envelope.code,
-                    status: testCase.envelope.status,
-                    message: testCase.envelope.message,
-                    retryable: testCase.envelope.retryable,
-                }
-            );
+            await expect(
+                transport.applyAction({ actionType: "createNote", parameters: {} })
+            ).rejects.toMatchObject({
+                name: testCase.envelope.name,
+                code: testCase.envelope.code,
+                status: testCase.envelope.status,
+                message: testCase.envelope.message,
+                retryable: testCase.envelope.retryable,
+            });
         }
     });
 
@@ -177,13 +177,9 @@ describe("remote ontology error protocol", () => {
             },
         });
 
-        const methodResponse = await server.handleRequest(
-            new Request("http://example.test/describe"),
-        );
+        const methodResponse = await server.handleRequest(new Request("http://example.test/describe"));
         expect(methodResponse.status).toBe(405);
-        await expect(
-            methodResponse.json(),
-        ).resolves.toMatchObject({
+        await expect(methodResponse.json()).resolves.toMatchObject({
             code: "BAD_REQUEST",
             status: 405,
             retryable: false,

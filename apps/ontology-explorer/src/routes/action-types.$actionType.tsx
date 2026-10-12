@@ -1,8 +1,8 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
 import { eq, useLiveQuery } from "@tanstack/react-db";
-import type { ActionParameterDef, ActionLogicStep } from "@party-stack/ontology";
-import { useOntology } from "../ontology/OntologyProvider";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { TypeDefLabel } from "../components/TypeDefLabel";
+import { useOntology } from "../ontology/OntologyProvider";
+import type { ActionParameterDef, ActionLogicStep } from "@party-stack/ontology";
 
 export const Route = createFileRoute("/action-types/$actionType")({
     component: ActionTypeDetail,
@@ -19,14 +19,12 @@ function ActionTypeDetail() {
                 .where(({ at }) => eq(at.name, actionTypeName))
                 .select(({ at }) => ({ ...at }))
                 .findOne(),
-        [actionTypeName],
+        [actionTypeName]
     );
 
     if (!actionType) {
         return (
-            <div className="flex items-center justify-center p-16 text-zinc-500">
-                Loading action type...
-            </div>
+            <div className="flex items-center justify-center p-16 text-zinc-500">Loading action type...</div>
         );
     }
 
@@ -39,9 +37,7 @@ function ActionTypeDetail() {
                 <Link to="/" className="text-sm text-zinc-500 hover:text-zinc-300">
                     ← Back
                 </Link>
-                <h1 className="mt-3 text-2xl font-bold text-zinc-100">
-                    {actionType.displayName as string}
-                </h1>
+                <h1 className="mt-3 text-2xl font-bold text-zinc-100">{actionType.displayName as string}</h1>
                 <div className="mt-1 text-sm text-zinc-400">
                     <span className="font-mono text-xs">{actionType.name as string}</span>
                 </div>
@@ -60,7 +56,9 @@ function ActionTypeDetail() {
                                 <th className="px-4 py-2.5 text-left font-medium text-zinc-400">API Name</th>
                                 <th className="px-4 py-2.5 text-left font-medium text-zinc-400">Type</th>
                                 <th className="px-4 py-2.5 text-left font-medium text-zinc-400">Default</th>
-                                <th className="px-4 py-2.5 text-left font-medium text-zinc-400">Description</th>
+                                <th className="px-4 py-2.5 text-left font-medium text-zinc-400">
+                                    Description
+                                </th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-800/60">
@@ -69,7 +67,9 @@ function ActionTypeDetail() {
                                     <td className="px-4 py-2 font-medium text-zinc-200">
                                         {param.displayName}
                                     </td>
-                                    <td className="px-4 py-2 font-mono text-xs text-zinc-400">{param.name}</td>
+                                    <td className="px-4 py-2 font-mono text-xs text-zinc-400">
+                                        {param.name}
+                                    </td>
                                     <td className="px-4 py-2 font-mono text-xs">
                                         <TypeDefLabel type={param.type} />
                                     </td>
@@ -131,7 +131,7 @@ function LogicStepCard({ step, index }: { step: ActionLogicStep; index: number }
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-800 text-xs font-medium text-zinc-400">
                     {index + 1}
                 </span>
-                <span className="text-sm font-semibold capitalize text-zinc-200">{step.kind}</span>
+                <span className="text-sm font-semibold text-zinc-200 capitalize">{step.kind}</span>
             </div>
             <pre className="overflow-x-auto rounded-lg bg-zinc-950 p-3 text-xs text-zinc-400">
                 {JSON.stringify(step.value, null, 2)}

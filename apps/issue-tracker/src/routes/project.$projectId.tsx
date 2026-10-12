@@ -1,16 +1,6 @@
-import {
-    createFileRoute,
-    lazyRouteComponent,
-} from "@tanstack/react-router";
+import { createFileRoute, lazyRouteComponent } from "@tanstack/react-router";
 
-const IssueTracker =
-    lazyRouteComponent(
-        () =>
-            import(
-                "../app/IssueTracker"
-            ),
-        "IssueTracker"
-    );
+const IssueTracker = lazyRouteComponent(() => import("../app/IssueTracker"), "IssueTracker");
 
 export const Route = createFileRoute("/project/$projectId")({
     ssr: false,
@@ -18,13 +8,6 @@ export const Route = createFileRoute("/project/$projectId")({
 });
 
 function ProjectRoute() {
-    const { projectId } =
-        Route.useParams();
-    return (
-        <IssueTracker
-            initialProjectId={
-                projectId
-            }
-        />
-    );
+    const { projectId } = Route.useParams();
+    return <IssueTracker initialProjectId={projectId} />;
 }

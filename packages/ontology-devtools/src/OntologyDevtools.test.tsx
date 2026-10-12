@@ -1,7 +1,6 @@
 import { LucideIcon } from "@party-stack/icons-lucide/react";
 import { isValidElement, type ReactElement } from "react";
-import { describe, expect, it } from "vitest";
-import type { LiveOntology, OntologyIR, OntologyOutboxEntry } from "@party-stack/ontology";
+import { describe, expect, it } from "vite-plus/test";
 import {
     createOntologyDevtoolsPlugin,
     getOutboxActivity,
@@ -17,6 +16,7 @@ import {
     typeDisplayName,
     type OntologyDevtoolsPanelProps,
 } from "./OntologyDevtools.js";
+import type { LiveOntology, OntologyIR, OntologyOutboxEntry } from "@party-stack/ontology";
 
 describe("createOntologyDevtoolsPlugin", () => {
     it("creates a composable TanStack Devtools plugin", () => {
@@ -191,10 +191,7 @@ describe("layoutSchema", () => {
         const source = layout.nodes.find((node) => node.objectType.name === "Project");
         const target = layout.nodes.find((node) => node.objectType.name === "Task");
         const points = layout.edges[0]!.points;
-        const touchesBoundary = (
-            point: { x: number; y: number },
-            node: NonNullable<typeof source>
-        ) => {
+        const touchesBoundary = (point: { x: number; y: number }, node: NonNullable<typeof source>) => {
             const onHorizontalEdge =
                 (point.y === node.y || point.y === node.y + 176) &&
                 point.x >= node.x &&
@@ -228,22 +225,9 @@ describe("layoutSchema", () => {
 });
 
 describe("property presentation", () => {
-    const ir: OntologyIR = {
-        types: [
-            {
-                name: "EventTime",
-                type: { kind: "timestamp", value: {} },
-            },
-        ],
-        objectTypes: [],
-        linkTypes: [],
-        actionTypes: [],
-        queryFunctionTypes: [],
-    };
-
     it("describes named and container property types", () => {
         expect(
-            typeDisplayName(ir, {
+            typeDisplayName({
                 kind: "optional",
                 value: {
                     type: {
@@ -255,7 +239,7 @@ describe("property presentation", () => {
                 },
             })
         ).toBe("List of Attachment (optional)");
-        expect(typeDisplayName(ir, { kind: "ref", value: { name: "EventTime" } })).toBe("EventTime");
+        expect(typeDisplayName({ kind: "ref", value: { name: "EventTime" } })).toBe("EventTime");
     });
 
     it("formats timestamps for display while retaining the exact value", () => {

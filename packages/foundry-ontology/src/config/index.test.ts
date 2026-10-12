@@ -1,5 +1,5 @@
 import { o, type OntologyIR } from "@party-stack/ontology";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { createFoundryOntologyPullSource, type CreateFoundryOntologyPullSourceOptions } from "./index.js";
 
 function createSource(options: Partial<CreateFoundryOntologyPullSourceOptions>) {

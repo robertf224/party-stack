@@ -54,22 +54,12 @@ export interface HostInvocationOptions {
 }
 
 export interface HostCoreOptions {
-    readonly contextClient: (
-        path: readonly string[],
-        signal: AbortSignal
-    ) => CoordinationClient;
-    readonly publishEvent: (
-        namespace: string,
-        event: string,
-        payload: unknown
-    ) => void;
+    readonly contextClient: (path: readonly string[], signal: AbortSignal) => CoordinationClient;
+    readonly publishEvent: (namespace: string, event: string, payload: unknown) => void;
 }
 
 export class HostCore {
-    private readonly registrations = new Map<
-        string,
-        Registration
-    >();
+    private readonly registrations = new Map<string, Registration>();
     private closed = false;
 
     constructor(private readonly options: HostCoreOptions) {}
@@ -88,9 +78,7 @@ export class HostCore {
 
         const registration: Registration = {
             namespace,
-            handlers: handlers as Readonly<
-                Record<string, UntypedHandler>
-            >,
+            handlers: handlers as Readonly<Record<string, UntypedHandler>>,
             controller: new AbortController(),
             queue: [],
             closed: false,
@@ -103,16 +91,11 @@ export class HostCore {
                     if (
                         registration.closed ||
                         this.closed ||
-                        this.registrations.get(namespace) !==
-                            registration
+                        this.registrations.get(namespace) !== registration
                     ) {
                         return;
                     }
-                    this.options.publishEvent(
-                        namespace,
-                        String(event),
-                        payload
-                    );
+                    this.options.publishEvent(namespace, String(event), payload);
                 },
             },
             close: () => this.closeRegistration(registration),
@@ -138,12 +121,8 @@ export class HostCore {
             );
         }
 
-        const current =
-            options.path[options.path.length - 1];
-        if (
-            current !== namespace &&
-            options.path.includes(namespace)
-        ) {
+        const current = options.path[options.path.length - 1];
+        if (current !== namespace && options.path.includes(namespace)) {
             return Promise.reject(
                 new CoordinationServiceError(
                     `Cyclic coordination service call to "${namespace}" is forbidden.`,
@@ -155,9 +134,7 @@ export class HostCore {
         const invocation = this.createInvocation(
             method,
             input,
-            current === namespace
-                ? options.path
-                : [...options.path, namespace],
+            current === namespace ? options.path : [...options.path, namespace],
             options
         );
 
@@ -174,9 +151,7 @@ export class HostCore {
         if (this.closed) return;
         this.closed = true;
         await Promise.all(
-            [...this.registrations.values()].map((registration) =>
-                this.closeRegistration(registration)
-            )
+            [...this.registrations.values()].map((registration) => this.closeRegistration(registration))
         );
     }
 
@@ -187,10 +162,7 @@ export class HostCore {
         options: HostInvocationOptions
     ): Invocation {
         const result = deferred<unknown>();
-        const signals = [
-            options.inheritedSignal,
-            options.signal,
-        ];
+        const signals = [options.inheritedSignal, options.signal];
         const invocation: Invocation = {
             method,
             input,
@@ -202,9 +174,7 @@ export class HostCore {
         };
 
         const abort = () => {
-            const signal = signals.find(
-                (candidate) => candidate?.aborted
-            );
+            const signal = signals.find((candidate) => candidate?.aborted);
             if (signal) result.reject(abortError(signal));
         };
         for (const signal of signals) {
@@ -231,10 +201,7 @@ export class HostCore {
             .then(() => this.drain(registration))
             .finally(() => {
                 registration.drainPromise = undefined;
-                if (
-                    !registration.closed &&
-                    registration.queue.length > 0
-                ) {
+                if (!registration.closed && registration.queue.length > 0) {
                     this.scheduleDrain(registration);
                 }
             });
@@ -252,10 +219,7 @@ export class HostCore {
         }
     }
 
-    private async execute(
-        registration: Registration,
-        invocation: Invocation
-    ): Promise<void> {
+    private async execute(registration: Registration, invocation: Invocation): Promise<void> {
         invocation.removeQueuedAbort?.();
         if (invocation.result.settled) return;
 
@@ -272,23 +236,11 @@ export class HostCore {
 
         const controller = new AbortController();
         const removeAbortLinks = [
-            linkAbortSignal(
-                registration.controller.signal,
-                controller
-            ),
-            ...invocation.signals.map((signal) =>
-                linkAbortSignal(signal, controller)
-            ),
+            linkAbortSignal(registration.controller.signal, controller),
+            ...invocation.signals.map((signal) => linkAbortSignal(signal, controller)),
         ];
-        const rejectOnAbort = () =>
-            invocation.result.reject(
-                abortError(controller.signal)
-            );
-        controller.signal.addEventListener(
-            "abort",
-            rejectOnAbort,
-            { once: true }
-        );
+        const rejectOnAbort = () => invocation.result.reject(abortError(controller.signal));
+        controller.signal.addEventListener("abort", rejectOnAbort, { once: true });
 
         try {
             if (controller.signal.aborted) {
@@ -299,10 +251,7 @@ export class HostCore {
                 requestId: invocation.requestId,
                 senderId: invocation.senderId,
                 signal: controller.signal,
-                coordination: this.options.contextClient(
-                    invocation.path,
-                    controller.signal
-                ),
+                coordination: this.options.contextClient(invocation.path, controller.signal),
             });
             if (!controller.signal.aborted) {
                 invocation.result.resolve(value);
@@ -310,17 +259,12 @@ export class HostCore {
         } catch (error) {
             invocation.result.reject(normalizeError(error));
         } finally {
-            controller.signal.removeEventListener(
-                "abort",
-                rejectOnAbort
-            );
+            controller.signal.removeEventListener("abort", rejectOnAbort);
             for (const remove of removeAbortLinks) remove();
         }
     }
 
-    private async closeRegistration(
-        registration: Registration
-    ): Promise<void> {
+    private async closeRegistration(registration: Registration): Promise<void> {
         if (registration.closed) {
             await registration.drainPromise;
             return;
@@ -336,10 +280,7 @@ export class HostCore {
             invocation.result.reject(error);
         }
         await registration.drainPromise;
-        if (
-            this.registrations.get(registration.namespace) ===
-            registration
-        ) {
+        if (this.registrations.get(registration.namespace) === registration) {
             this.registrations.delete(registration.namespace);
         }
     }

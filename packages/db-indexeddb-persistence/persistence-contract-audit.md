@@ -82,13 +82,13 @@ workload edits one row while maintaining four persisted indexes and bounded hist
 
 Native headless Chromium / Playwright 1.61.1, local macOS measurements:
 
-| Workload | Observed mean |
-| --- | ---: |
-| Ordered first ten rows (initial stable run) | 0.87 ms |
-| Same page through unindexed fallback | 70.89 ms |
-| Empty indexed AND before short circuit | 12.08 ms |
-| Empty indexed AND after short circuit | 5.27 ms |
-| One-row edit with four indexes | 25.27 ms (high variance) |
+| Workload                                    |            Observed mean |
+| ------------------------------------------- | -----------------------: |
+| Ordered first ten rows (initial stable run) |                  0.87 ms |
+| Same page through unindexed fallback        |                 70.89 ms |
+| Empty indexed AND before short circuit      |                 12.08 ms |
+| Empty indexed AND after short circuit       |                  5.27 ms |
+| One-row edit with four indexes              | 25.27 ms (high variance) |
 
 The empty-AND change avoids reading the broad 1,000-entry branch after the selective
 branch has already returned no candidates. A unit test verifies exactly one lookup
@@ -107,10 +107,10 @@ at least five iterations, and a 100-ms/five-iteration warmup.
 ## Commands and limits
 
 ```sh
-pnpm --filter @party-stack/db-indexeddb-persistence test
-pnpm --filter @party-stack/db-indexeddb-persistence test:browser
+vp run @party-stack/db-indexeddb-persistence#test
+vp run @party-stack/db-indexeddb-persistence#test:browser
 pnpm --filter @party-stack/web-runtime test:browser
-pnpm --filter @party-stack/db-indexeddb-persistence bench:browser
+vp run @party-stack/db-indexeddb-persistence#bench:browser
 ```
 
 Install Chromium with the web-runtime package's Playwright CLI first. Both native

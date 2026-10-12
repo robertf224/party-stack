@@ -79,10 +79,7 @@ interface LeadershipTerm {
     readonly signal: AbortSignal;
 }
 
-export class LockBroadcastCoordination
-    extends BaseCoordination
-    implements CoordinationHost
-{
+export class LockBroadcastCoordination extends BaseCoordination implements CoordinationHost {
     readonly role = "host" as const;
     readonly scope: string;
 
@@ -107,26 +104,16 @@ export class LockBroadcastCoordination
     private terminalError: Error | undefined;
     private closePromise: Promise<void> | undefined;
 
-    constructor(
-        private readonly options: LockBroadcastCoordinationOptions
-    ) {
+    constructor(private readonly options: LockBroadcastCoordinationOptions) {
         super();
         this.scope = options.scope;
-        this.requestTimeoutMs =
-            options.requestTimeoutMs ??
-            DEFAULT_REQUEST_TIMEOUT_MS;
-        this.requestAttempts =
-            options.requestAttempts ??
-            DEFAULT_REQUEST_ATTEMPTS;
-        this.responseCacheMs =
-            options.responseCacheMs ??
-            DEFAULT_RESPONSE_CACHE_MS;
+        this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+        this.requestAttempts = options.requestAttempts ?? DEFAULT_REQUEST_ATTEMPTS;
+        this.responseCacheMs = options.responseCacheMs ?? DEFAULT_RESPONSE_CACHE_MS;
         void this.ready.promise.catch(() => undefined);
         this.core = new HostCore({
-            contextClient: (path, signal) =>
-                this.createContextClient({ path, signal }),
-            publishEvent: (service, event, payload) =>
-                this.publishEvent(service, event, payload),
+            contextClient: (path, signal) => this.createContextClient({ path, signal }),
+            publishEvent: (service, event, payload) => this.publishEvent(service, event, payload),
         });
         this.task = run(() => this.useLifetime());
         void this.task.catch((error: unknown) => {
@@ -150,25 +137,15 @@ export class LockBroadcastCoordination
         callback: (context: { signal: AbortSignal }) => Result | Promise<Result>,
         options?: CoordinationCallOptions
     ): Promise<Result> {
-        await waitForAbortable(
-            this.ready.promise,
-            options?.signal
-        );
+        await waitForAbortable(this.ready.promise, options?.signal);
         this.throwTerminalError();
-        const term = await this.waitForLeadership(
-            options?.signal
-        );
+        const term = await this.waitForLeadership(options?.signal);
         try {
             return await runInScope(
                 term.scope,
                 function* () {
-                    const signal =
-                        yield* useAbortSignal();
-                    return yield* until(
-                        Promise.resolve(
-                            callback({ signal })
-                        )
-                    );
+                    const signal = yield* useAbortSignal();
+                    return yield* until(Promise.resolve(callback({ signal })));
                 },
                 [options?.signal]
             );
@@ -188,9 +165,7 @@ export class LockBroadcastCoordination
     close(): Promise<void> {
         if (this.closePromise) return this.closePromise;
         this.closed = true;
-        this.closePromise = this.task
-            .halt()
-            .then(() => undefined);
+        this.closePromise = this.task.halt().then(() => undefined);
         return this.closePromise;
     }
 
@@ -206,20 +181,10 @@ export class LockBroadcastCoordination
         }
         return this.rootScope.promise
             .then((scope) =>
-                runInScope(
-                    scope,
-                    () =>
-                        this.invokeOperation(
-                            namespace,
-                            method,
-                            input,
-                            context.path
-                        ),
-                    [
-                        context.signal,
-                        options?.signal,
-                    ]
-                )
+                runInScope(scope, () => this.invokeOperation(namespace, method, input, context.path), [
+                    context.signal,
+                    options?.signal,
+                ])
             )
             .catch((error: unknown) => {
                 if (this.closed) {
@@ -232,30 +197,18 @@ export class LockBroadcastCoordination
     private *useLifetime(): Operation<void> {
         const channelName = `party-stack.coordination:${this.scope}`;
         const rootScope = yield* useScope();
-        const channel =
-            yield* useBroadcastChannel<unknown>(
-                channelName
-            );
+        const channel = yield* useBroadcastChannel<unknown>(channelName);
         this.channel = channel;
         this.rootScope.resolve(rootScope);
 
         try {
-            void (yield* spawn(() =>
-                this.processMessages(channel)
-            ));
-            void (yield* spawn(() =>
-                this.useLeadership()
-            ));
+            void (yield* spawn(() => this.processMessages(channel)));
+            void (yield* spawn(() => this.useLeadership()));
             this.ready.resolve();
             yield* suspend();
         } finally {
             const closeError = new CoordinationClosedError();
-            yield* until(
-                this.stopTerm(
-                    this.term,
-                    closeError
-                )
-            );
+            yield* until(this.stopTerm(this.term, closeError));
             yield* until(this.core.close());
             this.channel = undefined;
             this.clearResponses();
@@ -266,12 +219,7 @@ export class LockBroadcastCoordination
         }
     }
 
-    private *processMessages(
-        messages: Stream<
-            MessageEvent<unknown>,
-            void
-        >
-    ): Operation<void> {
+    private *processMessages(messages: Stream<MessageEvent<unknown>, void>): Operation<void> {
         for (const event of yield* each(messages)) {
             this.onMessage(decodeCoordinationMessage(event.data));
             yield* each.next();
@@ -279,9 +227,7 @@ export class LockBroadcastCoordination
     }
 
     private *useLeadership(): Operation<void> {
-        yield* useWebLock(
-            `party-stack.coordination:${this.scope}:leader`
-        );
+        yield* useWebLock(`party-stack.coordination:${this.scope}:leader`);
         const scope = yield* useScope();
         const signal = yield* useAbortSignal();
         const term: LeadershipTerm = {
@@ -324,17 +270,12 @@ export class LockBroadcastCoordination
         const term = this.term;
         if (term) {
             return yield* until(
-                this.core.invoke(
-                    namespace,
-                    method,
-                    input,
-                    {
-                        signal,
-                        inheritedSignal: term.signal,
-                        senderId: this.nodeId,
-                        path,
-                    }
-                )
+                this.core.invoke(namespace, method, input, {
+                    signal,
+                    inheritedSignal: term.signal,
+                    senderId: this.nodeId,
+                    path,
+                })
             );
         }
         return yield* this.requestRemote(namespace, method, input);
@@ -359,12 +300,14 @@ export class LockBroadcastCoordination
             const route = yield* this.findLeader(service, method);
             const localTerm = this.currentTerm();
             if (route.nodeId === this.nodeId && localTerm?.id === route.termId) {
-                return yield* until(this.core.invoke(service, method, payload, {
-                    signal,
-                    inheritedSignal: localTerm.signal,
-                    senderId: this.nodeId,
-                    path: [],
-                }));
+                return yield* until(
+                    this.core.invoke(service, method, payload, {
+                        signal,
+                        inheritedSignal: localTerm.signal,
+                        senderId: this.nodeId,
+                        path: [],
+                    })
+                );
             }
             this.pendingSenders.set(requestId, route.nodeId);
             const request: CoordinationRequestMessage = {
@@ -403,10 +346,7 @@ export class LockBroadcastCoordination
                     return yield* this.waitForResponseAttempt(response.promise, service, method);
                 } catch (error) {
                     if (
-                        !(
-                            error instanceof
-                                CoordinationTransportError
-                        ) ||
+                        !(error instanceof CoordinationTransportError) ||
                         error.code !== "TIMEOUT" ||
                         attempt === this.requestAttempts - 1
                     ) {
@@ -506,10 +446,7 @@ export class LockBroadcastCoordination
     private onMessage(message: unknown): void {
         if (this.closed || !isRecord(message)) return;
         const type = messageType(message);
-        if (
-            message.v !== COORDINATION_PROTOCOL_VERSION ||
-            message.scope !== this.scope
-        ) {
+        if (message.v !== COORDINATION_PROTOCOL_VERSION || message.scope !== this.scope) {
             this.handleProtocolMismatch(message, type);
             return;
         }
@@ -541,22 +478,12 @@ export class LockBroadcastCoordination
         } else if (type === "response") {
             this.onResponse(message as unknown as CoordinationResponseMessage);
         } else if (type === "event") {
-            const event =
-                message as unknown as CoordinationEventMessage;
-            this.emitEvent(
-                event.service,
-                event.event,
-                event.payload
-            );
+            const event = message as unknown as CoordinationEventMessage;
+            this.emitEvent(event.service, event.event, event.payload);
         } else if (type === "cancel") {
-            this.onCancel(
-                message as unknown as CoordinationCancelMessage
-            );
+            this.onCancel(message as unknown as CoordinationCancelMessage);
         } else if (type === "request" && this.term) {
-            this.onRequest(
-                message as unknown as CoordinationRequestMessage,
-                this.term
-            );
+            this.onRequest(message as unknown as CoordinationRequestMessage, this.term);
         }
     }
 
@@ -622,43 +549,25 @@ export class LockBroadcastCoordination
             return;
         }
         const controller = new AbortController();
-        const removeTermAbort = linkAbortSignal(
-            term.signal,
-            controller
-        );
+        const removeTermAbort = linkAbortSignal(term.signal, controller);
         const completion = this.core
-            .invoke(
-                request.service,
-                request.method,
-                request.payload,
-                {
-                    signal: controller.signal,
-                    requestId: request.requestId,
-                    senderId: request.senderId,
-                    path: [],
-                }
-            )
+            .invoke(request.service, request.method, request.payload, {
+                signal: controller.signal,
+                requestId: request.requestId,
+                senderId: request.senderId,
+                path: [],
+            })
             .then(
                 (result) =>
-                    this.completeIncoming(
-                        key,
-                        request,
-                        term,
-                        {
-                            ok: true,
-                            result,
-                        }
-                    ),
+                    this.completeIncoming(key, request, term, {
+                        ok: true,
+                        result,
+                    }),
                 (error: unknown) =>
-                    this.completeIncoming(
-                        key,
-                        request,
-                        term,
-                        {
-                            ok: false,
-                            error: serializeError(error),
-                        }
-                    )
+                    this.completeIncoming(key, request, term, {
+                        ok: false,
+                        error: serializeError(error),
+                    })
             )
             .finally(removeTermAbort);
         this.incoming.set(key, {
@@ -677,17 +586,11 @@ export class LockBroadcastCoordination
             | { readonly ok: true; readonly result: unknown }
             | {
                   readonly ok: false;
-                  readonly error: ReturnType<
-                      typeof serializeError
-                  >;
+                  readonly error: ReturnType<typeof serializeError>;
               }
     ): void {
         this.incoming.delete(key);
-        if (
-            this.closed ||
-            this.term !== term ||
-            term.signal.aborted
-        ) {
+        if (this.closed || this.term !== term || term.signal.aborted) {
             return;
         }
         const response: CoordinationResponseMessage = {
@@ -709,12 +612,7 @@ export class LockBroadcastCoordination
     }
 
     private onCancel(message: CoordinationCancelMessage): void {
-        const incoming = this.incoming.get(
-            this.requestKey(
-                message.senderId,
-                message.requestId
-            )
-        );
+        const incoming = this.incoming.get(this.requestKey(message.senderId, message.requestId));
         incoming?.controller.abort(
             new CoordinationTransportError(
                 "Coordination request was cancelled by its caller.",
@@ -723,10 +621,7 @@ export class LockBroadcastCoordination
         );
     }
 
-    private handleProtocolMismatch(
-        message: Record<string, unknown>,
-        type: string | undefined
-    ): void {
+    private handleProtocolMismatch(message: Record<string, unknown>, type: string | undefined): void {
         const error = new CoordinationProtocolError(
             `Coordination protocol mismatch for scope "${this.scope}".`
         );
@@ -757,11 +652,7 @@ export class LockBroadcastCoordination
         }
     }
 
-    private publishEvent(
-        service: string,
-        event: string,
-        payload: unknown
-    ): void {
+    private publishEvent(service: string, event: string, payload: unknown): void {
         this.emitEvent(service, event, payload);
         this.publish({
             v: COORDINATION_PROTOCOL_VERSION,
@@ -787,9 +678,7 @@ export class LockBroadcastCoordination
         }
     }
 
-    private waitForLeadership(
-        signal?: AbortSignal
-    ): Promise<LeadershipTerm> {
+    private waitForLeadership(signal?: AbortSignal): Promise<LeadershipTerm> {
         if (this.term) return Promise.resolve(this.term);
         if (this.closed) {
             return Promise.reject(new CoordinationClosedError());
@@ -811,27 +700,20 @@ export class LockBroadcastCoordination
                 once: true,
             });
             void waiter.promise.then(
-                () =>
-                    signal.removeEventListener("abort", abort),
-                () =>
-                    signal.removeEventListener("abort", abort)
+                () => signal.removeEventListener("abort", abort),
+                () => signal.removeEventListener("abort", abort)
             );
         }
         return waiter.promise;
     }
 
-    private async stopTerm(
-        term: LeadershipTerm | undefined,
-        reason: Error
-    ): Promise<void> {
+    private async stopTerm(term: LeadershipTerm | undefined, reason: Error): Promise<void> {
         if (!term) return;
         const completions: Promise<void>[] = [];
         for (const incoming of this.incoming.values()) {
             if (incoming.term === term) {
                 incoming.controller.abort(reason);
-                completions.push(
-                    incoming.completion
-                );
+                completions.push(incoming.completion);
             }
         }
         await Promise.allSettled(completions);
@@ -847,9 +729,7 @@ export class LockBroadcastCoordination
         this.ready.reject(error);
         this.rejectPending(error);
         this.rejectLeadershipWaiters(error);
-        void this.task.halt().catch(
-            () => undefined
-        );
+        void this.task.halt().catch(() => undefined);
     }
 
     private throwTerminalError(): void {
@@ -882,11 +762,14 @@ export class LockBroadcastCoordination
     private scheduleResponsePruning(): void {
         if (this.responsePruneTimer !== undefined || this.responses.size === 0 || this.closed) return;
         const nextExpiry = Math.min(...[...this.responses.values()].map((cached) => cached.expiresAt));
-        this.responsePruneTimer = setTimeout(() => {
-            this.responsePruneTimer = undefined;
-            this.pruneResponses();
-            this.scheduleResponsePruning();
-        }, Math.max(1, Math.min(2_147_483_647, nextExpiry - Date.now())));
+        this.responsePruneTimer = setTimeout(
+            () => {
+                this.responsePruneTimer = undefined;
+                this.pruneResponses();
+                this.scheduleResponsePruning();
+            },
+            Math.max(1, Math.min(2_147_483_647, nextExpiry - Date.now()))
+        );
     }
 
     private pruneResponses(): void {
@@ -898,10 +781,7 @@ export class LockBroadcastCoordination
         }
     }
 
-    private requestKey(
-        senderId: string,
-        requestId: string
-    ): string {
+    private requestKey(senderId: string, requestId: string): string {
         return `${senderId}\u0000${requestId}`;
     }
 }

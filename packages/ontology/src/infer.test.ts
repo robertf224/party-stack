@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vite-plus/test";
 import { defineNamedType, defineOntology, defineType, type Infer } from "./infer.js";
 import { o } from "./ir/generated/builders.js";
 import type { attachment, timestamp } from "./utils/values.js";

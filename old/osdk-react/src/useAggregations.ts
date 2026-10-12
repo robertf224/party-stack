@@ -42,7 +42,7 @@ export function useAggregations<
         ...queryOpts,
         queryFn: () =>
             ObjectSet.toOSDK(objectSet, client).aggregate(
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+                // oxlint-disable-next-line typescript/no-unsafe-argument, typescript/no-explicit-any
                 aggregateOpts as any
             ) as unknown as AggregationsResults<T, AO>,
         queryKey: [...QUERY_KEY_PREFIX, objectSet, aggregateOpts],

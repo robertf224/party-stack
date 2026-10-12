@@ -94,10 +94,7 @@ export function isRemoteOntologyErrorEnvelope(value: unknown): value is RemoteOn
     return remoteOntologyErrorEnvelopeSchema.safeParse(value).success;
 }
 
-export function parseRemoteOntologyErrorBody(
-    text: string,
-    status: number
-): RemoteOntologyError {
+export function parseRemoteOntologyErrorBody(text: string, status: number): RemoteOntologyError {
     if (!text) {
         return new RemoteOntologyError({
             code: statusToCode(status),
@@ -207,7 +204,9 @@ export function remoteOntologyErrorFromUnknown(error: unknown): RemoteOntologyEr
     const message = error instanceof Error ? error.message : String(error);
     // Sanitize potential sensitive backend details from unexpected failures.
     const safeMessage =
-        message.length > 500 ? "Remote ontology request failed." : message || "Remote ontology request failed.";
+        message.length > 500
+            ? "Remote ontology request failed."
+            : message || "Remote ontology request failed.";
     return new RemoteOntologyError({
         name: error instanceof Error ? error.name : "RemoteOntologyError",
         code: "INTERNAL",

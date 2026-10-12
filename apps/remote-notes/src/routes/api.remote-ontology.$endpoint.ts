@@ -1,9 +1,9 @@
 import { mkdirSync } from "node:fs";
-import Database from "better-sqlite3";
-import { createFileRoute } from "@tanstack/react-router";
-import { eq, queryOnce, type Collection } from "@tanstack/db";
-import { createSQLiteOntologyBackendAdapter } from "@party-stack/sqlite-ontology";
 import { createRemoteOntologyServer } from "@party-stack/remote-ontology/server";
+import { createSQLiteOntologyBackendAdapter } from "@party-stack/sqlite-ontology";
+import { eq, queryOnce, type Collection } from "@tanstack/db";
+import { createFileRoute } from "@tanstack/react-router";
+import Database from "better-sqlite3";
 import { notesOntology } from "../ontology/ontology";
 import type { Note, RemoteNotesOntology } from "../ontology/generated/types";
 

@@ -17,7 +17,7 @@ function AuthCallback() {
     useEffect(() => {
         auth.signIn()
             .then(() => {
-                navigate("/", { replace: true });
+                return navigate("/", { replace: true });
             })
             .catch((e: unknown) => setError((e as Error).message ?? e));
     }, [navigate]);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { generateLive } from "./live.js";
 
 describe("generateLive", () => {
@@ -12,25 +12,17 @@ describe("generateLive", () => {
                 queryFunctionTypes: [],
             },
             {
-                ontologyImportPath:
-                    "../ontology.js",
-                ontologyTypesImportPath:
-                    "./types.js",
-                ontologyRuntimeImportPath:
-                    "@party-stack/ontology",
+                ontologyImportPath: "../ontology.js",
+                ontologyTypesImportPath: "./types.js",
+                ontologyRuntimeImportPath: "@party-stack/ontology",
                 ontologyTypeName: "ExampleOntology",
-                outputFactoryName:
-                    "createExampleLiveOntology",
+                outputFactoryName: "createExampleLiveOntology",
             }
         );
 
         expect(output).toContain(
             'import { createLiveOntology, type CreateLiveOntologyOpts, type LiveOntology } from "@party-stack/ontology";'
         );
-        expect(
-            output.match(
-                /from "@party-stack\/ontology";/g
-            )
-        ).toHaveLength(1);
+        expect(output.match(/from "@party-stack\/ontology";/g)).toHaveLength(1);
     });
 });

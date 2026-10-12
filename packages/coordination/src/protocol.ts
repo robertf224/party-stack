@@ -6,8 +6,7 @@ interface ProtocolEnvelope {
     readonly senderId: string;
 }
 
-export interface CoordinationRequestMessage
-    extends ProtocolEnvelope {
+export interface CoordinationRequestMessage extends ProtocolEnvelope {
     readonly type: "request";
     readonly requestId: string;
     readonly service: string;
@@ -18,8 +17,7 @@ export interface CoordinationRequestMessage
     readonly expiresAt: number;
 }
 
-export interface CoordinationResponseMessage
-    extends ProtocolEnvelope {
+export interface CoordinationResponseMessage extends ProtocolEnvelope {
     readonly type: "response";
     readonly requestId: string;
     readonly recipientId: string;
@@ -28,14 +26,12 @@ export interface CoordinationResponseMessage
     readonly error?: SerializedError;
 }
 
-export interface CoordinationCancelMessage
-    extends ProtocolEnvelope {
+export interface CoordinationCancelMessage extends ProtocolEnvelope {
     readonly type: "cancel";
     readonly requestId: string;
 }
 
-export interface CoordinationEventMessage
-    extends ProtocolEnvelope {
+export interface CoordinationEventMessage extends ProtocolEnvelope {
     readonly type: "event";
     readonly service: string;
     readonly event: string;
@@ -62,16 +58,10 @@ export type CoordinationProtocolMessage =
     | CoordinationLeaderQueryMessage
     | CoordinationLeaderMessage;
 
-export function isRecord(
-    value: unknown
-): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
 
-export function messageType(
-    value: unknown
-): string | undefined {
-    return isRecord(value) && typeof value.type === "string"
-        ? value.type
-        : undefined;
+export function messageType(value: unknown): string | undefined {
+    return isRecord(value) && typeof value.type === "string" ? value.type : undefined;
 }

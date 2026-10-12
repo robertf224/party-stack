@@ -1,17 +1,22 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
 import { eq, ilike, or, useLiveQuery } from "@tanstack/react-db";
-import { useDeferredValue, useMemo, useRef, useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
-    useReactTable,
-    getCoreRowModel,
+    useTable,
+    tableFeatures,
+    rowSortingFeature,
+    columnSizingFeature,
+    columnResizingFeature,
     flexRender,
     type ColumnDef,
     type SortingState,
     type ColumnSizingState,
 } from "@tanstack/react-table";
-import type { PropertyDef, TypeDef } from "@party-stack/ontology";
-import { useOntology } from "../ontology/OntologyProvider";
+import { useDeferredValue, useMemo, useRef, useState } from "react";
 import { TypeDefLabel } from "../components/TypeDefLabel";
+import { useOntology } from "../ontology/OntologyProvider";
+import type { PropertyDef, TypeDef } from "@party-stack/ontology";
+
+const objectTableFeatures = tableFeatures({ rowSortingFeature, columnSizingFeature, columnResizingFeature });
 
 export const Route = createFileRoute("/object-types/$objectType")({
     component: ObjectTypeDetail,
@@ -194,14 +199,14 @@ function ObjectInstanceTable({
         [filter, stringPropNames, sortField, sortDir]
     );
 
-    const columns = useMemo<ColumnDef<Record<string, unknown>>[]>(
+    const columns = useMemo<ColumnDef<typeof objectTableFeatures, Record<string, unknown>>[]>(
         () =>
             properties.map((prop) => ({
                 id: prop.name,
                 header: prop.displayName,
                 accessorFn: (row: Record<string, unknown>) => row[prop.name],
-                cell: ({ getValue }) => {
-                    const value = getValue();
+                cell: (cell) => {
+                    const value = cell.getValue();
                     return <CellValue value={value} type={prop.type} />;
                 },
                 size: defaultColumnSize(prop),
@@ -216,7 +221,8 @@ function ObjectInstanceTable({
         [rows]
     );
 
-    const table = useReactTable({
+    const table = useTable({
+        features: objectTableFeatures,
         data,
         columns,
         state: { sorting, columnSizing },
@@ -224,11 +230,9 @@ function ObjectInstanceTable({
         onColumnSizingChange: setColumnSizing,
         columnResizeMode: "onEnd",
         manualSorting: true,
-        manualFiltering: true,
-        getCoreRowModel: getCoreRowModel(),
     });
 
-    const columnSizeVars = useMemo(() => {
+    const columnSizeVars = (() => {
         const headers = table.getFlatHeaders();
         const vars: Record<string, string> = {};
         for (const header of headers) {
@@ -236,7 +240,7 @@ function ObjectInstanceTable({
             vars[`--col-${header.column.id}-size`] = `${header.column.getSize()}px`;
         }
         return vars;
-    }, [table.getState().columnSizing, columns]);
+    })();
 
     const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -268,12 +272,21 @@ function ObjectInstanceTable({
                             <tr key={headerGroup.id} className="border-b border-zinc-800 bg-zinc-900">
                                 {headerGroup.headers.map((header) => (
                                     <th
+                                        aria-sort={
+                                            header.column.getIsSorted() === "asc"
+                                                ? "ascending"
+                                                : header.column.getIsSorted() === "desc"
+                                                  ? "descending"
+                                                  : "none"
+                                        }
                                         key={header.id}
-                                        className="relative select-none text-left font-medium text-zinc-400"
+                                        className="relative text-left font-medium text-zinc-400 select-none"
                                         style={{ width: `var(--header-${header.id}-size)` }}
                                     >
-                                        <div
-                                            className="flex cursor-pointer items-center gap-1 truncate px-4 py-2.5 hover:text-zinc-200"
+                                        <button
+                                            type="button"
+                                            disabled={!header.column.getCanSort()}
+                                            className="flex w-full cursor-pointer items-center gap-1 truncate px-4 py-2.5 text-left outline-none hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-default"
                                             onClick={header.column.getToggleSortingHandler()}
                                             title={
                                                 typeof header.column.columnDef.header === "string"
@@ -293,19 +306,38 @@ function ObjectInstanceTable({
                                             {header.column.getIsSorted() === "desc" && (
                                                 <span className="shrink-0">↓</span>
                                             )}
-                                        </div>
-                                        <div
+                                        </button>
+                                        <button
+                                            type="button"
+                                            aria-label={`Resize ${header.column.id} column`}
+                                            onKeyDown={(event) => {
+                                                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+                                                    return;
+                                                event.preventDefault();
+                                                const delta = event.key === "ArrowRight" ? 10 : -10;
+                                                const min = header.column.columnDef.minSize ?? 20;
+                                                const max =
+                                                    header.column.columnDef.maxSize ??
+                                                    Number.MAX_SAFE_INTEGER;
+                                                setColumnSizing((current) => ({
+                                                    ...current,
+                                                    [header.column.id]: Math.min(
+                                                        max,
+                                                        Math.max(min, header.column.getSize() + delta)
+                                                    ),
+                                                }));
+                                            }}
                                             onDoubleClick={() => header.column.resetSize()}
                                             onMouseDown={header.getResizeHandler()}
                                             onTouchStart={header.getResizeHandler()}
-                                            className={`absolute right-0 top-0 h-full w-1 cursor-col-resize touch-none select-none ${
+                                            className={`absolute top-0 right-0 h-full w-1 cursor-col-resize touch-none border-0 p-0 outline-none select-none focus-visible:bg-blue-500 ${
                                                 header.column.getIsResizing()
                                                     ? "bg-blue-500"
                                                     : "bg-transparent hover:bg-zinc-600"
                                             }`}
                                             style={{
                                                 transform: header.column.getIsResizing()
-                                                    ? `translateX(${table.getState().columnSizingInfo.deltaOffset ?? 0}px)`
+                                                    ? `translateX(${table.state.columnResizing.deltaOffset ?? 0}px)`
                                                     : undefined,
                                             }}
                                         />
@@ -328,7 +360,7 @@ function ObjectInstanceTable({
                         )}
                         {table.getRowModel().rows.map((row) => (
                             <tr key={row.id} className="hover:bg-zinc-900/30">
-                                {row.getVisibleCells().map((cell) => (
+                                {row.getAllCells().map((cell) => (
                                     <td
                                         key={cell.id}
                                         className="truncate px-4 py-2 text-zinc-300"
@@ -364,8 +396,15 @@ function CellValue({ value, type }: { value: unknown; type: TypeDef }) {
         );
     }
 
-    if (type.kind === "timestamp" || type.kind === "date") {
-        return <span className="tabular-nums">{String(value)}</span>;
+    if (
+        (type.kind === "timestamp" || type.kind === "date") &&
+        (typeof value === "string" ||
+            (typeof value === "object" &&
+                "toString" in value &&
+                typeof value.toString === "function" &&
+                value.toString !== Object.prototype.toString))
+    ) {
+        return <span className="tabular-nums">{(value as { toString(): string }).toString()}</span>;
     }
 
     if (type.kind === "geopoint" && typeof value === "object") {
@@ -385,5 +424,14 @@ function CellValue({ value, type }: { value: unknown; type: TypeDef }) {
         return <span className="text-xs text-zinc-500">{JSON.stringify(value)}</span>;
     }
 
-    return <span>{String(value)}</span>;
+    if (
+        typeof value === "string" ||
+        typeof value === "number" ||
+        typeof value === "boolean" ||
+        typeof value === "bigint" ||
+        typeof value === "symbol"
+    ) {
+        return <span>{String(value)}</span>;
+    }
+    return <span className="text-zinc-600">—</span>;
 }

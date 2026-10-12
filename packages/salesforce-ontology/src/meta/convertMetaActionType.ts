@@ -2,11 +2,6 @@ import {
     fromSalesforceLightningIconName,
     getSalesforceActionIconName,
 } from "@party-stack/icons-salesforce-lightning";
-import type { MetaActionType } from "@party-stack/ontology";
-import type {
-    SalesforceInvocableActionDescribe,
-    SalesforceSObjectDescribe,
-} from "@party-stack/salesforce-client";
 import { salesforceActionMeta } from "../actionMetadata.js";
 import {
     salesforceFlowActionTypeId,
@@ -14,6 +9,11 @@ import {
     toOntologyActionTypeName,
 } from "../utils/ids.js";
 import { convertSalesforceInvocableParameterType } from "./convertMetaTypeDef.js";
+import type { MetaActionType } from "@party-stack/ontology";
+import type {
+    SalesforceInvocableActionDescribe,
+    SalesforceSObjectDescribe,
+} from "@party-stack/salesforce-client";
 
 /**
  * Convert an autolaunched Flow describe into a Party Stack action type.
@@ -23,10 +23,7 @@ function convertSalesforceInvocableMetaActionType(
     describe: SalesforceInvocableActionDescribe,
     id: string,
     kind: "flow" | "standard",
-    sObjectDescribes: ReadonlyMap<
-        string,
-        SalesforceSObjectDescribe
-    > = new Map()
+    sObjectDescribes: ReadonlyMap<string, SalesforceSObjectDescribe> = new Map()
 ): MetaActionType {
     return {
         id,
@@ -44,12 +41,8 @@ function convertSalesforceInvocableMetaActionType(
             description: parameter.description,
             type: convertSalesforceInvocableParameterType(
                 parameter,
-                parameter.sobjectType ??
-                    parameter.sObjectType
-                    ? sObjectDescribes.get(
-                          (parameter.sobjectType ??
-                              parameter.sObjectType)!
-                      )
+                (parameter.sobjectType ?? parameter.sObjectType)
+                    ? sObjectDescribes.get((parameter.sobjectType ?? parameter.sObjectType)!)
                     : undefined
             ),
         })),
@@ -59,10 +52,7 @@ function convertSalesforceInvocableMetaActionType(
 
 export function convertSalesforceMetaActionType(
     describe: SalesforceInvocableActionDescribe,
-    sObjectDescribes: ReadonlyMap<
-        string,
-        SalesforceSObjectDescribe
-    > = new Map()
+    sObjectDescribes: ReadonlyMap<string, SalesforceSObjectDescribe> = new Map()
 ): MetaActionType {
     return convertSalesforceInvocableMetaActionType(
         describe,
@@ -74,10 +64,7 @@ export function convertSalesforceMetaActionType(
 
 export function convertSalesforceMetaStandardActionType(
     describe: SalesforceInvocableActionDescribe,
-    sObjectDescribes: ReadonlyMap<
-        string,
-        SalesforceSObjectDescribe
-    > = new Map()
+    sObjectDescribes: ReadonlyMap<string, SalesforceSObjectDescribe> = new Map()
 ): MetaActionType {
     return convertSalesforceInvocableMetaActionType(
         describe,

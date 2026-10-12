@@ -1,0 +1,22 @@
+{
+    "$schema": "https://json.schemastore.org/tsconfig",
+    "compilerOptions": {
+        "types": ["node"],
+        "outDir": "${configDir}/lib",
+        "rootDir": "${configDir}/src",
+        "declaration": true,
+        "declarationMap": true,
+        "sourceMap": true,
+        "isolatedModules": true,
+        "noUncheckedIndexedAccess": true,
+        "resolveJsonModule": true,
+        "strict": true,
+        "allowUnreachableCode": false,
+        "lib": ["ES2022", "DOM", "DOM.Iterable"],
+        "target": "ES2022",
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        "skipLibCheck": true
+    },
+    "include": ["${configDir}/src/**/*.ts"]
+}

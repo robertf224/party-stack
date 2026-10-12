@@ -1,6 +1,6 @@
 import { DynamicIcon } from "lucide-react/dynamic";
-import type { IconName } from "@party-stack/icons";
 import { getLucideIconName } from "./index.js";
+import type { IconName } from "@party-stack/icons";
 import type { ComponentProps } from "react";
 
 export interface LucideIconProps extends Omit<ComponentProps<typeof DynamicIcon>, "name"> {

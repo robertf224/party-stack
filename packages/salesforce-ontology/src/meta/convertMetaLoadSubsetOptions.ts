@@ -1,8 +1,4 @@
-import {
-    FieldPath,
-    type LoadSubsetOptions,
-    parseWhereExpression,
-} from "@tanstack/db";
+import { FieldPath, type LoadSubsetOptions, parseWhereExpression } from "@tanstack/db";
 
 export type MetaNameQuery =
     | { type: "getBatch"; names: string[] }
@@ -22,62 +18,35 @@ export function matchesMetaNameQuery(
     }
 ): boolean {
     if (query.type !== "search") return true;
-    const escaped = query.pattern.replace(
-        /[|\\{}()[\]^$+*?.-]/g,
-        "\\$&"
-    );
-    const expression = escaped
-        .replaceAll("%", ".*")
-        .replaceAll("_", ".");
-    return new RegExp(
-        `^${expression}$`,
-        query.caseInsensitive ? "i" : undefined
-    ).test(value[query.field]);
+    const escaped = query.pattern.replace(/[|\\{}()[\]^$+*?.-]/g, "\\$&");
+    const expression = escaped.replaceAll("%", ".*").replaceAll("_", ".");
+    return new RegExp(`^${expression}$`, query.caseInsensitive ? "i" : undefined).test(value[query.field]);
 }
 
-export function convertMetaNameQuery(
-    options?: LoadSubsetOptions
-): MetaNameQuery {
+export function convertMetaNameQuery(options?: LoadSubsetOptions): MetaNameQuery {
     if (!options?.where) return { type: "list" };
     const batch =
-        parseWhereExpression<
-            MetaNameQuery | undefined
-        >(options.where, {
+        parseWhereExpression<MetaNameQuery | undefined>(options.where, {
             handlers: {
-                eq: (
-                    field: FieldPath,
-                    value: unknown
-                ) =>
+                eq: (field: FieldPath, value: unknown) =>
                     field.join(".") === "name"
                         ? {
                               type: "getBatch",
                               names: [String(value)],
                           }
                         : undefined,
-                in: (
-                    field: FieldPath,
-                    values: unknown[]
-                ) =>
+                in: (field: FieldPath, values: unknown[]) =>
                     field.join(".") === "name"
                         ? {
                               type: "getBatch",
                               names: values
-                                  .filter(
-                                      (value) =>
-                                          value !== null &&
-                                          value !==
-                                              undefined
-                                  )
+                                  .filter((value) => value !== null && value !== undefined)
                                   .map(String),
                           }
                         : undefined,
-                like: (
-                    field: FieldPath,
-                    pattern: string
-                ) => {
+                like: (field: FieldPath, pattern: string) => {
                     const name = field.join(".");
-                    return name === "name" ||
-                        name === "displayName"
+                    return name === "name" || name === "displayName"
                         ? {
                               type: "search",
                               field: name,
@@ -86,13 +55,9 @@ export function convertMetaNameQuery(
                           }
                         : undefined;
                 },
-                ilike: (
-                    field: FieldPath,
-                    pattern: string
-                ) => {
+                ilike: (field: FieldPath, pattern: string) => {
                     const name = field.join(".");
-                    return name === "name" ||
-                        name === "displayName"
+                    return name === "name" || name === "displayName"
                         ? {
                               type: "search",
                               field: name,

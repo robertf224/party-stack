@@ -17,12 +17,17 @@ import { useLiveInfiniteQuery, useLiveQuery } from "@tanstack/react-db";
 import {
     createColumnHelper,
     flexRender,
-    getCoreRowModel,
-    useReactTable,
+    useTable,
+    tableFeatures,
+    rowSortingFeature,
+    columnOrderingFeature,
+    columnSizingFeature,
+    columnResizingFeature,
+    columnVisibilityFeature,
     type ColumnOrderState,
     type ColumnSizingState,
     type SortingState,
-    type VisibilityState,
+    type ColumnVisibilityState,
 } from "@tanstack/react-table";
 import {
     RefreshCw as ArrowPathIcon,
@@ -116,13 +121,7 @@ export function OntologyIcon({
     );
 }
 
-function ObjectTypeIcon({
-    className,
-    objectType,
-}: {
-    className?: string;
-    objectType: ObjectTypeDef;
-}) {
+function ObjectTypeIcon({ className, objectType }: { className?: string; objectType: ObjectTypeDef }) {
     return (
         <OntologyIcon
             className={className}
@@ -230,7 +229,6 @@ export function OntologyDevtoolsTrigger({ theme }: OntologyDevtoolsChromeProps) 
     return (
         <div
             aria-label="Open Ontology devtools"
-            role="button"
             style={{
                 alignItems: "center",
                 background: dark
@@ -401,10 +399,10 @@ function OutboxEntryCard({
 
 function OutboxRows({ outbox, theme }: { outbox: OntologyOutbox; theme: "light" | "dark" }) {
     const now = useRelativeTimeNow();
-    const { data } = useLiveQuery(
-        (query) => query.from({ entry: outbox.collection }).orderBy(({ entry }) => entry.sequence, "asc"),
-        [outbox]
-    );
+    const { data } = useLiveQuery({
+        query: (query) =>
+            query.from({ entry: outbox.collection }).orderBy(({ entry }) => entry.sequence, "asc"),
+    });
 
     return (
         <OutboxPanel theme={theme}>
@@ -508,16 +506,16 @@ function resolvedType(ir: OntologyIR, type: TypeDef): TypeDef {
     return referenced ? resolvedType(ir, referenced) : type;
 }
 
-export function typeDisplayName(ir: OntologyIR, type: TypeDef): string {
+export function typeDisplayName(type: TypeDef): string {
     switch (type.kind) {
         case "ref":
             return type.value.name;
         case "optional":
-            return `${typeDisplayName(ir, type.value.type)} (optional)`;
+            return `${typeDisplayName(type.value.type)} (optional)`;
         case "list":
-            return `List of ${typeDisplayName(ir, type.value.elementType)}`;
+            return `List of ${typeDisplayName(type.value.elementType)}`;
         case "map":
-            return `Map of ${typeDisplayName(ir, type.value.valueType)}`;
+            return `Map of ${typeDisplayName(type.value.valueType)}`;
         case "objectReference":
             return `${type.value.objectType} reference`;
         case "string":
@@ -603,10 +601,11 @@ function DevtoolsTooltip({ children, label }: { children: ReactNode; label: Reac
     );
 }
 
-function TypeIndicator({ ir, type }: { ir: OntologyIR; type: TypeDef }) {
+function TypeIndicator({ type }: { type: TypeDef }) {
     const Icon = typeIcon(type);
     return (
-        <DevtoolsTooltip label={typeDisplayName(ir, type)}>
+        <DevtoolsTooltip label={typeDisplayName(type)}>
+            {/* oxlint-disable-next-line react/static-components -- typeIcon selects an imported static icon; it does not create a component. */}
             <Icon aria-hidden className="ps:size-3.5 ps:text-zinc-500" />
         </DevtoolsTooltip>
     );
@@ -623,6 +622,7 @@ function isGeopoint(value: unknown): value is v.geopoint {
     );
 }
 
+/* oxlint-disable jsx-a11y/prefer-tag-over-role -- Inline SVG is an image, not an HTML img. */
 function GeopointPreview({ value }: { value: v.geopoint }) {
     const cx = value.lon + 180;
     const cy = 90 - value.lat;
@@ -663,6 +663,7 @@ function GeopointPreview({ value }: { value: v.geopoint }) {
     );
 }
 
+/* oxlint-enable jsx-a11y/prefer-tag-over-role */
 export function timestampPreview(value: unknown): { display: string; exact: string } | undefined {
     if (value === undefined || value === null) return undefined;
     const exact = formatObjectValue(value);
@@ -855,7 +856,14 @@ export function moveColumn(columnOrder: string[], sourceId: string, targetId: st
     return next;
 }
 
-const objectColumnHelper = createColumnHelper<Record<string, unknown>>();
+const objectTableFeatures = tableFeatures({
+    rowSortingFeature,
+    columnOrderingFeature,
+    columnSizingFeature,
+    columnResizingFeature,
+    columnVisibilityFeature,
+});
+const objectColumnHelper = createColumnHelper<typeof objectTableFeatures, Record<string, unknown>>();
 
 function ObjectTable({
     collection,
@@ -870,7 +878,7 @@ function ObjectTable({
 }) {
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
-    const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+    const [columnVisibility, setColumnVisibility] = useState<ColumnVisibilityState>({});
     const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(() =>
         objectType.properties.map((property) => property.name)
     );
@@ -917,7 +925,7 @@ function ObjectTable({
                             : defaultColumnSize(ontology.ir, property.type),
                     header: () => (
                         <span className="ps:inline-flex ps:items-center ps:gap-1.5">
-                            <TypeIndicator ir={ontology.ir} type={property.type} />
+                            <TypeIndicator type={property.type} />
                             <span>{property.displayName}</span>
                             {property.name === objectType.primaryKey ? (
                                 <span className="ps:ml-1.5 ps:text-[9px] ps:font-bold ps:tracking-wide ps:text-rose-400">
@@ -938,12 +946,12 @@ function ObjectTable({
             ),
         [objectType, ontology]
     );
-    const table = useReactTable({
+    const table = useTable({
+        features: objectTableFeatures,
         columnResizeMode: "onEnd",
         columns,
         data: rows,
         enableColumnResizing: true,
-        getCoreRowModel: getCoreRowModel(),
         getRowId: (row, index) => `${formatObjectValue(row[objectType.primaryKey])}-${index}`,
         manualSorting: true,
         onColumnOrderChange: setColumnOrder,
@@ -952,7 +960,7 @@ function ObjectTable({
         onSortingChange: setSorting,
         state: { columnOrder, columnSizing, columnVisibility, sorting },
     });
-    const resizingColumnId = table.getState().columnSizingInfo.isResizingColumn;
+    const resizingColumnId = table.state.columnResizing.isResizingColumn;
     const resizingColumn =
         typeof resizingColumnId === "string" ? table.getColumn(resizingColumnId) : undefined;
     const allColumns = table.getAllLeafColumns();
@@ -1061,6 +1069,7 @@ function ObjectTable({
                                                 }}
                                             >
                                                 <span
+                                                    aria-hidden="true"
                                                     className="ps:cursor-grab ps:text-zinc-500 ps:active:cursor-grabbing"
                                                     title="Drag to reorder"
                                                     onClick={(event) => {
@@ -1156,60 +1165,68 @@ function ObjectTable({
                                                             </span>
                                                         </button>
                                                     )}
-                                                    {header.column.getCanResize() ? (
-                                                        <button
-                                                            aria-label={`Resize ${header.column.id} column`}
-                                                            aria-orientation="vertical"
-                                                            aria-valuemax={header.column.columnDef.maxSize}
-                                                            aria-valuemin={header.column.columnDef.minSize}
-                                                            aria-valuenow={header.column.getSize()}
-                                                            className={
-                                                                header.column.getIsResizing()
-                                                                    ? "ps:absolute ps:top-0 ps:right-0 ps:z-20 ps:h-full ps:w-1 ps:cursor-col-resize ps:touch-none ps:border-0 ps:bg-transparent ps:p-0"
-                                                                    : resizingColumn
-                                                                      ? "ps:pointer-events-none ps:invisible ps:absolute ps:top-0 ps:right-0 ps:h-full ps:w-1 ps:border-0 ps:bg-transparent ps:p-0"
-                                                                      : "ps:absolute ps:top-0 ps:right-0 ps:h-full ps:w-1 ps:cursor-col-resize ps:touch-none ps:border-0 ps:bg-transparent ps:p-0 ps:hover:bg-rose-400/70 ps:focus-visible:bg-rose-400/70 ps:focus:outline-none"
-                                                            }
-                                                            disabled={
-                                                                resizingColumn !== undefined &&
-                                                                !header.column.getIsResizing()
-                                                            }
-                                                            role="separator"
-                                                            tabIndex={0}
-                                                            type="button"
-                                                            onDoubleClick={() => {
-                                                                header.column.resetSize();
-                                                            }}
-                                                            onKeyDown={(event) => {
-                                                                if (
-                                                                    event.key !== "ArrowLeft" &&
-                                                                    event.key !== "ArrowRight"
-                                                                ) {
-                                                                    return;
+                                                    {
+                                                        header.column.getCanResize() ? (
+                                                            // oxlint-disable jsx-a11y/prefer-tag-over-role -- This focusable separator adjusts column width; an hr cannot replace it.
+                                                            <button
+                                                                aria-label={`Resize ${header.column.id} column`}
+                                                                aria-orientation="vertical"
+                                                                aria-valuemax={
+                                                                    header.column.columnDef.maxSize
                                                                 }
-                                                                event.preventDefault();
-                                                                const delta =
-                                                                    event.key === "ArrowRight" ? 10 : -10;
-                                                                const min =
-                                                                    header.column.columnDef.minSize ?? 20;
-                                                                const max =
-                                                                    header.column.columnDef.maxSize ??
-                                                                    Number.MAX_SAFE_INTEGER;
-                                                                setColumnSizing((current) => ({
-                                                                    ...current,
-                                                                    [header.column.id]: Math.min(
-                                                                        max,
-                                                                        Math.max(
-                                                                            min,
-                                                                            header.column.getSize() + delta
-                                                                        )
-                                                                    ),
-                                                                }));
-                                                            }}
-                                                            onMouseDown={header.getResizeHandler()}
-                                                            onTouchStart={header.getResizeHandler()}
-                                                        />
-                                                    ) : null}
+                                                                aria-valuemin={
+                                                                    header.column.columnDef.minSize
+                                                                }
+                                                                aria-valuenow={header.column.getSize()}
+                                                                className={
+                                                                    header.column.getIsResizing()
+                                                                        ? "ps:absolute ps:top-0 ps:right-0 ps:z-20 ps:h-full ps:w-1 ps:cursor-col-resize ps:touch-none ps:border-0 ps:bg-transparent ps:p-0"
+                                                                        : resizingColumn
+                                                                          ? "ps:pointer-events-none ps:invisible ps:absolute ps:top-0 ps:right-0 ps:h-full ps:w-1 ps:border-0 ps:bg-transparent ps:p-0"
+                                                                          : "ps:absolute ps:top-0 ps:right-0 ps:h-full ps:w-1 ps:cursor-col-resize ps:touch-none ps:border-0 ps:bg-transparent ps:p-0 ps:hover:bg-rose-400/70 ps:focus-visible:bg-rose-400/70 ps:focus:outline-none"
+                                                                }
+                                                                disabled={
+                                                                    resizingColumn !== undefined &&
+                                                                    !header.column.getIsResizing()
+                                                                }
+                                                                role="separator"
+                                                                tabIndex={0}
+                                                                type="button"
+                                                                onDoubleClick={() => {
+                                                                    header.column.resetSize();
+                                                                }}
+                                                                onKeyDown={(event) => {
+                                                                    if (
+                                                                        event.key !== "ArrowLeft" &&
+                                                                        event.key !== "ArrowRight"
+                                                                    ) {
+                                                                        return;
+                                                                    }
+                                                                    event.preventDefault();
+                                                                    const delta =
+                                                                        event.key === "ArrowRight" ? 10 : -10;
+                                                                    const min =
+                                                                        header.column.columnDef.minSize ?? 20;
+                                                                    const max =
+                                                                        header.column.columnDef.maxSize ??
+                                                                        Number.MAX_SAFE_INTEGER;
+                                                                    setColumnSizing((current) => ({
+                                                                        ...current,
+                                                                        [header.column.id]: Math.min(
+                                                                            max,
+                                                                            Math.max(
+                                                                                min,
+                                                                                header.column.getSize() +
+                                                                                    delta
+                                                                            )
+                                                                        ),
+                                                                    }));
+                                                                }}
+                                                                onMouseDown={header.getResizeHandler()}
+                                                                onTouchStart={header.getResizeHandler()}
+                                                            />
+                                                        ) : null /* oxlint-enable jsx-a11y/prefer-tag-over-role */
+                                                    }
                                                 </th>
                                             );
                                         })}
@@ -1239,9 +1256,7 @@ function ObjectTable({
                                     type="button"
                                     onClick={() => void fetchNextPage()}
                                 >
-                                    {isFetchingNextPage
-                                        ? "Loading…"
-                                        : `Load ${pageSize} more`}
+                                    {isFetchingNextPage ? "Loading…" : `Load ${pageSize} more`}
                                 </button>
                             </div>
                         ) : null}
@@ -1250,9 +1265,7 @@ function ObjectTable({
                                 className="ps:pointer-events-none ps:absolute ps:inset-y-0 ps:z-50 ps:w-0.5 ps:bg-rose-400 ps:shadow-[0_0_0_1px_rgba(251,113,133,0.18)] ps:will-change-transform"
                                 style={{
                                     left: resizingColumn.getStart() + resizingColumn.getSize(),
-                                    transform: `translateX(${
-                                        table.getState().columnSizingInfo.deltaOffset ?? 0
-                                    }px)`,
+                                    transform: `translateX(${table.state.columnResizing.deltaOffset ?? 0}px)`,
                                 }}
                             />
                         ) : null}
@@ -1263,13 +1276,7 @@ function ObjectTable({
     );
 }
 
-function ObjectsView({
-    ontology,
-    pageSize = 50,
-}: {
-    ontology: LiveOntology;
-    pageSize?: number;
-}) {
+function ObjectsView({ ontology, pageSize = 50 }: { ontology: LiveOntology; pageSize?: number }) {
     const objectTypes = ontology.ir.objectTypes;
     const [selectedName, setSelectedName] = useState(() => objectTypes[0]?.name);
     const selected = objectTypes.find((objectType) => objectType.name === selectedName) ?? objectTypes[0];
@@ -1303,10 +1310,7 @@ function ObjectsView({
                                 setSelectedName(objectType.name);
                             }}
                         >
-                            <ObjectTypeIcon
-                                className="ps:size-4 ps:flex-none"
-                                objectType={objectType}
-                            />
+                            <ObjectTypeIcon className="ps:size-4 ps:flex-none" objectType={objectType} />
                             <span className="ps:truncate">{objectType.pluralDisplayName}</span>
                         </button>
                     ))}
@@ -1394,9 +1398,7 @@ export function layoutSchema(ir: OntologyIR): {
 
     layoutGraph(graph);
 
-    const objectTypeByName = new Map(
-        ir.objectTypes.map((objectType) => [objectType.name, objectType])
-    );
+    const objectTypeByName = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
     const nodes = graph
         .nodes()
         .map((name) => {
@@ -1416,8 +1418,8 @@ export function layoutSchema(ir: OntologyIR): {
             id: edge.name ?? `${edge.v}-${edge.w}`,
             label: value.label ?? "",
             labelWidth: value.width ?? 72,
-            labelX: value.x ?? (value.points?.[0]?.x ?? 0),
-            labelY: value.y ?? (value.points?.[0]?.y ?? 0),
+            labelX: value.x ?? value.points?.[0]?.x ?? 0,
+            labelY: value.y ?? value.points?.[0]?.y ?? 0,
             points: value.points ?? [],
         };
     });
@@ -1481,6 +1483,7 @@ function SchemaView({ ir }: { ir: OntologyIR }) {
                 className="ps:relative ps:rounded-2xl ps:border ps:border-zinc-500/20 ps:bg-zinc-950/25 ps:in-[.ps-theme-light]:bg-white/45"
                 style={{ height: schemaLayout.height, width: schemaLayout.width }}
             >
+                {/* oxlint-disable jsx-a11y/prefer-tag-over-role -- Inline SVG is an image, not an HTML img. */}
                 <svg
                     aria-label="Ontology relations"
                     className="ps:absolute ps:inset-0 ps:size-full ps:overflow-visible"
@@ -1529,6 +1532,7 @@ function SchemaView({ ir }: { ir: OntologyIR }) {
                         </g>
                     ))}
                 </svg>
+                {/* oxlint-enable jsx-a11y/prefer-tag-over-role */}
                 {schemaLayout.nodes.map(({ objectType, x, y }) => (
                     <article
                         className="ps:absolute ps:h-44 ps:w-[230px] ps:overflow-hidden ps:rounded-xl ps:border ps:border-zinc-500/30 ps:bg-zinc-900/95 ps:shadow-xl ps:in-[.ps-theme-light]:bg-white/95"
@@ -1572,15 +1576,10 @@ function SchemaView({ ir }: { ir: OntologyIR }) {
 export function OntologyDevtoolsPanel<
     Ontology extends OntologyDefinition,
     MetaOntology extends OntologyDefinition = OntologyDefinition,
->({
-    metaOntology,
-    ontology,
-    theme = "dark",
-}: OntologyDevtoolsPanelProps<Ontology, MetaOntology>) {
-    const { data: outboxEntries } = useLiveQuery(
-        (query) => query.from({ entry: ontology.outbox.collection }),
-        [ontology.outbox]
-    );
+>({ metaOntology, ontology, theme = "dark" }: OntologyDevtoolsPanelProps<Ontology, MetaOntology>) {
+    const { data: outboxEntries } = useLiveQuery({
+        query: (query) => query.from({ entry: ontology.outbox.collection }),
+    });
     const outboxActivity = getOutboxActivity(outboxEntries);
 
     return (
@@ -1651,19 +1650,11 @@ export function OntologyDevtoolsPanel<
                     <SchemaView ir={ontology.ir} />
                 </Tabs.Panel>
                 <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="objects">
-                    <ObjectsView ontology={ontology as LiveOntology} />
+                    <ObjectsView ontology={ontology} />
                 </Tabs.Panel>
                 {metaOntology ? (
-                    <Tabs.Panel
-                        className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden"
-                        value="meta"
-                    >
-                        <ObjectsView
-                            ontology={
-                                metaOntology as LiveOntology
-                            }
-                            pageSize={25}
-                        />
+                    <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="meta">
+                        <ObjectsView ontology={metaOntology} pageSize={25} />
                     </Tabs.Panel>
                 ) : null}
             </Tabs.Root>
@@ -1686,11 +1677,7 @@ export function createOntologyDevtoolsPlugin<
         name: "Ontology",
         defaultOpen,
         Component: ({ theme }) => (
-            <OntologyDevtoolsPanel
-                metaOntology={metaOntology}
-                ontology={ontology}
-                theme={theme}
-            />
+            <OntologyDevtoolsPanel metaOntology={metaOntology} ontology={ontology} theme={theme} />
         ),
     });
 

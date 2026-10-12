@@ -1,6 +1,6 @@
 import { Icon, type IconProps } from "@blueprintjs/core";
-import type { IconName } from "@party-stack/icons";
 import { getBlueprintIconName } from "./index.js";
+import type { IconName } from "@party-stack/icons";
 
 export interface BlueprintIconProps extends Omit<IconProps, "icon"> {
     name: IconName;

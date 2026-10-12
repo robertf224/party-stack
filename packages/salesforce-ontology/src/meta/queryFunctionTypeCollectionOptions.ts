@@ -1,5 +1,8 @@
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
+import { classifySalesforceStandardAction } from "../standardActions.js";
+import { convertMetaNameQuery, matchesMetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
+import { convertSalesforceMetaStandardQueryFunctionType } from "./convertMetaQueryFunctionType.js";
 import type { OntologyCollectionOptions, QueryFunctionTypeDef } from "@party-stack/ontology";
 import type {
     SalesforceClient,
@@ -7,27 +10,14 @@ import type {
     SalesforceInvocableActionSummary,
     SalesforceSObjectDescribe,
 } from "@party-stack/salesforce-client";
-import { classifySalesforceStandardAction } from "../standardActions.js";
-import {
-    convertMetaNameQuery,
-    matchesMetaNameQuery,
-} from "./convertMetaLoadSubsetOptions.js";
-import { convertSalesforceMetaStandardQueryFunctionType } from "./convertMetaQueryFunctionType.js";
 
 async function describeStandardActions(
     client: SalesforceClient,
     names: readonly string[]
-): Promise<
-    Array<SalesforceInvocableActionDescribe | undefined>
-> {
-    if (
-        typeof client.describeStandardActions ===
-        "function"
-    ) {
+): Promise<Array<SalesforceInvocableActionDescribe | undefined>> {
+    if (typeof client.describeStandardActions === "function") {
         try {
-            return await client.describeStandardActions(
-                names
-            );
+            return await client.describeStandardActions(names);
         } catch {
             // Fall through when Composite API access is unavailable.
         }
@@ -35,9 +25,7 @@ async function describeStandardActions(
     return Promise.all(
         names.map(async (name) => {
             try {
-                return await client.describeStandardAction(
-                    name
-                );
+                return await client.describeStandardAction(name);
             } catch {
                 return undefined;
             }
@@ -53,141 +41,64 @@ export function queryFunctionTypeCollectionOptions(opts: {
     return queryCollectionOptions<QueryFunctionTypeDef>({
         queryClient: opts.queryClient ?? new QueryClient(),
         getKey: (row) => row.name,
-        queryKey: [
-            "salesforce",
-            "ontology",
-            "queryFunctionTypes",
-            opts.standardQueryFunctionTypeNames ?? [],
-        ],
+        queryKey: ["salesforce", "ontology", "queryFunctionTypes", opts.standardQueryFunctionTypeNames ?? []],
         syncMode: "on-demand",
         queryFn: async (ctx) => {
-            const query = convertMetaNameQuery(
-                ctx.meta?.loadSubsetOptions
-            );
-            let summaries:
-                | SalesforceInvocableActionSummary[]
-                | undefined;
-            if (
-                query.type !== "getBatch" &&
-                !opts.standardQueryFunctionTypeNames
-            ) {
-                const response =
-                    await opts.client.listStandardActions();
-                summaries =
-                    Array.isArray(response)
-                        ? response
-                        : Array.isArray(response.actions)
-                          ? response.actions
-                          : Object.keys(response).map(
-                                (name) => ({ name })
-                            );
+            const query = convertMetaNameQuery(ctx.meta?.loadSubsetOptions);
+            let summaries: SalesforceInvocableActionSummary[] | undefined;
+            if (query.type !== "getBatch" && !opts.standardQueryFunctionTypeNames) {
+                const response = await opts.client.listStandardActions();
+                summaries = Array.isArray(response)
+                    ? response
+                    : Array.isArray(response.actions)
+                      ? response.actions
+                      : Object.keys(response).map((name) => ({ name }));
             }
-            const requestedNames =
-                query.type === "getBatch"
-                    ? new Set(query.names)
-                    : undefined;
+            const requestedNames = query.type === "getBatch" ? new Set(query.names) : undefined;
             const candidates = (
                 opts.standardQueryFunctionTypeNames ??
-                (requestedNames
-                    ? [...requestedNames]
-                    : summaries?.map(
-                          (summary) => summary.name
-                      ) ?? [])
+                (requestedNames ? [...requestedNames] : (summaries?.map((summary) => summary.name) ?? []))
             )
                 .filter(
                     (name) =>
-                        (!requestedNames ||
-                            requestedNames.has(name)) &&
-                        (opts.standardQueryFunctionTypeNames !==
-                            undefined ||
-                            classifySalesforceStandardAction(
-                                name
-                            ) ===
-                                "queryFunction")
+                        (!requestedNames || requestedNames.has(name)) &&
+                        (opts.standardQueryFunctionTypeNames !== undefined ||
+                            classifySalesforceStandardAction(name) === "queryFunction")
                 )
                 .map((name) => ({
                     name,
-                    displayName:
-                        summaries?.find(
-                            (summary) =>
-                                summary.name === name
-                        )?.label ?? name,
+                    displayName: summaries?.find((summary) => summary.name === name)?.label ?? name,
                 }))
-                .filter((candidate) =>
-                    matchesMetaNameQuery(
-                        query,
-                        candidate
-                    )
-                );
-            const offset = Math.max(
-                0,
-                Math.trunc(
-                    ctx.meta?.loadSubsetOptions
-                        ?.offset ?? 0
-                )
-            );
-            const limit =
-                ctx.meta?.loadSubsetOptions?.limit;
+                .filter((candidate) => matchesMetaNameQuery(query, candidate));
+            const offset = Math.max(0, Math.trunc(ctx.meta?.loadSubsetOptions?.offset ?? 0));
+            const limit = ctx.meta?.loadSubsetOptions?.limit;
             const names = (
                 requestedNames
                     ? candidates
                     : candidates.slice(
                           offset,
-                          limit === undefined
-                              ? undefined
-                              : offset +
-                                    Math.max(
-                                        0,
-                                        Math.trunc(
-                                            limit
-                                        )
-                                    )
+                          limit === undefined ? undefined : offset + Math.max(0, Math.trunc(limit))
                       )
             ).map((candidate) => candidate.name);
-            const describes = (
-                await describeStandardActions(
-                    opts.client,
-                    names
-                )
-            ).filter(
-                (
-                    describe
-                ): describe is SalesforceInvocableActionDescribe =>
-                    Boolean(describe)
+            const describes = (await describeStandardActions(opts.client, names)).filter(
+                (describe): describe is SalesforceInvocableActionDescribe => Boolean(describe)
             );
             const sObjectNames = new Set<string>();
             for (const describe of describes) {
-                for (const parameter of [
-                    ...(describe.inputs ?? []),
-                    ...(describe.outputs ?? []),
-                ]) {
-                    const name =
-                        parameter.sobjectType ??
-                        parameter.sObjectType;
+                for (const parameter of [...(describe.inputs ?? []), ...(describe.outputs ?? [])]) {
+                    const name = parameter.sobjectType ?? parameter.sObjectType;
                     if (name) sObjectNames.add(name);
                 }
             }
-            const sObjectDescribes = new Map<
-                string,
-                SalesforceSObjectDescribe
-            >(
+            const sObjectDescribes = new Map<string, SalesforceSObjectDescribe>(
                 await Promise.all(
                     [...sObjectNames].map(
-                        async (name) =>
-                            [
-                                name,
-                                await opts.client.describeSObject(
-                                    name
-                                ),
-                            ] as const
+                        async (name) => [name, await opts.client.describeSObject(name)] as const
                     )
                 )
             );
             return describes.map((describe) =>
-                convertSalesforceMetaStandardQueryFunctionType(
-                    describe,
-                    sObjectDescribes
-                )
+                convertSalesforceMetaStandardQueryFunctionType(describe, sObjectDescribes)
             );
         },
     }) as unknown as OntologyCollectionOptions;

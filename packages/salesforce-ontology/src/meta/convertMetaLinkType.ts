@@ -1,6 +1,6 @@
+import { salesforceLinkTypeId } from "../utils/ids.js";
 import type { MetaLinkType } from "@party-stack/ontology";
 import type { SalesforceFieldDescribe, SalesforceSObjectDescribe } from "@party-stack/salesforce-client";
-import { salesforceLinkTypeId } from "../utils/ids.js";
 
 /**
  * Create Party Stack link types for single-target Salesforce reference fields.

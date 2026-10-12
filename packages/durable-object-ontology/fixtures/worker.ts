@@ -1,7 +1,7 @@
-import { DurableObject } from "cloudflare:workers";
 import { createLiveOntology } from "@party-stack/ontology";
 import { sqliteOntologyConformanceIR } from "@party-stack/sqlite-ontology/testing";
 import { queryOnce } from "@tanstack/db";
+import { DurableObject } from "cloudflare:workers";
 import { createDurableObjectOntologyBackendAdapter } from "../src/index.js";
 
 interface FixtureEnvironment {

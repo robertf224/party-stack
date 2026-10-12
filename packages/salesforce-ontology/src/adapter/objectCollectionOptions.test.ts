@@ -1,16 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { objectCollectionOptions } from "./objectCollectionOptions.js";
 import type { LoadSubsetOptions } from "@tanstack/db";
 
 describe("Salesforce object collection invalidation", () => {
     it("stages targeted reconciliation without waiting on its blocked sync receipt", async () => {
         const begin = vi.fn();
-        const commit = vi.fn(
-            () =>
-                new Promise<void>(
-                    () => undefined
-                )
-        );
+        const commit = vi.fn(() => new Promise<void>(() => undefined));
         const options = objectCollectionOptions({
             client: {
                 query: vi.fn().mockResolvedValue({
@@ -70,63 +65,39 @@ describe("Salesforce object collection invalidation", () => {
             primaryKeyProperty: "Id",
             selectedProperties: ["Id", "Name"],
         });
-        const rows = new Map<
-            string | number,
-            Record<string, unknown>
-        >();
+        const rows = new Map<string | number, Record<string, unknown>>();
         const commit = vi
             .fn()
             .mockResolvedValueOnce(undefined)
-            .mockReturnValueOnce(
-                new Promise<void>(
-                    () => undefined
-                )
-            );
+            .mockReturnValueOnce(new Promise<void>(() => undefined));
         const sync = options.sync.sync({
             collection: {
-                has: (key: string | number) =>
-                    rows.has(key),
-                get: (key: string | number) =>
-                    rows.get(key),
+                has: (key: string | number) => rows.has(key),
+                get: (key: string | number) => rows.get(key),
             },
             begin: vi.fn(),
-            write: (message: {
-                type: string;
-                key?: string | number;
-                value?: Record<string, unknown>;
-            }) => {
+            write: (message: { type: string; key?: string | number; value?: Record<string, unknown> }) => {
                 if (message.type === "delete") {
                     rows.delete(message.key!);
                 } else {
-                    rows.set(
-                        message.value!.Id as string,
-                        message.value!
-                    );
+                    rows.set(message.value!.Id as string, message.value!);
                 }
             },
             commit,
             markReady: vi.fn(),
         } as never);
         const subset = {} as LoadSubsetOptions;
-        if (
-            !sync ||
-            typeof sync === "function" ||
-            !("loadSubset" in sync)
-        ) {
-            throw new Error(
-                "Expected subset sync controls."
-            );
+        if (!sync || typeof sync === "function" || !("loadSubset" in sync)) {
+            throw new Error("Expected subset sync controls.");
         }
 
         await sync.loadSubset?.(subset);
         expect(rows.get("001")?.Name).toBe("Before");
 
         let completed = false;
-        const invalidation = options.utils
-            .invalidate()
-            .then(() => {
-                completed = true;
-            });
+        const invalidation = options.utils.invalidate().then(() => {
+            completed = true;
+        });
         await Promise.resolve();
         expect(completed).toBe(false);
 
@@ -143,12 +114,7 @@ describe("Salesforce object collection invalidation", () => {
     });
 
     it("restores and advances the CDC replay ID in collection metadata", async () => {
-        const metadata = new Map<string, unknown>([
-            [
-                "salesforce.cdc.Account.replayId",
-                41,
-            ],
-        ]);
+        const metadata = new Map<string, unknown>([["salesforce.cdc.Account.replayId", 41]]);
         let listener:
             | ((event: {
                   event: { replayId: number };
@@ -160,29 +126,20 @@ describe("Salesforce object collection invalidation", () => {
                   };
               }) => void)
             | undefined;
-        const subscribeToChangeEvents = vi.fn(
-            (...args: [
-                string,
-                typeof listener,
-            ]) => {
-                listener = args[1];
-                return Promise.resolve({
-                    channel:
-                        "/data/AccountChangeEvent",
-                    unsubscribe: vi.fn(),
-                });
-            }
-        );
-        const commit = vi
-            .fn()
-            .mockResolvedValue(undefined);
+        const subscribeToChangeEvents = vi.fn((...args: [string, typeof listener]) => {
+            listener = args[1];
+            return Promise.resolve({
+                channel: "/data/AccountChangeEvent",
+                unsubscribe: vi.fn(),
+            });
+        });
+        const commit = vi.fn().mockResolvedValue(undefined);
         const options = objectCollectionOptions({
             client: { query: vi.fn() } as never,
             objectType: "Account",
             primaryKeyProperty: "Id",
             selectedProperties: ["Id"],
-            subscribeToChangeEvents:
-                subscribeToChangeEvents as never,
+            subscribeToChangeEvents: subscribeToChangeEvents as never,
         });
         options.sync.sync({
             collection: {
@@ -198,13 +155,9 @@ describe("Salesforce object collection invalidation", () => {
         } as never);
 
         await vi.waitFor(() => {
-            expect(
-                subscribeToChangeEvents
-            ).toHaveBeenCalledWith(
-                "Account",
-                expect.any(Function),
-                { replayId: 41 }
-            );
+            expect(subscribeToChangeEvents).toHaveBeenCalledWith("Account", expect.any(Function), {
+                replayId: 41,
+            });
         });
         listener?.({
             event: { replayId: 42 },
@@ -216,11 +169,7 @@ describe("Salesforce object collection invalidation", () => {
             },
         });
         await vi.waitFor(() => {
-            expect(
-                metadata.get(
-                    "salesforce.cdc.Account.replayId"
-                )
-            ).toBe(42);
+            expect(metadata.get("salesforce.cdc.Account.replayId")).toBe(42);
         });
         expect(commit).toHaveBeenCalled();
     });

@@ -1,8 +1,8 @@
 import { createMetaLiveOntology } from "@party-stack/ontology";
 import { eq, queryOnce } from "@tanstack/db";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { OntologyClient } from "@party-stack/foundry-client";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { createFoundryMetaOntologyBackendAdapter } from "./createFoundryMetaOntologyBackendAdapter.js";
+import type { OntologyClient } from "@party-stack/foundry-client";
 
 const mocks = vi.hoisted(() => ({
     bulkLoadOntologyEntities: vi.fn(),
@@ -24,8 +24,7 @@ vi.mock("@osdk/foundry.ontologies", async (importOriginal) => {
         },
         ActionTypesFullMetadata: {
             ...original.ActionTypesFullMetadata,
-            getFullMetadataBatch:
-                mocks.getFullMetadataBatch,
+            getFullMetadataBatch: mocks.getFullMetadataBatch,
         },
     };
 });
@@ -70,12 +69,7 @@ describe("Foundry ActionType metadata ID queries", () => {
             const rows = await queryOnce((q) =>
                 q
                     .from({ ActionType: meta.objects.ActionType })
-                    .where(({ ActionType }) =>
-                        eq(
-                            ActionType.id,
-                            "ri.actions.main.action-type.create-task"
-                        )
-                    )
+                    .where(({ ActionType }) => eq(ActionType.id, "ri.actions.main.action-type.create-task"))
             );
 
             expect(mocks.searchActionTypes).toHaveBeenCalledWith(
@@ -89,9 +83,7 @@ describe("Foundry ActionType metadata ID queries", () => {
                 }),
                 { preview: true }
             );
-            expect(
-                mocks.getFullMetadataBatch
-            ).not.toHaveBeenCalled();
+            expect(mocks.getFullMetadataBatch).not.toHaveBeenCalled();
             expect(rows).toEqual([
                 expect.objectContaining({
                     id: "ri.actions.main.action-type.create-task",
@@ -144,9 +136,7 @@ describe("Foundry ActionType metadata ID queries", () => {
                 })
             );
 
-            expect(
-                mocks.getFullMetadataBatch
-            ).toHaveBeenCalledWith(
+            expect(mocks.getFullMetadataBatch).toHaveBeenCalledWith(
                 expect.anything(),
                 "ri.ontology.main.ontology.example",
                 {

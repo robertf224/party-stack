@@ -25,7 +25,12 @@ export function encodeCoordinationValue(value: unknown, seen = new WeakMap<objec
     if (seen.has(value)) return seen.get(value);
     const prototype = Object.getPrototypeOf(value) as unknown;
     const kind = (value as { [Symbol.toStringTag]?: unknown })[Symbol.toStringTag];
-    if (prototype !== Object.prototype && prototype !== null && typeof kind === "string" && kind.startsWith("Temporal.")) {
+    if (
+        prototype !== Object.prototype &&
+        prototype !== null &&
+        typeof kind === "string" &&
+        kind.startsWith("Temporal.")
+    ) {
         const constructor = temporalConstructor(kind);
         if (!constructor) throw new TypeError(`Unsupported coordination value: ${kind}`);
         const encoded = { [TAG]: "temporal", kind, value: constructor.prototype.toString.call(value) };
@@ -37,15 +42,20 @@ export function encodeCoordinationValue(value: unknown, seen = new WeakMap<objec
         seen.set(value, encoded);
         // Preserve sparse arrays as well as explicit undefined entries.
         encoded.length = value.length;
-        for (const key of Object.keys(value)) Object.defineProperty(encoded, key, {
-            value: encodeCoordinationValue(Reflect.get(value, key), seen), enumerable: true, writable: true, configurable: true,
-        });
+        for (const key of Object.keys(value))
+            Object.defineProperty(encoded, key, {
+                value: encodeCoordinationValue(Reflect.get(value, key), seen),
+                enumerable: true,
+                writable: true,
+                configurable: true,
+            });
         return encoded;
     }
     if (value instanceof Map) {
         const encoded = new Map<unknown, unknown>();
         seen.set(value, encoded);
-        for (const [key, entry] of value) encoded.set(encodeCoordinationValue(key, seen), encodeCoordinationValue(entry, seen));
+        for (const [key, entry] of value)
+            encoded.set(encodeCoordinationValue(key, seen), encodeCoordinationValue(entry, seen));
         return encoded;
     }
     if (value instanceof Set) {
@@ -58,9 +68,13 @@ export function encodeCoordinationValue(value: unknown, seen = new WeakMap<objec
         const entries: Record<string, unknown> = {};
         const encoded = { [TAG]: "record", value: entries };
         seen.set(value, encoded);
-        for (const [key, entry] of Object.entries(value)) Object.defineProperty(entries, key, {
-            value: encodeCoordinationValue(entry, seen), enumerable: true, writable: true, configurable: true,
-        });
+        for (const [key, entry] of Object.entries(value))
+            Object.defineProperty(entries, key, {
+                value: encodeCoordinationValue(entry, seen),
+                enumerable: true,
+                writable: true,
+                configurable: true,
+            });
         return encoded;
     }
     return value;
@@ -73,15 +87,20 @@ export function decodeCoordinationValue(value: unknown, seen = new WeakMap<objec
         const decoded: unknown[] = [];
         seen.set(value, decoded);
         decoded.length = value.length;
-        for (const key of Object.keys(value)) Object.defineProperty(decoded, key, {
-            value: decodeCoordinationValue(Reflect.get(value, key), seen), enumerable: true, writable: true, configurable: true,
-        });
+        for (const key of Object.keys(value))
+            Object.defineProperty(decoded, key, {
+                value: decodeCoordinationValue(Reflect.get(value, key), seen),
+                enumerable: true,
+                writable: true,
+                configurable: true,
+            });
         return decoded;
     }
     if (value instanceof Map) {
         const decoded = new Map<unknown, unknown>();
         seen.set(value, decoded);
-        for (const [key, entry] of value) decoded.set(decodeCoordinationValue(key, seen), decodeCoordinationValue(entry, seen));
+        for (const [key, entry] of value)
+            decoded.set(decodeCoordinationValue(key, seen), decodeCoordinationValue(entry, seen));
         return decoded;
     }
     if (value instanceof Set) {
@@ -92,7 +111,11 @@ export function decodeCoordinationValue(value: unknown, seen = new WeakMap<objec
     }
     if (TAG in value) {
         const record = value as Record<string, unknown>;
-        if (record[TAG] === "temporal" && typeof record.kind === "string" && typeof record.value === "string") {
+        if (
+            record[TAG] === "temporal" &&
+            typeof record.kind === "string" &&
+            typeof record.value === "string"
+        ) {
             const constructor = temporalConstructor(record.kind);
             if (!constructor) throw new TypeError(`Unsupported coordination value: ${record.kind}`);
             const decoded = constructor.from(record.value);
@@ -102,9 +125,13 @@ export function decodeCoordinationValue(value: unknown, seen = new WeakMap<objec
         if (record[TAG] === "record" && typeof record.value === "object" && record.value !== null) {
             const decoded: Record<string, unknown> = {};
             seen.set(value, decoded);
-            for (const [key, entry] of Object.entries(record.value)) Object.defineProperty(decoded, key, {
-                value: decodeCoordinationValue(entry, seen), enumerable: true, writable: true, configurable: true,
-            });
+            for (const [key, entry] of Object.entries(record.value))
+                Object.defineProperty(decoded, key, {
+                    value: decodeCoordinationValue(entry, seen),
+                    enumerable: true,
+                    writable: true,
+                    configurable: true,
+                });
             return decoded;
         }
         throw new TypeError("Invalid coordination value encoding");

@@ -7,7 +7,7 @@ import { updateObjectQueries } from "./useObject";
 import { updateObjectsQueries } from "./useObjects";
 import type { ActionDefinition, ActionEditResponse } from "@osdk/api";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// oxlint-disable-next-line typescript/no-explicit-any
 export function useAction<T extends ActionDefinition<any>>(
     type: T,
     mutationOpts?: Omit<
@@ -21,7 +21,7 @@ export function useAction<T extends ActionDefinition<any>>(
         ...mutationOpts,
         mutationFn: async (parameters) => {
             // Not sure why we need this cast and such here.
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+            // oxlint-disable-next-line typescript/no-unsafe-call
             const result = (await client(type).applyAction(parameters, {
                 $returnEdits: true,
             })) as ActionEditResponse;

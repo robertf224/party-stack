@@ -31,16 +31,22 @@ update automatically records the new tarball URL.
 
 ```bash
 pnpm install --filter @party-stack/icon-lab
-pnpm turbo icons:archive --filter @party-stack/icon-lab   # explicitly refresh checked-in snapshots
-pnpm turbo icons:catalog --filter @party-stack/icon-lab   # derive catalog in temp/
-pnpm turbo icons:embed --filter @party-stack/icon-lab     # CLIP + draft mappings (cached)
+vp run @party-stack/icon-lab#icons:archive   # explicitly refresh checked-in snapshots
+vp run @party-stack/icon-lab#icons:catalog   # derive catalog in temp/
+vp run @party-stack/icon-lab#icons:embed     # CLIP + draft mappings (cached)
 pnpm --filter @party-stack/icon-lab icons:update          # update sources, then prepare
-pnpm turbo watch build dev --filter @party-stack/icon-lab # embeds first, then http://localhost:5179
+vp run @party-stack/icon-lab#dev           # open the URL printed by Vite+
 ```
 
-The generation tasks are declared only in this package's nested `turbo.json`. `dev` /
-`dist` derive the catalog and embeddings from the committed snapshots, while ordinary
-monorepo `build` / `lint` / `test` do not run CLIP. `icons:archive` remains an explicit
+Before using the app on a fresh checkout, run `vp run @party-stack/icon-lab#icons:embed`
+explicitly. It derives the catalog from committed snapshots and generates the CLIP
+embeddings and draft mappings in ignored `temp/data`. Generation can take several minutes;
+rerun it when icon sources or the embedding pipeline change.
+
+Normal `dev`, `build`, `test`, and workspace CI tasks never generate embeddings.
+Builds include prepared data when it exists, and otherwise compile the app with a
+warning. The app needs prepared data to function, so generate it before using the
+app or creating a bundle for deployment. `icons:archive` remains an explicit
 one-off task because it refreshes checked-in provider snapshots.
 
 Mapping review decisions and concept confirmations are saved in browser local storage.
@@ -64,7 +70,7 @@ CLI, then point the pipeline at that ignored directory:
 ```bash
 pnpm icons:sf:export
 SF_SYMBOLS_ASSET_DIR="$PWD/temp/sf-symbols" \
-    pnpm turbo icons:embed --filter @party-stack/icon-lab
+    vp run @party-stack/icon-lab#icons:embed
 ```
 
 You can also supply your own directory of `<symbol-name>.png` or

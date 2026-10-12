@@ -9,7 +9,7 @@ import type {
 
 export function createReadTx(objects: OntologyMutatorObjects): OntologyReadTx {
     return {
-        query: (build) => queryOnce((query) => build(query, objects) as never) as never,
+        query: (build) => queryOnce((query) => build(query, objects) as never),
     };
 }
 
@@ -45,7 +45,7 @@ export function createMutatorTx(options: {
                             await ensureObjectLoaded(collection, objectType, options.primaryKeys, key);
                             options.transaction.mutate(() => {
                                 collection.update(key, (draft) => {
-                                    applyChanges(draft as Record<string, unknown>, changes);
+                                    applyChanges(draft, changes);
                                 });
                             });
                         },
@@ -58,7 +58,7 @@ export function createMutatorTx(options: {
                     };
                 },
             }
-        ) as OntologyMutatorTx["mutate"],
+        ),
     };
 }
 

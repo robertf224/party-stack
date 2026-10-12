@@ -27,7 +27,7 @@ export function averageVectors(vectors: number[][]): number[] {
         return [];
     }
     const dims = vectors[0]!.length;
-    const out = new Array<number>(dims).fill(0);
+    const out = Array.from({ length: dims }, () => 0);
     for (const vector of vectors) {
         for (let i = 0; i < dims; i++) {
             out[i]! += vector[i]!;
@@ -45,7 +45,7 @@ export function projectTo2d(vectors: number[][]): Array<{ x: number; y: number }
         return [];
     }
     const dims = vectors[0]!.length;
-    const mean = new Array<number>(dims).fill(0);
+    const mean = Array.from({ length: dims }, () => 0);
     for (const vector of vectors) {
         for (let i = 0; i < dims; i++) {
             mean[i]! += vector[i]!;
@@ -77,7 +77,7 @@ function dot(a: number[], b: number[]): number {
 function powerIteration(rows: number[][], dims: number, iterations: number): number[] {
     let axis = l2Normalize(Array.from({ length: dims }, (_, i) => ((i * 17) % 97) / 97));
     for (let iter = 0; iter < iterations; iter++) {
-        const next = new Array<number>(dims).fill(0);
+        const next = Array.from({ length: dims }, () => 0);
         for (const row of rows) {
             const weight = dot(row, axis);
             for (let i = 0; i < dims; i++) {

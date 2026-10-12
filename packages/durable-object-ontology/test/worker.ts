@@ -1,12 +1,12 @@
-import { DurableObject } from "cloudflare:workers";
 import { createLiveOntology } from "@party-stack/ontology";
 import { createSQLiteOntologyBackendAdapter } from "@party-stack/sqlite-ontology";
-import { queryOnce } from "@tanstack/db";
 import {
     runSQLiteOntologyConformanceCase,
     sqliteOntologyConformanceIR,
     type SQLiteOntologyConformanceCaseId,
 } from "@party-stack/sqlite-ontology/testing";
+import { queryOnce } from "@tanstack/db";
+import { DurableObject } from "cloudflare:workers";
 import {
     createDurableObjectOntologyBackendAdapter,
     createDurableObjectSQLiteDatabase,
@@ -40,18 +40,14 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
         await runSQLiteOntologyConformanceCase(id, this.database);
     }
 
-    async createAndListNote(
-        id?: string,
-        title?: string
-    ): Promise<string[]> {
+    async createAndListNote(id?: string, title?: string): Promise<string[]> {
         const ontology = await createLiveOntology({
             ir: sqliteOntologyConformanceIR,
             backend: () =>
                 createDurableObjectOntologyBackendAdapter({
                     ir: sqliteOntologyConformanceIR,
                     storage: this.ctx.storage,
-                    installationId:
-                        this.ctx.id.toString(),
+                    installationId: this.ctx.id.toString(),
                     ontologyId: "ontology",
                     attachmentStorage: "sqlite",
                 }),
@@ -70,9 +66,7 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
                     })
                     .select(({ note }) => note)
             );
-            return [...ontology.objects.Note!.values()].map(
-                (note) => String(note.title)
-            );
+            return [...ontology.objects.Note!.values()].map((note) => String(note.title));
         } finally {
             await ontology.cleanup();
         }
@@ -90,8 +84,7 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
                     ir: sqliteOntologyConformanceIR,
                     storage: this.ctx.storage,
                     bucket: this.env.BLOBS,
-                    installationId:
-                        this.ctx.id.toString(),
+                    installationId: this.ctx.id.toString(),
                     ontologyId: "ontology",
                 }),
         });
@@ -142,8 +135,7 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
                 createDurableObjectOntologyBackendAdapter({
                     ir: sqliteOntologyConformanceIR,
                     storage: this.ctx.storage,
-                    installationId:
-                        this.ctx.id.toString(),
+                    installationId: this.ctx.id.toString(),
                     ontologyId: "ontology",
                     attachmentStorage: "sqlite",
                 }),

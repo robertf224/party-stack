@@ -1,13 +1,5 @@
-import {
-    o,
-    type Lens,
-} from "@party-stack/ontology";
-import {
-    describe,
-    expect,
-    it,
-    vi,
-} from "vitest";
+import { o, type Lens } from "@party-stack/ontology";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { createFoundryUsersIntegration } from "./createFoundryUsersIntegration.js";
 import { foundryUserProfilePictureAttachment } from "./foundryUser.js";
 
@@ -17,8 +9,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@osdk/foundry.admin", () => ({
     Users: {
-        profilePicture:
-            mocks.profilePicture,
+        profilePicture: mocks.profilePicture,
     },
 }));
 
@@ -37,18 +28,15 @@ describe("createFoundryUsersIntegration", () => {
                 status: 204,
             })
         );
-        const integration =
-            createFoundryUsersIntegration({
-                objectType: "User",
-                lens: identityLens,
-            });
+        const integration = createFoundryUsersIntegration({
+            objectType: "User",
+            lens: identityLens,
+        });
 
         await expect(
             integration.getAttachmentContent!(
                 {} as never,
-                foundryUserProfilePictureAttachment(
-                    "user-1"
-                )
+                foundryUserProfilePictureAttachment("user-1")
             ).then((blob) => blob?.size)
         ).resolves.toBe(0);
     });

@@ -1,5 +1,4 @@
 import { invariant } from "@bobbyfidz/panic";
-import type { PropertyDef, StringConstraint, TypeDef } from "@party-stack/ontology";
 import { foundryAttachmentMeta } from "./foundryAttachmentMetadata.js";
 import type {
     ObjectPropertyType,
@@ -7,6 +6,7 @@ import type {
     ValueTypeConstraint,
     ValueTypeFieldType,
 } from "@osdk/foundry.ontologies";
+import type { PropertyDef, StringConstraint, TypeDef } from "@party-stack/ontology";
 
 export function convertFoundryValueTypeFieldType(
     type: ValueTypeFieldType,
@@ -130,11 +130,7 @@ export function convertFoundryObjectPropertyType(type: ObjectPropertyType): Type
             return {
                 kind: "attachment",
                 value: {
-                    meta: foundryAttachmentMeta(
-                        type.type === "attachment"
-                            ? "attachment"
-                            : "media"
-                    ),
+                    meta: foundryAttachmentMeta(type.type === "attachment" ? "attachment" : "media"),
                 },
             };
         case "vector":

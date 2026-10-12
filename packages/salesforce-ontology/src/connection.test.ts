@@ -1,7 +1,7 @@
 import { createDefaultRuntime } from "@party-stack/runtime";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { EstablishedConnection } from "@party-stack/connections";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { createSalesforceConnectionAdapter } from "./connection.js";
+import type { EstablishedConnection } from "@party-stack/connections";
 
 describe("createSalesforceConnectionAdapter", () => {
     afterEach(() => {
@@ -29,14 +29,12 @@ describe("createSalesforceConnectionAdapter", () => {
             createWebSocket: () => Promise.resolve({} as WebSocket),
         });
 
-        await egress.fetch(
-            new Request("https://example.my.salesforce.com/services/data/v65.0/sobjects")
-        );
+        await egress.fetch(new Request("https://example.my.salesforce.com/services/data/v65.0/sobjects"));
         const request = fetch.mock.calls[0]![0] as Request;
         expect(request.headers.get("authorization")).toBe("Bearer access-token");
-        await expect(
-            egress.fetch(new Request("https://attacker.example/services/data"))
-        ).rejects.toThrow('Salesforce egress not allowed for origin "https://attacker.example".');
+        await expect(egress.fetch(new Request("https://attacker.example/services/data"))).rejects.toThrow(
+            'Salesforce egress not allowed for origin "https://attacker.example".'
+        );
         expect(fetch).toHaveBeenCalledOnce();
     });
 
@@ -70,67 +68,43 @@ describe("createSalesforceConnectionAdapter", () => {
     });
 
     it("establishes server-side client credentials connections", async () => {
-        let tokenBody:
-            | URLSearchParams
-            | undefined;
-        const fetch = vi.fn<
-            typeof globalThis.fetch
-        >(async (input, init) => {
-            const request = new Request(
-                input,
-                init
-            );
-            if (
-                request.url.endsWith(
-                    "/services/oauth2/userinfo"
-                )
-            ) {
+        let tokenBody: URLSearchParams | undefined;
+        const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+            const request = new Request(input, init);
+            if (request.url.endsWith("/services/oauth2/userinfo")) {
                 return Response.json({
-                    user_id:
-                        "005000000000001",
+                    user_id: "005000000000001",
                 });
             }
-            tokenBody =
-                new URLSearchParams(
-                    await request.text()
-                );
+            tokenBody = new URLSearchParams(await request.text());
             return Response.json({
                 access_token: "access-token",
                 expires_in: 3600,
                 token_type: "Bearer",
             });
         });
-        const adapter =
-            await createSalesforceConnectionAdapter({
-                instanceUrl:
-                    "https://example.my.salesforce.com",
-                clientCredentials: {
-                    clientId: "client",
-                    clientSecret: "secret",
-                    fetch,
-                },
-            })({
-                installationId: "salesforce",
-                runtime: {} as never,
-            });
+        const adapter = await createSalesforceConnectionAdapter({
+            instanceUrl: "https://example.my.salesforce.com",
+            clientCredentials: {
+                clientId: "client",
+                clientSecret: "secret",
+                fetch,
+            },
+        })({
+            installationId: "salesforce",
+            runtime: {} as never,
+        });
 
-        const [established] =
-            await adapter.restoreConnections();
+        const [established] = await adapter.restoreConnections();
 
-        expect(
-            established?.connection
-        ).toMatchObject({
+        expect(established?.connection).toMatchObject({
             userId: "005000000000001",
             state: {
                 status: "active",
             },
         });
-        expect(
-            tokenBody?.get("grant_type")
-        ).toBe("client_credentials");
-        expect(
-            tokenBody?.get("client_secret")
-        ).toBe("secret");
+        expect(tokenBody?.get("grant_type")).toBe("client_credentials");
+        expect(tokenBody?.get("client_secret")).toBe("secret");
         await adapter.cleanup?.();
     });
 
@@ -165,11 +139,7 @@ describe("createSalesforceConnectionAdapter", () => {
         };
         const fetch = vi.fn<typeof globalThis.fetch>((input) => {
             const url =
-                input instanceof Request
-                    ? input.url
-                    : input instanceof URL
-                      ? input.toString()
-                      : input;
+                input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
             return Promise.resolve(
                 url.endsWith("/services/oauth2/userinfo")
                     ? Response.json({ user_id: "005000000000001" })
@@ -192,15 +162,11 @@ describe("createSalesforceConnectionAdapter", () => {
             installationId: "salesforce",
             runtime,
         });
-        let established:
-            | EstablishedConnection
-            | undefined;
-        const connect = vi.fn(
-            (candidate: EstablishedConnection) => {
-                established = candidate;
-                return Promise.resolve();
-            }
-        );
+        let established: EstablishedConnection | undefined;
+        const connect = vi.fn((candidate: EstablishedConnection) => {
+            established = candidate;
+            return Promise.resolve();
+        });
         const authentication = adapter.createAuthenticationClient({
             connect,
             disconnect: () => Promise.resolve(),
@@ -217,9 +183,7 @@ describe("createSalesforceConnectionAdapter", () => {
         );
         expect([...values.values()].some((value) => value.includes("refresh-token"))).toBe(true);
         if (!established?.session.egress) {
-            throw new Error(
-                "Expected OAuth egress wrapper."
-            );
+            throw new Error("Expected OAuth egress wrapper.");
         }
         const backendFetch = vi
             .fn<typeof globalThis.fetch>()
@@ -233,27 +197,17 @@ describe("createSalesforceConnectionAdapter", () => {
                     status: 204,
                 })
             );
-        const egress =
-            established.session.egress({
-                fetch: backendFetch,
-                createWebSocket: () =>
-                    Promise.resolve(
-                        {} as WebSocket
-                    ),
-            });
+        const egress = established.session.egress({
+            fetch: backendFetch,
+            createWebSocket: () => Promise.resolve({} as WebSocket),
+        });
 
         await expect(
-            egress.fetch(
-                new Request(
-                    "https://example.my.salesforce.com/services/data/v65.0/sobjects"
-                )
-            )
+            egress.fetch(new Request("https://example.my.salesforce.com/services/data/v65.0/sobjects"))
         ).resolves.toMatchObject({
             status: 204,
         });
-        expect(backendFetch).toHaveBeenCalledTimes(
-            2
-        );
+        expect(backendFetch).toHaveBeenCalledTimes(2);
 
         await adapter.cleanup?.();
         await runtime.cleanup?.();

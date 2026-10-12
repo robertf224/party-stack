@@ -1,10 +1,10 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RuntimeAdapterProvider } from "@party-stack/runtime";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { writePulledOntology } from "./pull.js";
 import type { OntologyIR, OntologyPullConfig } from "../index.js";
+import type { RuntimeAdapterProvider } from "@party-stack/runtime";
 
 const mocks = vi.hoisted(() => ({
     pull: vi.fn(),
@@ -68,6 +68,11 @@ describe("writePulledOntology", () => {
             actionTypeNames: [],
         };
         mocks.pull.mockResolvedValue(emptyOntology);
+        mocks.generateOntology.mockReturnValueOnce("export default {\nname: 'pulled',\n};");
+        await writeFile(
+            join(directory, "vite.config.ts"),
+            'throw new Error("Vite config must not be evaluated");'
+        );
 
         await writePulledOntology(config, join(directory, "ontology.ts"), {
             runtime,
@@ -81,6 +86,9 @@ describe("writePulledOntology", () => {
         });
         expect(mocks.pull).toHaveBeenCalledWith(liveOntology, expect.any(Object));
         expect(cleanup).toHaveBeenCalledOnce();
+        expect(await readFile(join(directory, "ontology.ts"), "utf8")).toBe(
+            '// Auto-generated file - do not edit manually\n\nexport default {\n    name: "pulled",\n};\n'
+        );
     });
 
     it("cleans up the installation when transformation fails", async () => {
@@ -111,7 +119,7 @@ describe("writePulledOntology", () => {
 
         await expect(
             writePulledOntology(config, join(directory, "ontology.ts"), {
-                runtime: vi.fn() as unknown as RuntimeAdapterProvider,
+                runtime: vi.fn(),
             })
         ).rejects.toThrow("transform failed");
         expect(cleanup).toHaveBeenCalledOnce();
@@ -141,7 +149,7 @@ describe("writePulledOntology", () => {
 
         await expect(
             writePulledOntology(config, join(directory, "ontology.ts"), {
-                runtime: vi.fn() as unknown as RuntimeAdapterProvider,
+                runtime: vi.fn(),
             })
         ).rejects.toThrow("open failed");
         expect(cleanup).toHaveBeenCalledOnce();

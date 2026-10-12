@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { o } from "../ir/index.js";
 import { generateOntology } from "./ontology.js";
 import type { OntologyIR } from "../ir/index.js";
@@ -60,7 +60,7 @@ describe("generateOntology", () => {
         expect(output).toContain('color: "#2d72d2"');
         expect(output).toContain('name: "plus-circle"');
         expect(output).toContain('color: "#15b371"');
-        expect(output).toContain('suggestions: [');
+        expect(output).toContain("suggestions: [");
         expect(output).toContain('label: "Ada Lovelace"');
     });
 
@@ -73,9 +73,7 @@ describe("generateOntology", () => {
                     displayName: "Membership",
                     pluralDisplayName: "Memberships",
                     primaryKey: "id",
-                    properties: [
-                        { name: "id", displayName: "ID", type: o.string({}) },
-                    ],
+                    properties: [{ name: "id", displayName: "ID", type: o.string({}) }],
                 },
             ],
             linkTypes: [],

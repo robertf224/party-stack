@@ -8,7 +8,12 @@ import { LoadOneCallback, loadOneCallback } from "grafast";
 import { FoundryContext } from "../context.js";
 import { PrimaryKeyValue, TypedOntologyObject } from "../utils/TypedOntologyObject.js";
 
-type ObjectLoader = LoadOneCallback<PrimaryKeyValue, TypedOntologyObject, {}, FoundryContext>;
+type ObjectLoader = LoadOneCallback<
+    PrimaryKeyValue,
+    TypedOntologyObject,
+    NonNullable<unknown>,
+    FoundryContext
+>;
 
 const cache = new WeakMap<ObjectTypeV2, ObjectLoader>();
 
@@ -18,7 +23,7 @@ export function getObjectLoader(objectType: ObjectTypeV2): ObjectLoader {
         return loader;
     }
 
-    loader = loadOneCallback<PrimaryKeyValue, TypedOntologyObject, {}, FoundryContext>(
+    loader = loadOneCallback<PrimaryKeyValue, TypedOntologyObject, NonNullable<unknown>, FoundryContext>(
         async (ids, { attributes, unary: context }) => {
             // TODO: handle page sizes
             const { data } = await OntologyObjectsV2.search(

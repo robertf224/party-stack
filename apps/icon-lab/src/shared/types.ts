@@ -1,9 +1,4 @@
-export type IconProvider =
-    | "blueprint"
-    | "lucide"
-    | "material"
-    | "salesforce"
-    | "sfsymbols";
+export type IconProvider = "blueprint" | "lucide" | "material" | "salesforce" | "sfsymbols";
 
 export interface CatalogIcon {
     id: string;

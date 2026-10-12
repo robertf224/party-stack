@@ -14,31 +14,18 @@ const settings = getSalesforceSettings();
 export default createSalesforceOntologyPullConfig({
     instanceUrl: settings.instanceUrl,
     apiVersion: settings.apiVersion,
-    ontologyId:
-        SALESFORCE_TASK_MANAGER_ONTOLOGY_ID,
-    objectTypeNames:
-        SALESFORCE_TASK_MANAGER_OBJECT_TYPES,
-    flowActionTypeNames: [
-        "sales_sfa_flows__CreateSalesLead",
-    ],
-    standardActionTypeNames: [
-        "confirmSalesMeeting",
-    ],
-    standardQueryFunctionTypeNames: [
-        "getAvailableMeetingTimes",
-    ],
+    ontologyId: SALESFORCE_TASK_MANAGER_ONTOLOGY_ID,
+    objectTypeNames: SALESFORCE_TASK_MANAGER_OBJECT_TYPES,
+    flowActionTypeNames: ["sales_sfa_flows__CreateSalesLead"],
+    standardActionTypeNames: ["confirmSalesMeeting"],
+    standardQueryFunctionTypeNames: ["getAvailableMeetingTimes"],
     crudActionTypes: [
         {
             objectType: "Task",
-            operations: [
-                "create",
-                "update",
-                "delete",
-            ],
+            operations: ["create", "update", "delete"],
         },
     ],
-    transformPulledOntology:
-        projectTaskManagerOntology,
+    transformPulledOntology: projectTaskManagerOntology,
     connection: {
         userId: settings.userId,
         oauth: {

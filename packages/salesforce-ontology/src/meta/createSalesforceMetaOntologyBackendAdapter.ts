@@ -1,6 +1,4 @@
 import { notImplemented } from "@bobbyfidz/panic";
-import type { OntologyBackendAdapter } from "@party-stack/ontology";
-import type { SalesforceClient } from "@party-stack/salesforce-client";
 import { actionTypeCollectionOptions } from "./actionTypeCollectionOptions.js";
 import {
     linkTypeCollectionOptions,
@@ -9,6 +7,8 @@ import {
 } from "./entityCollectionOptions.js";
 import { queryFunctionTypeCollectionOptions } from "./queryFunctionTypeCollectionOptions.js";
 import type { SalesforceCrudActionTypeSelection } from "../crud.js";
+import type { OntologyBackendAdapter } from "@party-stack/ontology";
+import type { SalesforceClient } from "@party-stack/salesforce-client";
 
 export interface CreateSalesforceMetaOntologyBackendAdapterOpts {
     client: SalesforceClient;
@@ -40,30 +40,22 @@ export function createSalesforceMetaOntologyBackendAdapter(
         getCollectionOptions: (objectType: string) => {
             switch (objectType) {
                 case "ObjectType":
-                    return objectTypeCollectionOptions(
-                        entityOptions
-                    );
+                    return objectTypeCollectionOptions(entityOptions);
                 case "ValueType":
                     return valueTypeCollectionOptions();
                 case "LinkType":
-                    return linkTypeCollectionOptions(
-                        entityOptions
-                    );
+                    return linkTypeCollectionOptions(entityOptions);
                 case "ActionType":
                     return actionTypeCollectionOptions({
                         client: opts.client,
-                        flowActionTypeNames:
-                            opts.flowActionTypeNames,
-                        standardActionTypeNames:
-                            opts.standardActionTypeNames,
-                        crudActionTypes:
-                            opts.crudActionTypes,
+                        flowActionTypeNames: opts.flowActionTypeNames,
+                        standardActionTypeNames: opts.standardActionTypeNames,
+                        crudActionTypes: opts.crudActionTypes,
                     });
                 case "QueryFunctionType":
                     return queryFunctionTypeCollectionOptions({
                         client: opts.client,
-                        standardQueryFunctionTypeNames:
-                            opts.standardQueryFunctionTypeNames,
+                        standardQueryFunctionTypeNames: opts.standardQueryFunctionTypeNames,
                     });
                 default:
                     throw new Error(`Unsupported Salesforce metadata object type "${objectType}".`);

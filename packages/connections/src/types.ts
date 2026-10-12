@@ -42,9 +42,7 @@ export interface ConnectionMonitor {
 export interface ConnectionSession {
     refresh?(): Promise<EstablishedConnection>;
     disconnect(): Promise<void>;
-    egress?(
-        handlers: ConnectionEgressHandlers
-    ): ConnectionEgressHandlers;
+    egress?(handlers: ConnectionEgressHandlers): ConnectionEgressHandlers;
     cleanup?(): void | Promise<void>;
 }
 
@@ -54,9 +52,7 @@ export interface EstablishedConnection {
 }
 
 export interface ConnectionController {
-    connect(
-        connection: EstablishedConnection
-    ): Promise<void>;
+    connect(connection: EstablishedConnection): Promise<void>;
     disconnect(userId: string): Promise<void>;
 }
 
@@ -65,39 +61,24 @@ export interface BackendConnectionAdapterContext {
     runtime: RuntimeAdapter;
 }
 
-export interface BackendConnectionAdapter<
-    AuthenticationClient extends object = object,
-> {
+export interface BackendConnectionAdapter<AuthenticationClient extends object = object> {
     readonly name: string;
-    createAuthenticationClient(
-        controller: ConnectionController
-    ): AuthenticationClient;
-    restoreConnections(): Promise<
-        readonly EstablishedConnection[]
-    >;
+    createAuthenticationClient(controller: ConnectionController): AuthenticationClient;
+    restoreConnections(): Promise<readonly EstablishedConnection[]>;
     cleanup?(): void | Promise<void>;
 }
 
-export type BackendConnectionAdapterProvider<
-    AuthenticationClient extends object = object,
-> = (
+export type BackendConnectionAdapterProvider<AuthenticationClient extends object = object> = (
     context: BackendConnectionAdapterContext
-) =>
-    | BackendConnectionAdapter<AuthenticationClient>
-    | Promise<BackendConnectionAdapter<AuthenticationClient>>;
+) => BackendConnectionAdapter<AuthenticationClient> | Promise<BackendConnectionAdapter<AuthenticationClient>>;
 
-export interface ConnectionManager<
-    AuthenticationClient extends object = object,
-> {
+export interface ConnectionManager<AuthenticationClient extends object = object> {
     readonly installationId: string;
     readonly authentication: AuthenticationClient;
     readonly connections: Collection<Connection, string>;
     disconnect(userId: string): Promise<void>;
     forget(userId: string): Promise<void>;
-    reportUnauthenticated(
-        userId: string,
-        error: UnauthenticatedError
-    ): Promise<void>;
+    reportUnauthenticated(userId: string, error: UnauthenticatedError): Promise<void>;
     egress(userId: string): ConnectionEgress | undefined;
     cleanup(): Promise<void>;
 }

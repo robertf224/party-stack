@@ -1,5 +1,14 @@
 import { QueryClient } from "@tanstack/query-core";
 import { queryCollectionOptions } from "@tanstack/query-db-collection";
+import { classifySalesforceStandardAction } from "../standardActions.js";
+import { salesforceCrudActionTypeId, salesforceCrudActionTypeName } from "../utils/ids.js";
+import {
+    convertSalesforceMetaActionType,
+    convertSalesforceMetaStandardActionType,
+} from "./convertMetaActionType.js";
+import { convertMetaNameQuery, matchesMetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
+import { synthesizeSalesforceCrudActionTypes } from "./synthesizeCrudActionTypes.js";
+import type { SalesforceCrudActionTypeSelection } from "../crud.js";
 import type { MetaActionType, OntologyCollectionOptions } from "@party-stack/ontology";
 import type {
     SalesforceClient,
@@ -8,21 +17,6 @@ import type {
     SalesforceInvocableActionSummary,
     SalesforceSObjectDescribe,
 } from "@party-stack/salesforce-client";
-import { classifySalesforceStandardAction } from "../standardActions.js";
-import {
-    salesforceCrudActionTypeId,
-    salesforceCrudActionTypeName,
-} from "../utils/ids.js";
-import {
-    convertSalesforceMetaActionType,
-    convertSalesforceMetaStandardActionType,
-} from "./convertMetaActionType.js";
-import {
-    convertMetaNameQuery,
-    matchesMetaNameQuery,
-} from "./convertMetaLoadSubsetOptions.js";
-import { synthesizeSalesforceCrudActionTypes } from "./synthesizeCrudActionTypes.js";
-import type { SalesforceCrudActionTypeSelection } from "../crud.js";
 
 export interface ActionTypeCollectionOpts {
     client: SalesforceClient;
@@ -72,49 +66,29 @@ async function loadStandardActionDescribe(
 async function loadFlowActionDescribes(
     client: SalesforceClient,
     names: readonly string[]
-): Promise<
-    Array<SalesforceInvocableActionDescribe | undefined>
-> {
-    if (
-        typeof client.describeFlowActions ===
-        "function"
-    ) {
+): Promise<Array<SalesforceInvocableActionDescribe | undefined>> {
+    if (typeof client.describeFlowActions === "function") {
         try {
             return await client.describeFlowActions(names);
         } catch {
             // Older Salesforce orgs may not expose Composite API access.
         }
     }
-    return Promise.all(
-        names.map((name) =>
-            loadFlowActionDescribe(client, name)
-        )
-    );
+    return Promise.all(names.map((name) => loadFlowActionDescribe(client, name)));
 }
 
 async function loadStandardActionDescribes(
     client: SalesforceClient,
     names: readonly string[]
-): Promise<
-    Array<SalesforceInvocableActionDescribe | undefined>
-> {
-    if (
-        typeof client.describeStandardActions ===
-        "function"
-    ) {
+): Promise<Array<SalesforceInvocableActionDescribe | undefined>> {
+    if (typeof client.describeStandardActions === "function") {
         try {
-            return await client.describeStandardActions(
-                names
-            );
+            return await client.describeStandardActions(names);
         } catch {
             // Older Salesforce orgs may not expose Composite API access.
         }
     }
-    return Promise.all(
-        names.map((name) =>
-            loadStandardActionDescribe(client, name)
-        )
-    );
+    return Promise.all(names.map((name) => loadStandardActionDescribe(client, name)));
 }
 
 async function loadSelectedActionDescribes(
@@ -123,66 +97,35 @@ async function loadSelectedActionDescribes(
     standardNames: readonly string[]
 ): Promise<
     [
-        Array<
-            SalesforceInvocableActionDescribe | undefined
-        >,
-        Array<
-            SalesforceInvocableActionDescribe | undefined
-        >,
+        Array<SalesforceInvocableActionDescribe | undefined>,
+        Array<SalesforceInvocableActionDescribe | undefined>,
     ]
 > {
-    if (
-        typeof client.describeInvocableActions ===
-        "function"
-    ) {
+    if (typeof client.describeInvocableActions === "function") {
         try {
-            const combined =
-                await client.describeInvocableActions([
-                    ...flowNames.map((apiName) => ({
-                        kind: "flow" as const,
-                        apiName,
-                    })),
-                    ...standardNames.map(
-                        (apiName) => ({
-                            kind: "standard" as const,
-                            apiName,
-                        })
-                    ),
-                ]);
-            return [
-                combined.slice(
-                    0,
-                    flowNames.length
-                ),
-                combined.slice(flowNames.length),
-            ];
+            const combined = await client.describeInvocableActions([
+                ...flowNames.map((apiName) => ({
+                    kind: "flow" as const,
+                    apiName,
+                })),
+                ...standardNames.map((apiName) => ({
+                    kind: "standard" as const,
+                    apiName,
+                })),
+            ]);
+            return [combined.slice(0, flowNames.length), combined.slice(flowNames.length)];
         } catch {
             // Fall through to subsystem-specific compatibility methods.
         }
     }
     return Promise.all([
-        flowNames.length > 0
-            ? loadFlowActionDescribes(
-                  client,
-                  flowNames
-              )
-            : [],
-        standardNames.length > 0
-            ? loadStandardActionDescribes(
-                  client,
-                  standardNames
-              )
-            : [],
+        flowNames.length > 0 ? loadFlowActionDescribes(client, flowNames) : [],
+        standardNames.length > 0 ? loadStandardActionDescribes(client, standardNames) : [],
     ]);
 }
 
 export function actionTypeCollectionOptions(opts: ActionTypeCollectionOpts): OntologyCollectionOptions {
-    const describeCache = new Map<
-        string,
-        ReturnType<
-            typeof loadSelectedActionDescribes
-        >
-    >();
+    const describeCache = new Map<string, ReturnType<typeof loadSelectedActionDescribes>>();
     return queryCollectionOptions<MetaActionType>({
         queryClient: opts.queryClient ?? new QueryClient(),
         getKey: (row) => row.name,
@@ -196,44 +139,23 @@ export function actionTypeCollectionOptions(opts: ActionTypeCollectionOpts): Ont
         ],
         syncMode: "on-demand",
         queryFn: async (ctx) => {
-            const query = convertMetaNameQuery(
-                ctx.meta?.loadSubsetOptions
-            );
-            const requestedNames =
-                query.type === "getBatch"
-                    ? new Set(query.names)
-                    : undefined;
+            const query = convertMetaNameQuery(ctx.meta?.loadSubsetOptions);
+            const requestedNames = query.type === "getBatch" ? new Set(query.names) : undefined;
             const configuredCrudNames = new Set(
-                (opts.crudActionTypes ?? []).flatMap(
-                    (selection) =>
-                        selection.operations.map(
-                            (operation) =>
-                                salesforceCrudActionTypeName(
-                                    operation,
-                                    selection.objectType
-                                )
-                        )
+                (opts.crudActionTypes ?? []).flatMap((selection) =>
+                    selection.operations.map((operation) =>
+                        salesforceCrudActionTypeName(operation, selection.objectType)
+                    )
                 )
             );
-            const [flowSummaries, standardSummaries] =
-                await Promise.all([
-                    opts.flowActionTypeNames ||
-                    requestedNames
-                        ? Promise.resolve(undefined)
-                        : opts.client
-                              .listFlowActions()
-                              .then(
-                                  normalizeFlowActionList
-                              ),
-                    opts.standardActionTypeNames ||
-                    requestedNames
-                        ? Promise.resolve(undefined)
-                        : opts.client
-                              .listStandardActions()
-                              .then(
-                                  normalizeFlowActionList
-                              ),
-                ]);
+            const [flowSummaries, standardSummaries] = await Promise.all([
+                opts.flowActionTypeNames || requestedNames
+                    ? Promise.resolve(undefined)
+                    : opts.client.listFlowActions().then(normalizeFlowActionList),
+                opts.standardActionTypeNames || requestedNames
+                    ? Promise.resolve(undefined)
+                    : opts.client.listStandardActions().then(normalizeFlowActionList),
+            ]);
             const candidates: Array<{
                 kind: "flow" | "standard";
                 name: string;
@@ -242,246 +164,108 @@ export function actionTypeCollectionOptions(opts: ActionTypeCollectionOpts): Ont
                 ...(
                     opts.flowActionTypeNames ??
                     (requestedNames
-                        ? [...requestedNames].filter(
-                              (name) =>
-                                  !configuredCrudNames.has(
-                                      name
-                                  )
-                          )
-                        : flowSummaries?.map(
-                              (summary) =>
-                                  summary.name
-                          ) ?? [])
+                        ? [...requestedNames].filter((name) => !configuredCrudNames.has(name))
+                        : (flowSummaries?.map((summary) => summary.name) ?? []))
                 ).map((name) => ({
                     kind: "flow" as const,
                     name,
-                    displayName:
-                        flowSummaries?.find(
-                            (summary) =>
-                                summary.name === name
-                        )?.label ?? name,
+                    displayName: flowSummaries?.find((summary) => summary.name === name)?.label ?? name,
                 })),
                 ...(
                     opts.standardActionTypeNames ??
                     (requestedNames
-                        ? [...requestedNames].filter(
-                              (name) =>
-                                  !configuredCrudNames.has(
-                                      name
-                                  )
-                          )
-                        : standardSummaries
+                        ? [...requestedNames].filter((name) => !configuredCrudNames.has(name))
+                        : (standardSummaries
                               ?.filter(
-                                  (summary) =>
-                                      classifySalesforceStandardAction(
-                                          summary.name
-                                      ) ===
-                                      "action"
+                                  (summary) => classifySalesforceStandardAction(summary.name) === "action"
                               )
-                              .map(
-                                  (summary) =>
-                                      summary.name
-                              ) ?? [])
+                              .map((summary) => summary.name) ?? []))
                 ).map((name) => ({
                     kind: "standard" as const,
                     name,
-                    displayName:
-                        standardSummaries?.find(
-                            (summary) =>
-                                summary.name === name
-                        )?.label ?? name,
+                    displayName: standardSummaries?.find((summary) => summary.name === name)?.label ?? name,
                 })),
             ];
             const matchingCandidates =
                 query.type === "search"
-                    ? candidates.filter((candidate) =>
-                          matchesMetaNameQuery(
-                              query,
-                              candidate
-                          )
-                      )
+                    ? candidates.filter((candidate) => matchesMetaNameQuery(query, candidate))
                     : candidates;
-            matchingCandidates.sort((left, right) =>
-                left.name.localeCompare(right.name)
-            );
-            const offset = Math.max(
-                0,
-                Math.trunc(
-                    ctx.meta?.loadSubsetOptions
-                        ?.offset ?? 0
-                )
-            );
-            const limit =
-                ctx.meta?.loadSubsetOptions?.limit;
-            const selectedCandidates =
-                requestedNames
-                    ? matchingCandidates
-                    : matchingCandidates.slice(
-                          offset,
-                          limit === undefined
-                              ? undefined
-                              : offset +
-                                    Math.max(
-                                        0,
-                                        Math.trunc(
-                                            limit
-                                        )
-                                    )
-                      );
+            matchingCandidates.sort((left, right) => left.name.localeCompare(right.name));
+            const offset = Math.max(0, Math.trunc(ctx.meta?.loadSubsetOptions?.offset ?? 0));
+            const limit = ctx.meta?.loadSubsetOptions?.limit;
+            const selectedCandidates = requestedNames
+                ? matchingCandidates
+                : matchingCandidates.slice(
+                      offset,
+                      limit === undefined ? undefined : offset + Math.max(0, Math.trunc(limit))
+                  );
             const names = selectedCandidates
-                .filter(
-                    (candidate) =>
-                        candidate.kind === "flow"
-                )
+                .filter((candidate) => candidate.kind === "flow")
                 .map((candidate) => candidate.name);
-            const standardNames =
-                selectedCandidates
-                    .filter(
-                        (candidate) =>
-                            candidate.kind ===
-                            "standard"
-                    )
-                    .map(
-                        (candidate) =>
-                            candidate.name
-                    );
-            const describeCacheKey =
-                JSON.stringify([
-                    names,
-                    standardNames,
-                ]);
-            let cached =
-                describeCache.get(
-                    describeCacheKey
-                );
+            const standardNames = selectedCandidates
+                .filter((candidate) => candidate.kind === "standard")
+                .map((candidate) => candidate.name);
+            const describeCacheKey = JSON.stringify([names, standardNames]);
+            let cached = describeCache.get(describeCacheKey);
             if (!cached) {
-                cached =
-                    loadSelectedActionDescribes(
-                        opts.client,
-                        names,
-                        standardNames
-                    );
-                describeCache.set(
-                    describeCacheKey,
-                    cached
-                );
+                cached = loadSelectedActionDescribes(opts.client, names, standardNames);
+                describeCache.set(describeCacheKey, cached);
             }
-            const [
-                describes,
-                rawStandardDescribes,
-            ] = await cached;
-            const standardDescribes =
-                rawStandardDescribes.filter(
-                (
-                    describe
-                ): describe is SalesforceInvocableActionDescribe =>
+            const [describes, rawStandardDescribes] = await cached;
+            const standardDescribes = rawStandardDescribes.filter(
+                (describe): describe is SalesforceInvocableActionDescribe =>
                     Boolean(describe) &&
-                    (opts.standardActionTypeNames !==
-                        undefined ||
-                        classifySalesforceStandardAction(
-                            describe!.name
-                        ) === "action")
-                );
+                    (opts.standardActionTypeNames !== undefined ||
+                        classifySalesforceStandardAction(describe!.name) === "action")
+            );
             const flowDescribes = describes.filter(
-                (
-                    describe
-                ): describe is SalesforceInvocableActionDescribe =>
-                    Boolean(describe)
+                (describe): describe is SalesforceInvocableActionDescribe => Boolean(describe)
             );
             const sObjectNames = new Set(
-                (opts.crudActionTypes ?? []).map(
-                    (selection) => selection.objectType
-                )
+                (opts.crudActionTypes ?? []).map((selection) => selection.objectType)
             );
-            for (const describe of [
-                ...flowDescribes,
-                ...standardDescribes,
-            ]) {
+            for (const describe of [...flowDescribes, ...standardDescribes]) {
                 for (const input of describe.inputs ?? []) {
-                    const sObjectType =
-                        input.sobjectType ??
-                        input.sObjectType;
-                    if (
-                        input.type?.toLowerCase() ===
-                            "sobject" &&
-                        sObjectType
-                    ) {
+                    const sObjectType = input.sobjectType ?? input.sObjectType;
+                    if (input.type?.toLowerCase() === "sobject" && sObjectType) {
                         sObjectNames.add(sObjectType);
                     }
                 }
             }
-            const sObjectDescribes = new Map<
-                string,
-                SalesforceSObjectDescribe
-            >(
+            const sObjectDescribes = new Map<string, SalesforceSObjectDescribe>(
                 await Promise.all(
                     [...sObjectNames].map(
-                        async (name) =>
-                            [
-                                name,
-                                await opts.client.describeSObject(
-                                    name
-                                ),
-                            ] as const
+                        async (name) => [name, await opts.client.describeSObject(name)] as const
                     )
                 )
             );
-            const flowActions = flowDescribes.map(
-                (describe) =>
-                    convertSalesforceMetaActionType(
-                        describe,
-                        sObjectDescribes
-                    )
+            const flowActions = flowDescribes.map((describe) =>
+                convertSalesforceMetaActionType(describe, sObjectDescribes)
             );
-            const standardActions =
-                standardDescribes.map((describe) =>
-                    convertSalesforceMetaStandardActionType(
-                        describe,
-                        sObjectDescribes
-                    )
-                );
-            const crudActions = (
-                opts.crudActionTypes ?? []
-            ).flatMap((selection) => {
-                const describe = sObjectDescribes.get(
-                    selection.objectType
-                );
+            const standardActions = standardDescribes.map((describe) =>
+                convertSalesforceMetaStandardActionType(describe, sObjectDescribes)
+            );
+            const crudActions = (opts.crudActionTypes ?? []).flatMap((selection) => {
+                const describe = sObjectDescribes.get(selection.objectType);
                 return describe
-                    ? synthesizeSalesforceCrudActionTypes(
-                          describe
-                      ).filter((action) =>
-                          (!requestedNames ||
-                              requestedNames.has(
-                                  action.name
-                              )) &&
-                          matchesMetaNameQuery(
-                              query,
-                              action
-                          ) &&
-                          selection.operations.some(
-                              (operation) =>
-                                  action.id ===
-                                  salesforceCrudActionTypeId(
-                                      operation,
-                                      selection.objectType
-                                  )
-                          )
+                    ? synthesizeSalesforceCrudActionTypes(describe).filter(
+                          (action) =>
+                              (!requestedNames || requestedNames.has(action.name)) &&
+                              matchesMetaNameQuery(query, action) &&
+                              selection.operations.some(
+                                  (operation) =>
+                                      action.id ===
+                                      salesforceCrudActionTypeId(operation, selection.objectType)
+                              )
                       )
                     : [];
             });
             const actions = new Map(
-                [...flowActions, ...standardActions].map(
-                    (action) => [
-                        action.name,
-                        action,
-                    ]
-                )
+                [...flowActions, ...standardActions].map((action) => [action.name, action])
             );
             for (const action of crudActions) {
                 if (actions.has(action.name)) {
-                    throw new Error(
-                        `Multiple Salesforce actions use ontology name "${action.name}".`
-                    );
+                    throw new Error(`Multiple Salesforce actions use ontology name "${action.name}".`);
                 }
                 actions.set(action.name, action);
             }

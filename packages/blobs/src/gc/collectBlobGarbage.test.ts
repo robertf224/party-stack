@@ -1,5 +1,5 @@
 import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { createBlobStore } from "../store/createBlobStore.js";
 import { BLOB_GC_BATCH_SIZE, BLOB_GC_SIZE_UNIT_BYTES, collectBlobGarbage } from "./collectBlobGarbage.js";
 import type { BlobMetadataRecord, BlobRef } from "../types.js";
