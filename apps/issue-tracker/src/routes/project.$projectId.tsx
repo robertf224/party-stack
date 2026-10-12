@@ -1,6 +1,9 @@
-import { createFileRoute, lazyRouteComponent } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
+import { lazy } from "react";
 
-const IssueTracker = lazyRouteComponent(() => import("../app/IssueTracker"), "IssueTracker");
+const IssueTracker = lazy(() =>
+    import("../app/IssueTracker").then(({ IssueTracker }) => ({ default: IssueTracker }))
+);
 
 export const Route = createFileRoute("/project/$projectId")({
     ssr: false,
