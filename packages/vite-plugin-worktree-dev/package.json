@@ -1,0 +1,30 @@
+{
+    "name": "@party-stack/vite-plugin-worktree-dev",
+    "version": "0.1.0",
+    "files": [
+        "lib"
+    ],
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "scripts": {
+        "prepare": "vp pack"
+    },
+    "dependencies": {
+        "portless": "^0.15.7"
+    },
+    "devDependencies": {
+        "@party-stack/build-config": "workspace:*",
+        "@types/node": "^24.10.1",
+        "typescript": "~7.0.2",
+        "vite": "catalog:",
+        "vite-plus": "catalog:"
+    },
+    "peerDependencies": {
+        "vite": "^8.3.0"
+    }
+}

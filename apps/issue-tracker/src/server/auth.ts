@@ -30,7 +30,10 @@ const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
 const authOptions = {
     database,
-    baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
+    baseURL:
+        (import.meta.env.DEV ? import.meta.env.WORKTREE_DEV_ORIGIN : undefined) ??
+        process.env.BETTER_AUTH_URL ??
+        "http://localhost:3000",
     secret: process.env.BETTER_AUTH_SECRET ?? "party-stack-issue-tracker-development-secret-change-me",
     emailAndPassword: {
         enabled: true,

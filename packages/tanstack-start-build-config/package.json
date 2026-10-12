@@ -19,6 +19,7 @@
     "dependencies": {
         "@babel/core": "^7.29.7",
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/vite-plugin-worktree-dev": "workspace:*",
         "@rolldown/plugin-babel": "^0.2.4",
         "@tailwindcss/vite": "^4.0.6",
         "@tanstack/devtools-vite": "^0.6.0",

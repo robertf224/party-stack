@@ -1,3 +1,4 @@
+import { worktreeDev } from "@party-stack/vite-plugin-worktree-dev";
 import { devtools } from "@tanstack/devtools-vite";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { defineAppConfig } from "./index.js";
@@ -6,6 +7,10 @@ vi.mock("@tanstack/devtools-vite", async (importOriginal) => {
     const original = await importOriginal<typeof import("@tanstack/devtools-vite")>();
     return { ...original, devtools: vi.fn(original.devtools) };
 });
+
+vi.mock("@party-stack/vite-plugin-worktree-dev", () => ({
+    worktreeDev: vi.fn(() => ({ name: "worktreeDev" })),
+}));
 
 describe("TanStack Start config", () => {
     it("preserves app tasks and caller plugins alongside the framework defaults", () => {
@@ -19,6 +24,7 @@ describe("TanStack Start config", () => {
         });
 
         expect(config.plugins?.[0]).toBe(plugins);
+        expect(config.plugins?.[1]).toEqual({ name: "worktreeDev" });
         expect(devtools).toHaveBeenCalledWith({ consolePiping: { enabled: false } });
         expect(config.server).toEqual({ port: 3000 });
         expect(config.build).toMatchObject({ sourcemap: true });
@@ -31,6 +37,14 @@ describe("TanStack Start config", () => {
             command: "vp build",
             dependsOn: expect.arrayContaining(["check"]),
         });
+    });
+
+    it("forwards Portless options and allows disabling it", () => {
+        defineAppConfig({ worktreeDev: { name: "web", env: false } });
+        expect(worktreeDev).toHaveBeenLastCalledWith({ name: "web", env: false });
+        vi.mocked(worktreeDev).mockClear();
+        defineAppConfig({ worktreeDev: false });
+        expect(worktreeDev).not.toHaveBeenCalled();
     });
 
     it("does not construct framework plugins during task metadata discovery", () => {
