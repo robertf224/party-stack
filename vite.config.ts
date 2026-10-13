@@ -5,7 +5,8 @@ export default defineConfig({
         tasks: {
             test: { command: "vp run -r test" },
             "check-versions": { command: "syncpack lint" },
-            ci: { command: [], dependsOn: ["test", "check-versions"] },
+            "check-format": { command: "vp fmt --check" },
+            ci: { command: [], dependsOn: ["test", "check-versions", "check-format"] },
         },
     },
     lint: {
