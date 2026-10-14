@@ -4,10 +4,14 @@ import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core
 import { decorateObjectAttachmentSources } from "../attachments/attachmentSources.js";
 import { ontologyObjectCollectionId } from "./ontologyObjectCollectionId.js";
 import type { OntologyIR } from "../../ir/index.js";
-import type { OntologyBackendAdapter } from "../OntologyBackendAdapter.js";
+import type { OntologyBackendAdapter, OntologyCollectionUtils } from "../OntologyBackendAdapter.js";
 import type { OntologyObject } from "./OntologyObject.js";
 
-export type OntologyCollection<T extends OntologyObject> = Collection<T>;
+export type OntologyCollection<T extends OntologyObject> = Collection<
+    T,
+    string | number,
+    OntologyCollectionUtils
+>;
 
 function decorateCollectionSync(opts: {
     ir: OntologyIR;
@@ -52,8 +56,21 @@ export function createLiveOntologyObjectCollection(opts: {
         objectType: opts.objectType,
         collectionOptions: opts.backendAdapter.getCollectionOptions(opts.objectType.name),
     });
+    let collection: OntologyCollection<OntologyObject>;
+    const sourceRefresh = collectionOptions.utils?.refresh;
     const options = {
         ...collectionOptions,
+        utils: {
+            ...collectionOptions.utils,
+            ...(sourceRefresh
+                ? {
+                      refresh: async () => {
+                          await collection.preload();
+                          await sourceRefresh();
+                      },
+                  }
+                : {}),
+        },
         id: ontologyObjectCollectionId(opts.runtime.owner, opts.runtime.namespace, opts.objectType.name),
         defaultIndexType: BasicIndex,
         autoIndex: "eager" as const,
@@ -61,7 +78,8 @@ export function createLiveOntologyObjectCollection(opts: {
             (object as Record<string, string | number>)[opts.objectType.primaryKey] as string | number,
     };
     if (!opts.persistObjects) {
-        return createCollection(options);
+        collection = createCollection(options);
+        return collection;
     }
     if (!opts.runtime.persistence) {
         throw new Error(
@@ -69,11 +87,12 @@ export function createLiveOntologyObjectCollection(opts: {
         );
     }
 
-    return createCollection(
-        persistedCollectionOptions<OntologyObject, string | number>({
+    collection = createCollection(
+        persistedCollectionOptions<OntologyObject, string | number, never, OntologyCollectionUtils>({
             ...options,
             schemaVersion: 1,
             persistence: createCollectionPersistence(opts.runtime.coordination, opts.runtime.persistence),
         })
     );
+    return collection;
 }

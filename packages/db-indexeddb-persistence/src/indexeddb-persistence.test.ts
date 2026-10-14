@@ -1,5 +1,6 @@
-import "fake-indexeddb/auto";
 import { createCollection } from "@tanstack/db";
+import "fake-indexeddb/auto";
+import { eagerStorageTarget } from "@tanstack/db-sqlite-persistence-core";
 import {
     persistedCollectionOptions,
     SingleProcessCoordinator,
@@ -76,13 +77,18 @@ describe("createIndexedDBPersistence", () => {
         const first = resolve({ collectionId: "first", mode: "sync-absent", schemaVersion: 2 }).adapter;
         const second = resolve({ collectionId: "second", mode: "sync-absent", schemaVersion: 7 }).adapter;
         try {
-            await Promise.all([first.loadResumeSnapshot("first"), second.loadResumeSnapshot("second")]);
+            await Promise.all([
+                first.loadResumeSnapshot(eagerStorageTarget("first")),
+                second.loadResumeSnapshot(eagerStorageTarget("second")),
+            ]);
             expect(open).toHaveBeenCalledOnce();
             (first as import("./IndexedDBPersistenceAdapter.js").IndexedDBPersistenceAdapter).close();
-            await expect(first.loadResumeSnapshot("first")).rejects.toThrow("closed");
-            await expect(second.loadResumeSnapshot("second")).resolves.toMatchObject({ rows: [] });
+            await expect(first.loadResumeSnapshot(eagerStorageTarget("first"))).rejects.toThrow("closed");
+            await expect(second.loadResumeSnapshot(eagerStorageTarget("second"))).resolves.toMatchObject({
+                rows: [],
+            });
             persistence.close();
-            await expect(second.loadResumeSnapshot("second")).rejects.toThrow("closed");
+            await expect(second.loadResumeSnapshot(eagerStorageTarget("second"))).rejects.toThrow("closed");
         } finally {
             persistence.close();
             open.mockRestore();
@@ -96,7 +102,7 @@ describe("createIndexedDBPersistence", () => {
             mode: "sync-absent",
             schemaVersion: 2,
         });
-        const load = view.adapter.loadResumeSnapshot("pending");
+        const load = view.adapter.loadResumeSnapshot(eagerStorageTarget("pending"));
         persistence.close();
         await expect(load).rejects.toThrow("closed");
     });
@@ -114,7 +120,7 @@ describe("createIndexedDBPersistence", () => {
                 mode: "sync-absent",
                 schemaVersion: 1,
             }).adapter;
-            await original.applyCommittedTx("tasks", {
+            await original.applyCommittedTx(eagerStorageTarget("tasks"), {
                 txId: "seed",
                 term: 1,
                 seq: 1,
@@ -122,8 +128,10 @@ describe("createIndexedDBPersistence", () => {
                 mutations: [{ type: "insert", key: "saved", value: { id: "saved" } }],
             });
             const next = resolve({ collectionId: "tasks", mode: "sync-absent", schemaVersion: 2 }).adapter;
-            await expect(next.loadResumeSnapshot("tasks")).rejects.toThrow("Local-only data was preserved");
-            expect((await original.loadResumeSnapshot("tasks")).rows).toHaveLength(1);
+            await expect(next.loadResumeSnapshot(eagerStorageTarget("tasks"))).rejects.toThrow(
+                "Local-only data was preserved"
+            );
+            expect((await original.loadResumeSnapshot(eagerStorageTarget("tasks"))).rows).toHaveLength(1);
             persistence.close();
         }
     );
@@ -137,7 +145,7 @@ describe("createIndexedDBPersistence", () => {
             });
             const resolve = persistence.resolvePersistenceForCollection!;
             const original = resolve({ collectionId: "tasks", mode, schemaVersion: 1 }).adapter;
-            await original.applyCommittedTx("tasks", {
+            await original.applyCommittedTx(eagerStorageTarget("tasks"), {
                 txId: "seed",
                 term: 1,
                 seq: 1,
@@ -145,7 +153,10 @@ describe("createIndexedDBPersistence", () => {
                 mutations: [{ type: "insert", key: "saved", value: { id: "saved" } }],
             });
             const next = resolve({ collectionId: "tasks", mode, schemaVersion: 2 }).adapter;
-            expect(await next.loadResumeSnapshot("tasks")).toMatchObject({ rows: [], resetEpoch: 1 });
+            expect(await next.loadResumeSnapshot(eagerStorageTarget("tasks"))).toMatchObject({
+                rows: [],
+                resetEpoch: 1,
+            });
             persistence.close();
         }
     );

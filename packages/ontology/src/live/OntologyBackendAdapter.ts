@@ -3,10 +3,15 @@ import type { AttachmentTypeDef, OntologyIR } from "../ir/index.js";
 import type { Uncertain } from "../utils/uncertain.js";
 import type { ValidationIssue } from "../utils/validation.js";
 import type { PartialAttachmentMetadata } from "./attachments/types.js";
-import type { Collection, CollectionConfig } from "@tanstack/db";
+import type { Collection, CollectionConfig, UtilsRecord } from "@tanstack/db";
+
+export interface OntologyCollectionUtils extends UtilsRecord {
+    /** Fetch and atomically replace the source snapshot, when supported by the adapter. */
+    refresh?: () => Promise<void>;
+}
 
 export type OntologyCollectionOptions = Omit<
-    CollectionConfig<Record<string, unknown>, string | number>,
+    CollectionConfig<Record<string, unknown>, string | number, never, OntologyCollectionUtils>,
     "getKey"
 >;
 

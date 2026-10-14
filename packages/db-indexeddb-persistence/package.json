@@ -12,14 +12,14 @@
         }
     },
     "dependencies": {
-        "@tanstack/db-sqlite-persistence-core": "0.4.5",
+        "@tanstack/db-sqlite-persistence-core": "0.4.9",
         "idb": "^8.0.3",
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db": "0.12.1",
-        "@tanstack/node-db-sqlite-persistence": "0.2.30",
+        "@tanstack/db": "0.14.0",
+        "@tanstack/node-db-sqlite-persistence": "0.2.34",
         "@types/better-sqlite3": "^7.6.13",
         "@vitest/browser-playwright": "catalog:",
         "better-sqlite3": "^12.9.0",
@@ -30,6 +30,6 @@
         "vitest": "catalog:"
     },
     "peerDependencies": {
-        "@tanstack/db": "0.12.1"
+        "@tanstack/db": "0.14.0"
     }
 }

@@ -2,6 +2,15 @@ import { defineLibraryConfig } from "@party-stack/build-config";
 import { playwright } from "vite-plus/test/browser-playwright";
 
 export default defineLibraryConfig({
+    pack: {
+        entry: [
+            "src/**/*.{ts,tsx}",
+            "!src/**/*.d.ts",
+            "!src/**/*.test.{ts,tsx}",
+            "!src/**/*.bench.{ts,tsx}",
+            "!src/contracts/**",
+        ],
+    },
     run: {
         tasks: {
             test: { command: "vp test --project unit" },

@@ -1,6 +1,7 @@
 import { createIndexedDBPersistence } from "@party-stack/db-indexeddb-persistence";
 import { createLocalCollection } from "@party-stack/runtime";
 import { createCollection, createLiveQueryCollection } from "@tanstack/db";
+import { eagerStorageTarget } from "@tanstack/db-sqlite-persistence-core";
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
 import { BroadcastCollectionCoordinator } from "@tanstack/db-sqlite-persistence-core/broadcast-coordinator";
 import { createWebRuntime } from "../src/createWebRuntime.js";
@@ -64,10 +65,13 @@ Object.assign(window, {
     persistenceTest: {
         durable: async () => ({
             position: await (upstreamPersistence ?? runtime.persistence)!.adapter.getStreamPosition?.(
-                collection.id
+                eagerStorageTarget(collection.id)
             ),
             keys: (
-                await (upstreamPersistence ?? runtime.persistence)!.adapter.loadSubset(collection.id, {})
+                await (upstreamPersistence ?? runtime.persistence)!.adapter.loadSubset(
+                    eagerStorageTarget(collection.id),
+                    {}
+                )
             ).map((row) => row.key),
         }),
         rows: () => [...query.values()].map(({ id, title, score }) => ({ id, title, score })),

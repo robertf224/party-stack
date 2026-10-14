@@ -1,6 +1,12 @@
 import { IR, compileSingleRowExpression, parseWhereExpression } from "@tanstack/db";
 import {
     encodePersistedStorageKey,
+    DEFAULT_CACHE_GENERATION_CLAIM_TTL_MS,
+    InvalidPersistedCollectionConfigError,
+    safeRandomUUID,
+    type PersistedCacheGenerationClaim,
+    resolvePersistedStorageTarget,
+    type PersistedStorageTarget,
     type PersistedIndexSpec,
     type PersistedRowScanOptions,
     type PersistencePullSinceResult,
@@ -9,7 +15,7 @@ import {
     type PersistenceAdapter,
     type SQLiteCoreAdapterOptions,
 } from "@tanstack/db-sqlite-persistence-core";
-import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from "idb";
 import { Temporal } from "temporal-polyfill";
 import type { LoadSubsetOptions } from "@tanstack/db";
 
@@ -28,7 +34,32 @@ type IndexValueType =
     | "string-ci"
     | "undefined";
 
-const DATABASE_VERSION = 3;
+const DATABASE_VERSION = 4;
+const CACHE_GENERATIONS = "cacheGenerations";
+const CACHE_CLAIMS = "cacheClaims";
+const CACHE_HEADS = "cacheHeads";
+const CACHE_GENERATION_PREFIX = "tanstack-db-cache:";
+const DATA_STORES = [
+    "rows",
+    "transactions",
+    "collectionMetadata",
+    "streams",
+    "indexDefinitions",
+    "indexEntries",
+] as const;
+const ALL_STORES = [...DATA_STORES, CACHE_GENERATIONS, CACHE_CLAIMS, CACHE_HEADS] as const;
+type CacheTransaction = IDBPTransaction<IndexedDBPersistenceDB, typeof ALL_STORES, "readwrite">;
+interface CacheGenerationRecord {
+    storageCollectionId: string;
+    logicalId: string;
+    generation: number;
+    retired: boolean;
+}
+interface CacheClaimRecord extends PersistedCacheGenerationClaim {
+    logicalId: string;
+    expiresAtMs: number;
+}
+
 const ROWS = "rows";
 const TRANSACTIONS = "transactions";
 const COLLECTION_METADATA = "collectionMetadata";
@@ -97,6 +128,13 @@ interface IndexEntryRecord {
 }
 
 interface IndexedDBPersistenceDB extends DBSchema {
+    cacheGenerations: { key: string; value: CacheGenerationRecord };
+    cacheClaims: { key: string; value: CacheClaimRecord; indexes: { collectionId: string } };
+    cacheHeads: {
+        key: string;
+        value: { logicalId: string; storageCollectionId: string; nextGeneration: number };
+    };
+
     rows: {
         key: string;
         value: RowRecord;
@@ -151,16 +189,8 @@ interface PersistedTemporalValue {
     value: string;
 }
 
-export interface IndexedDBPersistenceAdapterOptions {
+export interface IndexedDBPersistenceAdapterOptions extends Omit<SQLiteCoreAdapterOptions, "driver"> {
     databaseName: string;
-    schemaVersion?: number;
-    schemaMismatchPolicy?: SQLiteCoreAdapterOptions["schemaMismatchPolicy"];
-    /** Retry deduplication and replay are retained for this bounded window. */
-    appliedTxPruneMaxRows?: number;
-    appliedTxPruneMaxAgeSeconds?: number;
-    pullSinceReloadThreshold?: number;
-    onBlocked?: () => void;
-    onVersionChange?: (event: IDBVersionChangeEvent) => void;
 }
 
 function id(...parts: string[]): string {
@@ -799,27 +829,202 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         this.schemaVersion = options.schemaVersion ?? 1;
         for (const [name, value] of Object.entries({
             schemaVersion: this.schemaVersion,
+            cacheGenerationClaimTtlMs:
+                options.cacheGenerationClaimTtlMs ?? DEFAULT_CACHE_GENERATION_CLAIM_TTL_MS,
             appliedTxPruneMaxRows: options.appliedTxPruneMaxRows ?? 1000,
             appliedTxPruneMaxAgeSeconds: options.appliedTxPruneMaxAgeSeconds ?? 86400,
             pullSinceReloadThreshold: options.pullSinceReloadThreshold ?? 128,
         })) {
-            if (!Number.isSafeInteger(value) || value < (name === "schemaVersion" ? 1 : 0)) {
+            if (!Number.isSafeInteger(value) || value < (name === "cacheGenerationClaimTtlMs" ? 1 : 0)) {
                 throw new Error(
-                    `IndexedDB ${name} must be a ${name === "schemaVersion" ? "positive" : "non-negative"} safe integer.`
+                    `IndexedDB ${name} must be a ${name === "cacheGenerationClaimTtlMs" ? "positive" : "non-negative"} safe integer.`
                 );
             }
         }
     }
 
+    getCacheGenerationNow(): number {
+        return this.options.now?.() ?? Date.now();
+    }
+
+    private get claimTtl(): number {
+        return this.options.cacheGenerationClaimTtlMs ?? DEFAULT_CACHE_GENERATION_CLAIM_TTL_MS;
+    }
+
+    private async cacheTransaction<T>(work: (transaction: CacheTransaction) => Promise<T>): Promise<T> {
+        const database = await this.database();
+        const transaction = database.transaction(ALL_STORES, "readwrite");
+        void transaction.done.catch(() => undefined);
+        try {
+            const result = await work(transaction);
+            await transaction.done;
+            return result;
+        } catch (error) {
+            try {
+                transaction.abort();
+            } catch {
+                /* Already settled. */
+            }
+            await transaction.done.catch(() => undefined);
+            throw error;
+        }
+    }
+
+    async claimCacheGeneration(logicalId: string): Promise<PersistedCacheGenerationClaim> {
+        return this.cacheTransaction(async (transaction) => {
+            let head = await transaction.objectStore(CACHE_HEADS).get(logicalId);
+            if (!head) {
+                // Never reuse legacy eager storage: old clients may still write it without a claim.
+                const storageCollectionId = `${CACHE_GENERATION_PREFIX}${safeRandomUUID()}`;
+                head = { logicalId, storageCollectionId, nextGeneration: 1 };
+                await transaction
+                    .objectStore(CACHE_GENERATIONS)
+                    .put({ logicalId, storageCollectionId, generation: 0, retired: false });
+                await transaction.objectStore(CACHE_HEADS).put(head);
+            }
+            const claim = {
+                logicalId,
+                storageCollectionId: head.storageCollectionId,
+                claimId: safeRandomUUID(),
+                expiresAtMs: this.getCacheGenerationNow() + this.claimTtl,
+            };
+            await transaction.objectStore(CACHE_CLAIMS).put(claim);
+            await this.collectRetiredGenerations(transaction);
+            return {
+                storageCollectionId: claim.storageCollectionId,
+                claimId: claim.claimId,
+                expiresAtMs: claim.expiresAtMs,
+            };
+        });
+    }
+
+    async rotateCacheGeneration(
+        logicalId: string,
+        claimId: string,
+        resetMetadata?: { key: string; value: unknown },
+        expectedStorageCollectionId?: string
+    ): Promise<PersistedCacheGenerationClaim> {
+        return this.cacheTransaction(async (transaction) => {
+            const now = this.getCacheGenerationNow();
+            const claim = await transaction.objectStore(CACHE_CLAIMS).get(claimId);
+            const ownedClaim = claim?.logicalId === logicalId ? claim : undefined;
+            const claimedPhysicalId =
+                ownedClaim && ownedClaim.expiresAtMs > now ? ownedClaim.storageCollectionId : undefined;
+            if (
+                claimedPhysicalId &&
+                expectedStorageCollectionId &&
+                claimedPhysicalId !== expectedStorageCollectionId
+            )
+                throw new InvalidPersistedCollectionConfigError(
+                    "Persisted cache claim changed generations before recovery"
+                );
+            const head = await transaction.objectStore(CACHE_HEADS).get(logicalId);
+            if (!head)
+                throw new InvalidPersistedCollectionConfigError(
+                    `No active persisted cache generation for collection "${logicalId}"`
+                );
+            const ownedHead = claimedPhysicalId === head.storageCollectionId;
+            const storageCollectionId = `${CACHE_GENERATION_PREFIX}${safeRandomUUID()}`;
+            if (ownedHead) {
+                const old = (await transaction.objectStore(CACHE_GENERATIONS).get(head.storageCollectionId))!;
+                await transaction.objectStore(CACHE_GENERATIONS).put({ ...old, retired: true });
+            }
+            await transaction.objectStore(CACHE_GENERATIONS).put({
+                logicalId,
+                storageCollectionId,
+                generation: head.nextGeneration,
+                retired: !ownedHead,
+            });
+            await transaction.objectStore(CACHE_HEADS).put({
+                ...head,
+                nextGeneration: head.nextGeneration + 1,
+                ...(ownedHead ? { storageCollectionId } : {}),
+            });
+            // A live or not-yet-collected expired claim keeps its identity, just as SQLite does.
+            const nextClaimId = ownedClaim ? claimId : safeRandomUUID();
+            const expiresAtMs = now + this.claimTtl;
+            await transaction
+                .objectStore(CACHE_CLAIMS)
+                .put({ logicalId, storageCollectionId, claimId: nextClaimId, expiresAtMs });
+            if (resetMetadata)
+                await transaction.objectStore(COLLECTION_METADATA).put({
+                    id: id(storageCollectionId, resetMetadata.key),
+                    collectionId: storageCollectionId,
+                    key: resetMetadata.key,
+                    value: encodePersistedValue(resetMetadata.value),
+                });
+            await this.collectRetiredGenerations(transaction);
+            return { storageCollectionId, claimId: nextClaimId, expiresAtMs };
+        });
+    }
+
+    async releaseCacheGenerationClaim(claimId: string): Promise<void> {
+        await this.cacheTransaction(async (transaction) => {
+            await transaction.objectStore(CACHE_CLAIMS).delete(claimId);
+            await this.collectRetiredGenerations(transaction);
+        });
+    }
+
+    async renewCacheGenerationClaim(
+        storageCollectionId: string,
+        claimId: string
+    ): Promise<number | undefined> {
+        return this.cacheTransaction(async (transaction) => {
+            const claim = await transaction.objectStore(CACHE_CLAIMS).get(claimId);
+            const now = this.getCacheGenerationNow();
+            if (!claim || claim.storageCollectionId !== storageCollectionId || claim.expiresAtMs <= now) {
+                await this.collectRetiredGenerations(transaction);
+                return undefined;
+            }
+            const expiresAtMs = now + this.claimTtl;
+            await transaction.objectStore(CACHE_CLAIMS).put({ ...claim, expiresAtMs });
+            return expiresAtMs;
+        });
+    }
+
+    private async collectRetiredGenerations(transaction: CacheTransaction): Promise<void> {
+        const now = this.getCacheGenerationNow();
+        let claim = await transaction.objectStore(CACHE_CLAIMS).openCursor();
+        while (claim) {
+            if (claim.value.expiresAtMs <= now) await claim.delete();
+            claim = await claim.continue();
+        }
+        let generation = await transaction.objectStore(CACHE_GENERATIONS).openCursor();
+        while (generation) {
+            const collectionId = generation.value.storageCollectionId;
+            if (
+                generation.value.retired &&
+                (await transaction.objectStore(CACHE_CLAIMS).index(BY_COLLECTION).count(collectionId)) === 0
+            ) {
+                for (const name of [
+                    ROWS,
+                    TRANSACTIONS,
+                    COLLECTION_METADATA,
+                    INDEX_DEFINITIONS,
+                    INDEX_ENTRIES,
+                ] as const) {
+                    const store = transaction.objectStore(name);
+                    const keys = await store.index(BY_COLLECTION).getAllKeys(collectionId);
+                    await Promise.all(keys.map((key) => store.delete(key as never)));
+                }
+                await transaction.objectStore(STREAMS).delete(collectionId);
+                await generation.delete();
+                this.initialized.delete(collectionId);
+            }
+            generation = await generation.continue();
+        }
+    }
+
     private async collectionDatabase(
-        collectionId: string
+        collectionId: string,
+        claimId?: string
     ): Promise<{ database: IDBPDatabase<IndexedDBPersistenceDB>; epoch: number }> {
         const database = await this.database();
         if (this.closed || this.connection.closed)
             throw new Error("IndexedDB persistence adapter is closed.");
         let initialized = this.initialized.get(collectionId);
         if (!initialized) {
-            initialized = this.initializeCollection(database, collectionId);
+            initialized = this.initializeCollection(database, collectionId, claimId);
             this.initialized.set(collectionId, initialized);
             void initialized.catch(() => {
                 if (this.initialized.get(collectionId) === initialized) this.initialized.delete(collectionId);
@@ -839,13 +1044,29 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
 
     private async initializeCollection(
         database: IDBPDatabase<IndexedDBPersistenceDB>,
-        collectionId: string
+        collectionId: string,
+        claimId?: string
     ): Promise<number> {
         const transaction = database.transaction(
-            [ROWS, TRANSACTIONS, COLLECTION_METADATA, STREAMS, INDEX_DEFINITIONS, INDEX_ENTRIES],
+            [
+                ROWS,
+                TRANSACTIONS,
+                COLLECTION_METADATA,
+                STREAMS,
+                INDEX_DEFINITIONS,
+                INDEX_ENTRIES,
+                CACHE_GENERATIONS,
+                CACHE_CLAIMS,
+            ],
             "readwrite"
         );
         try {
+            await this.assertClaim(
+                transaction.objectStore(CACHE_GENERATIONS),
+                transaction.objectStore(CACHE_CLAIMS),
+                collectionId,
+                claimId
+            );
             let stream = await transaction.objectStore(STREAMS).get(collectionId);
             // Existing version-1 databases were written with the default collection schema (1).
             const storedVersion = stream?.schemaVersion ?? (stream ? 1 : this.schemaVersion);
@@ -943,14 +1164,63 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         }
     }
 
-    async loadResumeSnapshot(
+    private access(target: PersistedStorageTarget, legacyClaimId?: string) {
+        return resolvePersistedStorageTarget(target, legacyClaimId);
+    }
+
+    private async assertClaim(
+        generations: { get(key: string): Promise<CacheGenerationRecord | undefined> },
+        claims: { get(key: string): Promise<CacheClaimRecord | undefined> },
         collectionId: string,
-        context?: { requiredIndexSignatures?: ReadonlyArray<string>; includeRows?: boolean }
+        claimId?: string
+    ): Promise<void> {
+        if (claimId) {
+            const [claim, generation] = await Promise.all([
+                claims.get(claimId),
+                generations.get(collectionId),
+            ]);
+            if (
+                !claim ||
+                !generation ||
+                claim.storageCollectionId !== collectionId ||
+                claim.expiresAtMs <= this.getCacheGenerationNow()
+            )
+                throw new InvalidPersistedCollectionConfigError(
+                    `Persisted cache claim is no longer active for collection "${collectionId}"`
+                );
+        } else if (
+            (collectionId.startsWith(CACHE_GENERATION_PREFIX) ||
+                collectionId.startsWith(`\u0000${CACHE_GENERATION_PREFIX}`)) &&
+            (await generations.get(collectionId))
+        ) {
+            throw new InvalidPersistedCollectionConfigError(
+                `Persisted cache claim is required for collection "${collectionId}"`
+            );
+        }
+    }
+
+    async loadResumeSnapshot(
+        target: PersistedStorageTarget,
+        context?: {
+            requiredIndexSignatures?: ReadonlyArray<string>;
+            includeRows?: boolean;
+            cacheGenerationClaimId?: string;
+        }
     ): ReturnType<PersistenceAdapter["loadResumeSnapshot"]> {
-        const { database, epoch } = await this.collectionDatabase(collectionId);
+        const { collectionId, claimId } = this.access(target, context?.cacheGenerationClaimId);
+        const { database, epoch } = await this.collectionDatabase(collectionId, claimId);
         // Read data and its cursor together so a concurrent commit cannot make
         // the resume position newer than the rows restored from this snapshot.
-        const transaction = database.transaction([ROWS, COLLECTION_METADATA, STREAMS], "readonly");
+        const transaction = database.transaction(
+            [ROWS, COLLECTION_METADATA, STREAMS, CACHE_GENERATIONS, CACHE_CLAIMS],
+            "readonly"
+        );
+        await this.assertClaim(
+            transaction.objectStore(CACHE_GENERATIONS),
+            transaction.objectStore(CACHE_CLAIMS),
+            collectionId,
+            claimId
+        );
         const [rows, metadata, stream] = await Promise.all([
             context?.includeRows === false
                 ? Promise.resolve([])
@@ -977,21 +1247,34 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         };
     }
 
-    async loadSubset(collectionId: string, options: LoadSubsetOptions): Promise<PersistedRow[]> {
+    async loadSubset(
+        target: PersistedStorageTarget,
+        options: LoadSubsetOptions,
+        context?: { requiredIndexSignatures?: ReadonlyArray<string>; cacheGenerationClaimId?: string }
+    ): Promise<PersistedRow[]> {
+        const { collectionId, claimId } = this.access(target, context?.cacheGenerationClaimId);
         if (options.cursor) {
             const combine = (predicate: IR.BasicExpression<boolean>) =>
                 options.where ? new IR.Func<boolean>("and", [options.where, predicate]) : predicate;
             // Restore every row tied at the current boundary, then the requested following page.
             const [current, following] = await Promise.all([
-                this.loadSubset(collectionId, {
-                    where: combine(options.cursor.whereCurrent),
-                    orderBy: options.orderBy,
-                }),
-                this.loadSubset(collectionId, {
-                    where: combine(options.cursor.whereFrom),
-                    orderBy: options.orderBy,
-                    limit: options.limit,
-                }),
+                this.loadSubset(
+                    target,
+                    {
+                        where: combine(options.cursor.whereCurrent),
+                        orderBy: options.orderBy,
+                    },
+                    context
+                ),
+                this.loadSubset(
+                    target,
+                    {
+                        where: combine(options.cursor.whereFrom),
+                        orderBy: options.orderBy,
+                        limit: options.limit,
+                    },
+                    context
+                ),
             ]);
             const currentPredicate = compileSingleRowExpression(combine(options.cursor.whereCurrent));
             const merged = new Map(
@@ -1001,10 +1284,16 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             );
             return orderRows([...merged.values()], options.orderBy).rows;
         }
-        const { database, epoch } = await this.collectionDatabase(collectionId);
+        const { database, epoch } = await this.collectionDatabase(collectionId, claimId);
         const transaction = database.transaction(
-            [ROWS, INDEX_DEFINITIONS, INDEX_ENTRIES, STREAMS],
+            [ROWS, INDEX_DEFINITIONS, INDEX_ENTRIES, STREAMS, CACHE_GENERATIONS, CACHE_CLAIMS],
             "readonly"
+        );
+        await this.assertClaim(
+            transaction.objectStore(CACHE_GENERATIONS),
+            transaction.objectStore(CACHE_CLAIMS),
+            collectionId,
+            claimId
         );
         this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
         const definitions = await transaction
@@ -1201,16 +1490,32 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         return ordered.rows.slice(offset, offset + limit);
     }
 
-    async applyCommittedTx(collectionId: string, committed: PersistedTx): Promise<void> {
-        const { database, epoch } = await this.collectionDatabase(collectionId);
+    async applyCommittedTx(target: PersistedStorageTarget, committed: PersistedTx): Promise<void> {
+        const { collectionId, claimId } = this.access(target, committed.cacheGenerationClaimId);
+        const { database, epoch } = await this.collectionDatabase(collectionId, claimId);
         const transaction = database.transaction(
-            [ROWS, TRANSACTIONS, COLLECTION_METADATA, STREAMS, INDEX_DEFINITIONS, INDEX_ENTRIES],
+            [
+                ROWS,
+                TRANSACTIONS,
+                COLLECTION_METADATA,
+                STREAMS,
+                INDEX_DEFINITIONS,
+                INDEX_ENTRIES,
+                CACHE_GENERATIONS,
+                CACHE_CLAIMS,
+            ],
             "readwrite"
         );
         // A cloning failure can abort while mutation promises are still unwinding.
         // Observe completion immediately; the catch below still propagates the write error.
         void transaction.done.catch(() => undefined);
         try {
+            await this.assertClaim(
+                transaction.objectStore(CACHE_GENERATIONS),
+                transaction.objectStore(CACHE_CLAIMS),
+                collectionId,
+                claimId
+            );
             const stream = await transaction.objectStore(STREAMS).get(collectionId);
             this.assertSchema(stream, collectionId, epoch);
             const transactionId = id(collectionId, committed.txId);
@@ -1460,9 +1765,22 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         }
     }
 
-    async loadCollectionMetadata(collectionId: string): Promise<Array<{ key: string; value: unknown }>> {
-        const { database, epoch } = await this.collectionDatabase(collectionId);
-        const transaction = database.transaction([COLLECTION_METADATA, STREAMS], "readonly");
+    async loadCollectionMetadata(
+        target: PersistedStorageTarget,
+        context?: { cacheGenerationClaimId?: string }
+    ): Promise<Array<{ key: string; value: unknown }>> {
+        const { collectionId, claimId } = this.access(target, context?.cacheGenerationClaimId);
+        const { database, epoch } = await this.collectionDatabase(collectionId, claimId);
+        const transaction = database.transaction(
+            [COLLECTION_METADATA, STREAMS, CACHE_GENERATIONS, CACHE_CLAIMS],
+            "readonly"
+        );
+        await this.assertClaim(
+            transaction.objectStore(CACHE_GENERATIONS),
+            transaction.objectStore(CACHE_CLAIMS),
+            collectionId,
+            claimId
+        );
         this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
         const records = await transaction
             .objectStore(COLLECTION_METADATA)
@@ -1475,10 +1793,24 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         }));
     }
 
-    async scanRows(collectionId: string, options?: PersistedRowScanOptions): Promise<PersistedRow[]> {
-        if (!options?.metadataOnly) return this.loadSubset(collectionId, {});
-        const { database, epoch } = await this.collectionDatabase(collectionId);
-        const transaction = database.transaction([ROWS, STREAMS], "readonly");
+    async scanRows(
+        target: PersistedStorageTarget,
+        options?: PersistedRowScanOptions,
+        context?: { cacheGenerationClaimId?: string }
+    ): Promise<PersistedRow[]> {
+        const { collectionId, claimId } = this.access(target, context?.cacheGenerationClaimId);
+        if (!options?.metadataOnly) return this.loadSubset(target, {}, context);
+        const { database, epoch } = await this.collectionDatabase(collectionId, claimId);
+        const transaction = database.transaction(
+            [ROWS, STREAMS, CACHE_GENERATIONS, CACHE_CLAIMS],
+            "readonly"
+        );
+        await this.assertClaim(
+            transaction.objectStore(CACHE_GENERATIONS),
+            transaction.objectStore(CACHE_CLAIMS),
+            collectionId,
+            claimId
+        );
         this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
         const rows = await transaction.objectStore(ROWS).index(BY_METADATA).getAll([collectionId, 1]);
         await transaction.done;
@@ -1490,11 +1822,22 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
     }
 
     async pullSince(
-        collectionId: string,
-        fromRowVersion: number
+        target: PersistedStorageTarget,
+        fromRowVersion: number,
+        context?: { cacheGenerationClaimId?: string }
     ): Promise<PersistencePullSinceResult & { latestTerm: number; latestSeq: number }> {
-        const { database, epoch } = await this.collectionDatabase(collectionId);
-        const transaction = database.transaction([TRANSACTIONS, STREAMS], "readonly");
+        const { collectionId, claimId } = this.access(target, context?.cacheGenerationClaimId);
+        const { database, epoch } = await this.collectionDatabase(collectionId, claimId);
+        const transaction = database.transaction(
+            [TRANSACTIONS, STREAMS, CACHE_GENERATIONS, CACHE_CLAIMS],
+            "readonly"
+        );
+        await this.assertClaim(
+            transaction.objectStore(CACHE_GENERATIONS),
+            transaction.objectStore(CACHE_CLAIMS),
+            collectionId,
+            claimId
+        );
         const stream = await transaction.objectStore(STREAMS).get(collectionId);
         this.assertSchema(stream, collectionId, epoch);
         const latestRowVersion = stream!.latestRowVersion;
@@ -1557,14 +1900,26 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         };
     }
 
-    async ensureIndex(collectionId: string, signature: string, spec: PersistedIndexSpec): Promise<void> {
-        const { database, epoch } = await this.collectionDatabase(collectionId);
+    async ensureIndex(
+        target: PersistedStorageTarget,
+        signature: string,
+        spec: PersistedIndexSpec,
+        context?: { cacheGenerationClaimId?: string }
+    ): Promise<void> {
+        const { collectionId, claimId } = this.access(target, context?.cacheGenerationClaimId);
+        const { database, epoch } = await this.collectionDatabase(collectionId, claimId);
         const expression = parseIndexExpression(spec);
         const transaction = database.transaction(
-            [ROWS, INDEX_DEFINITIONS, INDEX_ENTRIES, STREAMS],
+            [ROWS, INDEX_DEFINITIONS, INDEX_ENTRIES, STREAMS, CACHE_GENERATIONS, CACHE_CLAIMS],
             "readwrite"
         );
         try {
+            await this.assertClaim(
+                transaction.objectStore(CACHE_GENERATIONS),
+                transaction.objectStore(CACHE_CLAIMS),
+                collectionId,
+                claimId
+            );
             this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
             const existing = await transaction.objectStore(INDEX_DEFINITIONS).get([collectionId, signature]);
             if (
@@ -1607,9 +1962,23 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         }
     }
 
-    async markIndexRemoved(collectionId: string, signature: string): Promise<void> {
-        const { database, epoch } = await this.collectionDatabase(collectionId);
-        const transaction = database.transaction([INDEX_DEFINITIONS, INDEX_ENTRIES, STREAMS], "readwrite");
+    async markIndexRemoved(
+        target: PersistedStorageTarget,
+        signature: string,
+        context?: { cacheGenerationClaimId?: string }
+    ): Promise<void> {
+        const { collectionId, claimId } = this.access(target, context?.cacheGenerationClaimId);
+        const { database, epoch } = await this.collectionDatabase(collectionId, claimId);
+        const transaction = database.transaction(
+            [INDEX_DEFINITIONS, INDEX_ENTRIES, STREAMS, CACHE_GENERATIONS, CACHE_CLAIMS],
+            "readwrite"
+        );
+        await this.assertClaim(
+            transaction.objectStore(CACHE_GENERATIONS),
+            transaction.objectStore(CACHE_CLAIMS),
+            collectionId,
+            claimId
+        );
         this.assertSchema(await transaction.objectStore(STREAMS).get(collectionId), collectionId, epoch);
         await transaction.objectStore(INDEX_DEFINITIONS).delete([collectionId, signature]);
         const entryStore = transaction.objectStore(INDEX_ENTRIES);
@@ -1618,10 +1987,22 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         await transaction.done;
     }
 
-    async getStreamPosition(collectionId: string): Promise<StreamRecord> {
-        const { database, epoch } = await this.collectionDatabase(collectionId);
-        const stream = await database.get(STREAMS, collectionId);
+    async getStreamPosition(
+        target: PersistedStorageTarget,
+        context?: { cacheGenerationClaimId?: string }
+    ): Promise<StreamRecord> {
+        const { collectionId, claimId } = this.access(target, context?.cacheGenerationClaimId);
+        const { database, epoch } = await this.collectionDatabase(collectionId, claimId);
+        const transaction = database.transaction([STREAMS, CACHE_GENERATIONS, CACHE_CLAIMS], "readonly");
+        await this.assertClaim(
+            transaction.objectStore(CACHE_GENERATIONS),
+            transaction.objectStore(CACHE_CLAIMS),
+            collectionId,
+            claimId
+        );
+        const stream = await transaction.objectStore(STREAMS).get(collectionId);
         this.assertSchema(stream, collectionId, epoch);
+        await transaction.done;
         return (
             stream ?? {
                 collectionId,
@@ -1649,12 +2030,7 @@ export class IndexedDBConnection {
     private databasePromise?: Promise<IDBPDatabase<IndexedDBPersistenceDB>>;
     closed = false;
 
-    constructor(
-        private readonly options: Pick<
-            IndexedDBPersistenceAdapterOptions,
-            "databaseName" | "onBlocked" | "onVersionChange"
-        >
-    ) {}
+    constructor(private readonly options: Pick<IndexedDBPersistenceAdapterOptions, "databaseName">) {}
 
     close(): void {
         this.closed = true;
@@ -1719,6 +2095,13 @@ export class IndexedDBConnection {
                         }
                     })().catch(() => transaction.abort());
                 }
+                if (oldVersion < 4) {
+                    database.createObjectStore(CACHE_GENERATIONS, { keyPath: "storageCollectionId" });
+                    database.createObjectStore(CACHE_HEADS, { keyPath: "logicalId" });
+                    database
+                        .createObjectStore(CACHE_CLAIMS, { keyPath: "claimId" })
+                        .createIndex(BY_COLLECTION, "storageCollectionId");
+                }
                 if (oldVersion < 3) {
                     // Older journal records retain tx-id deduplication; new records also
                     // retain the coordinator stream identity, matching SQLite's contract.
@@ -1727,9 +2110,7 @@ export class IndexedDBConnection {
                         .createIndex(BY_POSITION, ["collectionId", "term", "seq"]);
                 }
             },
-            blocked: () => this.options.onBlocked?.(),
-            blocking: (_currentVersion, _blockedVersion, event) => {
-                this.options.onVersionChange?.(event);
+            blocking: () => {
                 void this.databasePromise?.then((database) => database.close());
                 this.databasePromise = undefined;
             },

@@ -80,7 +80,7 @@ function memoryPersistenceAdapter(): PersistenceAdapter {
                 }))
             ),
         applyCommittedTx: (
-            _collectionId: string,
+            _target: Parameters<PersistenceAdapter["applyCommittedTx"]>[0],
             transaction: Parameters<PersistenceAdapter["applyCommittedTx"]>[1]
         ) => {
             if (transaction.truncate) rows.clear();

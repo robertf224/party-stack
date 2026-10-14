@@ -6,6 +6,8 @@ import {
 } from "@party-stack/coordination";
 import {
     safeRandomUUID,
+    eagerStorageTarget,
+    managedStorageTarget,
     SingleProcessCoordinator,
     toTransportedLoadSubsetOptions,
     toPersistedCollectionDurabilityError,
@@ -24,6 +26,7 @@ import type {
     ProtocolEnvelope,
     PullSinceResponse,
     ReplayableTxDelta,
+    PersistedStorageTarget,
 } from "@tanstack/db-sqlite-persistence-core";
 
 const PERSISTENCE_SERVICE = "party-stack.persistence.v1";
@@ -54,6 +57,7 @@ interface ApplyCommittedTxInput {
 }
 
 interface EnsurePersistedIndexInput {
+    cacheGenerationClaimId?: string;
     schemaVersion?: number;
     collectionId: string;
     signature: string;
@@ -61,6 +65,7 @@ interface EnsurePersistedIndexInput {
 }
 
 interface ApplyLocalMutationsInput {
+    cacheGenerationClaimId?: string;
     schemaVersion?: number;
     collectionId: string;
     rpcId: string;
@@ -69,6 +74,7 @@ interface ApplyLocalMutationsInput {
 }
 
 interface PullSinceInput {
+    cacheGenerationClaimId?: string;
     schemaVersion?: number;
     collectionId: string;
     rpcId: string;
@@ -98,7 +104,7 @@ interface PersistenceCoordinationService {
 
 type AdapterWithPullSince = PersistenceAdapter & {
     pullSince?: (
-        collectionId: string,
+        target: PersistedStorageTarget,
         fromRowVersion: number
     ) => Promise<
         | {
@@ -214,7 +220,13 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
         };
     }
 
-    setAdapterForCollection(collectionId: string, adapter: HydrationPersistenceAdapter): void {
+    setAdapterForCollection(
+        collectionId: string,
+        adapter: HydrationPersistenceAdapter,
+        cacheGenerationClaimId?: string
+    ): void {
+        if (cacheGenerationClaimId) this.claims.set(collectionId, cacheGenerationClaimId);
+        else this.claims.delete(collectionId);
         this.collectionAdapters.set(collectionId, adapter);
         this.positions.delete(collectionId);
     }
@@ -233,6 +245,14 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
         return "schemaVersion" in adapter && typeof adapter.schemaVersion === "number"
             ? adapter.schemaVersion
             : undefined;
+    }
+    private readonly claims = new Map<string, string>();
+    private storageTarget(
+        collectionId: string,
+        claimId = this.claims.get(collectionId)
+    ): PersistedStorageTarget {
+        if (claimId) this.claims.set(collectionId, claimId);
+        return claimId ? managedStorageTarget(collectionId, claimId) : eagerStorageTarget(collectionId);
     }
     private readonly positions = new Map<string, Promise<CollectionPosition>>();
     private readonly appliedEnvelopes = new Map<string, Extract<ApplyLocalMutationsResponse, { ok: true }>>();
@@ -291,7 +311,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
                   applyCommittedTx: (input) => this.applyCommittedTx(input),
                   ensurePersistedIndex: (input) =>
                       this.adapterForCollection(input.collectionId, input.schemaVersion).ensureIndex(
-                          input.collectionId,
+                          this.storageTarget(input.collectionId, input.cacheGenerationClaimId),
                           input.signature,
                           input.spec
                       ),
@@ -346,7 +366,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
             try {
                 if (!active) return;
                 const adapter = this.adapterForCollection(collectionId);
-                const current = await adapter.getStreamPosition?.(collectionId);
+                const current = await adapter.getStreamPosition?.(this.storageTarget(collectionId));
                 if (!active) return;
                 if (
                     !force &&
@@ -408,6 +428,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
                 } else {
                     this.collectionSubscriptions.delete(collectionId);
                     this.collectionAdapters.delete(collectionId);
+                    this.claims.delete(collectionId);
                     this.positions.delete(collectionId);
                 }
             }
@@ -514,7 +535,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     ): Promise<ApplyCommittedTxResponse> {
         try {
             await (scopedAdapter ?? this.adapterForCollection(collectionId, schemaVersion)).applyCommittedTx(
-                collectionId,
+                this.storageTarget(collectionId, tx.cacheGenerationClaimId),
                 tx
             );
         } catch (error) {
@@ -536,13 +557,14 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
         signature: string,
         spec: PersistedIndexSpec,
         scopedAdapter?: HydrationPersistenceAdapter,
-        localEnsureCompleted?: boolean
+        localEnsureCompleted?: boolean,
+        cacheGenerationClaimId?: string
     ): Promise<void> {
         if (this.isLeader()) {
             return localEnsureCompleted
                 ? Promise.resolve()
                 : (scopedAdapter ?? this.adapterForCollection(collectionId)).ensureIndex(
-                      collectionId,
+                      this.storageTarget(collectionId, cacheGenerationClaimId),
                       signature,
                       spec
                   );
@@ -551,6 +573,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
             collectionId,
             signature,
             spec,
+            cacheGenerationClaimId,
             schemaVersion:
                 this.schemaVersion(scopedAdapter ?? this.adapterForCollection(collectionId)) ??
                 this.schemaVersion(this.adapterForCollection(collectionId)),
@@ -559,7 +582,8 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
 
     async requestApplyLocalMutations(
         collectionId: string,
-        mutations: PersistedMutationEnvelope[]
+        mutations: PersistedMutationEnvelope[],
+        cacheGenerationClaimId?: string
     ): Promise<ApplyLocalMutationsResponse> {
         const envelopeId = safeRandomUUID();
         const burst = this.resumeChecks.has(collectionId)
@@ -582,6 +606,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
                 envelopeId,
                 schemaVersion: this.schemaVersion(this.adapterForCollection(collectionId)),
                 mutations,
+                cacheGenerationClaimId,
             });
         } finally {
             burst?.pending.delete(envelopeId);
@@ -600,13 +625,23 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
         }
     }
 
-    pullSince(collectionId: string, fromRowVersion: number): Promise<PullSinceResponse> {
-        return this.service.methods.pullSince({
+    pullSince(
+        collectionId: string,
+        fromRowVersion: number,
+        scopedAdapter?: HydrationPersistenceAdapter,
+        cacheGenerationClaimId?: string
+    ): Promise<PullSinceResponse> {
+        this.storageTarget(collectionId, cacheGenerationClaimId);
+        const input = {
             collectionId,
             rpcId: safeRandomUUID(),
             fromRowVersion,
+            cacheGenerationClaimId,
             schemaVersion: this.schemaVersion(this.adapterForCollection(collectionId)),
-        });
+        };
+        return scopedAdapter && this.isLeader()
+            ? this.handlePullSince(input, scopedAdapter)
+            : this.service.methods.pullSince(input);
     }
 
     private relayMessage(input: RelayMessageInput): Promise<void> {
@@ -635,8 +670,8 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
             const adapter = this.adapterForCollection(collectionId);
             position = Promise.resolve(
                 adapter.getStreamPosition
-                    ? adapter.getStreamPosition(collectionId)
-                    : adapter.loadResumeSnapshot(collectionId, { includeRows: false })
+                    ? adapter.getStreamPosition(this.storageTarget(collectionId))
+                    : adapter.loadResumeSnapshot(this.storageTarget(collectionId), { includeRows: false })
             ).then((current) => ({
                 term: (current?.latestTerm ?? 0) + 1,
                 seq: current?.latestSeq ?? 0,
@@ -666,10 +701,12 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
             };
         }
 
+        this.storageTarget(input.collectionId, input.cacheGenerationClaimId);
         const position = await this.position(input.collectionId);
         const nextPosition = { ...position, seq: position.seq + 1, rowVersion: position.rowVersion + 1 };
         const txId = input.envelopeId;
-        await adapter.applyCommittedTx(input.collectionId, {
+        await adapter.applyCommittedTx(this.storageTarget(input.collectionId, input.cacheGenerationClaimId), {
+            cacheGenerationClaimId: input.cacheGenerationClaimId,
             txId,
             term: nextPosition.term,
             seq: nextPosition.seq,
@@ -738,13 +775,22 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
         return response;
     }
 
-    private async handlePullSince(input: PullSinceInput): Promise<PullSinceResponse> {
-        const adapter = this.adapterForCollection(input.collectionId, input.schemaVersion);
-        const current = await adapter.getStreamPosition?.(input.collectionId);
+    private async handlePullSince(
+        input: PullSinceInput,
+        scopedAdapter?: HydrationPersistenceAdapter
+    ): Promise<PullSinceResponse> {
+        const adapter: AdapterWithPullSince =
+            scopedAdapter ?? this.adapterForCollection(input.collectionId, input.schemaVersion);
+        const current = await adapter.getStreamPosition?.(
+            this.storageTarget(input.collectionId, input.cacheGenerationClaimId)
+        );
         const position = current
             ? { term: current.latestTerm, seq: current.latestSeq, rowVersion: current.latestRowVersion }
             : await this.position(input.collectionId);
-        const result = await adapter.pullSince?.(input.collectionId, input.fromRowVersion);
+        const result = await adapter.pullSince?.(
+            this.storageTarget(input.collectionId, input.cacheGenerationClaimId),
+            input.fromRowVersion
+        );
         if (!result || result.requiresFullReload) {
             return {
                 type: "rpc:pullSince:res",

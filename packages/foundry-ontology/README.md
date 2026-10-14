@@ -44,3 +44,22 @@ are used when public metadata does not provide them. Open string one-of values
 are preserved as suggestions. Object-query and struct-field prefills are omitted
 until the expression model supports them, and failures from the private endpoint
 do not prevent public action metadata from loading.
+
+## Refreshing objects
+
+Foundry object collections expose an awaitable full-source refresh:
+
+```ts
+await ontology.objects.Employee.utils.refresh?.();
+```
+
+`refresh` is an optional adapter utility on the generic ontology collection API.
+Foundry fetches a fresh snapshot and replaces cached rows in one sync transaction,
+while keeping live subscriptions active and applying updates received during the
+fetch. The promise waits for the commit and rejects on failure. Ontology
+collections start their sync before refreshing; when using
+`objectCollectionOptions` directly, preload the collection first.
+
+When edit history is unavailable, reconnection and action acknowledgement also
+request a fresh snapshot. Acknowledgement waits for that snapshot's commit; it
+cannot confirm a specific edit-history operation ID in this mode.

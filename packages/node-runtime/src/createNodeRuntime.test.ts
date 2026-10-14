@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLocalCollection } from "@party-stack/runtime";
+import { eagerStorageTarget } from "@tanstack/db-sqlite-persistence-core";
 import { SQLiteCorePersistenceAdapter } from "@tanstack/db-sqlite-persistence-core";
 import { Temporal } from "temporal-polyfill";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -59,8 +60,8 @@ describe("createNodeRuntime", () => {
             await first.insert({ id: "one", instant, nested: { dates: [date] } }).isPersisted.promise;
             await first.cleanup();
             const adapter = firstRuntime.persistence!.adapter;
-            const position = await adapter.loadResumeSnapshot(collectionId);
-            await adapter.applyCommittedTx(collectionId, {
+            const position = await adapter.loadResumeSnapshot(eagerStorageTarget(collectionId));
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: "temporal-metadata",
                 term: position.latestTerm,
                 seq: position.latestSeq + 1,
@@ -83,7 +84,7 @@ describe("createNodeRuntime", () => {
             expect(second.get("one")?.nested.dates[0]).toBeInstanceOf(Temporal.PlainDate);
             expect(second.get("one")?.nested.dates[0]?.toString()).toBe(date.toString());
             const adapter = secondRuntime.persistence!.adapter;
-            const snapshot = await adapter.loadResumeSnapshot(collectionId);
+            const snapshot = await adapter.loadResumeSnapshot(eagerStorageTarget(collectionId));
             const rowMetadata = snapshot.rows[0]?.metadata as { date: unknown };
             expect(rowMetadata.date).toBeInstanceOf(Temporal.PlainDate);
             expect(String(rowMetadata.date)).toBe(date.toString());
@@ -94,7 +95,7 @@ describe("createNodeRuntime", () => {
             expect(String(cursor.instant)).toBe(instant.toString());
             if (!(adapter instanceof SQLiteCorePersistenceAdapter))
                 throw new Error("Expected SQLite persistence");
-            const replay = await adapter.pullSince(collectionId, 0);
+            const replay = await adapter.pullSince(eagerStorageTarget(collectionId), 0);
             expect(replay.requiresFullReload).toBe(false);
             if (replay.requiresFullReload) throw new Error("Expected incremental replay");
             {
@@ -181,10 +182,10 @@ describe("createNodeRuntime", () => {
                 schemaVersion: 3,
             }).adapter;
             await tasks.cleanup();
-            await expect(incompatible.loadResumeSnapshot(tasks.id)).rejects.toThrow(
+            await expect(incompatible.loadResumeSnapshot(eagerStorageTarget(tasks.id))).rejects.toThrow(
                 "Schema version mismatch"
             );
-            expect((await current.loadResumeSnapshot(tasks.id)).rows).toHaveLength(1);
+            expect((await current.loadResumeSnapshot(eagerStorageTarget(tasks.id))).rows).toHaveLength(1);
             await settings.insert({ id: "other", title: "Still active" }).isPersisted.promise;
             const reopened = open("tasks", 2);
             try {

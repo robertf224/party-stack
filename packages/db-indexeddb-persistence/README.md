@@ -8,11 +8,11 @@ for shared options, schema versioning, coordination, and lifecycle behavior.
 ## Installation
 
 ```sh
-pnpm add @party-stack/db-indexeddb-persistence @tanstack/db@0.12.1 @tanstack/db-sqlite-persistence-core@0.4.5
+pnpm add @party-stack/db-indexeddb-persistence @tanstack/db@0.14.0 @tanstack/db-sqlite-persistence-core@0.4.9
 ```
 
-Requires IndexedDB. The current release uses persistence core 0.4.5 and expects
-TanStack DB 0.12.1.
+Requires IndexedDB. The current release uses persistence core 0.4.9 and expects
+TanStack DB 0.14.0.
 
 ## Persist a Query Collection
 
@@ -23,7 +23,7 @@ restores the persisted data.
 For this example, also install the Query Collection adapter and TanStack Query:
 
 ```sh
-pnpm add @tanstack/query-db-collection@1.4.0 @tanstack/query-core@^5.102.8
+pnpm add @tanstack/query-db-collection@1.4.4 @tanstack/query-core@^5.102.8
 ```
 
 ```ts
@@ -188,3 +188,32 @@ mobile OS process-kill behavior.
 
 See [the contract audit and measurements](persistence-contract-audit.md) for
 coverage and limits.
+
+## Managed on-demand caches
+
+Synced collections with `syncMode: "on-demand"` use the same managed cache
+protocol as upstream SQLite. A logical collection such as `tasks` maps to a
+physical cache generation. Each active sync run claims that generation; recovery
+can select fresh storage while delayed work remains bound to the older one.
+Valid peers can continue using a retired generation until their claims end.
+Retired rows, indexes, metadata, and transaction history are collected when no
+live claims remain. The current shared generation remains available without
+active claims; an expired claimant recovers privately without displacing it.
+
+`IndexedDBPersistenceAdapterOptions` extends
+`Omit<SQLiteCoreAdapterOptions, "driver">`, adding only `databaseName`.
+`createIndexedDBPersistence` also accepts the existing optional `coordinator`.
+`cacheGenerationClaimTtlMs` defaults to five minutes and `now` defaults to
+`Date.now`, matching SQLite. Upstream's persistence wrapper renews live claims
+and handles source restart and recovery. Database upgrades automatically close
+older connections when requested by another connection.
+
+Direct adapter calls require explicit `eagerStorageTarget(collectionId)` or
+`managedStorageTarget(storageCollectionId, claimId)` targets, as upstream does.
+The wrapper supplies these automatically. An eager target describes direct
+storage access; it does not require the collection's sync mode to be eager.
+
+The database upgrades from version 3 to 4 without clearing existing data.
+Managed caches initially use fresh physical IDs rather than trusting legacy
+unclaimed storage. Local-only/eager rows, including pending actions, remain
+accessible at their original IDs.

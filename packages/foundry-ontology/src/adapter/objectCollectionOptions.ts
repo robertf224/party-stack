@@ -55,6 +55,7 @@ class ObjectCollectionSyncAbortedError extends Error {
 }
 
 export interface ObjectCollectionUtils extends UtilsRecord {
+    refresh: () => Promise<void>;
     awaitOperationId: (operationId: string, timeout?: number) => Promise<void>;
 }
 
@@ -260,9 +261,18 @@ function createSyncConfig(
 ): { sync: SyncConfig<Record<string, unknown>, string | number>; utils: ObjectCollectionUtils } {
     const seenOperationIds = new Store<Set<string>>(new Set<string>());
     const syncDisposed = new Store(false);
-    const directWebsocketSyncVersion = new Store(0);
+    const fullSourceRefreshVersion = new Store(0);
     let editHistoryUnavailable = false;
-    let requestFullRefresh: (() => void) | undefined;
+    let requestFullRefresh: (() => Promise<void>) | undefined;
+    const refresh = async (): Promise<void> => {
+        if (!requestFullRefresh || syncDisposed.state) throw new ObjectCollectionSyncAbortedError(objectType);
+        await requestFullRefresh();
+    };
+    const refreshInBackground = () => {
+        void refresh().catch((error: unknown) => {
+            console.warn(`Failed full Foundry refresh for ${objectType}.`, error);
+        });
+    };
     let requestEditHistoryCatchUp: (() => void) | undefined;
 
     const awaitOperationId = async (
@@ -283,19 +293,16 @@ function createSyncConfig(
 
         if (!requestEditHistoryCatchUp) {
             // An on-demand collection has no local state to confirm until its sync starts.
-            // TODO: Track sync activity and edit-history availability separately. If sync is
-            // active but edit-history catch-up is unavailable, request and await a full refresh.
             return;
         }
 
-        const directSyncVersionAtStart = directWebsocketSyncVersion.state;
-        requestEditHistoryCatchUp();
-
+        const refreshVersionAtStart = fullSourceRefreshVersion.state;
+        const historyUnavailableAtStart = editHistoryUnavailable;
         return new Promise<void>((resolve, reject) => {
             const cleanup = () => {
                 clearTimeout(timeoutId);
                 seenOperationIdsSubscription.unsubscribe();
-                directWebsocketSyncVersionSubscription.unsubscribe();
+                fullSourceRefreshVersionSubscription.unsubscribe();
                 disposedSubscription.unsubscribe();
             };
 
@@ -309,8 +316,12 @@ function createSyncConfig(
                     resolve();
                 }
             });
-            const directWebsocketSyncVersionSubscription = directWebsocketSyncVersion.subscribe(() => {
-                if (editHistoryUnavailable && directWebsocketSyncVersion.state > directSyncVersionAtStart) {
+            const fullSourceRefreshVersionSubscription = fullSourceRefreshVersion.subscribe(() => {
+                if (
+                    !historyUnavailableAtStart &&
+                    editHistoryUnavailable &&
+                    fullSourceRefreshVersion.state > refreshVersionAtStart
+                ) {
                     cleanup();
                     resolve();
                 }
@@ -321,10 +332,22 @@ function createSyncConfig(
                     reject(new ObjectCollectionSyncAbortedError(objectType));
                 }
             });
+            if (editHistoryUnavailable) {
+                void refresh().then(
+                    () => {
+                        cleanup();
+                        resolve();
+                    },
+                    (error: unknown) => {
+                        cleanup();
+                        reject(error);
+                    }
+                );
+            } else requestEditHistoryCatchUp?.();
         });
     };
 
-    const utils: ObjectCollectionUtils = { awaitOperationId };
+    const utils: ObjectCollectionUtils = { awaitOperationId, refresh };
 
     const sync: SyncConfig<Record<string, unknown>, string | number> = {
         sync: (params) => {
@@ -421,12 +444,10 @@ function createSyncConfig(
                     string | number,
                     { type: "upsert"; object: FoundryObject } | { type: "delete" }
                 >();
-                let observedObjectUpdate = false;
 
                 for (const update of updates) {
                     if (update.type !== "object") continue;
 
-                    observedObjectUpdate = true;
                     const object = update.object;
                     const primaryKey = getWatcherObjectKey(object);
 
@@ -459,10 +480,6 @@ function createSyncConfig(
 
                 const receipt = transactionStarted ? commit() : true;
 
-                if (observedObjectUpdate) {
-                    directWebsocketSyncVersion.setState((version) => version + 1);
-                }
-
                 if (receipt !== true) await receipt;
             };
 
@@ -483,7 +500,7 @@ function createSyncConfig(
                         console.warn(`Failed to apply direct Foundry updates for ${objectType}.`, applyError);
                     });
                 }
-                requestFullRefresh?.();
+                refreshInBackground();
             };
 
             const catchUpFromEditHistory = async (): Promise<void> => {
@@ -585,7 +602,7 @@ function createSyncConfig(
                     {},
                     decodeObject
                 );
-                if (disposed) return;
+                if (disposed) throw new ObjectCollectionSyncAbortedError(objectType);
 
                 begin();
                 truncate();
@@ -597,35 +614,54 @@ function createSyncConfig(
                 }
                 const receipt = commit();
 
-                if (pendingDirectWatcherUpdates.length > 0) {
+                if (receipt !== true) await receipt;
+                if (disposed) throw new ObjectCollectionSyncAbortedError(objectType);
+                while (pendingDirectWatcherUpdates.length > 0 && !disposed) {
                     const updates = pendingDirectWatcherUpdates;
                     pendingDirectWatcherUpdates = [];
                     await applyDirectWatcherUpdates(updates);
                 }
-                directWebsocketSyncVersion.setState((version) => version + 1);
-
-                if (receipt !== true) await receipt;
+                if (disposed) throw new ObjectCollectionSyncAbortedError(objectType);
+                fullSourceRefreshVersion.setState((version) => version + 1);
             };
 
             requestFullRefresh = () => {
                 fullRefreshRequested = true;
-                if (fullRefreshTask) return;
+                if (fullRefreshTask) return fullRefreshTask;
 
+                const priorCatchUp = catchUpTask;
                 fullRefreshTask = (async () => {
+                    if (priorCatchUp) await priorCatchUp;
+                    if (disposed) throw new ObjectCollectionSyncAbortedError(objectType);
                     while (fullRefreshRequested && !disposed) {
                         fullRefreshRequested = false;
                         await refreshAllFromSource();
                     }
                 })()
-                    .catch((error: unknown) => {
-                        console.warn(`Failed full Foundry refresh for ${objectType}.`, error);
+                    .catch(async (error: unknown) => {
+                        // A failed snapshot must not strand updates queued by the live watcher.
+                        while (pendingDirectWatcherUpdates.length > 0 && !disposed) {
+                            const updates = pendingDirectWatcherUpdates;
+                            pendingDirectWatcherUpdates = [];
+                            try {
+                                await applyDirectWatcherUpdates(updates);
+                            } catch (applyError: unknown) {
+                                console.warn(
+                                    `Failed to apply queued Foundry updates for ${objectType}.`,
+                                    applyError
+                                );
+                                break;
+                            }
+                        }
+                        throw error;
                     })
                     .finally(() => {
                         fullRefreshTask = undefined;
                         if (fullRefreshRequested && !disposed) {
-                            requestFullRefresh?.();
+                            refreshInBackground();
                         }
                     });
+                return fullRefreshTask;
             };
 
             requestEditHistoryCatchUp = () => {
@@ -636,7 +672,9 @@ function createSyncConfig(
                 catchUpRequested = true;
                 if (catchUpTask) return;
 
+                const priorRefresh = fullRefreshTask;
                 catchUpTask = (async () => {
+                    if (priorRefresh) await priorRefresh;
                     while (catchUpRequested && !disposed) {
                         catchUpRequested = false;
                         await catchUpFromEditHistory();
@@ -676,20 +714,16 @@ function createSyncConfig(
                 ? getObjectSetWatcherManager(client).subscribe({ type: "base", objectType }, (message) => {
                       switch (message.type) {
                           case "change": {
-                              if (editHistoryUnavailable) {
-                                  if (fullRefreshTask) {
-                                      pendingDirectWatcherUpdates.push(...message.updates);
-                                  } else {
-                                      void applyDirectWatcherUpdates(message.updates).catch(
-                                          (error: unknown) => {
-                                              console.warn(
-                                                  `Failed to apply direct Foundry updates for ${objectType}.`,
-                                                  error
-                                              );
-                                              requestFullRefresh?.();
-                                          }
+                              if (fullRefreshTask) {
+                                  pendingDirectWatcherUpdates.push(...message.updates);
+                              } else if (editHistoryUnavailable) {
+                                  void applyDirectWatcherUpdates(message.updates).catch((error: unknown) => {
+                                      console.warn(
+                                          `Failed to apply direct Foundry updates for ${objectType}.`,
+                                          error
                                       );
-                                  }
+                                      refreshInBackground();
+                                  });
                               } else {
                                   pendingDirectWatcherUpdates.push(...message.updates);
                                   requestEditHistoryCatchUp?.();
@@ -698,7 +732,7 @@ function createSyncConfig(
                           }
                           case "refresh": {
                               if (editHistoryUnavailable) {
-                                  requestFullRefresh?.();
+                                  refreshInBackground();
                               } else {
                                   requestEditHistoryCatchUp?.();
                               }
@@ -707,7 +741,7 @@ function createSyncConfig(
                           case "state": {
                               if (message.status !== "open") break;
                               if (editHistoryUnavailable) {
-                                  requestFullRefresh?.();
+                                  refreshInBackground();
                               } else {
                                   requestEditHistoryCatchUp?.();
                               }

@@ -41,7 +41,7 @@
         "@party-stack/icons": "workspace:*",
         "@party-stack/node-runtime": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "@tanstack/db-sqlite-persistence-core": "0.4.5",
+        "@tanstack/db-sqlite-persistence-core": "0.4.9",
         "change-case": "^5.4.4",
         "commander": "^14.0.2",
         "effection": "^4.0.2",
@@ -53,12 +53,12 @@
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db": "0.12.1",
+        "@tanstack/db": "0.14.0",
         "tsx": "^4.20.6",
         "typescript": "~7.0.2",
         "vite-plus": "catalog:"
     },
     "peerDependencies": {
-        "@tanstack/db": "0.12.1"
+        "@tanstack/db": "0.14.0"
     }
 }
