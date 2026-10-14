@@ -31,7 +31,7 @@ jobs:
                   restore-keys: |
                       vite-task-${{ runner.os }}-${{ runner.arch }}-
             - name: Check, build, and test
-              run: vp run ci
+              run: bash .github/scripts/run-ci.sh
             - name: Save Vite Task cache
               if: success()
               uses: actions/cache/save@v6

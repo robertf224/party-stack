@@ -92,7 +92,10 @@ export function defineAppConfig(config: AppConfig = {}): ViteUserConfig {
                     build: {
                         command: "vp build",
                         // Shell nesting changed cache fingerprints without changing app outputs.
-                        cache: { ...taskCache(), untrackedEnv: ["SHLVL"] },
+                        cache: {
+                            ...taskCache("!.", "*.{json,jsonc,ts,mts,js,mjs}", "!dist", "!dist/**"),
+                            untrackedEnv: ["SHLVL"],
+                        },
                         dependsOn: ["check", { task: "build", from: ["dependencies", "devDependencies"] }],
                     },
                     test: { command: "vp test", cache: taskCache(), dependsOn: ["build"] },
