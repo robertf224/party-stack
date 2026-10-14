@@ -1,11 +1,12 @@
 // Adapted from TanStack/db, MIT licensed; see contracts/NOTICE.md for source and changes.
 import { IR } from "@tanstack/db";
+import { eagerStorageTarget, type PersistedStorageTarget } from "@tanstack/db-sqlite-persistence-core";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import type { PersistenceAdapter, PersistencePullSinceResult } from "@tanstack/db-sqlite-persistence-core";
 
 type Todo = { id: string; title: string; createdAt: string; score: number };
 export type ContractAdapter = PersistenceAdapter & {
-    pullSince(collectionId: string, fromRowVersion: number): Promise<PersistencePullSinceResult>;
+    pullSince(target: PersistedStorageTarget, fromRowVersion: number): Promise<PersistencePullSinceResult>;
 };
 export interface ContractHarness {
     adapter: ContractAdapter;
@@ -69,7 +70,7 @@ export function runPersistenceContract(
                 },
             ];
 
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `seed-1`,
                 term: 1,
                 seq: 1,
@@ -81,7 +82,7 @@ export function runPersistenceContract(
                 })),
             });
 
-            const filtered = await adapter.loadSubset(collectionId, {
+            const filtered = await adapter.loadSubset(eagerStorageTarget(collectionId), {
                 where: new IR.Func(`and`, [
                     new IR.Func(`or`, [
                         new IR.Func(`like`, [new IR.PropRef([`title`]), new IR.Value(`%Task%`)]),
@@ -115,7 +116,7 @@ export function runPersistenceContract(
                 },
             ]);
 
-            const withInEmpty = await adapter.loadSubset(collectionId, {
+            const withInEmpty = await adapter.loadSubset(eagerStorageTarget(collectionId), {
                 where: new IR.Func(`in`, [new IR.PropRef([`id`]), new IR.Value([] as Array<string>)]),
             });
             expect(withInEmpty).toEqual([]);
@@ -128,7 +129,7 @@ export function runPersistenceContract(
             const firstBigInt = BigInt(`9007199254740992`);
             const secondBigInt = BigInt(`9007199254740997`);
 
-            await typedAdapter.applyCommittedTx(collectionId, {
+            await typedAdapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `seed-typed-values`,
                 term: 1,
                 seq: 1,
@@ -159,14 +160,14 @@ export function runPersistenceContract(
 
             // Filter-only subset reads may legally be supersets; an indexed typed
             // predicate provides the exact candidate set exercised by this upstream case.
-            await adapter.ensureIndex(collectionId, `bigint`, {
+            await adapter.ensureIndex(eagerStorageTarget(collectionId), `bigint`, {
                 expressionSql: [JSON.stringify(new IR.PropRef([`largeViewCount`]))],
             });
-            await adapter.ensureIndex(collectionId, `date`, {
+            await adapter.ensureIndex(eagerStorageTarget(collectionId), `date`, {
                 expressionSql: [JSON.stringify(new IR.PropRef([`createdAt`]))],
             });
 
-            const bigintRows = await typedAdapter.loadSubset(collectionId, {
+            const bigintRows = await typedAdapter.loadSubset(eagerStorageTarget(collectionId), {
                 where: new IR.Func(`gt`, [
                     new IR.PropRef([`largeViewCount`]),
                     new IR.Value(BigInt(`9007199254740993`)),
@@ -174,7 +175,7 @@ export function runPersistenceContract(
             });
             expect(bigintRows.map((row) => row.key)).toEqual([`2`]);
 
-            const dateRows = await typedAdapter.loadSubset(collectionId, {
+            const dateRows = await typedAdapter.loadSubset(eagerStorageTarget(collectionId), {
                 where: new IR.Func(`gt`, [
                     new IR.PropRef([`createdAt`]),
                     new IR.Value(new Date(`2026-01-02T12:00:00.000Z`)),
@@ -182,7 +183,7 @@ export function runPersistenceContract(
             });
             expect(dateRows.map((row) => row.key)).toEqual([`2`]);
 
-            const restoredRows = await typedAdapter.loadSubset(collectionId, {
+            const restoredRows = await typedAdapter.loadSubset(eagerStorageTarget(collectionId), {
                 where: new IR.Func(`eq`, [
                     new IR.Func(`date`, [new IR.PropRef([`createdAt`])]),
                     new IR.Value(`2026-01-02`),
@@ -197,7 +198,7 @@ export function runPersistenceContract(
             const { adapter } = registerContractHarness();
             const collectionId = `todos`;
 
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `tx-1`,
                 term: 1,
                 seq: 1,
@@ -215,7 +216,7 @@ export function runPersistenceContract(
                     },
                 ],
             });
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `tx-1-replay`,
                 term: 1,
                 seq: 1,
@@ -234,12 +235,12 @@ export function runPersistenceContract(
                 ],
             });
 
-            const replay = await adapter.pullSince(collectionId, 0);
+            const replay = await adapter.pullSince(eagerStorageTarget(collectionId), 0);
             expect(replay.requiresFullReload).toBe(false);
             if (replay.requiresFullReload) throw new Error("Expected incremental replay");
             expect(replay.deltas).toHaveLength(1);
 
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `tx-2`,
                 term: 1,
                 seq: 2,
@@ -258,7 +259,7 @@ export function runPersistenceContract(
                 ],
             });
 
-            const updated = await adapter.loadSubset(collectionId, {
+            const updated = await adapter.loadSubset(eagerStorageTarget(collectionId), {
                 where: new IR.Func(`eq`, [new IR.PropRef([`id`]), new IR.Value(`1`)]),
             });
             expect(updated).toEqual([
@@ -273,7 +274,7 @@ export function runPersistenceContract(
                 },
             ]);
 
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `tx-3`,
                 term: 1,
                 seq: 3,
@@ -292,10 +293,10 @@ export function runPersistenceContract(
                 ],
             });
 
-            const remainingRows = await adapter.loadSubset(collectionId, {});
+            const remainingRows = await adapter.loadSubset(eagerStorageTarget(collectionId), {});
             expect(remainingRows).toEqual([]);
 
-            const deletion = await adapter.pullSince(collectionId, 2);
+            const deletion = await adapter.pullSince(eagerStorageTarget(collectionId), 2);
             expect(deletion).toMatchObject({
                 latestRowVersion: 3,
                 requiresFullReload: false,
@@ -309,7 +310,7 @@ export function runPersistenceContract(
             const collectionId = `atomicity`;
 
             await expect(
-                adapter.applyCommittedTx(collectionId, {
+                adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                     txId: `atomicity-1`,
                     term: 1,
                     seq: 1,
@@ -341,10 +342,10 @@ export function runPersistenceContract(
                 })
             ).rejects.toThrow(Error);
 
-            const rows = await adapter.loadSubset(collectionId, {});
+            const rows = await adapter.loadSubset(eagerStorageTarget(collectionId), {});
             expect(rows).toEqual([]);
 
-            expect(await adapter.getStreamPosition?.(collectionId)).toMatchObject({
+            expect(await adapter.getStreamPosition?.(eagerStorageTarget(collectionId))).toMatchObject({
                 latestRowVersion: 0,
                 latestSeq: 0,
             });
@@ -354,7 +355,7 @@ export function runPersistenceContract(
             const { adapter, unserializable } = registerContractHarness();
             const collectionId = `metadata-roundtrip`;
 
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `metadata-1`,
                 term: 1,
                 seq: 1,
@@ -394,7 +395,7 @@ export function runPersistenceContract(
                 ],
             });
 
-            const rows = await adapter.loadSubset(collectionId, {});
+            const rows = await adapter.loadSubset(eagerStorageTarget(collectionId), {});
             expect(rows).toEqual([
                 {
                     key: `1`,
@@ -414,7 +415,9 @@ export function runPersistenceContract(
                 },
             ]);
 
-            const collectionMetadata = await adapter.loadCollectionMetadata?.(collectionId);
+            const collectionMetadata = await adapter.loadCollectionMetadata?.(
+                eagerStorageTarget(collectionId)
+            );
             expect(collectionMetadata).toEqual([
                 {
                     key: `electric:resume`,
@@ -429,7 +432,7 @@ export function runPersistenceContract(
             ]);
 
             await expect(
-                adapter.applyCommittedTx(collectionId, {
+                adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                     txId: `metadata-2`,
                     term: 1,
                     seq: 2,
@@ -458,11 +461,13 @@ export function runPersistenceContract(
                 })
             ).rejects.toThrow(Error);
 
-            const rowsAfterFailure = await adapter.loadSubset(collectionId, {});
+            const rowsAfterFailure = await adapter.loadSubset(eagerStorageTarget(collectionId), {});
             expect(rowsAfterFailure).toEqual(rows);
 
-            expect(await adapter.loadCollectionMetadata?.(collectionId)).toEqual(collectionMetadata);
-            expect(await adapter.getStreamPosition?.(collectionId)).toMatchObject({
+            expect(await adapter.loadCollectionMetadata?.(eagerStorageTarget(collectionId))).toEqual(
+                collectionMetadata
+            );
+            expect(await adapter.getStreamPosition?.(eagerStorageTarget(collectionId))).toMatchObject({
                 latestRowVersion: 1,
                 latestSeq: 1,
             });
@@ -472,7 +477,7 @@ export function runPersistenceContract(
             const { adapter } = registerContractHarness();
             const collectionId = `truncate-metadata-roundtrip`;
 
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `seed-1`,
                 term: 1,
                 seq: 1,
@@ -508,7 +513,7 @@ export function runPersistenceContract(
                 ],
             });
 
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `truncate-2`,
                 term: 1,
                 seq: 2,
@@ -542,7 +547,7 @@ export function runPersistenceContract(
                 ],
             });
 
-            expect(await adapter.loadSubset(collectionId, {})).toEqual([
+            expect(await adapter.loadSubset(eagerStorageTarget(collectionId), {})).toEqual([
                 {
                     key: `2`,
                     value: {
@@ -557,7 +562,7 @@ export function runPersistenceContract(
                 },
             ]);
 
-            expect(await adapter.loadCollectionMetadata?.(collectionId)).toEqual([
+            expect(await adapter.loadCollectionMetadata?.(eagerStorageTarget(collectionId))).toEqual([
                 {
                     key: `electric:resume`,
                     value: {
@@ -574,7 +579,7 @@ export function runPersistenceContract(
             });
             const collectionId = `todos`;
 
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `seed-pull`,
                 term: 1,
                 seq: 1,
@@ -602,7 +607,7 @@ export function runPersistenceContract(
                     },
                 ],
             });
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `seed-pull-2`,
                 term: 1,
                 seq: 2,
@@ -621,7 +626,7 @@ export function runPersistenceContract(
                 ],
             });
 
-            const delta = await adapter.pullSince(collectionId, 1);
+            const delta = await adapter.pullSince(eagerStorageTarget(collectionId), 1);
             if (delta.requiresFullReload) {
                 throw new Error(`Expected key-level delta, received full reload`);
             }
@@ -638,7 +643,7 @@ export function runPersistenceContract(
                 },
             ]);
 
-            const fullReload = await adapter.pullSince(collectionId, 0);
+            const fullReload = await adapter.pullSince(eagerStorageTarget(collectionId), 0);
             expect(fullReload.requiresFullReload).toBe(true);
         });
 
@@ -646,7 +651,7 @@ export function runPersistenceContract(
             const { adapter } = registerContractHarness();
             const collectionId = `scan-and-replay`;
 
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `scan-seed-1`,
                 term: 1,
                 seq: 1,
@@ -673,7 +678,7 @@ export function runPersistenceContract(
                 ],
             });
 
-            const scannedRows = await adapter.scanRows?.(collectionId, {
+            const scannedRows = await adapter.scanRows?.(eagerStorageTarget(collectionId), {
                 metadataOnly: true,
             });
             expect(scannedRows).toEqual([
@@ -695,7 +700,7 @@ export function runPersistenceContract(
                 },
             ]);
 
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `scan-seed-2`,
                 term: 1,
                 seq: 2,
@@ -726,7 +731,7 @@ export function runPersistenceContract(
                 ],
             });
 
-            const replayDelta = await adapter.pullSince(collectionId, 1);
+            const replayDelta = await adapter.pullSince(eagerStorageTarget(collectionId), 1);
             if (replayDelta.requiresFullReload) {
                 throw new Error(`Expected replay delta, received full reload`);
             }
@@ -768,7 +773,7 @@ export function runPersistenceContract(
             const { adapter } = registerContractHarness();
             const collectionId = `todos`;
 
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `seed-cursor`,
                 term: 1,
                 seq: 1,
@@ -817,7 +822,7 @@ export function runPersistenceContract(
                 ],
             });
 
-            const rows = await adapter.loadSubset(collectionId, {
+            const rows = await adapter.loadSubset(eagerStorageTarget(collectionId), {
                 orderBy: [
                     {
                         expression: new IR.PropRef([`score`]),
@@ -862,7 +867,7 @@ export function runPersistenceContract(
                 const { adapter } = registerContractHarness();
                 const collectionId = `custom-collation-order-${caseName}`;
 
-                await adapter.applyCommittedTx(collectionId, {
+                await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                     txId: `seed-custom-collation`,
                     term: 1,
                     seq: 1,
@@ -874,7 +879,7 @@ export function runPersistenceContract(
                     })),
                 });
 
-                const rows = await adapter.loadSubset(collectionId, {
+                const rows = await adapter.loadSubset(eagerStorageTarget(collectionId), {
                     orderBy: [
                         {
                             expression: new IR.PropRef([`title`]),
@@ -896,7 +901,7 @@ export function runPersistenceContract(
             const { adapter } = registerContractHarness();
             const collectionId = `mixed-keys`;
 
-            await adapter.applyCommittedTx(collectionId, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
                 txId: `mixed-1`,
                 term: 1,
                 seq: 1,
@@ -925,7 +930,7 @@ export function runPersistenceContract(
                 ],
             });
 
-            const rows = await adapter.loadSubset(collectionId, {});
+            const rows = await adapter.loadSubset(eagerStorageTarget(collectionId), {});
             expect(rows).toHaveLength(2);
             expect(rows.some((row) => row.key === 1)).toBe(true);
             expect(rows.some((row) => row.key === `1`)).toBe(true);

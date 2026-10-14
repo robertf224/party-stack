@@ -11,6 +11,7 @@ import {
     not,
     or,
 } from "@tanstack/db";
+import { eagerStorageTarget } from "@tanstack/db-sqlite-persistence-core";
 import { afterAll, describe, test } from "vite-plus/test";
 import { IndexedDBPersistenceAdapter } from "./IndexedDBPersistenceAdapter.js";
 import type { LoadSubsetOptions } from "@tanstack/db";
@@ -121,12 +122,12 @@ const prefixLike = queryOptions((query) => query.where(({ item }) => like(item.n
 const adapter = new IndexedDBPersistenceAdapter({
     databaseName: `runtime-browser-bench-${crypto.randomUUID()}`,
 });
-await adapter.applyCommittedTx("items", seedTransaction(buildRows()));
+await adapter.applyCommittedTx(eagerStorageTarget("items"), seedTransaction(buildRows()));
 await Promise.all([
-    adapter.ensureIndex("items", "category-index", indexSpec("category")),
-    adapter.ensureIndex("items", "priority-index", indexSpec("priority")),
-    adapter.ensureIndex("items", "name-index", indexSpec("name")),
-    adapter.ensureIndex("items", "status-index", indexSpec("status")),
+    adapter.ensureIndex(eagerStorageTarget("items"), "category-index", indexSpec("category")),
+    adapter.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec("priority")),
+    adapter.ensureIndex(eagerStorageTarget("items"), "name-index", indexSpec("name")),
+    adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec("status")),
 ]);
 
 const expectedCounts: Array<[string, LoadSubsetOptions, number]> = [
@@ -140,7 +141,7 @@ const expectedCounts: Array<[string, LoadSubsetOptions, number]> = [
     ["LIKE", prefixLike, 500],
 ];
 for (const [name, options, expected] of expectedCounts) {
-    const rows = await adapter.loadSubset("items", options);
+    const rows = await adapter.loadSubset(eagerStorageTarget("items"), options);
     if (rows.length !== expected) {
         throw new Error(`${name} expected ${expected} candidate rows, received ${rows.length}.`);
     }
@@ -149,49 +150,49 @@ for (const [name, options, expected] of expectedCounts) {
 describe("IndexedDBPersistenceAdapter browser query planning", () => {
     test("full collection fallback: 10,000 rows loaded", async ({ bench }) => {
         await bench("full collection fallback: 10,000 rows loaded", async () => {
-            await adapter.loadSubset("items", unplannableOr);
+            await adapter.loadSubset(eagerStorageTarget("items"), unplannableOr);
         }).run(BENCH_OPTIONS);
     });
 
     test("equality index: 100 entries scanned / rows loaded", async ({ bench }) => {
         await bench("equality index: 100 entries scanned / rows loaded", async () => {
-            await adapter.loadSubset("items", categoryEquals);
+            await adapter.loadSubset(eagerStorageTarget("items"), categoryEquals);
         }).run(BENCH_OPTIONS);
     });
 
     test("range index: 1,000 entries scanned / rows loaded", async ({ bench }) => {
         await bench("range index: 1,000 entries scanned / rows loaded", async () => {
-            await adapter.loadSubset("items", highPriority);
+            await adapter.loadSubset(eagerStorageTarget("items"), highPriority);
         }).run(BENCH_OPTIONS);
     });
 
     test("indexed AND: 1,100 entries scanned / 10 rows loaded", async ({ bench }) => {
         await bench("indexed AND: 1,100 entries scanned / 10 rows loaded", async () => {
-            await adapter.loadSubset("items", indexedAnd);
+            await adapter.loadSubset(eagerStorageTarget("items"), indexedAnd);
         }).run(BENCH_OPTIONS);
     });
 
     test("indexed OR: 1,100 entries scanned / 1,090 rows loaded", async ({ bench }) => {
         await bench("indexed OR: 1,100 entries scanned / 1,090 rows loaded", async () => {
-            await adapter.loadSubset("items", indexedOr);
+            await adapter.loadSubset(eagerStorageTarget("items"), indexedOr);
         }).run(BENCH_OPTIONS);
     });
 
     test("AND with residual NOT: 100 entries scanned / rows loaded", async ({ bench }) => {
         await bench("AND with residual NOT: 100 entries scanned / rows loaded", async () => {
-            await adapter.loadSubset("items", residualAnd);
+            await adapter.loadSubset(eagerStorageTarget("items"), residualAnd);
         }).run(BENCH_OPTIONS);
     });
 
     test("IN with three values: 300 entries scanned / rows loaded", async ({ bench }) => {
         await bench("IN with three values: 300 entries scanned / rows loaded", async () => {
-            await adapter.loadSubset("items", categoryIn);
+            await adapter.loadSubset(eagerStorageTarget("items"), categoryIn);
         }).run(BENCH_OPTIONS);
     });
 
     test("prefix LIKE: 500 entries scanned / rows loaded", async ({ bench }) => {
         await bench("prefix LIKE: 500 entries scanned / rows loaded", async () => {
-            await adapter.loadSubset("items", prefixLike);
+            await adapter.loadSubset(eagerStorageTarget("items"), prefixLike);
         }).run(BENCH_OPTIONS);
     });
 });
@@ -201,37 +202,37 @@ describe("IndexedDBPersistenceAdapter browser query planning", () => {
 const fallbackAdapter = new IndexedDBPersistenceAdapter({
     databaseName: `bench-fallback-${crypto.randomUUID()}`,
 });
-await fallbackAdapter.applyCommittedTx("items", seedTransaction(buildRows()));
+await fallbackAdapter.applyCommittedTx(eagerStorageTarget("items"), seedTransaction(buildRows()));
 const page = queryOptions((query) => query.orderBy(({ item }) => item.priority, "asc").limit(10));
 const emptyAnd = queryOptions((query) =>
     query.where(({ item }) => and(eq(item.category, "absent"), gte(item.priority, 900)))
 );
-const indexedPage = await adapter.loadSubset("items", page);
-const fallbackPage = await fallbackAdapter.loadSubset("items", page);
+const indexedPage = await adapter.loadSubset(eagerStorageTarget("items"), page);
+const fallbackPage = await fallbackAdapter.loadSubset(eagerStorageTarget("items"), page);
 if (indexedPage.length !== 10 || JSON.stringify(indexedPage) !== JSON.stringify(fallbackPage))
     throw new Error("Pagination benchmark paths disagree");
 let writeVersion = 1;
 describe("IndexedDB persistence pagination and incremental updates", () => {
     test("ordered index: first 10 of 10,000 rows", async ({ bench }) => {
         await bench("ordered index: first 10 of 10,000 rows", async () => {
-            await adapter.loadSubset("items", page);
+            await adapter.loadSubset(eagerStorageTarget("items"), page);
         }).run(BENCH_OPTIONS);
     });
     test("unindexed fallback: same first 10 of 10,000 rows", async ({ bench }) => {
         await bench("unindexed fallback: same first 10 of 10,000 rows", async () => {
-            await fallbackAdapter.loadSubset("items", page);
+            await fallbackAdapter.loadSubset(eagerStorageTarget("items"), page);
         }).run(BENCH_OPTIONS);
     });
     test("empty AND: absent category intersected with 1,000 priorities", async ({ bench }) => {
         await bench("empty AND: absent category intersected with 1,000 priorities", async () => {
-            if ((await adapter.loadSubset("items", emptyAnd)).length !== 0)
+            if ((await adapter.loadSubset(eagerStorageTarget("items"), emptyAnd)).length !== 0)
                 throw new Error("Empty intersection returned rows");
         }).run(BENCH_OPTIONS);
     });
     test("one-row partial update with four maintained indexes", async ({ bench }) => {
         await bench("one-row partial update with four maintained indexes", async () => {
             const version = ++writeVersion;
-            await adapter.applyCommittedTx("items", {
+            await adapter.applyCommittedTx(eagerStorageTarget("items"), {
                 txId: `update-${version}`,
                 term: 1,
                 seq: version,

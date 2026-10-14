@@ -4,6 +4,7 @@ import {
     SharedWorkerCoordinationHost,
 } from "@party-stack/coordination/shared-worker";
 import { queryOnce } from "@tanstack/db";
+import { eagerStorageTarget, resolvePersistedStorageTarget } from "@tanstack/db-sqlite-persistence-core";
 import { SingleProcessCoordinator } from "@tanstack/db-sqlite-persistence-core";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createPersistedCollectionCoordinator } from "../coordinator/createPersistedCollectionCoordinator.js";
@@ -38,21 +39,32 @@ function memoryAdapter(): PersistenceAdapter & {
         return collection;
     };
     return {
-        loadResumeSnapshot: (collectionId) =>
+        loadResumeSnapshot: (target) =>
             Promise.resolve({
-                rows: [...rows(collectionId)].map(([key, value]) => ({ key, value })),
+                rows: [...rows(resolvePersistedStorageTarget(target).collectionId)].map(([key, value]) => ({
+                    key,
+                    value,
+                })),
                 collectionMetadata: [],
-                ...(positions.get(collectionId) ?? { latestTerm: 0, latestSeq: 0, latestRowVersion: 0 }),
+                ...(positions.get(resolvePersistedStorageTarget(target).collectionId) ?? {
+                    latestTerm: 0,
+                    latestSeq: 0,
+                    latestRowVersion: 0,
+                }),
                 resetEpoch: 0,
             }),
-        loadSubset: (collectionId) =>
+        loadSubset: (target) =>
             Promise.resolve(
-                [...rows(collectionId)].map(([key, value]) => ({
+                [...rows(resolvePersistedStorageTarget(target).collectionId)].map(([key, value]) => ({
                     key,
                     value,
                 }))
             ),
-        applyCommittedTx: (collectionId: string, transaction: PersistedTx) => {
+        applyCommittedTx: (
+            target: Parameters<PersistenceAdapter["applyCommittedTx"]>[0],
+            transaction: PersistedTx
+        ) => {
+            const { collectionId } = resolvePersistedStorageTarget(target);
             const collection = rows(collectionId);
             for (const mutation of transaction.mutations) {
                 if (mutation.type === "delete") {
@@ -69,9 +81,9 @@ function memoryAdapter(): PersistenceAdapter & {
             return Promise.resolve();
         },
         ensureIndex: () => Promise.resolve(),
-        getStreamPosition: (collectionId) =>
+        getStreamPosition: (target) =>
             Promise.resolve(
-                positions.get(collectionId) ?? {
+                positions.get(resolvePersistedStorageTarget(target).collectionId) ?? {
                     latestTerm: 0,
                     latestSeq: 0,
                     latestRowVersion: 0,
@@ -181,7 +193,7 @@ describe("createLocalCollection", () => {
         await collection.preload();
 
         expect(loadResumeSnapshot).toHaveBeenCalledWith(
-            "party-stack:test-owner:persisted:persisted-items",
+            eagerStorageTarget("party-stack:test-owner:persisted:persisted-items"),
             expect.any(Object)
         );
         expect(collection.get("one")).toMatchObject({
@@ -371,7 +383,7 @@ describe("createLocalCollection", () => {
                 { mutationId: "two", type: "insert", key: "two", value: { id: "two" } },
             ]);
             expect(apply).toHaveBeenLastCalledWith(
-                "client-0",
+                eagerStorageTarget("client-0"),
                 expect.objectContaining({ seq: 2, rowVersion: 2 })
             );
         } finally {
@@ -436,7 +448,7 @@ describe("createLocalCollection", () => {
                 mutations: [{ type: "insert", key: "two", value: { id: "two", title: "From source" } }],
             })
         ).resolves.toMatchObject({ ok: true, latestRowVersion: 2 });
-        expect(await adapter.loadSubset(collectionId, {})).toEqual(
+        expect(await adapter.loadSubset(eagerStorageTarget(collectionId), {})).toEqual(
             expect.arrayContaining([{ key: "two", value: { id: "two", title: "From source" } }])
         );
 
@@ -449,6 +461,41 @@ describe("createLocalCollection", () => {
 });
 
 describe("collection-scoped persistence", () => {
+    it("preserves managed cache claims across writes, index requests, and pullSince", async () => {
+        const coordination = new SingleProcessCoordination({ scope: "managed-targets" });
+        const adapter = memoryAdapter();
+        const apply = vi.spyOn(adapter, "applyCommittedTx");
+        const ensure = vi.spyOn(adapter, "ensureIndex");
+        const position = vi.spyOn(adapter, "getStreamPosition");
+        const coordinator = createPersistedCollectionCoordinator(coordination, adapter);
+        coordinator.setAdapterForCollection?.("generation", adapter, "claim");
+        const target = { kind: "managed", storageCollectionId: "generation", claimId: "claim" };
+        await coordinator.requestApplyCommittedTx("generation", {
+            txId: "tx",
+            term: 1,
+            seq: 1,
+            rowVersion: 1,
+            mutations: [],
+            cacheGenerationClaimId: "claim",
+        });
+        expect(apply).toHaveBeenCalledWith(
+            target,
+            expect.objectContaining({ cacheGenerationClaimId: "claim" })
+        );
+        await coordinator.requestEnsurePersistedIndex(
+            "generation",
+            "index",
+            { expressionSql: [] },
+            undefined,
+            false,
+            "claim"
+        );
+        expect(ensure).toHaveBeenCalledWith(target, "index", { expressionSql: [] });
+        await coordinator.pullSince?.("generation", 0, undefined, "claim");
+        expect(position).toHaveBeenCalledWith(target);
+        await coordination.close();
+    });
+
     it("forwards local mode and schema and routes writes through the scoped adapter", async () => {
         const coordination = new SingleProcessCoordination({ scope: "scoped-persistence" });
         const scoped = { ...memoryAdapter(), schemaVersion: 2 };
@@ -475,7 +522,7 @@ describe("collection-scoped persistence", () => {
             }).runtime,
         });
         await collection.preload();
-        expect(registerAdapter).toHaveBeenCalledExactlyOnceWith(collection.id, scoped);
+        expect(registerAdapter).toHaveBeenCalledExactlyOnceWith(collection.id, scoped, undefined);
         expect(resolvePersistenceForCollection).toHaveBeenCalledWith({
             collectionId: collection.id,
             mode: "sync-absent",
@@ -490,7 +537,7 @@ describe("collection-scoped persistence", () => {
         rootPosition.mockClear();
         await coordinator.pullSince!(collection.id, 0);
         expect(scopedPosition).not.toHaveBeenCalled();
-        expect(rootPosition).toHaveBeenCalledWith(collection.id);
+        expect(rootPosition).toHaveBeenCalledWith(eagerStorageTarget(collection.id));
         await coordination.close();
     });
 
@@ -516,7 +563,7 @@ describe("collection-scoped persistence", () => {
             await collection.preload();
             await collection.insert({ id: "one", title: "Selected" }).isPersisted.promise;
             expect(resolvePersistenceForMode).toHaveBeenCalledWith("sync-absent");
-            expect(apply).toHaveBeenCalledWith(collection.id, expect.anything());
+            expect(apply).toHaveBeenCalledWith(eagerStorageTarget(collection.id), expect.anything());
             expect(rootApply).not.toHaveBeenCalled();
         } finally {
             await collection.cleanup();
@@ -556,8 +603,8 @@ describe("collection-scoped persistence", () => {
         await Promise.all([tasks.preload(), settings.preload()]);
         await tasks.insert({ id: "one", title: "Task" }).isPersisted.promise;
         await settings.insert({ id: "one", title: "Setting" }).isPersisted.promise;
-        expect(tasksApply).toHaveBeenCalledWith(tasks.id, expect.anything());
-        expect(settingsApply).toHaveBeenCalledWith(settings.id, expect.anything());
+        expect(tasksApply).toHaveBeenCalledWith(eagerStorageTarget(tasks.id), expect.anything());
+        expect(settingsApply).toHaveBeenCalledWith(eagerStorageTarget(settings.id), expect.anything());
         expect(rootApply).not.toHaveBeenCalled();
         await tasks.cleanup();
         await settings.insert({ id: "two", title: "Still active" }).isPersisted.promise;
@@ -587,7 +634,7 @@ describe("collection-scoped persistence", () => {
             },
         ]);
         expect(apply).toHaveBeenCalledWith(
-            "items",
+            eagerStorageTarget("items"),
             expect.objectContaining({
                 mutations: [
                     {
@@ -693,7 +740,7 @@ describe("collection-scoped persistence", () => {
             requiresFullReload: false,
             changedKeys: ["one"],
         });
-        expect(pullSince).toHaveBeenCalledWith("items", 8);
+        expect(pullSince).toHaveBeenCalledWith(eagerStorageTarget("items"), 8);
         await coordination.close();
     });
 });
@@ -828,7 +875,7 @@ describe("persistence page resume", () => {
             await collection.insert({ id: "one", title: "Original" }).isPersisted.promise;
             load.mockClear();
             // A durable adapter commit without its notification models a missed broadcast.
-            await adapter.applyCommittedTx(collection.id, {
+            await adapter.applyCommittedTx(eagerStorageTarget(collection.id), {
                 txId: "missed",
                 term: 1,
                 seq: 2,

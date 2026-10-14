@@ -364,10 +364,8 @@ describe("createRemoteOntologyBackendAdapter.loadSubset", () => {
         const controllerA = new AbortController();
         const controllerB = new AbortController();
 
-        const requestA = collection._sync.loadSubset({
-            limit: 1,
-            signal: controllerA.signal,
-        });
+        const optionsA = { limit: 1, signal: controllerA.signal };
+        const requestA = collection._sync.loadSubset(optionsA);
         const requestB = collection._sync.loadSubset({
             limit: 1,
             signal: controllerB.signal,
@@ -378,6 +376,8 @@ describe("createRemoteOntologyBackendAdapter.loadSubset", () => {
         expect(loadSubset.mock.calls[0]?.[1]?.signal).toBe(controllerA.signal);
         expect(loadSubset.mock.calls[1]?.[1]?.signal).toBe(controllerB.signal);
 
+        // Releasing demand ends the observer lease in current query collections.
+        collection._sync.unloadSubset(optionsA);
         controllerA.abort(new DOMException("Request A canceled.", "AbortError"));
         requests[1]!.resolve({
             objectType: "Note",

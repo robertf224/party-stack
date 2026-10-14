@@ -121,3 +121,18 @@ persistence requires a supplied cross-tab coordinator for notifications. Manual
 storage edits remain unsupported; they bypass notification, index, and replay
 maintenance. Temporal query literals still have upstream remote-subset wire
 restrictions, separate from row serialization.
+
+## Managed cache update — 2026-10-14
+
+The adapter now implements upstream core 0.4.9's complete managed cache lifecycle:
+claim, rotate, renew, release, clock, transactional claim validation, and retired
+storage collection. Shared options derive from the core interface. Targets are
+explicit and database version 4 preserves legacy eager/local-only data.
+
+The additional source pin, ported test inventory, backend-specific adaptations,
+and exclusions are documented in [the contract notice](src/contracts/NOTICE.md).
+Managed contracts run against SQLite as a control, fake IndexedDB, and native
+Chromium IndexedDB. IndexedDB-specific race histories additionally cover separate
+connections, revoked/expired claims at registration and access boundaries, and
+schema-upgrade preservation. Test-only contract modules are excluded from
+published library outputs.

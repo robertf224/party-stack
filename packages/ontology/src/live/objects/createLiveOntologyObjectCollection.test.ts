@@ -1,5 +1,6 @@
 import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
 import { createLiveQueryCollection } from "@tanstack/db";
+import { resolvePersistedStorageTarget } from "@tanstack/db-sqlite-persistence-core";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { o } from "../../ir/index.js";
 import { createLiveOntologyActions } from "../actions/createLiveOntologyActions.js";
@@ -78,44 +79,53 @@ function memoryPersistence(
             latestRowVersion: number;
         }
     >();
-    const applyCommittedTx = vi.fn((collectionId: string, transaction: PersistedTx) => {
-        const rows = rowsFor(collectionId);
-        if (transaction.truncate) rows.clear();
-        for (const mutation of transaction.mutations) {
-            if (mutation.type === "delete") {
-                rows.delete(String(mutation.key));
-            } else {
-                rows.set(String(mutation.key), mutation.value);
+    const applyCommittedTx = vi.fn(
+        (target: Parameters<PersistenceAdapter["applyCommittedTx"]>[0], transaction: PersistedTx) => {
+            const { collectionId } = resolvePersistedStorageTarget(target);
+            const rows = rowsFor(collectionId);
+            if (transaction.truncate) rows.clear();
+            for (const mutation of transaction.mutations) {
+                if (mutation.type === "delete") {
+                    rows.delete(String(mutation.key));
+                } else {
+                    rows.set(String(mutation.key), mutation.value);
+                }
             }
+            positions.set(collectionId, {
+                latestTerm: transaction.term,
+                latestSeq: transaction.seq,
+                latestRowVersion: transaction.rowVersion,
+            });
+            return Promise.resolve();
         }
-        positions.set(collectionId, {
-            latestTerm: transaction.term,
-            latestSeq: transaction.seq,
-            latestRowVersion: transaction.rowVersion,
-        });
-        return Promise.resolve();
-    });
+    );
     return {
         adapter: {
-            loadResumeSnapshot: (collectionId) =>
+            loadResumeSnapshot: (target) =>
                 Promise.resolve({
-                    rows: [...rowsFor(collectionId)].map(([key, value]) => ({ key, value })),
+                    rows: [...rowsFor(resolvePersistedStorageTarget(target).collectionId)].map(
+                        ([key, value]) => ({ key, value })
+                    ),
                     collectionMetadata: [],
-                    ...(positions.get(collectionId) ?? { latestTerm: 0, latestSeq: 0, latestRowVersion: 0 }),
+                    ...(positions.get(resolvePersistedStorageTarget(target).collectionId) ?? {
+                        latestTerm: 0,
+                        latestSeq: 0,
+                        latestRowVersion: 0,
+                    }),
                     resetEpoch: 0,
                 }),
-            loadSubset: (collectionId) =>
+            loadSubset: (target) =>
                 Promise.resolve(
-                    [...rowsFor(collectionId)].map(([key, value]) => ({
+                    [...rowsFor(resolvePersistedStorageTarget(target).collectionId)].map(([key, value]) => ({
                         key,
                         value,
                     }))
                 ),
             applyCommittedTx,
             ensureIndex: () => Promise.resolve(),
-            getStreamPosition: (collectionId) =>
+            getStreamPosition: (target) =>
                 Promise.resolve(
-                    positions.get(collectionId) ?? {
+                    positions.get(resolvePersistedStorageTarget(target).collectionId) ?? {
                         latestTerm: 0,
                         latestSeq: 0,
                         latestRowVersion: 0,
@@ -140,6 +150,38 @@ function createOptions() {
 }
 
 describe("createLiveOntologyObjectCollection", () => {
+    it.each([false, true])(
+        "exposes optional adapter refresh through collections (persisted: %s)",
+        async (persistObjects) => {
+            const options = createOptions();
+            const refresh = vi.fn(() => Promise.resolve());
+            const adapter = backend(({ markReady }) => markReady());
+            const getOptions = adapter.getCollectionOptions;
+            adapter.getCollectionOptions = (objectType) => ({
+                ...getOptions(objectType),
+                utils: { refresh },
+            });
+            const collection = createLiveOntologyObjectCollection({
+                ...options,
+                backendAdapter: adapter,
+                runtime: {
+                    owner: options.owner,
+                    namespace: options.ontologyId,
+                    blobBytes: new MemoryBlobBytesStore(),
+                    coordination: options.coordination,
+                    persistence: memoryPersistence(),
+                },
+                persistObjects,
+            });
+            await collection.utils.refresh?.();
+            expect(refresh).toHaveBeenCalledOnce();
+            refresh.mockRejectedValueOnce(new Error("refresh failed"));
+            await expect(collection.utils.refresh?.()).rejects.toThrow("refresh failed");
+            await collection.cleanup();
+            await options.coordination.close();
+        }
+    );
+
     it("fails fast when object persistence has no adapter", async () => {
         const options = createOptions();
 
@@ -236,16 +278,18 @@ describe("createLiveOntologyObjectCollection", () => {
             query: (q) => q.from({ task: collection }).orderBy(({ task }) => task.title, "asc"),
             startSync: true,
         });
+        const loading = query.preload();
         try {
-            await vi.waitFor(() => expect(loadSubset).toHaveBeenCalled());
             await vi.waitFor(() =>
                 expect(query.toArray).toMatchObject([{ id: "persisted", title: "Cached task" }])
             );
+            await vi.waitFor(() => expect(loadSubset).toHaveBeenCalled());
             expect(query.status).not.toBe("ready");
             finishRemote();
             await vi.waitFor(() => expect(query.status).toBe("ready"));
         } finally {
             finishRemote();
+            await loading;
             await query.cleanup();
             await collection.cleanup();
             await options.coordination.close();

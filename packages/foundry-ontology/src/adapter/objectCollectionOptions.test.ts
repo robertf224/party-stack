@@ -184,6 +184,135 @@ describe("objectCollectionOptions", () => {
         });
     });
 
+    it("refreshes the full snapshot atomically and preserves the watcher", async () => {
+        mockState.search.mockResolvedValue({
+            data: [{ employeeId: 2, name: "Fresh" }],
+            nextPageToken: undefined,
+        });
+        const harness = createSyncHarness([{ employeeId: 1, name: "Stale" }]);
+        const watcher = mockState.subscribeCallback;
+        await harness.utils.refresh();
+        expect(harness.syncedData.has(1)).toBe(false);
+        expect(harness.syncedData.get(2)).toEqual({ employeeId: 2, name: "Fresh" });
+        expect(harness.truncate).toHaveBeenCalledTimes(1);
+        expect(harness.transactions.at(-1)?.writes).toEqual([{ type: "insert", primaryKey: 2 }]);
+        expect(mockState.subscribeCallback).toBe(watcher);
+        expect(mockState.unsubscribe).not.toHaveBeenCalled();
+        harness.cleanup();
+    });
+
+    it("propagates refresh errors without clearing cached rows, and allows retry", async () => {
+        mockState.search.mockRejectedValueOnce(new Error("snapshot failed"));
+        const harness = createSyncHarness([{ employeeId: 1, name: "Cached" }]);
+        await expect(harness.utils.refresh()).rejects.toThrow("snapshot failed");
+        expect(harness.syncedData.get(1)).toMatchObject({ name: "Cached" });
+        expect(harness.truncate).not.toHaveBeenCalled();
+        mockState.search.mockResolvedValue({ data: [], nextPageToken: undefined });
+        await harness.utils.refresh();
+        expect(harness.syncedData.size).toBe(0);
+        harness.cleanup();
+        await expect(harness.utils.refresh()).rejects.toThrow();
+    });
+
+    it("waits for refresh commit and replays websocket updates received during the snapshot fetch", async () => {
+        let finishFetch!: (value: unknown) => void;
+        mockState.search.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    finishFetch = resolve;
+                })
+        );
+        let finishCommit!: () => void;
+        const receipt = new Promise<void>((resolve) => {
+            finishCommit = resolve;
+        });
+        const harness = createSyncHarness([], { commitReceipt: () => receipt });
+        const completed = vi.fn();
+        const refresh = harness.utils.refresh().then(completed);
+        await vi.waitFor(() => expect(finishFetch).toBeDefined());
+        mockState.subscribeCallback?.({
+            type: "change",
+            updates: [{ type: "object", state: "ADDED_OR_UPDATED", object: { employeeId: 2, name: "Live" } }],
+        });
+        finishFetch({ data: [{ employeeId: 2, name: "Snapshot" }], nextPageToken: undefined });
+        await vi.waitFor(() => expect(harness.truncate).toHaveBeenCalledOnce());
+        expect(completed).not.toHaveBeenCalled();
+        finishCommit();
+        await refresh;
+        expect(harness.syncedData.get(2)).toMatchObject({ name: "Live" });
+        harness.cleanup();
+    });
+
+    it("applies queued live updates even when the snapshot fetch fails", async () => {
+        let failFetch!: (error: Error) => void;
+        mockState.search.mockImplementation(
+            () =>
+                new Promise((_resolve, reject) => {
+                    failFetch = reject;
+                })
+        );
+        const harness = createSyncHarness([{ employeeId: 1, name: "Cached" }]);
+        const refresh = harness.utils.refresh();
+        const rejected = expect(refresh).rejects.toThrow("snapshot failed");
+        await vi.waitFor(() => expect(failFetch).toBeDefined());
+        mockState.subscribeCallback?.({
+            type: "change",
+            updates: [{ type: "object", state: "ADDED_OR_UPDATED", object: { employeeId: 1, name: "Live" } }],
+        });
+        failFetch(new Error("snapshot failed"));
+        await rejected;
+        expect(harness.syncedData.get(1)).toMatchObject({ name: "Live" });
+        expect(harness.truncate).not.toHaveBeenCalled();
+        expect(mockState.unsubscribe).not.toHaveBeenCalled();
+        harness.cleanup();
+    });
+
+    it("rejects a refresh disposed while its snapshot is in flight", async () => {
+        let finishFetch!: (value: unknown) => void;
+        mockState.search.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    finishFetch = resolve;
+                })
+        );
+        const harness = createSyncHarness([{ employeeId: 1 }]);
+        const refresh = harness.utils.refresh();
+        const result = expect(refresh).rejects.toThrow("sync");
+        await vi.waitFor(() => expect(finishFetch).toBeDefined());
+        harness.cleanup();
+        finishFetch({ data: [], nextPageToken: undefined });
+        await result;
+        expect(harness.truncate).not.toHaveBeenCalled();
+    });
+
+    it("acknowledges an operation by requesting and awaiting a new snapshot when history is unavailable", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        mockState.getEditsHistory.mockRejectedValue(new Error("History unavailable"));
+        mockState.search.mockResolvedValue({ data: [], nextPageToken: undefined });
+        const harness = createSyncHarness();
+        mockState.subscribeCallback?.({ type: "state", status: "open" });
+        await vi.waitFor(() => expect(mockState.search).toHaveBeenCalledOnce());
+        // Await the background refresh and any queued request before testing acknowledgement.
+        await harness.utils.refresh();
+        mockState.search.mockClear();
+        let finishFetch!: (value: unknown) => void;
+        mockState.search.mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    finishFetch = resolve;
+                })
+        );
+        const acknowledged = vi.fn();
+        const operation = harness.utils.awaitOperationId("op-without-history").then(acknowledged);
+        await vi.waitFor(() => expect(finishFetch).toBeDefined());
+        expect(acknowledged).not.toHaveBeenCalled();
+        finishFetch({ data: [{ employeeId: 4, name: "Created" }], nextPageToken: undefined });
+        await operation;
+        expect(harness.syncedData.get(4)).toMatchObject({ name: "Created" });
+        harness.cleanup();
+        warn.mockRestore();
+    });
+
     it("constructs and cleans up the object-set watcher by default", () => {
         const harness = createSyncHarness();
 
@@ -1294,43 +1423,26 @@ describe("objectCollectionOptions", () => {
         expect(mockState.getEditsHistory).not.toHaveBeenCalled();
     });
 
-    it("resolves awaitOperationId after direct websocket sync observes an update", async () => {
+    it("resolves awaitOperationId after fallback snapshot commit without edit history", async () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         mockState.getEditsHistory.mockRejectedValue(new Error("Edit history is not enabled"));
-
+        mockState.search.mockResolvedValue({
+            data: [{ employeeId: 13, name: "Direct Operation Employee" }],
+            nextPageToken: undefined,
+        });
         let resolveCommit!: () => void;
         const commitApplied = new Promise<void>((resolve) => {
             resolveCommit = resolve;
         });
-        const harness = createSyncHarness([], {
-            commitReceipt: () => commitApplied,
-        });
-        const operationPromise = harness.utils.awaitOperationId("op-12");
-
-        await vi.waitFor(() => {
-            expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
-        });
-
-        mockState.subscribeCallback?.({
-            type: "change",
-            updates: [
-                {
-                    type: "object",
-                    state: "ADDED_OR_UPDATED",
-                    object: { employeeId: 13, name: "Direct Operation Employee" },
-                },
-            ],
-        });
-
-        await expect(operationPromise).resolves.toBeUndefined();
-        expect(harness.syncedData.get(13)).toEqual({
-            employeeId: 13,
-            name: "Direct Operation Employee",
-        });
-        expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
-
+        const harness = createSyncHarness([], { commitReceipt: () => commitApplied });
+        const acknowledged = vi.fn();
+        const operationPromise = harness.utils.awaitOperationId("op-12").then(acknowledged);
+        await vi.waitFor(() => expect(harness.truncate).toHaveBeenCalledOnce());
+        expect(acknowledged).not.toHaveBeenCalled();
         resolveCommit();
-        await commitApplied;
+        await operationPromise;
+        expect(harness.syncedData.get(13)).toEqual({ employeeId: 13, name: "Direct Operation Employee" });
+        expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
         harness.cleanup();
         warnSpy.mockRestore();
     });

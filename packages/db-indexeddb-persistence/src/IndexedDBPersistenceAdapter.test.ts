@@ -1,4 +1,3 @@
-import "fake-indexeddb/auto";
 import {
     BTreeIndex,
     IR,
@@ -19,13 +18,19 @@ import {
     not,
     or,
 } from "@tanstack/db";
+import "fake-indexeddb/auto";
+import { eagerStorageTarget } from "@tanstack/db-sqlite-persistence-core";
 import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
 import { openDB } from "idb";
 import { Temporal } from "temporal-polyfill";
 import { afterAll, describe, expect, it, vi } from "vite-plus/test";
 import { IndexedDBPersistenceAdapter } from "./IndexedDBPersistenceAdapter.js";
 import type { LoadSubsetOptions } from "@tanstack/db";
-import type { PersistedIndexSpec, PersistedTx } from "@tanstack/db-sqlite-persistence-core";
+import type {
+    PersistedIndexSpec,
+    PersistedTx,
+    PersistedStorageTarget,
+} from "@tanstack/db-sqlite-persistence-core";
 
 interface Item {
     [key: string]: unknown;
@@ -107,9 +112,13 @@ function expressionIndexSpec(expression: IR.BasicExpression): PersistedIndexSpec
     };
 }
 
-async function seed(adapter: IndexedDBPersistenceAdapter, items: Item[]): Promise<void> {
+async function seed(
+    adapter: IndexedDBPersistenceAdapter,
+    items: Item[],
+    target: PersistedStorageTarget = eagerStorageTarget("items")
+): Promise<void> {
     await adapter.applyCommittedTx(
-        "items",
+        target,
         tx(
             "seed",
             1,
@@ -138,11 +147,12 @@ describe("IndexedDBPersistenceAdapter", () => {
                     adapter,
                     values.map((mixed, priority) => ({ id: String(priority), priority, mixed }))
                 );
-                if (indexed) await adapter.ensureIndex("items", "bigint", indexSpec(["mixed"]));
+                if (indexed)
+                    await adapter.ensureIndex(eagerStorageTarget("items"), "bigint", indexSpec(["mixed"]));
                 expect(
                     ids(
                         await adapter.loadSubset(
-                            "items",
+                            eagerStorageTarget("items"),
                             queryOptions((query) => query.where(({ item }) => eq(item.mixed, 10n)).limit(100))
                         )
                     )
@@ -150,7 +160,7 @@ describe("IndexedDBPersistenceAdapter", () => {
                 expect(
                     ids(
                         await adapter.loadSubset(
-                            "items",
+                            eagerStorageTarget("items"),
                             queryOptions((query) => query.where(({ item }) => gt(item.mixed, 2n)).limit(100))
                         )
                     )
@@ -158,7 +168,7 @@ describe("IndexedDBPersistenceAdapter", () => {
                 expect(
                     (
                         await adapter.loadSubset(
-                            "items",
+                            eagerStorageTarget("items"),
                             queryOptions((query) =>
                                 query
                                     .orderBy(({ item }) => item.mixed, "asc")
@@ -171,7 +181,7 @@ describe("IndexedDBPersistenceAdapter", () => {
                 expect(
                     (
                         await adapter.loadSubset(
-                            "items",
+                            eagerStorageTarget("items"),
                             queryOptions((query) => query.orderBy(({ item }) => item.mixed, "desc").limit(3))
                         )
                     ).map((row) => row.value.mixed)
@@ -182,7 +192,9 @@ describe("IndexedDBPersistenceAdapter", () => {
             const reopened = new IndexedDBPersistenceAdapter({ databaseName: name });
             try {
                 expect(
-                    (await reopened.loadResumeSnapshot("items")).rows.map((row) => row.value.mixed)
+                    (await reopened.loadResumeSnapshot(eagerStorageTarget("items"))).rows.map(
+                        (row) => row.value.mixed
+                    )
                 ).toEqual(values);
             } finally {
                 reopened.close();
@@ -226,7 +238,7 @@ describe("IndexedDBPersistenceAdapter", () => {
                 adapter,
                 values.map((mixed, priority) => ({ id: String(priority).padStart(2, "0"), priority, mixed }))
             );
-            await adapter.ensureIndex("items", "bigint", indexSpec(["mixed"]));
+            await adapter.ensureIndex(eagerStorageTarget("items"), "bigint", indexSpec(["mixed"]));
             for (const threshold of [-1000n, -10n, -1n, 0n, 1n, 10n, 1000n, 10n ** 100n]) {
                 for (const operator of ["eq", "gt", "gte", "lt", "lte"] as const) {
                     const matches = (value: bigint) =>
@@ -239,7 +251,7 @@ describe("IndexedDBPersistenceAdapter", () => {
                                 : operator === "lt"
                                   ? value < threshold
                                   : value <= threshold;
-                    const rows = await adapter.loadSubset("items", {
+                    const rows = await adapter.loadSubset(eagerStorageTarget("items"), {
                         where: new IR.Func<boolean>(operator, [
                             new IR.PropRef(["mixed"]),
                             new IR.Value(threshold),
@@ -261,7 +273,7 @@ describe("IndexedDBPersistenceAdapter", () => {
                 for (const direction of ["asc", "desc"] as const) {
                     get.mockClear();
                     const rows = await adapter.loadSubset(
-                        "items",
+                        eagerStorageTarget("items"),
                         queryOptions((query) =>
                             query
                                 .orderBy(({ item }) => item.mixed, direction)
@@ -278,7 +290,7 @@ describe("IndexedDBPersistenceAdapter", () => {
                 }
                 get.mockClear();
                 const rows = await adapter.loadSubset(
-                    "items",
+                    eagerStorageTarget("items"),
                     queryOptions((query) =>
                         query
                             .where(({ item }) => gt(item.mixed, 9n))
@@ -312,11 +324,11 @@ describe("IndexedDBPersistenceAdapter", () => {
                 { id: "b", priority: 3, mixed: 0n, status: "open" },
                 { id: "c", priority: 4, mixed: 10n, status: "open" },
             ]);
-            await adapter.ensureIndex("items", "bigint", indexSpec(["mixed"]));
+            await adapter.ensureIndex(eagerStorageTarget("items"), "bigint", indexSpec(["mixed"]));
             expect(
                 (
                     await adapter.loadSubset(
-                        "items",
+                        eagerStorageTarget("items"),
                         queryOptions((query) =>
                             query
                                 .where(({ item }) => eq(item.status, "open"))
@@ -330,7 +342,7 @@ describe("IndexedDBPersistenceAdapter", () => {
             expect(
                 (
                     await adapter.loadSubset(
-                        "items",
+                        eagerStorageTarget("items"),
                         queryOptions((query) =>
                             query
                                 .orderBy(({ item }) => item.mixed, "desc")
@@ -341,7 +353,7 @@ describe("IndexedDBPersistenceAdapter", () => {
                 ).map((row) => row.key)
             ).toEqual(["a"]);
             const orderBy = queryOptions((query) => query.orderBy(({ item }) => item.mixed, "asc")).orderBy;
-            const rows = await adapter.loadSubset("items", {
+            const rows = await adapter.loadSubset(eagerStorageTarget("items"), {
                 orderBy,
                 limit: 1,
                 cursor: {
@@ -365,7 +377,7 @@ describe("IndexedDBPersistenceAdapter", () => {
                     { id: "negative", priority: 1, mixed: -10n },
                     { id: "positive", priority: 2, mixed: 2n },
                 ]);
-                await adapter.ensureIndex("items", "bigint", indexSpec(["mixed"]));
+                await adapter.ensureIndex(eagerStorageTarget("items"), "bigint", indexSpec(["mixed"]));
                 const database = await openDB(name);
                 const definition = (await database.get("indexDefinitions", ["items", "bigint"])) as Record<
                     string,
@@ -384,11 +396,13 @@ describe("IndexedDBPersistenceAdapter", () => {
                 }
                 database.close();
                 const page = queryOptions((query) => query.orderBy(({ item }) => item.mixed, "asc").limit(1));
-                expect((await adapter.loadSubset("items", page)).map((row) => row.key)).toEqual(["negative"]);
+                expect(
+                    (await adapter.loadSubset(eagerStorageTarget("items"), page)).map((row) => row.key)
+                ).toEqual(["negative"]);
                 expect(
                     (
                         await adapter.loadSubset(
-                            "items",
+                            eagerStorageTarget("items"),
                             queryOptions((query) => query.where(({ item }) => gt(item.mixed, 0n)).limit(1))
                         )
                     ).map((row) => row.key)
@@ -396,10 +410,14 @@ describe("IndexedDBPersistenceAdapter", () => {
                 const put = vi.spyOn(IDBObjectStore.prototype, "put");
                 try {
                     if (trigger === "ensureIndex")
-                        await adapter.ensureIndex("items", "bigint", indexSpec(["mixed"]));
+                        await adapter.ensureIndex(
+                            eagerStorageTarget("items"),
+                            "bigint",
+                            indexSpec(["mixed"])
+                        );
                     else
                         await adapter.applyCommittedTx(
-                            "items",
+                            eagerStorageTarget("items"),
                             tx("change", 2, [
                                 {
                                     type: "update",
@@ -412,7 +430,7 @@ describe("IndexedDBPersistenceAdapter", () => {
                         put.mock.contexts.filter((store) => (store as IDBObjectStore).name === "indexEntries")
                     ).toHaveLength(2);
                     put.mockClear();
-                    await adapter.ensureIndex("items", "bigint", indexSpec(["mixed"]));
+                    await adapter.ensureIndex(eagerStorageTarget("items"), "bigint", indexSpec(["mixed"]));
                     expect(put).not.toHaveBeenCalled();
                 } finally {
                     put.mockRestore();
@@ -420,7 +438,7 @@ describe("IndexedDBPersistenceAdapter", () => {
                 expect(
                     (
                         await adapter.loadSubset(
-                            "items",
+                            eagerStorageTarget("items"),
                             queryOptions((query) => query.where(({ item }) => gt(item.mixed, 0n)))
                         )
                     ).map((row) => row.key)
@@ -436,7 +454,7 @@ describe("IndexedDBPersistenceAdapter", () => {
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: name });
         try {
             await seed(adapter, [{ id: "one", priority: 1, mixed: 1 }]);
-            await adapter.ensureIndex("items", "mixed", indexSpec(["mixed"]));
+            await adapter.ensureIndex(eagerStorageTarget("items"), "mixed", indexSpec(["mixed"]));
             const database = await openDB(name);
             const definition = (await database.get("indexDefinitions", ["items", "mixed"])) as Record<
                 string,
@@ -447,10 +465,10 @@ describe("IndexedDBPersistenceAdapter", () => {
             const put = vi.spyOn(IDBObjectStore.prototype, "put");
             const getAll = vi.spyOn(IDBIndex.prototype, "getAll");
             try {
-                await adapter.ensureIndex("items", "mixed", indexSpec(["mixed"]));
+                await adapter.ensureIndex(eagerStorageTarget("items"), "mixed", indexSpec(["mixed"]));
                 expect(put).not.toHaveBeenCalled();
                 await adapter.applyCommittedTx(
-                    "items",
+                    eagerStorageTarget("items"),
                     tx("bigint", 2, [
                         { type: "update", key: "one", value: { id: "one", priority: 1, mixed: 10n } },
                     ])
@@ -459,12 +477,12 @@ describe("IndexedDBPersistenceAdapter", () => {
                     getAll.mock.contexts.some((index) => (index as IDBIndex).objectStore.name === "rows")
                 ).toBe(false);
                 put.mockClear();
-                await adapter.ensureIndex("items", "mixed", indexSpec(["mixed"]));
+                await adapter.ensureIndex(eagerStorageTarget("items"), "mixed", indexSpec(["mixed"]));
                 expect(put).not.toHaveBeenCalled();
                 expect(
                     (
                         await adapter.loadSubset(
-                            "items",
+                            eagerStorageTarget("items"),
                             queryOptions((query) => query.orderBy(({ item }) => item.mixed, "asc").limit(1))
                         )
                     ).map((row) => row.value.mixed)
@@ -501,7 +519,7 @@ describe("IndexedDBPersistenceAdapter", () => {
             cycle,
         };
         try {
-            await adapter.applyCommittedTx("items", {
+            await adapter.applyCommittedTx(eagerStorageTarget("items"), {
                 ...tx("values", 1, [
                     {
                         type: "insert",
@@ -539,11 +557,11 @@ describe("IndexedDBPersistenceAdapter", () => {
             expect(restored.cycle.instant).toBeInstanceOf(Temporal.Instant);
         };
         try {
-            const snapshot = await reopened.loadResumeSnapshot("items");
+            const snapshot = await reopened.loadResumeSnapshot(eagerStorageTarget("items"));
             check(snapshot.rows[0]?.value.mixed);
             check(snapshot.rows[0]?.metadata);
             check(snapshot.collectionMetadata[0]?.value);
-            const replay = await reopened.pullSince("items", 0);
+            const replay = await reopened.pullSince(eagerStorageTarget("items"), 0);
             expect(replay.requiresFullReload).toBe(false);
             if (!replay.requiresFullReload) {
                 check(replay.deltas?.[0]?.changedRows[0]?.value.mixed);
@@ -565,8 +583,8 @@ describe("IndexedDBPersistenceAdapter", () => {
                     { id: "one", priority: 1, mixed: Temporal.PlainDateTime.from("2026-10-07T12:00:00") },
                 ])
             ).rejects.toThrow("Unsupported Temporal.PlainDateTime");
-            expect((await adapter.loadResumeSnapshot("items")).rows).toEqual([]);
-            expect((await adapter.loadResumeSnapshot("items")).latestRowVersion).toBe(0);
+            expect((await adapter.loadResumeSnapshot(eagerStorageTarget("items"))).rows).toEqual([]);
+            expect((await adapter.loadResumeSnapshot(eagerStorageTarget("items"))).latestRowVersion).toBe(0);
         } finally {
             adapter.close();
         }
@@ -576,7 +594,7 @@ describe("IndexedDBPersistenceAdapter", () => {
         const name = databaseName();
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: name });
         await seed(adapter, [{ id: "one", priority: 1, status: "open" }]);
-        await adapter.ensureIndex("items", "status", indexSpec(["status"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status", indexSpec(["status"]));
         const database = await openDB(name);
         const legacy = (await database.get("indexDefinitions", ["items", "status"])) as {
             valueTypeCounts?: unknown;
@@ -591,23 +609,23 @@ describe("IndexedDBPersistenceAdapter", () => {
         expect(
             ids(
                 await adapter.loadSubset(
-                    "items",
+                    eagerStorageTarget("items"),
                     queryOptions((query) => query.where(({ item }) => eq(item.status, "missing")))
                 )
             )
         ).toEqual(["one"]);
         const put = vi.spyOn(IDBObjectStore.prototype, "put");
         try {
-            await adapter.ensureIndex("items", "status", indexSpec(["status"]));
+            await adapter.ensureIndex(eagerStorageTarget("items"), "status", indexSpec(["status"]));
             expect(
                 put.mock.contexts.filter((store) => (store as IDBObjectStore).name === "indexEntries")
             ).toHaveLength(2);
             put.mockClear();
-            await adapter.ensureIndex("items", "status", indexSpec(["status"]));
+            await adapter.ensureIndex(eagerStorageTarget("items"), "status", indexSpec(["status"]));
             expect(put).not.toHaveBeenCalled();
             expect(
                 await adapter.loadSubset(
-                    "items",
+                    eagerStorageTarget("items"),
                     queryOptions((query) => query.where(({ item }) => eq(item.status, "missing")))
                 )
             ).toEqual([]);
@@ -620,7 +638,7 @@ describe("IndexedDBPersistenceAdapter", () => {
     it("rolls back row writes when index maintenance fails", async () => {
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
         await seed(adapter, [{ id: "one", priority: 1 }]);
-        await adapter.ensureIndex("items", "priority", indexSpec(["priority"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "priority", indexSpec(["priority"]));
         // oxlint-disable-next-line typescript/unbound-method -- Rebound to the actual store with call below.
         const originalPut = IDBObjectStore.prototype.put;
         const put = vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function (
@@ -634,7 +652,7 @@ describe("IndexedDBPersistenceAdapter", () => {
         try {
             await expect(
                 adapter.applyCommittedTx(
-                    "items",
+                    eagerStorageTarget("items"),
                     tx("failed", 2, [{ type: "update", key: "one", value: { id: "one", priority: 2 } }])
                 )
             ).rejects.toThrow("Index write failed");
@@ -642,10 +660,10 @@ describe("IndexedDBPersistenceAdapter", () => {
             put.mockRestore();
         }
         try {
-            expect((await adapter.loadResumeSnapshot("items")).latestRowVersion).toBe(1);
+            expect((await adapter.loadResumeSnapshot(eagerStorageTarget("items"))).latestRowVersion).toBe(1);
             expect(
                 await adapter.loadSubset(
-                    "items",
+                    eagerStorageTarget("items"),
                     queryOptions((query) => query.where(({ item }) => eq(item.priority, 1)))
                 )
             ).toMatchObject([{ key: "one", value: { priority: 1 } }]);
@@ -660,17 +678,17 @@ describe("IndexedDBPersistenceAdapter", () => {
             adapter,
             Array.from({ length: 50 }, (_, priority) => ({ id: String(priority), priority, status: "open" }))
         );
-        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
         const put = vi.spyOn(IDBObjectStore.prototype, "put");
         const remove = vi.spyOn(IDBObjectStore.prototype, "delete");
         const scan = vi.spyOn(IDBIndex.prototype, "getAll");
         try {
-            await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
+            await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
             expect(put).not.toHaveBeenCalled();
             expect(remove).not.toHaveBeenCalled();
             expect(scan).not.toHaveBeenCalled();
             await adapter.applyCommittedTx(
-                "items",
+                eagerStorageTarget("items"),
                 tx("edit", 2, [
                     { type: "update", key: "0", value: { id: "0", priority: 0, status: "closed" } },
                 ])
@@ -693,7 +711,7 @@ describe("IndexedDBPersistenceAdapter", () => {
             put.mockClear();
             remove.mockClear();
             scan.mockClear();
-            await adapter.applyCommittedTx("items", {
+            await adapter.applyCommittedTx(eagerStorageTarget("items"), {
                 ...tx("metadata", 3, []),
                 collectionMetadataMutations: [{ type: "set", key: "cursor", value: "next" }],
             });
@@ -719,9 +737,9 @@ describe("IndexedDBPersistenceAdapter", () => {
                 { id: "string", priority: 0, mixed: "text" },
                 { id: "object", priority: 0, mixed: {} },
             ]);
-            await adapter.ensureIndex("items", "mixed", indexSpec(["mixed"]));
+            await adapter.ensureIndex(eagerStorageTarget("items"), "mixed", indexSpec(["mixed"]));
             await adapter.applyCommittedTx(
-                "items",
+                eagerStorageTarget("items"),
                 tx("remove-mixed", 2, [
                     { type: "delete", key: "string", value: { id: "string", priority: 0 } },
                     { type: "delete", key: "object", value: { id: "object", priority: 0 } },
@@ -730,20 +748,23 @@ describe("IndexedDBPersistenceAdapter", () => {
             expect(
                 ids(
                     await adapter.loadSubset(
-                        "items",
+                        eagerStorageTarget("items"),
                         queryOptions((query) => query.where(({ item }) => gt(item.mixed, 1)))
                     )
                 )
             ).toEqual(["two"]);
-            await adapter.applyCommittedTx("items", { ...tx("reset", 3, []), truncate: true });
+            await adapter.applyCommittedTx(eagerStorageTarget("items"), {
+                ...tx("reset", 3, []),
+                truncate: true,
+            });
             await adapter.applyCommittedTx(
-                "items",
+                eagerStorageTarget("items"),
                 tx("reseed", 4, [{ type: "insert", key: "new", value: { id: "new", priority: 3, mixed: 3 } }])
             );
             expect(
                 ids(
                     await adapter.loadSubset(
-                        "items",
+                        eagerStorageTarget("items"),
                         queryOptions((query) => query.where(({ item }) => gt(item.mixed, 1)))
                     )
                 )
@@ -761,11 +782,11 @@ describe("IndexedDBPersistenceAdapter", () => {
                 { id: "early", priority: 1, instant },
                 { id: "later", priority: 2, instant: instant.add({ nanoseconds: 1 }) },
             ]);
-            await adapter.ensureIndex("items", "instant", indexSpec(["instant"]));
+            await adapter.ensureIndex(eagerStorageTarget("items"), "instant", indexSpec(["instant"]));
             expect(
                 ids(
                     await adapter.loadSubset(
-                        "items",
+                        eagerStorageTarget("items"),
                         queryOptions((query) => query.where(({ item }) => gt(item.instant, instant)))
                     )
                 )
@@ -784,11 +805,11 @@ describe("IndexedDBPersistenceAdapter", () => {
                 { id: "later", priority: 2, date: Temporal.PlainDate.from("-000001-01-01") },
                 { id: "future", priority: 3, date: Temporal.PlainDate.from("+010000-01-01") },
             ]);
-            await adapter.ensureIndex("items", "date", indexSpec(["date"]));
+            await adapter.ensureIndex(eagerStorageTarget("items"), "date", indexSpec(["date"]));
             expect(
                 ids(
                     await adapter.loadSubset(
-                        "items",
+                        eagerStorageTarget("items"),
                         queryOptions((query) => query.where(({ item }) => gt(item.date, date)))
                     )
                 )
@@ -802,13 +823,13 @@ describe("IndexedDBPersistenceAdapter", () => {
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
         const instant = Temporal.Instant.from("2026-10-05T12:00:00Z");
         try {
-            await adapter.applyCommittedTx("items", {
+            await adapter.applyCommittedTx(eagerStorageTarget("items"), {
                 ...tx("snapshot", 7, [
                     { type: "insert", key: "one", value: { id: "one", priority: 1, instant } },
                 ]),
                 collectionMetadataMutations: [{ type: "set", key: "cursor", value: instant }],
             });
-            const snapshot = await adapter.loadResumeSnapshot("items");
+            const snapshot = await adapter.loadResumeSnapshot(eagerStorageTarget("items"));
             expect(snapshot).toMatchObject({
                 rows: [{ key: "one", value: { id: "one", priority: 1, instant } }],
                 collectionMetadata: [{ key: "cursor", value: instant }],
@@ -817,11 +838,13 @@ describe("IndexedDBPersistenceAdapter", () => {
                 latestRowVersion: 7,
                 resetEpoch: 0,
             });
-            expect(await adapter.loadResumeSnapshot("items", { includeRows: false })).toEqual({
+            expect(
+                await adapter.loadResumeSnapshot(eagerStorageTarget("items"), { includeRows: false })
+            ).toEqual({
                 ...snapshot,
                 rows: [],
             });
-            expect(await adapter.loadResumeSnapshot("missing")).toEqual({
+            expect(await adapter.loadResumeSnapshot(eagerStorageTarget("missing"))).toEqual({
                 rows: [],
                 collectionMetadata: [],
                 latestTerm: 0,
@@ -834,13 +857,19 @@ describe("IndexedDBPersistenceAdapter", () => {
         }
     });
 
-    it("makes a second ordered persisted query ready synchronously without rereading storage", async () => {
+    it("reuses an ordered persisted query without rereading storage", async () => {
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
-        await seed(adapter, [
-            { id: "three", priority: 3 },
-            { id: "one", priority: 1 },
-            { id: "two", priority: 2 },
-        ]);
+        const claim = await adapter.claimCacheGeneration("items");
+        await seed(
+            adapter,
+            [
+                { id: "three", priority: 3 },
+                { id: "one", priority: 1 },
+                { id: "two", priority: 2 },
+            ],
+            { kind: "managed", storageCollectionId: claim.storageCollectionId, claimId: claim.claimId }
+        );
+        await adapter.releaseCacheGenerationClaim(claim.claimId);
         const loadSubset = vi.spyOn(adapter, "loadSubset");
         const items = createCollection(
             persistedCollectionOptions<Item, string>({
@@ -874,6 +903,8 @@ describe("IndexedDBPersistenceAdapter", () => {
             expect([...first.values()].map((item) => item.id)).toEqual(["one", "two"]);
             const reads = loadSubset.mock.calls.length;
             second = createWindow();
+            // Upstream now admits cached publications asynchronously.
+            await second.preload();
             expect(second.status).toBe("ready");
             expect([...second.values()].map((item) => item.id)).toEqual(["one", "two"]);
             expect(loadSubset).toHaveBeenCalledTimes(reads);
@@ -986,7 +1017,7 @@ describe("IndexedDBPersistenceAdapter", () => {
         const second = new IndexedDBPersistenceAdapter({
             databaseName: name,
         });
-        const [row] = await second.loadSubset("items", {});
+        const [row] = await second.loadSubset(eagerStorageTarget("items"), {});
 
         expect(row?.value.date).toBeInstanceOf(Temporal.PlainDate);
         expect(String(row?.value.date)).toBe("2026-07-21");
@@ -1013,17 +1044,17 @@ describe("IndexedDBPersistenceAdapter", () => {
                 instant: Temporal.Instant.from("2026-08-01T00:00:00Z"),
             },
         ]);
-        await adapter.ensureIndex("items", "date-index", indexSpec(["date"]));
-        await adapter.ensureIndex("items", "instant-index", indexSpec(["instant"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "date-index", indexSpec(["date"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "instant-index", indexSpec(["instant"]));
 
         const dates = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) =>
                 query.where(({ item }) => gt(item.date, Temporal.PlainDate.from("2026-06-01")))
             )
         );
         const instants = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) =>
                 query.where(({ item }) => gt(item.instant, Temporal.Instant.from("2026-06-01T00:00:00Z")))
             )
@@ -1044,7 +1075,7 @@ describe("IndexedDBPersistenceAdapter", () => {
         ]);
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => eq(item.status, "open")))
         );
 
@@ -1061,10 +1092,10 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "open-2", status: "open", priority: 2 },
             { id: "closed", status: "closed", priority: 3 },
         ]);
-        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => eq(item.status, "open")))
         );
 
@@ -1081,10 +1112,10 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "middle", priority: 5 },
             { id: "high", priority: 10 },
         ]);
-        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec(["priority"]));
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => gt(item.priority, 4)))
         );
 
@@ -1101,11 +1132,11 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "open-high", status: "open", priority: 10 },
             { id: "closed-high", status: "closed", priority: 10 },
         ]);
-        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
-        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec(["priority"]));
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) =>
                 query.where(({ item }) => and(eq(item.status, "open"), gt(item.priority, 4)))
             )
@@ -1124,10 +1155,10 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "middle", priority: 5 },
             { id: "high", priority: 10 },
         ]);
-        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec(["priority"]));
         const cursorWhere = queryOptions((query) => query.where(({ item }) => gt(item.priority, 4))).where!;
 
-        const rows = await adapter.loadSubset("items", {
+        const rows = await adapter.loadSubset(eagerStorageTarget("items"), {
             cursor: {
                 whereFrom: cursorWhere,
                 whereCurrent: queryOptions((query) => query.where(({ item }) => eq(item.priority, 4))).where!,
@@ -1147,12 +1178,12 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "open-high", status: "open", priority: 10 },
             { id: "closed-high", status: "closed", priority: 10 },
         ]);
-        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
-        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec(["priority"]));
         const options = queryOptions((query) => query.where(({ item }) => eq(item.status, "open")));
         const cursorWhere = queryOptions((query) => query.where(({ item }) => gt(item.priority, 4))).where!;
 
-        const rows = await adapter.loadSubset("items", {
+        const rows = await adapter.loadSubset(eagerStorageTarget("items"), {
             ...options,
             cursor: {
                 whereFrom: cursorWhere,
@@ -1173,11 +1204,11 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "open-high", status: "open", priority: 10 },
             { id: "closed-high", status: "closed", priority: 10 },
         ]);
-        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
         const options = queryOptions((query) => query.where(({ item }) => eq(item.status, "open")));
         const cursorWhere = queryOptions((query) => query.where(({ item }) => gt(item.priority, 4))).where!;
 
-        const rows = await adapter.loadSubset("items", {
+        const rows = await adapter.loadSubset(eagerStorageTarget("items"), {
             ...options,
             cursor: {
                 whereFrom: cursorWhere,
@@ -1198,10 +1229,10 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "pending", status: "pending", priority: 2 },
             { id: "closed", status: "closed", priority: 3 },
         ]);
-        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => inArray(item.status, ["open", "pending"])))
         );
 
@@ -1218,10 +1249,10 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "help", name: "helper", priority: 2 },
             { id: "world", name: "world hello", priority: 3 },
         ]);
-        await adapter.ensureIndex("items", "name-index", indexSpec(["name"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "name-index", indexSpec(["name"]));
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => like(item.name, "hel_o%")))
         );
 
@@ -1238,10 +1269,10 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "helium", name: "hELium", priority: 2 },
             { id: "world", name: "world", priority: 3 },
         ]);
-        await adapter.ensureIndex("items", "name-index", indexSpec(["name"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "name-index", indexSpec(["name"]));
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => ilike(item.name, "HEL%")))
         );
 
@@ -1258,14 +1289,14 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "missing", priority: 2 },
             { id: "value", nullable: "value", priority: 3 },
         ]);
-        await adapter.ensureIndex("items", "nullable-index", indexSpec(["nullable"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "nullable-index", indexSpec(["nullable"]));
 
         const nullRows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => isNull(item.nullable)))
         );
         const undefinedRows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => isUndefined(item.nullable)))
         );
 
@@ -1283,11 +1314,11 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "open-high", status: "open", priority: 10 },
             { id: "closed", status: "closed", priority: 2 },
         ]);
-        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
-        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec(["priority"]));
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) =>
                 query.where(({ item }) => or(eq(item.status, "closed"), gt(item.priority, 8)))
             )
@@ -1305,10 +1336,10 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "open", status: "open", priority: 1 },
             { id: "closed", status: "closed", priority: 2 },
         ]);
-        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => not(eq(item.status, "open"))))
         );
 
@@ -1325,13 +1356,13 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "world", name: "WORLD", priority: 2 },
         ]);
         await adapter.ensureIndex(
-            "items",
+            eagerStorageTarget("items"),
             "lower-name-index",
             expressionIndexSpec(new IR.Func("lower", [new IR.PropRef(["name"])]))
         );
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => eq(lower(item.name), "hello")))
         );
 
@@ -1347,14 +1378,14 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "number", mixed: 1, priority: 1 },
             { id: "string", mixed: "1", priority: 2 },
         ]);
-        await adapter.ensureIndex("items", "mixed-index", indexSpec(["mixed"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "mixed-index", indexSpec(["mixed"]));
 
         const numbers = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => eq(item.mixed, 1)))
         );
         const strings = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => eq(item.mixed, "1")))
         );
 
@@ -1373,22 +1404,22 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "bigint", mixed: 1n, priority: 3 },
             { id: "string", mixed: "1", priority: 4 },
         ]);
-        await adapter.ensureIndex("items", "mixed-index", indexSpec(["mixed"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "mixed-index", indexSpec(["mixed"]));
 
         const booleans = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => eq(item.mixed, true)))
         );
         const numbers = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => eq(item.mixed, 1)))
         );
         const bigints = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => eq(item.mixed, 1n)))
         );
         const strings = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => eq(item.mixed, "1")))
         );
 
@@ -1407,10 +1438,10 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "number", mixed: 10, priority: 1 },
             { id: "string", mixed: "10", priority: 2 },
         ]);
-        await adapter.ensureIndex("items", "mixed-index", indexSpec(["mixed"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "mixed-index", indexSpec(["mixed"]));
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => gt(item.mixed, 4)))
         );
 
@@ -1426,9 +1457,9 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "one", status: "open", priority: 1 },
             { id: "two", status: "closed", priority: 2 },
         ]);
-        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
         await adapter.applyCommittedTx(
-            "items",
+            eagerStorageTarget("items"),
             tx("update", 2, [
                 {
                     type: "update",
@@ -1439,7 +1470,7 @@ describe("IndexedDBPersistenceAdapter", () => {
         );
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => eq(item.status, "open")))
         );
 
@@ -1455,11 +1486,11 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "open", status: "open", priority: 1 },
             { id: "closed", status: "closed", priority: 2 },
         ]);
-        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
-        await adapter.markIndexRemoved("items", "status-index");
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
+        await adapter.markIndexRemoved(eagerStorageTarget("items"), "status-index");
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => eq(item.status, "open")))
         );
 
@@ -1479,11 +1510,11 @@ describe("IndexedDBPersistenceAdapter", () => {
             },
         ]);
 
-        await adapter.applyCommittedTx("items", committed);
-        await adapter.applyCommittedTx("items", committed);
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), committed);
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), committed);
 
-        expect(ids(await adapter.loadSubset("items", {}))).toEqual(["one"]);
-        await expect(adapter.getStreamPosition("items")).resolves.toMatchObject({
+        expect(ids(await adapter.loadSubset(eagerStorageTarget("items"), {}))).toEqual(["one"]);
+        await expect(adapter.getStreamPosition(eagerStorageTarget("items"))).resolves.toMatchObject({
             latestTerm: 1,
             latestSeq: 1,
             latestRowVersion: 1,
@@ -1500,10 +1531,10 @@ describe("IndexedDBPersistenceAdapter", () => {
             { id: "open", status: "open", priority: 1 },
             { id: "closed", status: "closed", priority: 2 },
         ]);
-        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
 
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) => query.where(({ item }) => gt(item.status, "a")))
         );
 
@@ -1515,13 +1546,14 @@ describe("IndexedDBPersistenceAdapter", () => {
 describe("IndexedDB persistence lifecycle and paging", () => {
     it("clears collection initialization state on close and cannot repopulate it while opening", async () => {
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
-        for (let index = 0; index < 20; index++) await adapter.loadResumeSnapshot(`dynamic-${index}`);
+        for (let index = 0; index < 20; index++)
+            await adapter.loadResumeSnapshot(eagerStorageTarget(`dynamic-${index}`));
         const initialized = Reflect.get(adapter, "initialized") as Map<string, unknown>;
         expect(initialized.size).toBe(20);
         adapter.close();
         expect(initialized.size).toBe(0);
         const opening = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
-        const load = opening.loadResumeSnapshot("pending");
+        const load = opening.loadResumeSnapshot(eagerStorageTarget("pending"));
         opening.close();
         await expect(load).rejects.toThrow("closed");
         expect((Reflect.get(opening, "initialized") as Map<string, unknown>).size).toBe(0);
@@ -1531,16 +1563,18 @@ describe("IndexedDB persistence lifecycle and paging", () => {
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
         try {
             await adapter.applyCommittedTx(
-                "saved",
+                eagerStorageTarget("saved"),
                 tx("seed", 1, [{ type: "insert", key: "one", value: { id: "one", priority: 1 } }])
             );
             await Promise.all(
-                Array.from({ length: 160 }, (_, index) => adapter.loadResumeSnapshot(`dynamic-${index}`))
+                Array.from({ length: 160 }, (_, index) =>
+                    adapter.loadResumeSnapshot(eagerStorageTarget(`dynamic-${index}`))
+                )
             );
             expect((Reflect.get(adapter, "initialized") as Map<string, unknown>).size).toBeLessThanOrEqual(
                 128
             );
-            expect((await adapter.loadResumeSnapshot("saved")).rows).toHaveLength(1);
+            expect((await adapter.loadResumeSnapshot(eagerStorageTarget("saved"))).rows).toHaveLength(1);
         } finally {
             adapter.close();
         }
@@ -1555,8 +1589,10 @@ describe("IndexedDB persistence lifecycle and paging", () => {
             schemaVersion: 2,
             schemaMismatchPolicy: "sync-absent-error",
         });
-        await expect(next.loadResumeSnapshot("items")).rejects.toThrow("Local-only data was preserved");
-        expect(ids(await original.loadSubset("items", {}))).toEqual(["saved"]);
+        await expect(next.loadResumeSnapshot(eagerStorageTarget("items"))).rejects.toThrow(
+            "Local-only data was preserved"
+        );
+        expect(ids(await original.loadSubset(eagerStorageTarget("items"), {}))).toEqual(["saved"]);
         next.close();
         original.close();
     });
@@ -1564,17 +1600,17 @@ describe("IndexedDB persistence lifecycle and paging", () => {
     it("resets synced schemas atomically and fences old adapters", async () => {
         const name = databaseName();
         const original = new IndexedDBPersistenceAdapter({ databaseName: name });
-        await original.applyCommittedTx("items", {
+        await original.applyCommittedTx(eagerStorageTarget("items"), {
             ...tx("seed", 1, [{ type: "insert", key: "old", value: { id: "old", priority: 1 } }]),
             collectionMetadataMutations: [{ type: "set", key: "cursor", value: "old" }],
         });
-        await original.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        await original.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec(["priority"]));
         const next = new IndexedDBPersistenceAdapter({
             databaseName: name,
             schemaMismatchPolicy: "sync-present-reset",
             schemaVersion: 2,
         });
-        const snapshot = await next.loadResumeSnapshot("items");
+        const snapshot = await next.loadResumeSnapshot(eagerStorageTarget("items"));
         expect(snapshot).toMatchObject({
             rows: [],
             collectionMetadata: [],
@@ -1583,17 +1619,21 @@ describe("IndexedDB persistence lifecycle and paging", () => {
         });
         await expect(
             original.applyCommittedTx(
-                "items",
+                eagerStorageTarget("items"),
                 tx("stale", 3, [{ type: "insert", key: "stale", value: { id: "stale", priority: 3 } }])
             )
         ).rejects.toThrow("stale IndexedDB adapter");
-        await expect(original.loadSubset("items", {})).rejects.toThrow("stale IndexedDB adapter");
+        await expect(original.loadSubset(eagerStorageTarget("items"), {})).rejects.toThrow(
+            "stale IndexedDB adapter"
+        );
         await expect(
-            original.ensureIndex("items", "priority-index", indexSpec(["priority"]))
+            original.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec(["priority"]))
         ).rejects.toThrow("stale IndexedDB adapter");
         const reopenedOld = new IndexedDBPersistenceAdapter({ databaseName: name });
-        await expect(reopenedOld.loadSubset("items", {})).rejects.toThrow("refusing to downgrade");
-        expect(await next.pullSince("items", 1)).toMatchObject({
+        await expect(reopenedOld.loadSubset(eagerStorageTarget("items"), {})).rejects.toThrow(
+            "refusing to downgrade"
+        );
+        expect(await next.pullSince(eagerStorageTarget("items"), 1)).toMatchObject({
             latestRowVersion: 2,
             requiresFullReload: true,
         });
@@ -1608,7 +1648,10 @@ describe("IndexedDB persistence lifecycle and paging", () => {
             schemaVersion: 5,
             schemaMismatchPolicy: "sync-absent-error",
         });
-        expect(await adapter.loadResumeSnapshot("items")).toMatchObject({ rows: [], resetEpoch: 0 });
+        expect(await adapter.loadResumeSnapshot(eagerStorageTarget("items"))).toMatchObject({
+            rows: [],
+            resetEpoch: 0,
+        });
         adapter.close();
     });
 
@@ -1627,9 +1670,9 @@ describe("IndexedDB persistence lifecycle and paging", () => {
             rowMetadataMutations: [{ type: "set" as const, key: "a", value: { owner: "query" } }],
             collectionMetadataMutations: [{ type: "set" as const, key: "cursor", value: instant }],
         };
-        await adapter.applyCommittedTx("items", edit);
-        await adapter.applyCommittedTx("items", edit);
-        expect(await adapter.pullSince("items", 1)).toMatchObject({
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), edit);
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), edit);
+        expect(await adapter.pullSince(eagerStorageTarget("items"), 1)).toMatchObject({
             latestRowVersion: 2,
             requiresFullReload: false,
             changedKeys: ["a"],
@@ -1645,7 +1688,7 @@ describe("IndexedDB persistence lifecycle and paging", () => {
                 },
             ],
         });
-        expect(await adapter.pullSince("items", 2)).toMatchObject({
+        expect(await adapter.pullSince(eagerStorageTarget("items"), 2)).toMatchObject({
             latestRowVersion: 2,
             requiresFullReload: false,
             changedKeys: [],
@@ -1663,29 +1706,32 @@ describe("IndexedDB persistence lifecycle and paging", () => {
             pullSinceReloadThreshold: 0,
         });
         await seed(adapter, [{ id: "a", priority: 1 }]);
-        await adapter.applyCommittedTx("items", tx("metadata", 2, []));
-        await adapter.applyCommittedTx("items", tx("metadata-2", 3, []));
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), tx("metadata", 2, []));
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), tx("metadata-2", 3, []));
         const database = await openDB(name);
         expect(await database.countFromIndex("transactions", "collectionId", "items")).toBe(2);
-        expect(await adapter.pullSince("items", 0)).toMatchObject({
+        expect(await adapter.pullSince(eagerStorageTarget("items"), 0)).toMatchObject({
             latestRowVersion: 3,
             requiresFullReload: true,
         });
-        expect(await adapter.pullSince("items", 1)).toMatchObject({
+        expect(await adapter.pullSince(eagerStorageTarget("items"), 1)).toMatchObject({
             latestRowVersion: 3,
             requiresFullReload: false,
             deltas: [{ txId: "metadata" }, { txId: "metadata-2" }],
         });
-        await adapter.applyCommittedTx("items", { ...tx("truncate", 4, []), truncate: true });
-        expect(await adapter.pullSince("items", 3)).toMatchObject({
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), {
+            ...tx("truncate", 4, []),
+            truncate: true,
+        });
+        expect(await adapter.pullSince(eagerStorageTarget("items"), 3)).toMatchObject({
             latestRowVersion: 4,
             requiresFullReload: true,
         });
         await adapter.applyCommittedTx(
-            "items",
+            eagerStorageTarget("items"),
             tx("insert", 5, [{ type: "insert", key: "b", value: { id: "b", priority: 2 } }])
         );
-        expect(await adapter.pullSince("items", 4)).toMatchObject({
+        expect(await adapter.pullSince(eagerStorageTarget("items"), 4)).toMatchObject({
             latestRowVersion: 5,
             requiresFullReload: true,
         });
@@ -1709,9 +1755,11 @@ describe("IndexedDB persistence lifecycle and paging", () => {
             delta: unknown;
         };
         await database.put("transactions", { ...record, appliedAt: Date.now() - 11000 });
-        await adapter.applyCommittedTx("items", tx("fresh", 2, []));
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), tx("fresh", 2, []));
         expect(await database.countFromIndex("transactions", "collectionId", "items")).toBe(1);
-        expect(await adapter.pullSince("items", 0)).toMatchObject({ requiresFullReload: true });
+        expect(await adapter.pullSince(eagerStorageTarget("items"), 0)).toMatchObject({
+            requiresFullReload: true,
+        });
         database.close();
         adapter.close();
         const noHistory = new IndexedDBPersistenceAdapter({
@@ -1719,8 +1767,10 @@ describe("IndexedDB persistence lifecycle and paging", () => {
             appliedTxPruneMaxRows: 0,
         });
         await seed(noHistory, [{ id: "a", priority: 1 }]);
-        expect(await noHistory.pullSince("items", 0)).toMatchObject({ requiresFullReload: true });
-        expect(await noHistory.pullSince("items", 1)).toMatchObject({
+        expect(await noHistory.pullSince(eagerStorageTarget("items"), 0)).toMatchObject({
+            requiresFullReload: true,
+        });
+        expect(await noHistory.pullSince(eagerStorageTarget("items"), 1)).toMatchObject({
             requiresFullReload: false,
             deltas: [],
         });
@@ -1729,7 +1779,7 @@ describe("IndexedDB persistence lifecycle and paging", () => {
 
     it("selects metadata rows through the metadata index and retains their values", async () => {
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
-        await adapter.applyCommittedTx("items", {
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), {
             ...tx("seed", 1, [
                 {
                     type: "insert",
@@ -1743,7 +1793,7 @@ describe("IndexedDB persistence lifecycle and paging", () => {
         });
         const getAll = vi.spyOn(IDBIndex.prototype, "getAll");
         try {
-            const rows = await adapter.scanRows("items", { metadataOnly: true });
+            const rows = await adapter.scanRows(eagerStorageTarget("items"), { metadataOnly: true });
             expect(rows).toEqual([
                 { key: "owned", value: { id: "owned", priority: 1 }, metadata: { owners: ["query"] } },
             ]);
@@ -1751,11 +1801,11 @@ describe("IndexedDB persistence lifecycle and paging", () => {
         } finally {
             getAll.mockRestore();
         }
-        await adapter.applyCommittedTx("items", {
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), {
             ...tx("clear", 2, []),
             rowMetadataMutations: [{ type: "delete", key: "owned" }],
         });
-        expect(await adapter.scanRows("items", { metadataOnly: true })).toEqual([]);
+        expect(await adapter.scanRows(eagerStorageTarget("items"), { metadataOnly: true })).toEqual([]);
         adapter.close();
     });
 
@@ -1769,12 +1819,12 @@ describe("IndexedDB persistence lifecycle and paging", () => {
                 status: index % 2 ? "open" : "closed",
             }))
         );
-        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec(["priority"]));
         const getAll = vi.spyOn(IDBIndex.prototype, "getAll");
         const get = vi.spyOn(IDBObjectStore.prototype, "get");
         try {
             const rows = await adapter.loadSubset(
-                "items",
+                eagerStorageTarget("items"),
                 queryOptions((query) =>
                     query
                         .where(({ item }) => eq(item.status, "open"))
@@ -1792,7 +1842,7 @@ describe("IndexedDB persistence lifecycle and paging", () => {
             ).toBeLessThan(15);
             get.mockClear();
             const tail = await adapter.loadSubset(
-                "items",
+                eagerStorageTarget("items"),
                 queryOptions((query) =>
                     query
                         .where(({ item }) => gt(item.priority, 90))
@@ -1818,9 +1868,9 @@ describe("IndexedDB persistence lifecycle and paging", () => {
             { id: "z", priority: 1, name: "z" },
             { id: "a", priority: 2, name: "a" },
         ]);
-        await adapter.ensureIndex("items", "name-index", indexSpec(["name"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "name-index", indexSpec(["name"]));
         const rows = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) =>
                 query
                     .orderBy(({ item }) => item.name, {
@@ -1833,7 +1883,7 @@ describe("IndexedDB persistence lifecycle and paging", () => {
         );
         expect(rows.map((row) => row.key)).toEqual(["z", "a"]);
         const composite = await adapter.loadSubset(
-            "items",
+            eagerStorageTarget("items"),
             queryOptions((query) =>
                 query
                     .orderBy(({ item }) => item.priority, "asc")
@@ -1853,9 +1903,9 @@ describe("IndexedDB persistence lifecycle and paging", () => {
             { id: "c", priority: 3 },
             { id: "d", priority: 4 },
         ]);
-        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec(["priority"]));
         const order = queryOptions((query) => query.orderBy(({ item }) => item.priority, "asc"));
-        const rows = await adapter.loadSubset("items", {
+        const rows = await adapter.loadSubset(eagerStorageTarget("items"), {
             ...order,
             limit: 1,
             cursor: {
@@ -1914,23 +1964,26 @@ describe("IndexedDB compatibility", () => {
         await legacy.put("transactions", { id: JSON.stringify(["items", "old"]), collectionId: "items" });
         legacy.close();
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: name });
-        expect(ids(await adapter.loadSubset("items", {}))).toEqual(["owned", "plain"]);
-        expect(await adapter.scanRows("items", { metadataOnly: true })).toEqual([
+        expect(ids(await adapter.loadSubset(eagerStorageTarget("items"), {}))).toEqual(["owned", "plain"]);
+        expect(await adapter.scanRows(eagerStorageTarget("items"), { metadataOnly: true })).toEqual([
             { key: "owned", value: { id: "owned", priority: 1 }, metadata: { owners: ["query"] } },
         ]);
-        expect(await adapter.pullSince("items", 0)).toMatchObject({ requiresFullReload: true });
+        expect(await adapter.pullSince(eagerStorageTarget("items"), 0)).toMatchObject({
+            requiresFullReload: true,
+        });
         await adapter.applyCommittedTx(
-            "items",
+            eagerStorageTarget("items"),
             tx("old", 1, [{ type: "update", key: "owned", value: { id: "owned", priority: 99 } }])
         );
         expect(
-            (await adapter.loadSubset("items", {})).find((row) => row.key === "owned")?.value.priority
+            (await adapter.loadSubset(eagerStorageTarget("items"), {})).find((row) => row.key === "owned")
+                ?.value.priority
         ).toBe(1);
         await adapter.applyCommittedTx(
-            "items",
+            eagerStorageTarget("items"),
             tx("edit", 2, [{ type: "update", key: "owned", value: { id: "owned", priority: 3 } }])
         );
-        expect(await adapter.pullSince("items", 1)).toMatchObject({
+        expect(await adapter.pullSince(eagerStorageTarget("items"), 1)).toMatchObject({
             requiresFullReload: false,
             changedKeys: ["owned"],
         });
@@ -1943,14 +1996,14 @@ describe("IndexedDB compatibility", () => {
             { id: "a", priority: 1, details: { priority: 10 } },
             { id: "b", priority: 10, details: { priority: 1 } },
         ]);
-        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec(["priority"]));
         const nested = new IR.PropRef<number>(["details", "priority"]);
-        const rows = await adapter.loadSubset("items", {
+        const rows = await adapter.loadSubset(eagerStorageTarget("items"), {
             where: new IR.Func<boolean>("eq", [nested, new IR.Value(10)]),
             limit: 1,
         });
         expect(rows.map((row) => row.key)).toEqual(["a"]);
-        const ordered = await adapter.loadSubset("items", {
+        const ordered = await adapter.loadSubset(eagerStorageTarget("items"), {
             orderBy: [
                 {
                     expression: nested,
@@ -1968,19 +2021,19 @@ describe("IndexedDB partial updates", () => {
     it("merges partial row updates and replays the full stored row", async () => {
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
         await seed(adapter, [{ id: "a", priority: 1, name: "Retained" }]);
-        await adapter.ensureIndex("items", "name-index", indexSpec(["name"]));
-        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
-        await adapter.applyCommittedTx("items", {
+        await adapter.ensureIndex(eagerStorageTarget("items"), "name-index", indexSpec(["name"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec(["priority"]));
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), {
             ...tx("patch", 2, []),
             mutations: [{ type: "update", key: "a", value: { priority: 5 } }],
         });
         expect(
             await adapter.loadSubset(
-                "items",
+                eagerStorageTarget("items"),
                 queryOptions((query) => query.where(({ item }) => eq(item.name, "Retained")))
             )
         ).toEqual([{ key: "a", value: { id: "a", priority: 5, name: "Retained" }, metadata: undefined }]);
-        expect(await adapter.pullSince("items", 1)).toMatchObject({
+        expect(await adapter.pullSince(eagerStorageTarget("items"), 1)).toMatchObject({
             requiresFullReload: false,
             deltas: [{ changedRows: [{ key: "a", value: { id: "a", priority: 5, name: "Retained" } }] }],
         });
@@ -1990,7 +2043,7 @@ describe("IndexedDB partial updates", () => {
     it("honors metadataChanged instead of silently replacing unchanged metadata", async () => {
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
         await adapter.applyCommittedTx(
-            "items",
+            eagerStorageTarget("items"),
             tx("seed", 1, [
                 {
                     type: "insert",
@@ -2001,14 +2054,14 @@ describe("IndexedDB partial updates", () => {
                 },
             ])
         );
-        await adapter.applyCommittedTx("items", {
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), {
             ...tx("patch", 2, []),
             mutations: [{ type: "update", key: "a", value: { priority: 2 }, metadata: { owner: "ignored" } }],
         });
-        expect(await adapter.scanRows("items", { metadataOnly: true })).toMatchObject([
+        expect(await adapter.scanRows(eagerStorageTarget("items"), { metadataOnly: true })).toMatchObject([
             { key: "a", metadata: { owner: "saved" } },
         ]);
-        await adapter.applyCommittedTx("items", {
+        await adapter.applyCommittedTx(eagerStorageTarget("items"), {
             ...tx("clear", 3, []),
             mutations: [
                 {
@@ -2020,8 +2073,8 @@ describe("IndexedDB partial updates", () => {
                 },
             ],
         });
-        expect(await adapter.scanRows("items", { metadataOnly: true })).toEqual([]);
-        expect(await adapter.pullSince("items", 2)).toMatchObject({
+        expect(await adapter.scanRows(eagerStorageTarget("items"), { metadataOnly: true })).toEqual([]);
+        expect(await adapter.pullSince(eagerStorageTarget("items"), 2)).toMatchObject({
             requiresFullReload: false,
             deltas: [{ rowMetadataMutations: [{ type: "delete", key: "a" }] }],
         });
@@ -2040,12 +2093,12 @@ describe("empty indexed intersections", () => {
                 priority: index,
             }))
         );
-        await adapter.ensureIndex("items", "status-index", indexSpec(["status"]));
-        await adapter.ensureIndex("items", "priority-index", indexSpec(["priority"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "status-index", indexSpec(["status"]));
+        await adapter.ensureIndex(eagerStorageTarget("items"), "priority-index", indexSpec(["priority"]));
         const scan = vi.spyOn(IDBIndex.prototype, "getAll");
         try {
             const rows = await adapter.loadSubset(
-                "items",
+                eagerStorageTarget("items"),
                 queryOptions((query) =>
                     query.where(({ item }) => and(eq(item.status, "absent"), gte(item.priority, 0)))
                 )
@@ -2068,23 +2121,23 @@ describe("committed stream identity", () => {
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
         try {
             await adapter.applyCommittedTx(
-                "items",
+                eagerStorageTarget("items"),
                 tx("one", 1, [{ type: "insert", key: "one", value: { id: "one", priority: 1 } }])
             );
             await adapter.applyCommittedTx(
-                "items",
+                eagerStorageTarget("items"),
                 tx("two", 2, [{ type: "insert", key: "two", value: { id: "two", priority: 2 } }])
             );
             await adapter.applyCommittedTx(
-                "items",
+                eagerStorageTarget("items"),
                 tx("retry-new-id", 1, [{ type: "delete", key: "one", value: { id: "one", priority: 0 } }])
             );
-            expect(ids(await adapter.loadSubset("items", {}))).toEqual(["one", "two"]);
-            expect(await adapter.getStreamPosition("items")).toMatchObject({
+            expect(ids(await adapter.loadSubset(eagerStorageTarget("items"), {}))).toEqual(["one", "two"]);
+            expect(await adapter.getStreamPosition(eagerStorageTarget("items"))).toMatchObject({
                 latestRowVersion: 2,
                 latestSeq: 2,
             });
-            const result = await adapter.pullSince("items", 0);
+            const result = await adapter.pullSince(eagerStorageTarget("items"), 0);
             expect(result).toMatchObject({ requiresFullReload: false });
             if (result.requiresFullReload) throw new Error("Expected incremental replay");
             expect(result.deltas).toHaveLength(2);
@@ -2142,16 +2195,16 @@ describe("committed stream identity", () => {
         const adapter = new IndexedDBPersistenceAdapter({ databaseName: name });
         try {
             await adapter.applyCommittedTx(
-                "items",
+                eagerStorageTarget("items"),
                 tx("retry-new-id", 1, [{ type: "delete", key: "one", value: { id: "one", priority: 0 } }])
             );
-            expect(ids(await adapter.loadSubset("items", {}))).toEqual(["one"]);
+            expect(ids(await adapter.loadSubset(eagerStorageTarget("items"), {}))).toEqual(["one"]);
             await adapter.applyCommittedTx(
-                "items",
+                eagerStorageTarget("items"),
                 tx("two", 2, [{ type: "insert", key: "two", value: { id: "two", priority: 2 } }])
             );
             const database = await openDB(name);
-            expect(database.version).toBe(3);
+            expect(database.version).toBe(4);
             expect(await database.getKeyFromIndex("transactions", "position", ["items", 1, 2])).toBeDefined();
             expect(await database.get("transactions", JSON.stringify(["items", "old"]))).toBeDefined();
             database.close();

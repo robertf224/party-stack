@@ -21,13 +21,13 @@
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db": "0.12.1",
-        "@tanstack/db-sqlite-persistence-core": "0.4.5",
+        "@tanstack/db": "0.14.0",
+        "@tanstack/db-sqlite-persistence-core": "0.4.9",
         "typescript": "~7.0.2",
         "vite-plus": "catalog:"
     },
     "peerDependencies": {
-        "@tanstack/db": "0.12.1",
-        "@tanstack/db-sqlite-persistence-core": "0.4.5"
+        "@tanstack/db": "0.14.0",
+        "@tanstack/db-sqlite-persistence-core": "0.4.9"
     }
 }

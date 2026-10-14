@@ -15,7 +15,7 @@
         "@hono/node-server": "^2.1.1",
         "@party-stack/coordination": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "@tanstack/node-db-sqlite-persistence": "0.2.30",
+        "@tanstack/node-db-sqlite-persistence": "0.2.34",
         "better-sqlite3": "^12.9.0",
         "cross-keychain": "^1.1.0",
         "hono": "^4.13.5",
@@ -24,7 +24,7 @@
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db-sqlite-persistence-core": "0.4.5",
+        "@tanstack/db-sqlite-persistence-core": "0.4.9",
         "@types/better-sqlite3": "^7.6.13",
         "@types/node": "^24.10.1",
         "typescript": "~7.0.2",

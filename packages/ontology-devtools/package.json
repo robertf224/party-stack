@@ -25,8 +25,8 @@
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
         "@tailwindcss/postcss": "^4.1.17",
-        "@tanstack/db": "0.12.1",
-        "@tanstack/react-db": "0.5.5",
+        "@tanstack/db": "0.14.0",
+        "@tanstack/react-db": "0.5.9",
         "@tanstack/react-devtools": "^0.10.9",
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
@@ -38,8 +38,8 @@
         "vite-plus": "catalog:"
     },
     "peerDependencies": {
-        "@tanstack/db": "0.12.1",
-        "@tanstack/react-db": "~0.5.5",
+        "@tanstack/db": "0.14.0",
+        "@tanstack/react-db": "0.5.9",
         "@tanstack/react-devtools": "^0.10.9",
         "react": "^19.2.0",
         "react-dom": "^19.2.0"

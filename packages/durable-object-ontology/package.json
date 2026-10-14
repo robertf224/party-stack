@@ -22,7 +22,7 @@
         "@cloudflare/vitest-plugin": "^1.4.0",
         "@cloudflare/workers-types": "^5.20260827.1",
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db": "0.12.1",
+        "@tanstack/db": "0.14.0",
         "esbuild": "^0.28.1",
         "typescript": "~7.0.2",
         "vite-plus": "catalog:",
@@ -30,6 +30,6 @@
         "wrangler": "^4.127.0"
     },
     "peerDependencies": {
-        "@tanstack/db": "0.12.1"
+        "@tanstack/db": "0.14.0"
     }
 }

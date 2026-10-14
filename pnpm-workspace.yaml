@@ -12,7 +12,7 @@ catalog:
 # Apply toolchain versions to transitive dependencies as well.
 # https://viteplus.dev/guide/migrate-rules#vite-and-overrides
 overrides:
-    "vite@*": "npm:@voidzero-dev/vite-plus-core@1.2.0"
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.2.0"
     "vitest@*": "5.0.4"
 # Plugins may still declare peer ranges for upstream Vite or older Vitest.
 # https://pnpm.io/settings/peer-dependencies#peerdependencyrulesallowany

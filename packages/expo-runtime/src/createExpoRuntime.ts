@@ -8,13 +8,15 @@ import { createExpoBrowserAuthentication } from "./createExpoBrowserAuthenticati
 import { ExpoFileSystemBlobBytesStore } from "./ExpoFileSystemBlobBytesStore.js";
 import { ExpoNetworkConnectivity } from "./ExpoNetworkConnectivity.js";
 import { ExpoSecretStore } from "./ExpoSecretStore.js";
+import { hashStorageName } from "./hashStorageName.js";
 import type { RuntimeAdapter } from "@party-stack/runtime";
 
 export const createExpoRuntime: (owner: string, namespace: string) => Promise<RuntimeAdapter> = defineRuntime(
     async (owner, namespace) => {
         const name = `party-stack:${owner}:${namespace}`;
+        const storageName = `party-stack-${await hashStorageName(JSON.stringify([owner, namespace]))}`;
         const [database, connectivity] = await Promise.all([
-            openDatabaseAsync(`${name}.db`),
+            openDatabaseAsync(`${storageName}.db`),
             ExpoNetworkConnectivity.create(),
         ]);
         const persistence = createExpoSQLitePersistence({
@@ -24,7 +26,7 @@ export const createExpoRuntime: (owner: string, namespace: string) => Promise<Ru
             scope: name,
         });
         const blobBytes = new ExpoFileSystemBlobBytesStore({
-            directoryName: `${name}:blobs`,
+            directoryName: `${storageName}-blobs`,
         });
         return {
             owner,
@@ -36,7 +38,7 @@ export const createExpoRuntime: (owner: string, namespace: string) => Promise<Ru
             coordination,
             persistence,
             destroy: async () => {
-                await Promise.all([deleteDatabaseAsync(`${name}.db`), blobBytes.clear()]);
+                await Promise.all([deleteDatabaseAsync(`${storageName}.db`), blobBytes.clear()]);
             },
             cleanup: async () => {
                 await coordination.close();

@@ -1,12 +1,9 @@
 import { Directory, File, Paths } from "expo-file-system";
+import { hashStorageName } from "./hashStorageName.js";
 import type { BlobBytesStore } from "@party-stack/runtime";
 
 export interface ExpoFileSystemBlobBytesStoreOptions {
     directoryName: string;
-}
-
-function encodeFileName(id: string): string {
-    return encodeURIComponent(id);
 }
 
 export class ExpoFileSystemBlobBytesStore implements BlobBytesStore {
@@ -17,14 +14,15 @@ export class ExpoFileSystemBlobBytesStore implements BlobBytesStore {
     }
 
     async write(id: string, blob: Blob): Promise<void> {
-        const file = this.#file(id);
+        const file = await this.#file(id);
+        const bytes = new Uint8Array(await blob.arrayBuffer());
         file.create({ intermediates: true, overwrite: true });
-        file.write(new Uint8Array(await blob.arrayBuffer()));
+        file.write(bytes);
     }
 
     read(id: string): Promise<Blob> {
-        return Promise.resolve().then(() => {
-            const file = this.#file(id);
+        return Promise.resolve().then(async () => {
+            const file = await this.#file(id);
             if (!file.exists) {
                 throw new Error(`Blob bytes not found for "${id}".`);
             }
@@ -33,8 +31,8 @@ export class ExpoFileSystemBlobBytesStore implements BlobBytesStore {
     }
 
     delete(id: string): Promise<void> {
-        return Promise.resolve().then(() => {
-            const file = this.#file(id);
+        return Promise.resolve().then(async () => {
+            const file = await this.#file(id);
             if (file.exists) file.delete();
         });
     }
@@ -52,7 +50,7 @@ export class ExpoFileSystemBlobBytesStore implements BlobBytesStore {
         return directory;
     }
 
-    #file(id: string): File {
-        return new File(this.#directory(), encodeFileName(id));
+    #file(id: string): Promise<File> {
+        return hashStorageName(id).then((name) => new File(this.#directory(), name));
     }
 }

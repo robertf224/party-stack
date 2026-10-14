@@ -47,8 +47,8 @@
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db": "0.12.1",
-        "@tanstack/query-db-collection": "1.4.0",
+        "@tanstack/db": "0.14.0",
+        "@tanstack/query-db-collection": "1.4.4",
         "@types/node": "^24.10.1",
         "@types/react": "^19.3.0",
         "react": "^19.3.0",
@@ -58,9 +58,9 @@
         "vite-plus": "catalog:"
     },
     "peerDependencies": {
-        "@tanstack/db": "0.12.1",
+        "@tanstack/db": "0.14.0",
         "@tanstack/query-core": "^5.102.8",
-        "@tanstack/query-db-collection": "1.4.0",
+        "@tanstack/query-db-collection": "1.4.4",
         "react": "^18.0.0 || ^19.0.0"
     }
 }
