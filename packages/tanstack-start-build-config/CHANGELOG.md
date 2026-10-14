@@ -1,5 +1,14 @@
 # @party-stack/tanstack-start-build-config
 
+## 0.2.2
+
+### Patch Changes
+
+- b11bae5: Require Vite+ 1.2 and preserve its built-in plugins when composing caller configuration, enabling automatic pnpm metadata normalization and Vitest cache tracking. Retain only generated-directory input exclusions for CI cache reuse.
+- Updated dependencies [b11bae5]
+    - @party-stack/build-config@0.1.3
+    - @party-stack/vite-plugin-worktree-dev@0.2.0
+
 ## 0.2.1
 
 ### Patch Changes
