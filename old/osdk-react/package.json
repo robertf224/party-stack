@@ -1,6 +1,7 @@
 {
     "name": "@bobbyfidz/osdk-react",
     "version": "0.13.1",
+    "private": true,
     "files": [
         "lib"
     ],

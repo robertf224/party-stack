@@ -27,6 +27,7 @@ describe("TanStack Start config", () => {
         expect(config.plugins?.[1]).toEqual({ name: "worktreeDev" });
         expect(devtools).toHaveBeenCalledWith({ consolePiping: { enabled: false } });
         expect(config.server).toEqual({ port: 3000 });
+        expect(config.resolve?.tsconfigPaths).toBe(true);
         expect(config.build).toMatchObject({ sourcemap: true });
         expect(config.run?.tasks?.dev).toMatchObject({
             command: "vp dev --host",

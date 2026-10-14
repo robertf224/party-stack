@@ -16,7 +16,6 @@ export function defineAppConfig(config: TanStackStartConfig = {}): ViteUserConfi
     const { start, plugins, worktreeDev: worktreeDevOptions, ...appConfig } = config;
     return defineBaseAppConfig({
         ...appConfig,
-        resolve: { tsconfigPaths: true, ...appConfig.resolve },
         plugins: lazyPlugins(() => [
             plugins,
             worktreeDevOptions !== false && worktreeDev(worktreeDevOptions),

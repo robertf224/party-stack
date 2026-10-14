@@ -7,5 +7,13 @@
     "access": "public",
     "baseBranch": "main",
     "updateInternalDependencies": "patch",
-    "ignore": []
+    "ignore": [
+        "@bobbyfidz/apollo",
+        "@bobbyfidz/foundry-graphql",
+        "@bobbyfidz/foundry-graphql-schema",
+        "@bobbyfidz/foundry-graphql-server",
+        "@bobbyfidz/osdk-react",
+        "@bobbyfidz/osdk-react-todo-app",
+        "@bobbyfidz/osdk-utils"
+    ]
 }

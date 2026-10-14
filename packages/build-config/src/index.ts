@@ -18,6 +18,7 @@ export type LibraryConfig = Omit<ViteUserConfig, "run"> & {
  */
 export function defineLibraryConfig(config: LibraryConfig = {}): ViteUserConfig {
     const base = defineConfig({
+        resolve: { tsconfigPaths: true },
         run: {
             tasks: {
                 check: {
@@ -64,6 +65,7 @@ export type AppConfig = LibraryConfig;
 export function defineAppConfig(config: AppConfig = {}): ViteUserConfig {
     return composeConfig(
         defineConfig({
+            resolve: { tsconfigPaths: true },
             run: {
                 tasks: {
                     check: {
@@ -110,6 +112,7 @@ function composeConfig(base: ViteUserConfig, config: LibraryConfig): ViteUserCon
     return {
         ...base,
         ...config,
+        resolve: { ...base.resolve, ...config.resolve },
         ...(base.pack || config.pack
             ? {
                   pack: Array.isArray(config.pack)
