@@ -1,5 +1,14 @@
 # @party-stack/tanstack-start-build-config
 
+## 0.2.1
+
+### Patch Changes
+
+- 4b553ad: Enable TypeScript path resolution by default in the shared app and library Vite configs. Preserve the default when merging caller resolve options, allow explicit opt-outs, and have the TanStack Start preset inherit the shared setting.
+- Updated dependencies [4b553ad]
+    - @party-stack/build-config@0.1.2
+    - @party-stack/vite-plugin-worktree-dev@0.2.0
+
 ## 0.2.0
 
 ### Minor Changes
