@@ -23,8 +23,8 @@ describe("TanStack Start config", () => {
             start: { router: { routesDirectory: "src/pages" } },
         });
 
-        expect(config.plugins?.[0]).toBe(plugins);
-        expect(config.plugins?.[1]).toEqual({ name: "worktreeDev" });
+        expect(config.plugins?.flat()).toContain(plugins[0]);
+        expect(config.plugins?.flat()).toEqual(expect.arrayContaining([{ name: "worktreeDev" }]));
         expect(devtools).toHaveBeenCalledWith({ consolePiping: { enabled: false } });
         expect(config.server).toEqual({ port: 3000 });
         expect(config.resolve?.tsconfigPaths).toBe(true);
@@ -52,7 +52,8 @@ describe("TanStack Start config", () => {
         vi.stubEnv("VP_RESOLVING_CONFIG_METADATA", "1");
         try {
             const config = defineAppConfig();
-            expect(config.plugins).toBeUndefined();
+            expect(worktreeDev).not.toHaveBeenCalled();
+            expect(devtools).not.toHaveBeenCalled();
             expect(config.run?.tasks?.test).toMatchObject({ command: "vp test", dependsOn: ["build"] });
         } finally {
             vi.unstubAllEnvs();

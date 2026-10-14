@@ -36,6 +36,6 @@
     },
     "peerDependencies": {
         "@tanstack/react-start": "^1.167.12",
-        "vite-plus": "^1.1.0"
+        "vite-plus": "^1.2.0"
     }
 }

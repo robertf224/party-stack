@@ -5,15 +5,15 @@ packages:
 # Shared Vite+ toolchain versions used by catalog: references.
 # https://viteplus.dev/guide/migrate-rules#version-selection
 catalog:
-    vite: npm:@voidzero-dev/vite-plus-core@1.1.0
-    vitest: 5.0.3
-    vite-plus: 1.1.0
-    "@vitest/browser-playwright": 5.0.3
+    vite: npm:@voidzero-dev/vite-plus-core@1.2.0
+    vitest: 5.0.4
+    vite-plus: 1.2.0
+    "@vitest/browser-playwright": 5.0.4
 # Apply toolchain versions to transitive dependencies as well.
 # https://viteplus.dev/guide/migrate-rules#vite-and-overrides
 overrides:
-    "vite@*": "npm:@voidzero-dev/vite-plus-core@1.1.0"
-    "vitest@*": "5.0.3"
+    "vite@*": "npm:@voidzero-dev/vite-plus-core@1.2.0"
+    "vitest@*": "5.0.4"
 # Plugins may still declare peer ranges for upstream Vite or older Vitest.
 # https://pnpm.io/settings/peer-dependencies#peerdependencyrulesallowany
 peerDependencyRules:

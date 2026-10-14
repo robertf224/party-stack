@@ -18,6 +18,20 @@ describe.each([
         expect(defineConfig({ resolve: { tsconfigPaths: false } }).resolve?.tsconfigPaths).toBe(false);
         expect(defineConfig().resolve?.tsconfigPaths).toBe(true);
     });
+
+    it("preserves Vite+ cache integration when callers supply plugins", () => {
+        const plugin = { name: "caller-plugin" };
+        const config = defineConfig({ plugins: [plugin] });
+        expect(config.plugins).toContain(plugin);
+        expect(config.plugins).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    name: "vite-plus:vitest-cache-paths",
+                    configureVitest: expect.any(Function),
+                }),
+            ])
+        );
+    });
 });
 
 describe("library config composition", () => {
@@ -72,7 +86,7 @@ describe("app config composition", () => {
             build: { sourcemap: true },
             run: { tasks: { dev: { command: "vp dev --host" } } },
         });
-        expect(config.plugins).toEqual([plugin]);
+        expect(config.plugins).toContain(plugin);
         expect(config.pack).toBeUndefined();
         expect(config.build).toMatchObject({
             target: ["chrome107", "edge107", "firefox104", "safari16"],

@@ -5,26 +5,6 @@ type RunConfig = NonNullable<ViteUserConfig["run"]>;
 type TaskDefinition = NonNullable<RunConfig["tasks"]>[string];
 type TaskOptions = Exclude<TaskDefinition, string | string[]>;
 
-function taskCache(...input: string[]) {
-    return {
-        input: [
-            { auto: true },
-            // Dependency changes matter; installation timestamps do not.
-            { pattern: "pnpm-lock.yaml", base: "workspace" as const },
-            { pattern: "!node_modules/.modules.yaml", base: "workspace" as const },
-            // Vitest's local results disappear on a fresh CI runner.
-            { pattern: "!**/node_modules/.vite/vitest", base: "workspace" as const },
-            { pattern: "!**/node_modules/.vite/vitest/**", base: "workspace" as const },
-            ...input,
-        ],
-        output: [
-            { auto: true },
-            { pattern: "!**/node_modules/.vite/vitest", base: "workspace" as const },
-            { pattern: "!**/node_modules/.vite/vitest/**", base: "workspace" as const },
-        ],
-    };
-}
-
 /** Override individual task options without repeating their command or prerequisites. */
 export type LibraryConfig = Omit<ViteUserConfig, "run"> & {
     run?: Omit<RunConfig, "tasks"> & {
@@ -44,16 +24,17 @@ export function defineLibraryConfig(config: LibraryConfig = {}): ViteUserConfig 
                 check: {
                     command: "vp check",
                     // Track root files without making generated directory entries inputs.
-                    cache: taskCache("!.", "*.{json,jsonc,ts,mts,js,mjs}"),
+                    // Still needed in Vite+ 1.2: https://github.com/voidzero-dev/vite-task/issues/504
+                    cache: { input: [{ auto: true }, "!.", "*.{json,jsonc,ts,mts,js,mjs}"] },
                     dependsOn: [{ task: "build", from: ["dependencies", "devDependencies"] }],
                 },
                 build: {
                     command: "vp pack",
                     // Generated outputs and package directory listings must not invalidate their own build.
-                    cache: taskCache("!.", "*.{json,jsonc,ts,mts,js,mjs}", "!lib/**"),
+                    cache: { input: [{ auto: true }, "!.", "*.{json,jsonc,ts,mts,js,mjs}", "!lib/**"] },
                     dependsOn: ["check", { task: "build", from: ["dependencies", "devDependencies"] }],
                 },
-                test: { command: "vp test", cache: taskCache(), dependsOn: ["build"] },
+                test: { command: "vp test", dependsOn: ["build"] },
             },
         },
         pack: {
@@ -86,19 +67,22 @@ export function defineAppConfig(config: AppConfig = {}): ViteUserConfig {
                 tasks: {
                     check: {
                         command: "vp check",
-                        cache: taskCache(),
                         dependsOn: [{ task: "build", from: ["dependencies", "devDependencies"] }],
                     },
                     build: {
                         command: "vp build",
-                        // Shell nesting changed cache fingerprints without changing app outputs.
                         cache: {
-                            ...taskCache("!.", "*.{json,jsonc,ts,mts,js,mjs}", "!dist", "!dist/**"),
-                            untrackedEnv: ["SHLVL"],
+                            input: [
+                                { auto: true },
+                                "!.",
+                                "*.{json,jsonc,ts,mts,js,mjs}",
+                                "!dist",
+                                "!dist/**",
+                            ],
                         },
                         dependsOn: ["check", { task: "build", from: ["dependencies", "devDependencies"] }],
                     },
-                    test: { command: "vp test", cache: taskCache(), dependsOn: ["build"] },
+                    test: { command: "vp test", dependsOn: ["build"] },
                     dev: {
                         command: "vp dev",
                         dependsOn: [{ task: "build", from: ["dependencies", "devDependencies"] }],
@@ -129,7 +113,8 @@ function composeConfig(base: ViteUserConfig, config: LibraryConfig): ViteUserCon
             tasks[name] = { ...inherited, ...override, command };
         }
     }
-    return {
+    // Vite+ injects its Vitest integrations here; caller plugins must not replace them.
+    return defineConfig({
         ...base,
         ...config,
         resolve: { ...base.resolve, ...config.resolve },
@@ -143,5 +128,5 @@ function composeConfig(base: ViteUserConfig, config: LibraryConfig): ViteUserCon
         ...(base.build || config.build ? { build: { ...base.build, ...config.build } } : {}),
         test: { ...base.test, ...config.test },
         run: { ...base.run, ...config.run, tasks },
-    };
+    });
 }
