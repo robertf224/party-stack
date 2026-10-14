@@ -39,7 +39,11 @@ function insertField(
         if (fields.some((candidate) => candidate.name === name)) {
             throw new Error(`Lens target path "${path.join(".")}" already exists.`);
         }
-        fields.push({ ...field, name, displayName: capitalCase(name) });
+        fields.push({
+            ...field,
+            name,
+            displayName: capitalCase(name),
+        });
         return;
     }
 

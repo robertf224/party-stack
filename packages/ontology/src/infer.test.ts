@@ -9,7 +9,11 @@ describe("Infer", () => {
         type: o.struct({
             fields: [
                 { name: "city", displayName: "City", type: o.string({}) },
-                { name: "line2", displayName: "Line 2", type: o.optional({ type: o.string({}) }) },
+                {
+                    name: "line2",
+                    displayName: "Line 2",
+                    type: o.optional({ type: o.string({}) }),
+                },
             ],
         }),
     });
@@ -58,9 +62,17 @@ describe("Infer", () => {
                 name: "createTask",
                 displayName: "Create Task",
                 parameters: [
-                    { name: "owner", displayName: "Owner", type: o.objectReference({ objectType: "User" }) },
+                    {
+                        name: "owner",
+                        displayName: "Owner",
+                        type: o.objectReference({ objectType: "User" }),
+                    },
                     { name: "title", displayName: "Title", type: o.string({}) },
-                    { name: "notes", displayName: "Notes", type: o.optional({ type: o.string({}) }) },
+                    {
+                        name: "notes",
+                        displayName: "Notes",
+                        type: o.optional({ type: o.string({}) }),
+                    },
                     {
                         name: "createdAt",
                         displayName: "Created At",
@@ -77,7 +89,11 @@ describe("Infer", () => {
                 displayName: "Search Tasks",
                 parameters: [
                     { name: "query", displayName: "Query", type: o.string({}) },
-                    { name: "limit", displayName: "Limit", type: o.optional({ type: o.integer({}) }) },
+                    {
+                        name: "limit",
+                        displayName: "Limit",
+                        type: o.optional({ type: o.integer({}) }),
+                    },
                 ],
                 returnType: o.list({ elementType: o.objectReference({ objectType: "Task" }) }),
             },
@@ -93,7 +109,10 @@ describe("Infer", () => {
             userId: string;
             status: "active" | "disabled";
             avatar?: attachment;
-            address: { city: string; line2?: string };
+            address: {
+                city: string;
+                line2?: string;
+            };
         }>();
         expectTypeOf<InferredOntology["objectTypes"]["Task"]>().toEqualTypeOf<{
             taskId: string;
@@ -126,7 +145,9 @@ describe("Infer", () => {
         const image = defineType(
             o.attachment({
                 constraint: {
-                    content: o.AttachmentContentConstraint.image({ mediaTypes: ["image/png", "image/jpeg"] }),
+                    content: o.AttachmentContentConstraint.image({
+                        mediaTypes: ["image/png", "image/jpeg"],
+                    }),
                 },
             })
         );

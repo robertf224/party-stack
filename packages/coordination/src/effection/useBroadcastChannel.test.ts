@@ -23,7 +23,9 @@ class TestBroadcastChannel extends EventTarget implements BroadcastChannel {
             if (channel === this || channel.closed) {
                 continue;
             }
-            const event = new MessageEvent("message", { data: structuredClone(message) });
+            const event = new MessageEvent("message", {
+                data: structuredClone(message),
+            });
             queueMicrotask(() => {
                 channel.dispatchEvent(event);
                 channel.onmessage?.call(channel, event);
@@ -65,8 +67,12 @@ describe("useBroadcastChannel", () => {
     it("provides a scoped native event stream", async () => {
         const received = vi.fn();
         await run(function* () {
-            const sender = yield* useBroadcastChannel<{ value: number }>("resource-channel");
-            const receiver = yield* useBroadcastChannel<{ value: number }>("resource-channel");
+            const sender = yield* useBroadcastChannel<{
+                value: number;
+            }>("resource-channel");
+            const receiver = yield* useBroadcastChannel<{
+                value: number;
+            }>("resource-channel");
             void (yield* spawn(function* () {
                 for (const event of yield* each(receiver)) {
                     received(event.data);
@@ -76,7 +82,9 @@ describe("useBroadcastChannel", () => {
             sender.postMessage({ value: 42 });
             yield* until(
                 vi.waitFor(() => {
-                    expect(received).toHaveBeenCalledWith({ value: 42 });
+                    expect(received).toHaveBeenCalledWith({
+                        value: 42,
+                    });
                 })
             );
         });

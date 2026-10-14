@@ -4,7 +4,9 @@ import { foundryUserToUser } from "./user";
 import type { FoundryOntologyPullConfig } from "@party-stack/foundry-ontology/config";
 
 const imageConstraint = {
-    content: o.AttachmentContentConstraint.image({ mediaTypes: ["image/png", "image/jpeg"] }),
+    content: o.AttachmentContentConstraint.image({
+        mediaTypes: ["image/png", "image/jpeg"],
+    }),
 };
 
 function requiredEnv(name: string): string {
@@ -25,19 +27,34 @@ export default {
                 redirectUrl: requiredEnv("VITE_FOUNDRY_REDIRECT_URL"),
             },
         },
-        users: { objectType: "User", lens: foundryUserToUser },
+        users: {
+            objectType: "User",
+            lens: foundryUserToUser,
+        },
         // TODO: scrap this
         attachmentConstraints: [
             {
-                target: { kind: "objectProperty", objectType: "Issue", property: "issueAttachments" },
+                target: {
+                    kind: "objectProperty",
+                    objectType: "Issue",
+                    property: "issueAttachments",
+                },
                 constraint: imageConstraint,
             },
             {
-                target: { kind: "actionParameter", actionType: "createIssue", parameter: "attachments" },
+                target: {
+                    kind: "actionParameter",
+                    actionType: "createIssue",
+                    parameter: "attachments",
+                },
                 constraint: imageConstraint,
             },
             {
-                target: { kind: "actionParameter", actionType: "updateIssue", parameter: "attachments" },
+                target: {
+                    kind: "actionParameter",
+                    actionType: "updateIssue",
+                    parameter: "attachments",
+                },
                 constraint: imageConstraint,
             },
         ],

@@ -36,26 +36,40 @@ export function createNodeRuntimeWithOptions(options: CreateNodeRuntimeOptions):
     return defineRuntime(async (owner, namespace) => {
         const scope = `party-stack:${owner}:${namespace}`;
         const directory = join(options.dataDirectory ?? defaultDataDirectory(), runtimeId(owner, namespace));
-        await mkdir(directory, { recursive: true });
+        await mkdir(directory, {
+            recursive: true,
+        });
 
         const database = new Database(join(directory, "collections.sqlite"));
-        const persistence = createNodeSQLitePersistence({ database });
-        const coordination = new SingleProcessCoordination({ scope });
-        const blobBytes = new NodeFileSystemBlobBytesStore({ directory: join(directory, "blobs") });
+        const persistence = createNodeSQLitePersistence({
+            database,
+        });
+        const coordination = new SingleProcessCoordination({
+            scope,
+        });
+        const blobBytes = new NodeFileSystemBlobBytesStore({
+            directory: join(directory, "blobs"),
+        });
 
         return {
             owner,
             namespace,
             blobBytes,
             browserAuthentication: createNodeBrowserAuthentication(),
-            secrets: new NodeSecretStore({ service: `party-stack:${runtimeId(owner, namespace)}:secrets` }),
+            secrets: new NodeSecretStore({
+                service: `party-stack:${runtimeId(owner, namespace)}:secrets`,
+            }),
             coordination,
             persistence,
             cleanup: async () => {
                 await coordination.close();
                 database.close();
             },
-            destroy: () => rm(directory, { recursive: true, force: true }),
+            destroy: () =>
+                rm(directory, {
+                    recursive: true,
+                    force: true,
+                }),
         };
     });
 }

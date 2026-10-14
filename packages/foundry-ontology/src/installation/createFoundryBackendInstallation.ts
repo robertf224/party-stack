@@ -56,7 +56,10 @@ function configureFoundryMeta(
     const client = createConnectionOntologyClient(baseUrl, options.ontologyId, options.egress);
     return createMetaOntologyConfiguration({
         backend: () =>
-            createFoundryMetaOntologyBackendAdapter({ client, refetchInterval: metaRefetchInterval }),
+            createFoundryMetaOntologyBackendAdapter({
+                client,
+                refetchInterval: metaRefetchInterval,
+            }),
     });
 }
 
@@ -71,7 +74,9 @@ export function createFoundryOntologyRoute(options: {
     metaRefetchInterval?: number | false;
 }): FoundryOntologyRoute {
     return (baseUrl) => {
-        const route: OntologyRoute = { matches: (ontologyId) => ontologyId === options.ontologyId };
+        const route: OntologyRoute = {
+            matches: (ontologyId) => ontologyId === options.ontologyId,
+        };
         const ir = options.ir;
         if (ir) {
             route.configure = ({ connection, egress }) => {

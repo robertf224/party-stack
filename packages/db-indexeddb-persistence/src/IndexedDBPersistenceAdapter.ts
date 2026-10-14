@@ -97,14 +97,25 @@ interface IndexEntryRecord {
 }
 
 interface IndexedDBPersistenceDB extends DBSchema {
-    rows: { key: string; value: RowRecord; indexes: { collectionId: string; metadata: [string, number] } };
+    rows: {
+        key: string;
+        value: RowRecord;
+        indexes: { collectionId: string; metadata: [string, number] };
+    };
     transactions: {
         key: string;
         value: TransactionRecord;
         indexes: { collectionId: string; version: [string, number]; position: [string, number, number] };
     };
-    collectionMetadata: { key: string; value: CollectionMetadataRecord; indexes: { collectionId: string } };
-    streams: { key: string; value: StreamRecord };
+    collectionMetadata: {
+        key: string;
+        value: CollectionMetadataRecord;
+        indexes: { collectionId: string };
+    };
+    streams: {
+        key: string;
+        value: StreamRecord;
+    };
     indexDefinitions: {
         key: [string, string];
         value: IndexDefinitionRecord;
@@ -390,7 +401,10 @@ function expressionsMatch(indexed: IR.BasicExpression, queried: IR.BasicExpressi
 function buildIndexRecords(
     definition: Omit<IndexDefinitionRecord, "hasUnsupportedValues" | "valueTypes">,
     rows: readonly RowRecord[]
-): { definition: IndexDefinitionRecord; entries: IndexEntryRecord[] } {
+): {
+    definition: IndexDefinitionRecord;
+    entries: IndexEntryRecord[];
+} {
     const evaluate = compileSingleRowExpression(definition.expression);
     const entries: IndexEntryRecord[] = [];
     const valueTypeCounts: Partial<Record<IndexValueType, number>> = {};
@@ -567,7 +581,11 @@ function inPlan(
         firstDefinition ??= definition;
         ranges.push(exactRange(definition, encoded));
     }
-    return { kind: "lookup", definition: firstDefinition, ranges };
+    return {
+        kind: "lookup",
+        definition: firstDefinition,
+        ranges,
+    };
 }
 
 function nullPlan(
@@ -577,7 +595,16 @@ function nullPlan(
 ): IndexPlan | undefined {
     const definition = matchingDefinition(definitions, toExpression(field), valueType);
     return definition
-        ? { kind: "lookup", definition, ranges: [exactRange(definition, { type: valueType, value: 0 })] }
+        ? {
+              kind: "lookup",
+              definition,
+              ranges: [
+                  exactRange(definition, {
+                      type: valueType,
+                      value: 0,
+                  }),
+              ],
+          }
         : undefined;
 }
 
@@ -1126,7 +1153,10 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
 
                 const children = current.children ?? [];
                 const estimated = await Promise.all(
-                    children.map(async (child) => ({ child, count: await estimatePlan(child) }))
+                    children.map(async (child) => ({
+                        child,
+                        count: await estimatePlan(child),
+                    }))
                 );
                 estimated.sort((left, right) => left.count - right.count);
                 const [first, ...rest] = estimated;
@@ -1405,21 +1435,19 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
                 count--;
                 cursor = await cursor.continue();
             }
-            await transaction
-                .objectStore(STREAMS)
-                .put({
-                    ...stream,
-                    collectionId,
-                    latestTerm: Math.max(stream?.latestTerm ?? 0, committed.term),
-                    latestSeq:
-                        committed.term > (stream?.latestTerm ?? 0)
-                            ? committed.seq
-                            : committed.term === (stream?.latestTerm ?? 0)
-                              ? Math.max(stream?.latestSeq ?? 0, committed.seq)
-                              : (stream?.latestSeq ?? 0),
-                    latestRowVersion: nextRowVersion,
-                    replayFloor,
-                });
+            await transaction.objectStore(STREAMS).put({
+                ...stream,
+                collectionId,
+                latestTerm: Math.max(stream?.latestTerm ?? 0, committed.term),
+                latestSeq:
+                    committed.term > (stream?.latestTerm ?? 0)
+                        ? committed.seq
+                        : committed.term === (stream?.latestTerm ?? 0)
+                          ? Math.max(stream?.latestSeq ?? 0, committed.seq)
+                          : (stream?.latestSeq ?? 0),
+                latestRowVersion: nextRowVersion,
+                replayFloor,
+            });
             await transaction.done;
         } catch (error) {
             try {
@@ -1441,7 +1469,10 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             .index(BY_COLLECTION)
             .getAll(collectionId);
         await transaction.done;
-        return records.map(({ key, value }) => ({ key, value: decodePersistedValue(value) }));
+        return records.map(({ key, value }) => ({
+            key,
+            value: decodePersistedValue(value),
+        }));
     }
 
     async scanRows(collectionId: string, options?: PersistedRowScanOptions): Promise<PersistedRow[]> {
@@ -1548,7 +1579,11 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
             }
             const rows = await transaction.objectStore(ROWS).index(BY_COLLECTION).getAll(collectionId);
             const built = buildIndexRecords(
-                { collectionId, signature, expression },
+                {
+                    collectionId,
+                    signature,
+                    expression,
+                },
                 rows.map((row) => ({
                     ...row,
                     value: decodePersistedValue(row.value) as Record<string, unknown>,
@@ -1587,7 +1622,14 @@ export class IndexedDBPersistenceAdapter implements PersistenceAdapter {
         const { database, epoch } = await this.collectionDatabase(collectionId);
         const stream = await database.get(STREAMS, collectionId);
         this.assertSchema(stream, collectionId, epoch);
-        return stream ?? { collectionId, latestTerm: 0, latestSeq: 0, latestRowVersion: 0 };
+        return (
+            stream ?? {
+                collectionId,
+                latestTerm: 0,
+                latestSeq: 0,
+                latestRowVersion: 0,
+            }
+        );
     }
 
     close(): void {
@@ -1630,13 +1672,17 @@ export class IndexedDBConnection {
         this.databasePromise ??= openDB<IndexedDBPersistenceDB>(this.options.databaseName, DATABASE_VERSION, {
             upgrade(database, oldVersion, _newVersion, transaction) {
                 if (oldVersion < 1) {
-                    const rows = database.createObjectStore(ROWS, { keyPath: "id" });
+                    const rows = database.createObjectStore(ROWS, {
+                        keyPath: "id",
+                    });
                     rows.createIndex(BY_COLLECTION, "collectionId");
                     const transactions = database.createObjectStore(TRANSACTIONS, { keyPath: "id" });
                     transactions.createIndex(BY_COLLECTION, "collectionId");
                     const metadata = database.createObjectStore(COLLECTION_METADATA, { keyPath: "id" });
                     metadata.createIndex(BY_COLLECTION, "collectionId");
-                    database.createObjectStore(STREAMS, { keyPath: "collectionId" });
+                    database.createObjectStore(STREAMS, {
+                        keyPath: "collectionId",
+                    });
 
                     const definitions = database.createObjectStore(INDEX_DEFINITIONS, {
                         keyPath: ["collectionId", "signature"],

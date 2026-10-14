@@ -27,7 +27,10 @@ export interface OntologyOutboxEntry {
     retryable: boolean;
     nextAttemptAt: number;
     executionId?: string;
-    lastError?: { name: string; message: string };
+    lastError?: {
+        name: string;
+        message: string;
+    };
 }
 
 export interface EnqueuedOntologyAction<Result = unknown> {
@@ -39,8 +42,12 @@ export interface OntologyOutbox {
     readonly collection: Collection<OntologyOutboxEntry, string>;
     readonly ready: Promise<void>;
     enqueue<Result = unknown>(
-        request: Omit<OntologyActionRequest, "idempotencyKey"> & { idempotencyKey?: string },
-        options?: { visibility?: "confirmed" | "optimistic" }
+        request: Omit<OntologyActionRequest, "idempotencyKey"> & {
+            idempotencyKey?: string;
+        },
+        options?: {
+            visibility?: "confirmed" | "optimistic";
+        }
     ): Promise<EnqueuedOntologyAction<Result>>;
     edit(id: string, update: (request: OntologyActionRequest) => void): Promise<OntologyOutboxEntry>;
     remove(id: string): Promise<void>;

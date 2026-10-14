@@ -20,7 +20,10 @@ describe("convertFoundryMetaQueryFunctionType", () => {
             queryType(
                 {
                     apiKey: {
-                        dataType: { type: "union", unionTypes: [{ type: "string" }, { type: "null" }] },
+                        dataType: {
+                            type: "union",
+                            unionTypes: [{ type: "string" }, { type: "null" }],
+                        },
                         required: false,
                     },
                     countries: {
@@ -36,10 +39,18 @@ describe("convertFoundryMetaQueryFunctionType", () => {
         );
 
         expect(result.parameters.map(({ type }) => type)).toEqual([
-            { kind: "optional", value: { type: { kind: "string", value: {} } } },
             {
                 kind: "optional",
-                value: { type: { kind: "list", value: { elementType: { kind: "string", value: {} } } } },
+                value: { type: { kind: "string", value: {} } },
+            },
+            {
+                kind: "optional",
+                value: {
+                    type: {
+                        kind: "list",
+                        value: { elementType: { kind: "string", value: {} } },
+                    },
+                },
             },
         ]);
     });
@@ -96,7 +107,12 @@ describe("convertFoundryMetaQueryFunctionType", () => {
                                                 displayName: "address2",
                                                 type: {
                                                     kind: "optional",
-                                                    value: { type: { kind: "string", value: {} } },
+                                                    value: {
+                                                        type: {
+                                                            kind: "string",
+                                                            value: {},
+                                                        },
+                                                    },
                                                 },
                                             },
                                         ],
@@ -112,7 +128,13 @@ describe("convertFoundryMetaQueryFunctionType", () => {
 
     it("preserves unions with multiple non-null variants", () => {
         const result = convertFoundryMetaQueryFunctionType(
-            queryType({}, { type: "union", unionTypes: [{ type: "string" }, { type: "integer" }] })
+            queryType(
+                {},
+                {
+                    type: "union",
+                    unionTypes: [{ type: "string" }, { type: "integer" }],
+                }
+            )
         );
 
         expect(result.returnType).toEqual({

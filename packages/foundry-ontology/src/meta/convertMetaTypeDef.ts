@@ -129,10 +129,17 @@ export function convertFoundryObjectPropertyType(type: ObjectPropertyType): Type
         case "mediaReference":
             return {
                 kind: "attachment",
-                value: { meta: foundryAttachmentMeta(type.type === "attachment" ? "attachment" : "media") },
+                value: {
+                    meta: foundryAttachmentMeta(type.type === "attachment" ? "attachment" : "media"),
+                },
             };
         case "vector":
-            return { kind: "list", value: { elementType: { kind: "double", value: {} } } };
+            return {
+                kind: "list",
+                value: {
+                    elementType: { kind: "double", value: {} },
+                },
+            };
         case "array":
             return {
                 kind: "list",
@@ -146,7 +153,9 @@ export function convertFoundryObjectPropertyType(type: ObjectPropertyType): Type
         case "struct":
             return {
                 kind: "struct",
-                value: { fields: type.structFieldTypes.map(convertFoundryStructField) },
+                value: {
+                    fields: type.structFieldTypes.map(convertFoundryStructField),
+                },
             };
     }
 }
@@ -155,7 +164,12 @@ export function convertFoundryStructField(field: StructFieldType): PropertyDef {
     return {
         name: field.apiName,
         displayName: field.apiName,
-        type: { kind: "optional", value: { type: convertFoundryObjectPropertyType(field.dataType) } },
+        type: {
+            kind: "optional",
+            value: {
+                type: convertFoundryObjectPropertyType(field.dataType),
+            },
+        },
     };
 }
 
@@ -166,13 +180,19 @@ function extractStringConstraint(constraints: ValueTypeConstraint[]): StringCons
             .filter((option): option is string => typeof option === "string")
             .map((value) => ({ value }));
         if (options.length > 0) {
-            return { kind: "enum", value: { options } };
+            return {
+                kind: "enum",
+                value: { options },
+            };
         }
     }
 
     const regexConstraint = constraints.find((constraint) => constraint.type === "regex");
     if (regexConstraint) {
-        return { kind: "regex", value: { regex: regexConstraint.pattern } };
+        return {
+            kind: "regex",
+            value: { regex: regexConstraint.pattern },
+        };
     }
 
     return undefined;

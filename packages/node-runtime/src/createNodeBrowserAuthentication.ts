@@ -72,7 +72,13 @@ export function createNodeBrowserAuthentication(
                             settled = true;
                             const callbackUrl = context.req.url;
                             setImmediate(() => {
-                                void finish().then(() => resolve({ callbackUrl }), reject);
+                                void finish().then(
+                                    () =>
+                                        resolve({
+                                            callbackUrl,
+                                        }),
+                                    reject
+                                );
                             });
                             return context.html(`<!doctype html>
 <html lang="en">

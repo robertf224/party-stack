@@ -14,7 +14,10 @@ import type { LoadSubsetOptions } from "@tanstack/db";
 export interface RemoteOntologyDescription {
     ir: OntologyIR;
     context?: Record<string, unknown>;
-    capabilities?: { actionValidation?: boolean; actionParameterResolution?: boolean };
+    capabilities?: {
+        actionValidation?: boolean;
+        actionParameterResolution?: boolean;
+    };
 }
 
 export type RemoteOntologyEndpoint =
@@ -185,7 +188,10 @@ export const remoteLoadSubsetOptionsSchema = recordSchema as z.ZodType<RemoteLoa
 export const remoteDescribeRequestSchema = z.object({}).strict() satisfies z.ZodType<RemoteDescribeRequest>;
 
 export const remoteLoadSubsetRequestSchema = z
-    .object({ objectType: z.string().min(1), options: remoteLoadSubsetOptionsSchema.optional() })
+    .object({
+        objectType: z.string().min(1),
+        options: remoteLoadSubsetOptionsSchema.optional(),
+    })
     .strict() satisfies z.ZodType<RemoteLoadSubsetRequest>;
 
 export const remoteApplyActionRequestSchema = z
@@ -197,15 +203,24 @@ export const remoteApplyActionRequestSchema = z
     .strict() satisfies z.ZodType<RemoteApplyActionRequest>;
 
 export const remoteValidateActionRequestSchema = z
-    .object({ actionType: z.string().min(1), parameters: recordSchema })
+    .object({
+        actionType: z.string().min(1),
+        parameters: recordSchema,
+    })
     .strict() satisfies z.ZodType<RemoteValidateActionRequest>;
 
 export const remoteResolveActionParametersRequestSchema = z
-    .object({ actionType: z.string().min(1), parameters: recordSchema })
+    .object({
+        actionType: z.string().min(1),
+        parameters: recordSchema,
+    })
     .strict() satisfies z.ZodType<RemoteResolveActionParametersRequest>;
 
 export const remoteRunQueryFunctionRequestSchema = z
-    .object({ queryFunctionType: z.string().min(1), parameters: recordSchema })
+    .object({
+        queryFunctionType: z.string().min(1),
+        parameters: recordSchema,
+    })
     .strict() satisfies z.ZodType<RemoteRunQueryFunctionRequest>;
 
 const attachmentSourceSchema = z
@@ -217,11 +232,17 @@ const attachmentSourceSchema = z
     .strict();
 
 export const remoteAttachmentSchema = z
-    .object({ id: z.string().min(1), type: z.string().optional(), source: attachmentSourceSchema.optional() })
+    .object({
+        id: z.string().min(1),
+        type: z.string().optional(),
+        source: attachmentSourceSchema.optional(),
+    })
     .strict() satisfies z.ZodType<attachment>;
 
 export const remoteAttachmentRequestSchema = z
-    .object({ attachment: remoteAttachmentSchema })
+    .object({
+        attachment: remoteAttachmentSchema,
+    })
     .strict() satisfies z.ZodType<RemoteAttachmentRequest>;
 
 export const remoteAttachmentMetadataRequestSchema = z
@@ -232,17 +253,38 @@ export const remoteAttachmentMetadataRequestSchema = z
     .strict() satisfies z.ZodType<RemoteAttachmentMetadataRequest>;
 
 const remoteOntologyRpc = {
-    describe: { endpoint: "describe", schema: remoteDescribeRequestSchema },
-    loadSubset: { endpoint: "load-subset", schema: remoteLoadSubsetRequestSchema },
-    applyAction: { endpoint: "apply-action", schema: remoteApplyActionRequestSchema },
-    validateAction: { endpoint: "validate-action", schema: remoteValidateActionRequestSchema },
+    describe: {
+        endpoint: "describe",
+        schema: remoteDescribeRequestSchema,
+    },
+    loadSubset: {
+        endpoint: "load-subset",
+        schema: remoteLoadSubsetRequestSchema,
+    },
+    applyAction: {
+        endpoint: "apply-action",
+        schema: remoteApplyActionRequestSchema,
+    },
+    validateAction: {
+        endpoint: "validate-action",
+        schema: remoteValidateActionRequestSchema,
+    },
     resolveActionParameters: {
         endpoint: "resolve-action-parameters",
         schema: remoteResolveActionParametersRequestSchema,
     },
-    runQueryFunction: { endpoint: "run-query-function", schema: remoteRunQueryFunctionRequestSchema },
-    attachmentMetadata: { endpoint: "attachment-metadata", schema: remoteAttachmentMetadataRequestSchema },
-    attachmentContent: { endpoint: "attachment-content", schema: remoteAttachmentRequestSchema },
+    runQueryFunction: {
+        endpoint: "run-query-function",
+        schema: remoteRunQueryFunctionRequestSchema,
+    },
+    attachmentMetadata: {
+        endpoint: "attachment-metadata",
+        schema: remoteAttachmentMetadataRequestSchema,
+    },
+    attachmentContent: {
+        endpoint: "attachment-content",
+        schema: remoteAttachmentRequestSchema,
+    },
 } as const;
 
 export function parseRemoteOntologyRequest(

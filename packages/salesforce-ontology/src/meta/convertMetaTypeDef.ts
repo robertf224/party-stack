@@ -22,8 +22,16 @@ function picklistConstraint(
 ): StringConstraint | undefined {
     const options = asPicklistValues(values)
         .filter((value) => value.active)
-        .map((value) => ({ value: value.value, label: value.label ?? undefined }));
-    return options.length > 0 ? { kind: "enum", value: { options } } : undefined;
+        .map((value) => ({
+            value: value.value,
+            label: value.label ?? undefined,
+        }));
+    return options.length > 0
+        ? {
+              kind: "enum",
+              value: { options },
+          }
+        : undefined;
 }
 
 /**
@@ -46,14 +54,28 @@ function convertSalesforceSoapType(field: SalesforceFieldDescribe): TypeDef {
         case "encryptedstring":
         case "combobox":
         case "anyType":
-            return { kind: "string", value: {} };
+            return {
+                kind: "string",
+                value: {},
+            };
         case "picklist":
         case "multipicklist": {
             const constraint = picklistConstraint(field.picklistValues);
             if (field.type === "multipicklist") {
-                return { kind: "list", value: { elementType: { kind: "string", value: { constraint } } } };
+                return {
+                    kind: "list",
+                    value: {
+                        elementType: {
+                            kind: "string",
+                            value: { constraint },
+                        },
+                    },
+                };
             }
-            return { kind: "string", value: { constraint } };
+            return {
+                kind: "string",
+                value: { constraint },
+            };
         }
         case "boolean":
             return { kind: "boolean", value: {} };
@@ -74,7 +96,10 @@ function convertSalesforceSoapType(field: SalesforceFieldDescribe): TypeDef {
         case "reference": {
             const referenceTo = field.referenceTo ?? [];
             if (referenceTo.length === 1) {
-                return { kind: "objectReference", value: { objectType: referenceTo[0]! } };
+                return {
+                    kind: "objectReference",
+                    value: { objectType: referenceTo[0]! },
+                };
             }
             // Polymorphic references stay scalar until multi-target links exist.
             return { kind: "string", value: {} };
@@ -124,7 +149,10 @@ export function convertSalesforceInvocableParameterType(
             },
         };
     } else if (sObjectType && (typeName === "id" || typeName === "reference")) {
-        baseType = { kind: "objectReference", value: { objectType: sObjectType } };
+        baseType = {
+            kind: "objectReference",
+            value: { objectType: sObjectType },
+        };
     } else {
         switch (typeName) {
             case "string":
@@ -138,7 +166,9 @@ export function convertSalesforceInvocableParameterType(
             case "picklist":
                 baseType = {
                     kind: "string",
-                    value: { constraint: picklistConstraint(parameter.picklistValues) },
+                    value: {
+                        constraint: picklistConstraint(parameter.picklistValues),
+                    },
                 };
                 break;
             case "boolean":
@@ -174,7 +204,10 @@ export function convertSalesforceInvocableParameterType(
         }
     }
     if (typeof parameter.maxOccurs === "number" && parameter.maxOccurs > 1) {
-        baseType = { kind: "list", value: { elementType: baseType } };
+        baseType = {
+            kind: "list",
+            value: { elementType: baseType },
+        };
     }
     return required ? baseType : { kind: "optional", value: { type: baseType } };
 }

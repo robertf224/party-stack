@@ -333,7 +333,13 @@ export function createSQLiteAttachmentStorageKey(
 }
 
 export async function prepareSQLiteAttachments(options: {
-    uploads?: Array<{ attachment: { id: string; type?: string }; blob: Blob }>;
+    uploads?: Array<{
+        attachment: {
+            id: string;
+            type?: string;
+        };
+        blob: Blob;
+    }>;
     storage?: SQLiteAttachmentStorageOptions;
 }): Promise<SQLitePreparedAttachment[]> {
     const rows: SQLitePreparedAttachment[] = [];
@@ -415,7 +421,10 @@ export function markSQLiteAttachmentUploadsComplete(
         if (!row.storageKey || !row.intentToken) continue;
         update.run(row.storageKey, row.intentToken);
         const completed = read.get(row.storageKey) as
-            | { state: string; intent_token: string | null }
+            | {
+                  state: string;
+                  intent_token: string | null;
+              }
             | undefined;
         if (completed?.state !== "pending" || completed.intent_token !== row.intentToken) {
             throw new Error(`Attachment "${row.id}" upload intent was replaced before completion.`);
@@ -464,7 +473,12 @@ export function persistSQLiteAttachmentRows(
                      FROM party_stack_attachment_orphans
                      WHERE storage_key = ?`
                 )
-                .get(row.storageKey) as { state: string; intent_token: string | null } | undefined;
+                .get(row.storageKey) as
+                | {
+                      state: string;
+                      intent_token: string | null;
+                  }
+                | undefined;
             if (intent?.state !== "pending" || intent.intent_token !== row.intentToken) {
                 throw new Error(`Attachment "${row.id}" upload is not ready to commit.`);
             }
@@ -527,7 +541,11 @@ export async function collectSQLiteAttachmentOrphans(options: {
              FROM party_stack_attachment_orphans
              WHERE state = 'pending'`
         )
-        .all() as Array<{ storage_key: string; created_at: number; intent_token: string }>;
+        .all() as Array<{
+        storage_key: string;
+        created_at: number;
+        intent_token: string;
+    }>;
     let deleted = 0;
     for (const row of rows) {
         if (options.olderThan !== undefined && row.created_at > options.olderThan) {
@@ -572,7 +590,11 @@ export async function collectSQLiteAttachmentOrphans(options: {
                              FROM party_stack_attachment_orphans
                              WHERE storage_key = ?`
                         )
-                        .get(row.storage_key) as { claim_token: string | null } | undefined
+                        .get(row.storage_key) as
+                        | {
+                              claim_token: string | null;
+                          }
+                        | undefined
                 )?.claim_token === claimToken;
         })();
         if (linked || !claimed) continue;

@@ -95,19 +95,28 @@ function evaluateExpression<Context>(opts: {
             return opts.locals?.get(opts.expression.value.name);
         }
         case "getAt": {
-            const source = evaluateExpression({ ...opts, expression: opts.expression.value.source });
+            const source = evaluateExpression({
+                ...opts,
+                expression: opts.expression.value.source,
+            });
             return getPath(source, opts.expression.value.path);
         }
         case "struct":
             return Object.fromEntries(
                 opts.expression.value.fields.map((field) => [
                     field.name,
-                    evaluateExpression({ ...opts, expression: field.value }),
+                    evaluateExpression({
+                        ...opts,
+                        expression: field.value,
+                    }),
                 ])
             );
         case "map": {
             const { source: sourceExpression, binding, body } = opts.expression.value;
-            const source = evaluateExpression({ ...opts, expression: sourceExpression });
+            const source = evaluateExpression({
+                ...opts,
+                expression: sourceExpression,
+            });
             if (source === undefined) return undefined;
             if (!Array.isArray(source)) {
                 throw new Error("Map expression source must resolve to a list.");
@@ -115,7 +124,11 @@ function evaluateExpression<Context>(opts: {
             return source.map((item) => {
                 const locals = new Map(opts.locals);
                 locals.set(binding, item);
-                return evaluateExpression({ ...opts, expression: body, locals });
+                return evaluateExpression({
+                    ...opts,
+                    expression: body,
+                    locals,
+                });
             });
         }
         case "uuid":
@@ -257,35 +270,85 @@ function projectExpression<Context>(opts: {
             ) {
                 return undefined;
             }
-            const source = projectExpression({ ...opts, expression: opts.expression.value.source });
+            const source = projectExpression({
+                ...opts,
+                expression: opts.expression.value.source,
+            });
             return source
-                ? { kind: "getAt", value: { source, path: opts.expression.value.path } }
+                ? {
+                      kind: "getAt",
+                      value: {
+                          source,
+                          path: opts.expression.value.path,
+                      },
+                  }
                 : undefined;
         }
         case "objectLookup": {
-            const reference = projectExpression({ ...opts, expression: opts.expression.value.reference });
-            return reference ? { kind: "objectLookup", value: { reference } } : undefined;
+            const reference = projectExpression({
+                ...opts,
+                expression: opts.expression.value.reference,
+            });
+            return reference
+                ? {
+                      kind: "objectLookup",
+                      value: { reference },
+                  }
+                : undefined;
         }
         case "linkHop": {
-            const source = projectExpression({ ...opts, expression: opts.expression.value.source });
+            const source = projectExpression({
+                ...opts,
+                expression: opts.expression.value.source,
+            });
             return source && getExpressionObjectType(opts.ir, opts.actionName, opts.expression)
-                ? { kind: "linkHop", value: { source, link: opts.expression.value.link } }
+                ? {
+                      kind: "linkHop",
+                      value: {
+                          source,
+                          link: opts.expression.value.link,
+                      },
+                  }
                 : undefined;
         }
         case "struct": {
             const fields = opts.expression.value.fields.map((field) => ({
                 ...field,
-                value: projectExpression({ ...opts, expression: field.value }),
+                value: projectExpression({
+                    ...opts,
+                    expression: field.value,
+                }),
             }));
             return fields.some((field) => field.value === undefined)
                 ? undefined
-                : { kind: "struct", value: { fields: fields as Array<{ name: string; value: Expression }> } };
+                : {
+                      kind: "struct",
+                      value: {
+                          fields: fields as Array<{
+                              name: string;
+                              value: Expression;
+                          }>,
+                      },
+                  };
         }
         case "map": {
-            const source = projectExpression({ ...opts, expression: opts.expression.value.source });
-            const body = projectExpression({ ...opts, expression: opts.expression.value.body });
+            const source = projectExpression({
+                ...opts,
+                expression: opts.expression.value.source,
+            });
+            const body = projectExpression({
+                ...opts,
+                expression: opts.expression.value.body,
+            });
             return source && body
-                ? { kind: "map", value: { source, binding: opts.expression.value.binding, body } }
+                ? {
+                      kind: "map",
+                      value: {
+                          source,
+                          binding: opts.expression.value.binding,
+                          body,
+                      },
+                  }
                 : undefined;
         }
         case "inputReference": {
@@ -304,7 +367,10 @@ function projectExpression<Context>(opts: {
             if (fixedValue.kind === "inputReference" && fixedValue.value.name === parameterName) {
                 return undefined;
             }
-            return projectExpression({ ...opts, expression: fixedValue });
+            return projectExpression({
+                ...opts,
+                expression: fixedValue,
+            });
         }
     }
 }
@@ -366,7 +432,13 @@ function projectLogicStep<Context>(opts: {
                 fixedActionParameterValues: opts.fixedActionParameterValues,
                 allowedObjectTypeProperties: opts.allowedObjectTypeProperties,
             });
-            return { ...opts.step, value: { ...opts.step.value, values } };
+            return {
+                ...opts.step,
+                value: {
+                    ...opts.step.value,
+                    values,
+                },
+            };
         }
         case "updateObject": {
             const objectTypeName = getObjectReferenceObjectType(
@@ -386,7 +458,13 @@ function projectLogicStep<Context>(opts: {
                 fixedActionParameterValues: opts.fixedActionParameterValues,
                 allowedObjectTypeProperties: opts.allowedObjectTypeProperties,
             });
-            return { ...opts.step, value: { ...opts.step.value, values } };
+            return {
+                ...opts.step,
+                value: {
+                    ...opts.step.value,
+                    values,
+                },
+            };
         }
         case "deleteObject":
             return opts.step;

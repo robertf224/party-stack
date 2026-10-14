@@ -7,5 +7,8 @@ import type { MetaOntology, MetaOntologyContext } from "./types.js";
 export async function createMetaLiveOntology(
     opts: Omit<CreateLiveOntologyOpts<MetaOntologyContext>, "ir">
 ): Promise<LiveOntology<MetaOntology>> {
-    return createLiveOntology<MetaOntology, MetaOntologyContext>({ ...opts, ir: ontology });
+    return createLiveOntology<MetaOntology, MetaOntologyContext>({
+        ...opts,
+        ir: ontology,
+    });
 }

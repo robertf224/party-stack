@@ -25,7 +25,11 @@ function manageRuntime(runtime: RuntimeAdapter): RuntimeAdapter {
           }
         : undefined;
 
-    return { ...runtime, cleanup, destroy };
+    return {
+        ...runtime,
+        cleanup,
+        destroy,
+    };
 }
 
 export function defineRuntime(provider: SyncRuntimeAdapterProvider): SyncRuntimeAdapterProvider;

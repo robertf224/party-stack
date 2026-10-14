@@ -8,7 +8,9 @@ import { foundryUserObjectType } from "./foundryUser.js";
 
 const foundryUserIdentityLens = {
     operations: [
-        o.LensOp.select({ properties: foundryUserObjectType.properties.map((property) => property.name) }),
+        o.LensOp.select({
+            properties: foundryUserObjectType.properties.map((property) => property.name),
+        }),
     ],
 };
 
@@ -20,16 +22,29 @@ export const foundryAdminOntology = defineOntology({
     queryFunctionTypes: [],
     contextType: o.struct({
         fields: [
-            { name: "user", displayName: "User", type: o.objectReference({ objectType: "FoundryUser" }) },
+            {
+                name: "user",
+                displayName: "User",
+                type: o.objectReference({
+                    objectType: "FoundryUser",
+                }),
+            },
         ],
     }),
 });
 
-export function createFoundryAdminOntologyRoute(options: { ontologyId?: string } = {}): FoundryOntologyRoute {
+export function createFoundryAdminOntologyRoute(
+    options: {
+        ontologyId?: string;
+    } = {}
+): FoundryOntologyRoute {
     const ontologyId = options.ontologyId ?? "admin";
     return createFoundryOntologyRoute({
         ontologyId,
         ir: foundryAdminOntology,
-        users: createFoundryUsersIntegration({ objectType: "FoundryUser", lens: foundryUserIdentityLens }),
+        users: createFoundryUsersIntegration({
+            objectType: "FoundryUser",
+            lens: foundryUserIdentityLens,
+        }),
     });
 }

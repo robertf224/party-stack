@@ -23,7 +23,9 @@ export class OntologyFixture extends DurableObject<FixtureEnvironment> {
         }
         const ontology = await createLiveOntology({
             ir: sqliteOntologyConformanceIR,
-            context: { user: request.headers.get("x-user-id") ?? "local-user" },
+            context: {
+                user: request.headers.get("x-user-id") ?? "local-user",
+            },
             backend: () =>
                 createDurableObjectOntologyBackendAdapter({
                     ir: sqliteOntologyConformanceIR,
@@ -35,15 +37,30 @@ export class OntologyFixture extends DurableObject<FixtureEnvironment> {
         });
         try {
             if (segments[0] === "notes" && request.method === "POST") {
-                const body = (await request.json()) as { id?: unknown; title?: unknown };
+                const body = (await request.json()) as {
+                    id?: unknown;
+                    title?: unknown;
+                };
                 if (typeof body.id !== "string" || typeof body.title !== "string") {
-                    return json({ error: "id and title must be strings." }, 400);
+                    return json(
+                        {
+                            error: "id and title must be strings.",
+                        },
+                        400
+                    );
                 }
-                await ontology.actions.createNote!({ id: body.id, title: body.title });
+                await ontology.actions.createNote!({
+                    id: body.id,
+                    title: body.title,
+                });
             }
             if (segments[0] === "notes" && (request.method === "GET" || request.method === "POST")) {
                 await queryOnce((query) =>
-                    query.from({ note: ontology.objects.Note! }).select(({ note }) => note)
+                    query
+                        .from({
+                            note: ontology.objects.Note!,
+                        })
+                        .select(({ note }) => note)
                 );
                 return json({
                     ontologyId,
@@ -72,7 +89,11 @@ const worker: ExportedHandler<FixtureEnvironment> = {
             segments[2] !== "ontologies" ||
             (ontologyId !== "primary" && ontologyId !== "secondary")
         ) {
-            return Promise.resolve(json({ usage: "/cells/{cell}/ontologies/{primary|secondary}/notes" }));
+            return Promise.resolve(
+                json({
+                    usage: "/cells/{cell}/ontologies/{primary|secondary}/notes",
+                })
+            );
         }
         const stub = environment.CELLS.get(
             environment.CELLS.idFromName(JSON.stringify([segments[1], ontologyId]))

@@ -69,8 +69,18 @@ export interface OntologyAttachmentsAdapter {
      * This is a hint, not an invariant. Attachments can arrive with IDs generated elsewhere,
      * so adapters must accept IDs downstream that were not produced by this function.
      */
-    generateAttachmentId?: (blob: Blob, opts: { target?: AttachmentTypeDef }) => Promise<string> | string;
-    canMaterializeAttachment?: (attachment: v.attachment, opts: { target?: AttachmentTypeDef }) => boolean;
+    generateAttachmentId?: (
+        blob: Blob,
+        opts: {
+            target?: AttachmentTypeDef;
+        }
+    ) => Promise<string> | string;
+    canMaterializeAttachment?: (
+        attachment: v.attachment,
+        opts: {
+            target?: AttachmentTypeDef;
+        }
+    ) => boolean;
     /**
      * Materializes an attachment in the backend.
      *
@@ -81,7 +91,9 @@ export interface OntologyAttachmentsAdapter {
     materializeAttachment?: (
         attachment: v.attachment,
         blob: Blob,
-        opts: { target?: AttachmentTypeDef }
+        opts: {
+            target?: AttachmentTypeDef;
+        }
     ) => Promise<v.attachment | void>;
     getAttachmentContent: (attachment: v.attachment) => Promise<Blob>;
     getAttachmentMetadata?: (

@@ -24,7 +24,10 @@ export function useAttachmentMetadata(
             }
             try {
                 const attachment = await Attachments.get(client, rid);
-                return { ...attachment, sizeBytes: Number(attachment.sizeBytes) };
+                return {
+                    ...attachment,
+                    sizeBytes: Number(attachment.sizeBytes),
+                };
             } catch (error) {
                 if (error instanceof PalantirApiError && error.errorName === "AttachmentNotFound") {
                     return null;

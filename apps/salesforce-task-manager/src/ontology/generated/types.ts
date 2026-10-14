@@ -17,10 +17,18 @@ export type Task = {
     LastModifiedById: string;
 };
 
-export type User = { Id: string; Username: string; Name: string; Email: string };
+export type User = {
+    Id: string;
+    Username: string;
+    Name: string;
+    Email: string;
+};
 
 export type SalesforceTaskManagerOntologyContext = Record<string, unknown>;
-export type ConfirmSalesMeetingParameters = { meetingRequestId: string; meetingTime: string };
+export type ConfirmSalesMeetingParameters = {
+    meetingRequestId: string;
+    meetingTime: string;
+};
 export type CreateTaskParameters = {
     WhoId?: string | null;
     WhatId?: string | null;
@@ -502,7 +510,9 @@ export type CreateTaskParameters = {
     Customer_POC__c?: string | null;
     Mission__c?: string | null;
 };
-export type DeleteTaskParameters = { recordId: string };
+export type DeleteTaskParameters = {
+    recordId: string;
+};
 export type SalesSfaFlowsCreateSalesLeadParameters = {
     leadRecord?: {
         Id?: string;
@@ -1127,13 +1137,26 @@ export type GetAvailableMeetingTimesReturn = {
 };
 export type SalesforceTaskManagerOntology = {
     context: SalesforceTaskManagerOntologyContext;
-    objectTypes: { Task: Task; User: User };
+    objectTypes: {
+        Task: Task;
+        User: User;
+    };
     actionTypes: {
-        confirmSalesMeeting: { parameters: ConfirmSalesMeetingParameters };
-        createTask: { parameters: CreateTaskParameters };
-        deleteTask: { parameters: DeleteTaskParameters };
-        sales_sfa_flows__CreateSalesLead: { parameters: SalesSfaFlowsCreateSalesLeadParameters };
-        updateTask: { parameters: UpdateTaskParameters };
+        confirmSalesMeeting: {
+            parameters: ConfirmSalesMeetingParameters;
+        };
+        createTask: {
+            parameters: CreateTaskParameters;
+        };
+        deleteTask: {
+            parameters: DeleteTaskParameters;
+        };
+        sales_sfa_flows__CreateSalesLead: {
+            parameters: SalesSfaFlowsCreateSalesLeadParameters;
+        };
+        updateTask: {
+            parameters: UpdateTaskParameters;
+        };
     };
     queryFunctionTypes: {
         getAvailableMeetingTimes: {

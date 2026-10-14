@@ -5,13 +5,18 @@ import { createFoundryMetaOntologyBackendAdapter } from "./createFoundryMetaOnto
 import type { ObjectTypeV2 } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
 
-const mocks = vi.hoisted(() => ({ getFullMetadata: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+    getFullMetadata: vi.fn(),
+}));
 
 vi.mock("@osdk/foundry.ontologies", async (importOriginal) => {
     const original = await importOriginal<typeof import("@osdk/foundry.ontologies")>();
     return {
         ...original,
-        OntologiesV2: { ...original.OntologiesV2, getFullMetadata: mocks.getFullMetadata },
+        OntologiesV2: {
+            ...original.OntologiesV2,
+            getFullMetadata: mocks.getFullMetadata,
+        },
     };
 });
 
@@ -85,7 +90,10 @@ describe("Foundry ObjectType metadata queries", () => {
                     name: "Employee",
                     title: "fullName",
                     properties: [
-                        expect.objectContaining({ id: "ri.ontology.main.property.employee-id", name: "id" }),
+                        expect.objectContaining({
+                            id: "ri.ontology.main.property.employee-id",
+                            name: "id",
+                        }),
                         expect.objectContaining({
                             id: "ri.ontology.main.property.employee-name",
                             name: "fullName",

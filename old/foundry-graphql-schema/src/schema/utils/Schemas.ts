@@ -8,4 +8,7 @@ function list<T extends GraphQLType>(type: T): GraphQLList<GraphQLNonNull<T>> {
     return new GraphQLList(required(type));
 }
 
-export const Schemas = { required, list };
+export const Schemas = {
+    required,
+    list,
+};

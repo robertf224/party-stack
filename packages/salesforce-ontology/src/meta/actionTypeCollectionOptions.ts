@@ -104,8 +104,14 @@ async function loadSelectedActionDescribes(
     if (typeof client.describeInvocableActions === "function") {
         try {
             const combined = await client.describeInvocableActions([
-                ...flowNames.map((apiName) => ({ kind: "flow" as const, apiName })),
-                ...standardNames.map((apiName) => ({ kind: "standard" as const, apiName })),
+                ...flowNames.map((apiName) => ({
+                    kind: "flow" as const,
+                    apiName,
+                })),
+                ...standardNames.map((apiName) => ({
+                    kind: "standard" as const,
+                    apiName,
+                })),
             ]);
             return [combined.slice(0, flowNames.length), combined.slice(flowNames.length)];
         } catch {
@@ -150,7 +156,11 @@ export function actionTypeCollectionOptions(opts: ActionTypeCollectionOpts): Ont
                     ? Promise.resolve(undefined)
                     : opts.client.listStandardActions().then(normalizeFlowActionList),
             ]);
-            const candidates: Array<{ kind: "flow" | "standard"; name: string; displayName: string }> = [
+            const candidates: Array<{
+                kind: "flow" | "standard";
+                name: string;
+                displayName: string;
+            }> = [
                 ...(
                     opts.flowActionTypeNames ??
                     (requestedNames

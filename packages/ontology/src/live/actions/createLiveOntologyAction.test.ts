@@ -10,7 +10,12 @@ const users = createCollection(
     localOnlyCollectionOptions<OntologyObject, string | number>({
         id: "resolve-action-parameters-users",
         getKey: (user) => user.id as string | number,
-        initialData: [{ id: "user-1", profile: { name: "Ada" } }],
+        initialData: [
+            {
+                id: "user-1",
+                profile: { name: "Ada" },
+            },
+        ],
     })
 );
 
@@ -22,26 +27,38 @@ const action: OntologyIR["actionTypes"][number] = {
             name: "chained",
             displayName: "Chained",
             type: o.string({}),
-            defaultValue: o.Expression.inputReference({ name: "base" }),
+            defaultValue: o.Expression.inputReference({
+                name: "base",
+            }),
         },
         {
             name: "base",
             displayName: "Base",
             type: o.string({}),
-            defaultValue: o.Expression.literal({ value: "base" }),
+            defaultValue: o.Expression.literal({
+                value: "base",
+            }),
         },
         {
             name: "actor",
             displayName: "Actor",
             type: o.string({}),
-            defaultValue: o.Expression.contextReference({ name: "actor" }),
+            defaultValue: o.Expression.contextReference({
+                name: "actor",
+            }),
         },
         {
             name: "entries",
             displayName: "Entries",
             type: o.list({
                 elementType: o.struct({
-                    fields: [{ name: "code", displayName: "Code", type: o.string({}) }],
+                    fields: [
+                        {
+                            name: "code",
+                            displayName: "Code",
+                            type: o.string({}),
+                        },
+                    ],
                 }),
             }),
         },
@@ -50,18 +67,28 @@ const action: OntologyIR["actionTypes"][number] = {
             displayName: "Mapped",
             type: o.list({
                 elementType: o.struct({
-                    fields: [{ name: "label", displayName: "Label", type: o.string({}) }],
+                    fields: [
+                        {
+                            name: "label",
+                            displayName: "Label",
+                            type: o.string({}),
+                        },
+                    ],
                 }),
             }),
             defaultValue: o.Expression.map({
-                source: o.Expression.inputReference({ name: "entries" }),
+                source: o.Expression.inputReference({
+                    name: "entries",
+                }),
                 binding: "entry",
                 body: o.Expression.struct({
                     fields: [
                         {
                             name: "label",
                             value: o.Expression.getAt({
-                                source: o.Expression.localReference({ name: "entry" }),
+                                source: o.Expression.localReference({
+                                    name: "entry",
+                                }),
                                 path: ["code"],
                             }),
                         },
@@ -69,19 +96,32 @@ const action: OntologyIR["actionTypes"][number] = {
                 }),
             }),
         },
-        { name: "user", displayName: "User", type: o.objectReference({ objectType: "User" }) },
+        {
+            name: "user",
+            displayName: "User",
+            type: o.objectReference({
+                objectType: "User",
+            }),
+        },
         {
             name: "userName",
             displayName: "User name",
             type: o.string({}),
             defaultValue: o.Expression.getAt({
                 source: o.Expression.objectLookup({
-                    reference: o.Expression.inputReference({ name: "user" }),
+                    reference: o.Expression.inputReference({
+                        name: "user",
+                    }),
                 }),
                 path: ["profile", "name"],
             }),
         },
-        { name: "id", displayName: "ID", type: o.string({}), defaultValue: o.Expression.uuid({}) },
+        {
+            name: "id",
+            displayName: "ID",
+            type: o.string({}),
+            defaultValue: o.Expression.uuid({}),
+        },
         {
             name: "createdAt",
             displayName: "Created at",
@@ -101,11 +141,23 @@ const ir: OntologyIR = {
             pluralDisplayName: "Users",
             primaryKey: "id",
             properties: [
-                { name: "id", displayName: "ID", type: o.string({}) },
+                {
+                    name: "id",
+                    displayName: "ID",
+                    type: o.string({}),
+                },
                 {
                     name: "profile",
                     displayName: "Profile",
-                    type: o.struct({ fields: [{ name: "name", displayName: "Name", type: o.string({}) }] }),
+                    type: o.struct({
+                        fields: [
+                            {
+                                name: "name",
+                                displayName: "Name",
+                                type: o.string({}),
+                            },
+                        ],
+                    }),
                 },
             ],
         },
@@ -133,7 +185,10 @@ describe("LiveOntologyAction.resolveParameters", () => {
     it("resolves defaults from partial parameters", async () => {
         await users.preload();
 
-        const resolved = await liveAction.resolveParameters({ entries: [{ code: "alpha" }], user: "user-1" });
+        const resolved = await liveAction.resolveParameters({
+            entries: [{ code: "alpha" }],
+            user: "user-1",
+        });
 
         expect(resolved).toMatchObject({
             base: "base",
@@ -181,7 +236,10 @@ describe("LiveOntologyAction submission", () => {
             validate: vi.fn(),
             validateDraft: vi.fn(),
         });
-        const provided = { entries: [{ code: "alpha" }], user: "user-1" };
+        const provided = {
+            entries: [{ code: "alpha" }],
+            user: "user-1",
+        };
 
         await actionWithDefaults(provided);
 

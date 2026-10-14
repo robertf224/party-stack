@@ -29,7 +29,11 @@ export function createFoundryUsersIntegration(options: {
             const userId = decodeFoundryUserProfilePictureAttachment(attachment.id);
             return Promise.resolve(
                 userId
-                    ? { id: attachment.id, type: attachment.type, name: `${userId} profile picture` }
+                    ? {
+                          id: attachment.id,
+                          type: attachment.type,
+                          name: `${userId} profile picture`,
+                      }
                     : undefined
             );
         },

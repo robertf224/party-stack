@@ -21,7 +21,11 @@ export default {
             type: o.struct({
                 fields: [
                     { name: "line1", displayName: "Line 1", type: o.string({}) },
-                    { name: "line2", displayName: "Line 2", type: o.optional({ type: o.string({}) }) },
+                    {
+                        name: "line2",
+                        displayName: "Line 2",
+                        type: o.optional({ type: o.string({}) }),
+                    },
                     { name: "city", displayName: "City", type: o.string({}) },
                     { name: "state", displayName: "State", type: o.string({}) },
                     { name: "zip", displayName: "ZIP", type: o.string({}) },
@@ -38,10 +42,26 @@ export default {
             description: "A blog author.",
             primaryKey: "authorId",
             properties: [
-                { name: "authorId", displayName: "Author ID", type: o.string({}) },
-                { name: "name", displayName: "Name", type: o.string({}) },
-                { name: "email", displayName: "Email", type: o.string({}) },
-                { name: "bio", displayName: "Bio", type: o.optional({ type: o.string({}) }) },
+                {
+                    name: "authorId",
+                    displayName: "Author ID",
+                    type: o.string({}),
+                },
+                {
+                    name: "name",
+                    displayName: "Name",
+                    type: o.string({}),
+                },
+                {
+                    name: "email",
+                    displayName: "Email",
+                    type: o.string({}),
+                },
+                {
+                    name: "bio",
+                    displayName: "Bio",
+                    type: o.optional({ type: o.string({}) }),
+                },
                 {
                     name: "avatar",
                     displayName: "Avatar",
@@ -53,7 +73,11 @@ export default {
                     displayName: "Address",
                     type: o.optional({ type: o.ref({ name: "Address" }) }),
                 },
-                { name: "createdAt", displayName: "Created At", type: o.timestamp({}) },
+                {
+                    name: "createdAt",
+                    displayName: "Created At",
+                    type: o.timestamp({}),
+                },
             ],
         },
         {
@@ -63,10 +87,26 @@ export default {
             description: "A blog post.",
             primaryKey: "postId",
             properties: [
-                { name: "postId", displayName: "Post ID", type: o.string({}) },
-                { name: "title", displayName: "Title", type: o.string({}) },
-                { name: "body", displayName: "Body", type: o.string({}) },
-                { name: "authorId", displayName: "Author ID", type: o.string({}) },
+                {
+                    name: "postId",
+                    displayName: "Post ID",
+                    type: o.string({}),
+                },
+                {
+                    name: "title",
+                    displayName: "Title",
+                    type: o.string({}),
+                },
+                {
+                    name: "body",
+                    displayName: "Body",
+                    type: o.string({}),
+                },
+                {
+                    name: "authorId",
+                    displayName: "Author ID",
+                    type: o.string({}),
+                },
                 {
                     name: "status",
                     displayName: "Status",
@@ -85,8 +125,16 @@ export default {
                     displayName: "Cover Image",
                     type: o.optional({ type: o.attachment({}) }),
                 },
-                { name: "tags", displayName: "Tags", type: o.list({ elementType: o.string({}) }) },
-                { name: "createdAt", displayName: "Created At", type: o.timestamp({}) },
+                {
+                    name: "tags",
+                    displayName: "Tags",
+                    type: o.list({ elementType: o.string({}) }),
+                },
+                {
+                    name: "createdAt",
+                    displayName: "Created At",
+                    type: o.timestamp({}),
+                },
                 {
                     name: "publishedAt",
                     displayName: "Published At",
@@ -101,11 +149,31 @@ export default {
             description: "A comment on a blog post.",
             primaryKey: "commentId",
             properties: [
-                { name: "commentId", displayName: "Comment ID", type: o.string({}) },
-                { name: "body", displayName: "Body", type: o.string({}) },
-                { name: "postId", displayName: "Post ID", type: o.string({}) },
-                { name: "authorId", displayName: "Author ID", type: o.string({}) },
-                { name: "createdAt", displayName: "Created At", type: o.timestamp({}) },
+                {
+                    name: "commentId",
+                    displayName: "Comment ID",
+                    type: o.string({}),
+                },
+                {
+                    name: "body",
+                    displayName: "Body",
+                    type: o.string({}),
+                },
+                {
+                    name: "postId",
+                    displayName: "Post ID",
+                    type: o.string({}),
+                },
+                {
+                    name: "authorId",
+                    displayName: "Author ID",
+                    type: o.string({}),
+                },
+                {
+                    name: "createdAt",
+                    displayName: "Created At",
+                    type: o.timestamp({}),
+                },
             ],
         },
     ],
@@ -113,22 +181,46 @@ export default {
     linkTypes: [
         {
             id: "Post:author",
-            source: { objectType: "Post", name: "posts", displayName: "Posts" },
-            target: { objectType: "Author", name: "author", displayName: "Author" },
+            source: {
+                objectType: "Post",
+                name: "posts",
+                displayName: "Posts",
+            },
+            target: {
+                objectType: "Author",
+                name: "author",
+                displayName: "Author",
+            },
             foreignKey: "authorId",
             cardinality: "many",
         },
         {
             id: "Comment:post",
-            source: { objectType: "Comment", name: "comments", displayName: "Comments" },
-            target: { objectType: "Post", name: "post", displayName: "Post" },
+            source: {
+                objectType: "Comment",
+                name: "comments",
+                displayName: "Comments",
+            },
+            target: {
+                objectType: "Post",
+                name: "post",
+                displayName: "Post",
+            },
             foreignKey: "postId",
             cardinality: "many",
         },
         {
             id: "Comment:author",
-            source: { objectType: "Comment", name: "comment", displayName: "Comment" },
-            target: { objectType: "Author", name: "author", displayName: "Author" },
+            source: {
+                objectType: "Comment",
+                name: "comment",
+                displayName: "Comment",
+            },
+            target: {
+                objectType: "Author",
+                name: "author",
+                displayName: "Author",
+            },
             foreignKey: "authorId",
             cardinality: "one",
         },
@@ -145,9 +237,21 @@ export default {
                     type: o.string({}),
                     defaultValue: o.Expression.uuid({}),
                 },
-                { name: "author", displayName: "Author", type: o.objectReference({ objectType: "Author" }) },
-                { name: "title", displayName: "Title", type: o.string({}) },
-                { name: "body", displayName: "Body", type: o.string({}) },
+                {
+                    name: "author",
+                    displayName: "Author",
+                    type: o.objectReference({ objectType: "Author" }),
+                },
+                {
+                    name: "title",
+                    displayName: "Title",
+                    type: o.string({}),
+                },
+                {
+                    name: "body",
+                    displayName: "Body",
+                    type: o.string({}),
+                },
                 {
                     name: "status",
                     displayName: "Status",
@@ -161,7 +265,11 @@ export default {
                         }),
                     }),
                 },
-                { name: "tags", displayName: "Tags", type: o.list({ elementType: o.string({}) }) },
+                {
+                    name: "tags",
+                    displayName: "Tags",
+                    type: o.list({ elementType: o.string({}) }),
+                },
                 {
                     name: "createdAt",
                     displayName: "Created At",
@@ -173,20 +281,37 @@ export default {
                 o.ActionLogicStep.createObject({
                     objectType: "Post",
                     values: [
-                        { property: ["postId"], value: o.Expression.inputReference({ name: "postId" }) },
-                        { property: ["title"], value: o.Expression.inputReference({ name: "title" }) },
-                        { property: ["body"], value: o.Expression.inputReference({ name: "body" }) },
+                        {
+                            property: ["postId"],
+                            value: o.Expression.inputReference({ name: "postId" }),
+                        },
+                        {
+                            property: ["title"],
+                            value: o.Expression.inputReference({ name: "title" }),
+                        },
+                        {
+                            property: ["body"],
+                            value: o.Expression.inputReference({ name: "body" }),
+                        },
                         {
                             property: ["authorId"],
                             value: o.Expression.getAt({
                                 source: o.Expression.objectLookup({
-                                    reference: o.Expression.inputReference({ name: "author" }),
+                                    reference: o.Expression.inputReference({
+                                        name: "author",
+                                    }),
                                 }),
                                 path: ["authorId"],
                             }),
                         },
-                        { property: ["status"], value: o.Expression.inputReference({ name: "status" }) },
-                        { property: ["tags"], value: o.Expression.inputReference({ name: "tags" }) },
+                        {
+                            property: ["status"],
+                            value: o.Expression.inputReference({ name: "status" }),
+                        },
+                        {
+                            property: ["tags"],
+                            value: o.Expression.inputReference({ name: "tags" }),
+                        },
                         {
                             property: ["createdAt"],
                             value: o.Expression.inputReference({ name: "createdAt" }),
@@ -202,8 +327,16 @@ export default {
             displayName: "Search Posts",
             description: "Search blog posts by query text.",
             parameters: [
-                { name: "query", displayName: "Query", type: o.string({}) },
-                { name: "limit", displayName: "Limit", type: o.optional({ type: o.integer({}) }) },
+                {
+                    name: "query",
+                    displayName: "Query",
+                    type: o.string({}),
+                },
+                {
+                    name: "limit",
+                    displayName: "Limit",
+                    type: o.optional({ type: o.integer({}) }),
+                },
             ],
             returnType: o.list({ elementType: o.objectReference({ objectType: "Post" }) }),
         },

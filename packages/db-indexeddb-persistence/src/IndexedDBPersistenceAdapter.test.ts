@@ -88,7 +88,13 @@ function tx(
     rowVersion: number,
     mutations: PersistedTx<Item, string>["mutations"]
 ): PersistedTx<Item, string> {
-    return { txId, term: 1, seq: rowVersion, rowVersion, mutations };
+    return {
+        txId,
+        term: 1,
+        seq: rowVersion,
+        rowVersion,
+        mutations,
+    };
 }
 
 function indexSpec(path: string[]): PersistedIndexSpec {
@@ -96,7 +102,9 @@ function indexSpec(path: string[]): PersistedIndexSpec {
 }
 
 function expressionIndexSpec(expression: IR.BasicExpression): PersistedIndexSpec {
-    return { expressionSql: [JSON.stringify(expression)] };
+    return {
+        expressionSql: [JSON.stringify(expression)],
+    };
 }
 
 async function seed(adapter: IndexedDBPersistenceAdapter, items: Item[]): Promise<void> {
@@ -105,7 +113,11 @@ async function seed(adapter: IndexedDBPersistenceAdapter, items: Item[]): Promis
         tx(
             "seed",
             1,
-            items.map((value) => ({ type: "insert", key: value.id, value }))
+            items.map((value) => ({
+                type: "insert",
+                key: value.id,
+                value,
+            }))
         )
     );
 }
@@ -875,7 +887,9 @@ describe("IndexedDBPersistenceAdapter", () => {
 
     it("persists a local-only TanStack DB collection across instances", async () => {
         const name = databaseName();
-        const firstAdapter = new IndexedDBPersistenceAdapter({ databaseName: name });
+        const firstAdapter = new IndexedDBPersistenceAdapter({
+            databaseName: name,
+        });
         const createItems = (adapter: IndexedDBPersistenceAdapter) =>
             createCollection(
                 persistedCollectionOptions<Item, string>({
@@ -887,15 +901,24 @@ describe("IndexedDBPersistenceAdapter", () => {
 
         const first = createItems(firstAdapter);
         await first.preload();
-        const transaction = first.insert({ id: "one", status: "open", priority: 1 });
+        const transaction = first.insert({
+            id: "one",
+            status: "open",
+            priority: 1,
+        });
         await transaction.isPersisted.promise;
         await first.cleanup();
         firstAdapter.close();
 
-        const secondAdapter = new IndexedDBPersistenceAdapter({ databaseName: name });
+        const secondAdapter = new IndexedDBPersistenceAdapter({
+            databaseName: name,
+        });
         const second = createItems(secondAdapter);
         await second.preload();
-        expect(second.get("one")).toMatchObject({ status: "open", priority: 1 });
+        expect(second.get("one")).toMatchObject({
+            status: "open",
+            priority: 1,
+        });
         await second.cleanup();
         secondAdapter.close();
     });
@@ -910,15 +933,25 @@ describe("IndexedDBPersistenceAdapter", () => {
                     persistence: { adapter },
                 })
             );
-        const firstAdapter = new IndexedDBPersistenceAdapter({ databaseName: name });
+        const firstAdapter = new IndexedDBPersistenceAdapter({
+            databaseName: name,
+        });
         const first = createItems(firstAdapter);
         await first.preload();
-        await first.insert({ id: "one", status: "executing", priority: 1 }, { optimistic: false }).isPersisted
-            .promise;
+        await first.insert(
+            {
+                id: "one",
+                status: "executing",
+                priority: 1,
+            },
+            { optimistic: false }
+        ).isPersisted.promise;
         await first.cleanup();
         firstAdapter.close();
 
-        const secondAdapter = new IndexedDBPersistenceAdapter({ databaseName: name });
+        const secondAdapter = new IndexedDBPersistenceAdapter({
+            databaseName: name,
+        });
         const second = createItems(secondAdapter);
         await second.preload();
         await second.update("one", { optimistic: false }, (draft) => {
@@ -926,7 +959,9 @@ describe("IndexedDBPersistenceAdapter", () => {
         }).isPersisted.promise;
 
         expect(second.has("one")).toBe(true);
-        await second.delete("one", { optimistic: false }).isPersisted.promise;
+        await second.delete("one", {
+            optimistic: false,
+        }).isPersisted.promise;
         expect(second.has("one")).toBe(false);
 
         await second.cleanup();
@@ -935,7 +970,9 @@ describe("IndexedDBPersistenceAdapter", () => {
 
     it("round-trips Temporal PlainDate and Instant values", async () => {
         const name = databaseName();
-        const first = new IndexedDBPersistenceAdapter({ databaseName: name });
+        const first = new IndexedDBPersistenceAdapter({
+            databaseName: name,
+        });
         await seed(first, [
             {
                 id: "temporal",
@@ -946,7 +983,9 @@ describe("IndexedDBPersistenceAdapter", () => {
         ]);
         first.close();
 
-        const second = new IndexedDBPersistenceAdapter({ databaseName: name });
+        const second = new IndexedDBPersistenceAdapter({
+            databaseName: name,
+        });
         const [row] = await second.loadSubset("items", {});
 
         expect(row?.value.date).toBeInstanceOf(Temporal.PlainDate);
@@ -957,7 +996,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("uses range indexes for Temporal PlainDate and Instant values", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             {
                 id: "earlier",
@@ -994,7 +1035,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("falls back to all rows when no persisted index matches", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "open", status: "open", priority: 1 },
             { id: "closed", status: "closed", priority: 2 },
@@ -1010,7 +1053,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("uses an equality index to return candidate rows", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "open-1", status: "open", priority: 1 },
             { id: "open-2", status: "open", priority: 2 },
@@ -1028,7 +1073,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("uses range indexes for homogeneous supported values", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "low", priority: 1 },
             { id: "middle", priority: 5 },
@@ -1046,7 +1093,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("intersects indexed AND predicates", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "open-low", status: "open", priority: 1 },
             { id: "open-high", status: "open", priority: 10 },
@@ -1067,7 +1116,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("uses cursor.whereFrom as an index candidate predicate", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "low", priority: 1 },
             { id: "middle", priority: 5 },
@@ -1088,7 +1139,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("intersects indexed where and cursor.whereFrom predicates", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "open-low", status: "open", priority: 1 },
             { id: "open-high", status: "open", priority: 10 },
@@ -1112,7 +1165,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("keeps indexed where candidates when cursor.whereFrom is not indexed", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "open-low", status: "open", priority: 1 },
             { id: "open-high", status: "open", priority: 10 },
@@ -1135,7 +1190,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("unions indexed IN values", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "open", status: "open", priority: 1 },
             { id: "pending", status: "pending", priority: 2 },
@@ -1153,7 +1210,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("uses literal prefixes for LIKE and leaves wildcard matching residual", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "hello", name: "hello world", priority: 1 },
             { id: "help", name: "helper", priority: 2 },
@@ -1171,7 +1230,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("uses normalized string entries for prefix ILIKE", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "hello", name: "Hello World", priority: 1 },
             { id: "helium", name: "hELium", priority: 2 },
@@ -1189,7 +1250,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("indexes null and undefined separately", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "null", nullable: null, priority: 1 },
             { id: "missing", priority: 2 },
@@ -1212,7 +1275,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("unions fully indexed OR branches", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "open-low", status: "open", priority: 1 },
             { id: "open-high", status: "open", priority: 10 },
@@ -1233,7 +1298,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("falls back to all rows for NOT predicates", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "open", status: "open", priority: 1 },
             { id: "closed", status: "closed", priority: 2 },
@@ -1250,7 +1317,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("matches indexes on supported computed expressions", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "hello", name: "HELLO", priority: 1 },
             { id: "world", name: "WORLD", priority: 2 },
@@ -1271,7 +1340,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("uses type-tagged equality lookups for mixed indexes", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "number", mixed: 1, priority: 1 },
             { id: "string", mixed: "1", priority: 2 },
@@ -1293,7 +1364,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("keeps boolean, number, bigint, and string index values distinct", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "boolean", mixed: true, priority: 1 },
             { id: "number", mixed: 1, priority: 2 },
@@ -1327,7 +1400,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("falls back to all rows for mixed-type ranges", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "number", mixed: 10, priority: 1 },
             { id: "string", mixed: "10", priority: 2 },
@@ -1344,7 +1419,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("rebuilds persisted indexes when rows change", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "one", status: "open", priority: 1 },
             { id: "two", status: "closed", priority: 2 },
@@ -1353,7 +1430,11 @@ describe("IndexedDBPersistenceAdapter", () => {
         await adapter.applyCommittedTx(
             "items",
             tx("update", 2, [
-                { type: "update", key: "two", value: { id: "two", status: "open", priority: 2 } },
+                {
+                    type: "update",
+                    key: "two",
+                    value: { id: "two", status: "open", priority: 2 },
+                },
             ])
         );
 
@@ -1367,7 +1448,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("falls back to a full scan after an index is removed", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "open", status: "open", priority: 1 },
             { id: "closed", status: "closed", priority: 2 },
@@ -1385,9 +1468,15 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("deduplicates committed transaction ids and restores stream position", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         const committed = tx("same-id", 1, [
-            { type: "insert", key: "one", value: { id: "one", status: "open", priority: 1 } },
+            {
+                type: "insert",
+                key: "one",
+                value: { id: "one", status: "open", priority: 1 },
+            },
         ]);
 
         await adapter.applyCommittedTx("items", committed);
@@ -1403,7 +1492,9 @@ describe("IndexedDBPersistenceAdapter", () => {
     });
 
     it("uses range indexes when omitted values are nullish", async () => {
-        const adapter = new IndexedDBPersistenceAdapter({ databaseName: databaseName() });
+        const adapter = new IndexedDBPersistenceAdapter({
+            databaseName: databaseName(),
+        });
         await seed(adapter, [
             { id: "missing", priority: 0 },
             { id: "open", status: "open", priority: 1 },

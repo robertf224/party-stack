@@ -56,7 +56,10 @@ type LensOp =
           /** Full target property path. */
           to: string[];
       }
-    | { kind: "select"; properties: string[] };
+    | {
+          kind: "select";
+          properties: string[];
+      };
 ```
 
 `move` handles both renaming and relocation. A rename is a move whose source
@@ -67,9 +70,14 @@ These are part of the self-hosted ontology schema in
 types/builders include:
 
 ```ts
-o.LensOp.move({ from: ["address", "zip"], to: ["postalCode"] });
+o.LensOp.move({
+    from: ["address", "zip"],
+    to: ["postalCode"],
+});
 
-o.LensOp.select({ properties: ["id", "givenName", "familyName", "email", "avatar"] });
+o.LensOp.select({
+    properties: ["id", "givenName", "familyName", "email", "avatar"],
+});
 ```
 
 Definition:
@@ -77,8 +85,13 @@ Definition:
 ```ts
 const foundryUserToUser = {
     operations: [
-        o.LensOp.move({ from: ["profilePicture"], to: ["avatar"] }),
-        o.LensOp.select({ properties: ["id", "givenName", "familyName", "email", "avatar"] }),
+        o.LensOp.move({
+            from: ["profilePicture"],
+            to: ["avatar"],
+        }),
+        o.LensOp.select({
+            properties: ["id", "givenName", "familyName", "email", "avatar"],
+        }),
     ],
 } satisfies Lens;
 ```
@@ -92,7 +105,10 @@ the lens.
 ### Caller supplies endpoints
 
 ```ts
-defineFoundryUsers({ objectType: "User", lens: foundryUserToUser });
+defineFoundryUsers({
+    objectType: "User",
+    lens: foundryUserToUser,
+});
 ```
 
 During Foundry pull/runtime setup:
@@ -127,8 +143,13 @@ Steps:
 
 ```ts
 [
-    o.LensOp.move({ from: ["profilePicture"], to: ["avatar"] }),
-    o.LensOp.select({ properties: ["id", "givenName", "familyName", "email", "avatar"] }),
+    o.LensOp.move({
+        from: ["profilePicture"],
+        to: ["avatar"],
+    }),
+    o.LensOp.select({
+        properties: ["id", "givenName", "familyName", "email", "avatar"],
+    }),
 ];
 ```
 

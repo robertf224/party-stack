@@ -51,9 +51,16 @@ function asClient(coordination: Coordination): Coordination {
 
 function setup(blobs = new Map<string, Blob>()) {
     const bytes = new TestBlobBytesStore(blobs);
-    const coordination = new SingleProcessCoordination({ scope: "blob-store-test" });
+    const coordination = new SingleProcessCoordination({
+        scope: "blob-store-test",
+    });
     const store = createBlobStore({
-        runtime: { owner: "user-1", namespace: "ontology-1", blobBytes: bytes, coordination },
+        runtime: {
+            owner: "user-1",
+            namespace: "ontology-1",
+            blobBytes: bytes,
+            coordination,
+        },
     });
     return { bytes, coordination, store };
 }
@@ -62,10 +69,21 @@ describe("createBlobStore", () => {
     it("ties staged bytes to collection metadata", async () => {
         const { bytes, store } = setup();
 
-        const ref = await store.stage("local-id", new File(["hello"], "hello.txt", { type: "text/plain" }));
+        const ref = await store.stage(
+            "local-id",
+            new File(["hello"], "hello.txt", {
+                type: "text/plain",
+            })
+        );
 
-        expect(ref).toMatchObject({ id: "local-id", name: "hello.txt" });
-        expect(store.collection.get("local-id")).toMatchObject({ state: "staged", operation: undefined });
+        expect(ref).toMatchObject({
+            id: "local-id",
+            name: "hello.txt",
+        });
+        expect(store.collection.get("local-id")).toMatchObject({
+            state: "staged",
+            operation: undefined,
+        });
         await expect(bytes.read("local-id").then((blob) => blob.text())).resolves.toBe("hello");
         await store.cleanup();
     });
@@ -75,11 +93,19 @@ describe("createBlobStore", () => {
 
         const ref = await store.cache(
             "remote-id",
-            new File(["remote"], "remote.txt", { type: "text/plain" })
+            new File(["remote"], "remote.txt", {
+                type: "text/plain",
+            })
         );
 
-        expect(ref).toMatchObject({ id: "remote-id", name: "remote.txt" });
-        expect(store.collection.get("remote-id")).toMatchObject({ state: "cached", operation: undefined });
+        expect(ref).toMatchObject({
+            id: "remote-id",
+            name: "remote.txt",
+        });
+        expect(store.collection.get("remote-id")).toMatchObject({
+            state: "cached",
+            operation: undefined,
+        });
         await expect(store.read("remote-id").then((blob) => blob.text())).resolves.toBe("remote");
         await store.cleanup();
     });
@@ -99,7 +125,9 @@ describe("createBlobStore", () => {
                 query
                     .from({ blob: store.collection })
                     .where(({ blob }) => eq(blob.state, "persisted"))
-                    .select(({ blob }) => ({ id: blob.id }))
+                    .select(({ blob }) => ({
+                        id: blob.id,
+                    }))
             )
         ).resolves.toEqual([expect.objectContaining({ id: "local-id" })]);
         await expect(store.read("remote-id").then((blob) => blob.text())).resolves.toBe("hello");
@@ -112,7 +140,9 @@ describe("createBlobStore", () => {
 
         await Promise.all([store.read("local-id"), store.bindRemoteId("local-id", "remote-id")]);
 
-        await expect(store.find("local-id")).resolves.toMatchObject({ state: "persisted" });
+        await expect(store.find("local-id")).resolves.toMatchObject({
+            state: "persisted",
+        });
         await store.cleanup();
     });
 
@@ -124,7 +154,11 @@ describe("createBlobStore", () => {
 
         const ref = await store.find("local-id");
         expect(ref?.state).toBeUndefined();
-        expect(ref?.operation).toMatchObject({ kind: "stage", status: "failed", error: "disk full" });
+        expect(ref?.operation).toMatchObject({
+            kind: "stage",
+            status: "failed",
+            error: "disk full",
+        });
         expect(ref?.operation?.operationId).toEqual(expect.any(String));
         await store.cleanup();
     });
@@ -138,7 +172,11 @@ describe("createBlobStore", () => {
 
         await expect(store.find("remote-id")).resolves.toMatchObject({
             state: "persisted",
-            operation: { kind: "cache", status: "failed", error: "disk full" },
+            operation: {
+                kind: "cache",
+                status: "failed",
+                error: "disk full",
+            },
         });
         await expect(store.read("remote-id")).rejects.toBeInstanceOf(BlobBytesUnavailableError);
         await expect(bytes.read("remote-id")).rejects.toThrow("not found");
@@ -147,21 +185,43 @@ describe("createBlobStore", () => {
 
     it("mints operation ids and fences stale write requests", async () => {
         const { bytes, store } = setup();
-        const metadata = { type: "text/plain", size: 5, name: "blob.txt" };
-        const first = await store.beginWrite({ id: "local-id", kind: "stage", metadata });
+        const metadata = {
+            type: "text/plain",
+            size: 5,
+            name: "blob.txt",
+        };
+        const first = await store.beginWrite({
+            id: "local-id",
+            kind: "stage",
+            metadata,
+        });
         await expectTaskRejection(
-            store.beginWrite({ id: "local-id", kind: "stage", metadata }),
+            store.beginWrite({
+                id: "local-id",
+                kind: "stage",
+                metadata,
+            }),
             "BLOB_OPERATION_CONFLICT"
         );
-        await store.failWrite({ ...first, error: "first write stopped" });
+        await store.failWrite({
+            ...first,
+            error: "first write stopped",
+        });
 
-        const second = await store.beginWrite({ id: "local-id", kind: "stage", metadata });
+        const second = await store.beginWrite({
+            id: "local-id",
+            kind: "stage",
+            metadata,
+        });
         expect(second.operationId).not.toBe(first.operationId);
         await bytes.write(second.id, new Blob(["fresh"], { type: "text/plain" }));
 
         await expectTaskRejection(store.commitWrite(first), "BLOB_OPERATION_STALE");
         await expectTaskRejection(
-            store.failWrite({ ...first, error: "late failure" }),
+            store.failWrite({
+                ...first,
+                error: "late failure",
+            }),
             "BLOB_OPERATION_STALE"
         );
         await expect(bytes.read(second.id).then((blob) => blob.text())).resolves.toBe("fresh");
@@ -171,7 +231,10 @@ describe("createBlobStore", () => {
             size: 5,
             type: "text/plain",
         });
-        expect(store.collection.get("local-id")).toMatchObject({ state: "staged", operation: undefined });
+        expect(store.collection.get("local-id")).toMatchObject({
+            state: "staged",
+            operation: undefined,
+        });
         await store.cleanup();
     });
 
@@ -202,18 +265,27 @@ describe("createBlobStore", () => {
             id: "local-id",
             type: "text/plain",
             size: 7,
-            operation: { kind: "stage", status: "pending", operationId: "interrupted-stage" },
+            operation: {
+                kind: "stage",
+                status: "pending",
+                operationId: "interrupted-stage",
+            },
             createdAt: timestamp,
             updatedAt: timestamp,
         };
-        await store.collection.insert(ref, { optimistic: false }).isPersisted.promise;
+        await store.collection.insert(ref, {
+            optimistic: false,
+        }).isPersisted.promise;
 
         await coordination.runAsLeader(({ signal }) => store.recoverAsLeader(signal));
 
         await expect(bytes.read("local-id")).rejects.toThrow("not found");
         const recovered = await store.find("local-id");
         expect(recovered?.state).toBeUndefined();
-        expect(recovered?.operation).toMatchObject({ kind: "stage", status: "failed" });
+        expect(recovered?.operation).toMatchObject({
+            kind: "stage",
+            status: "failed",
+        });
         expect(recovered?.operation?.status === "failed" ? recovered.operation.error : undefined).toContain(
             "interrupted before completion"
         );
@@ -237,7 +309,11 @@ describe("createBlobStore", () => {
                 type: "text/plain",
                 size: 7,
                 state: "persisted",
-                operation: { kind: "cache", status: "pending", operationId: "interrupted-cache" },
+                operation: {
+                    kind: "cache",
+                    status: "pending",
+                    operationId: "interrupted-cache",
+                },
                 createdAt: timestamp,
                 updatedAt: timestamp,
             },
@@ -250,7 +326,10 @@ describe("createBlobStore", () => {
         const recovered = await store.find("remote-id");
         expect(recovered).toMatchObject({
             state: "persisted",
-            operation: { kind: "cache", status: "failed" },
+            operation: {
+                kind: "cache",
+                status: "failed",
+            },
         });
         expect(recovered?.operation?.status === "failed" ? recovered.operation.error : undefined).toContain(
             "interrupted before completion"
@@ -267,7 +346,11 @@ describe("createBlobStore", () => {
                 type: "text/plain",
                 size: 6,
                 state: "cached",
-                operation: { kind: "purge", status: "pending", operationId: "interrupted-purge" },
+                operation: {
+                    kind: "purge",
+                    status: "pending",
+                    operationId: "interrupted-purge",
+                },
                 createdAt: timestamp,
                 updatedAt: timestamp,
             },
@@ -323,7 +406,10 @@ describe("createBlobStore", () => {
         await expect(bytes.read("stable").then((blob) => blob.text())).resolves.toBe("stable");
         await expect(bytes.read("failed").then((blob) => blob.text())).resolves.toBe("existing");
         await expect(store.find("failed")).resolves.toMatchObject({
-            operation: { status: "failed", error: "previous failure" },
+            operation: {
+                status: "failed",
+                error: "previous failure",
+            },
         });
         await store.cleanup();
     });
@@ -337,7 +423,11 @@ describe("createBlobStore", () => {
 
         await expect(store.find("local-id")).resolves.toMatchObject({
             state: "staged",
-            operation: { kind: "purge", status: "failed", error: "busy" },
+            operation: {
+                kind: "purge",
+                status: "failed",
+                error: "busy",
+            },
         });
         await store.cleanup();
     });

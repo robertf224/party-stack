@@ -14,8 +14,16 @@ describe("applyActionLogicToMutatorTx", () => {
                     pluralDisplayName: "Tasks",
                     primaryKey: "Id",
                     properties: [
-                        { name: "Id", displayName: "ID", type: o.string({}) },
-                        { name: "Subject", displayName: "Subject", type: o.string({}) },
+                        {
+                            name: "Id",
+                            displayName: "ID",
+                            type: o.string({}),
+                        },
+                        {
+                            name: "Subject",
+                            displayName: "Subject",
+                            type: o.string({}),
+                        },
                     ],
                 },
             ],
@@ -24,7 +32,13 @@ describe("applyActionLogicToMutatorTx", () => {
                 {
                     name: "createTask",
                     displayName: "Create Task",
-                    parameters: [{ name: "Subject", displayName: "Subject", type: o.string({}) }],
+                    parameters: [
+                        {
+                            name: "Subject",
+                            displayName: "Subject",
+                            type: o.string({}),
+                        },
+                    ],
                     logic: [
                         {
                             kind: "createObject",
@@ -33,7 +47,12 @@ describe("applyActionLogicToMutatorTx", () => {
                                 values: [
                                     {
                                         property: ["Subject"],
-                                        value: { kind: "inputReference", value: { name: "Subject" } },
+                                        value: {
+                                            kind: "inputReference",
+                                            value: {
+                                                name: "Subject",
+                                            },
+                                        },
                                     },
                                 ],
                             },
@@ -51,9 +70,16 @@ describe("applyActionLogicToMutatorTx", () => {
             context: {},
             idempotencyKey: "request-1",
             objects: {},
-            tx: { mutate: { Task: { create } } } as never,
+            tx: {
+                mutate: {
+                    Task: { create },
+                },
+            } as never,
         });
 
-        expect(create).toHaveBeenCalledWith({ Id: "optimistic:request-1:Task:0", Subject: "Follow up" });
+        expect(create).toHaveBeenCalledWith({
+            Id: "optimistic:request-1:Task:0",
+            Subject: "Follow up",
+        });
     });
 });

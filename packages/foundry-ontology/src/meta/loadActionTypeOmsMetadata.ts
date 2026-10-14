@@ -48,7 +48,9 @@ export async function loadActionTypeOmsMetadata(
         async (rids) => {
             try {
                 const response = await bulkLoadOntologyEntities(context, undefined, {
-                    actionTypes: rids.map((rid) => ({ rid })),
+                    actionTypes: rids.map((rid) => ({
+                        rid,
+                    })),
                     datasourceTypes: [],
                     linkTypes: [],
                     objectTypes: [],
@@ -88,7 +90,10 @@ export async function loadActionTypeOmsMetadata(
             );
             if (!objectTypeId) continue;
 
-            const dependency = { objectTypeId, ontologyVersion };
+            const dependency = {
+                objectTypeId,
+                ontologyVersion,
+            };
             dependencies.set(objectTypeDependencyKey(dependency), dependency);
         }
     }
@@ -104,8 +109,14 @@ export async function loadActionTypeOmsMetadata(
                     datasourceTypes: [],
                     linkTypes: [],
                     objectTypes: batch.map(({ objectTypeId, ontologyVersion }) => ({
-                        identifier: { type: "objectTypeId", objectTypeId },
-                        versionReference: { type: "ontologyVersion", ontologyVersion },
+                        identifier: {
+                            type: "objectTypeId",
+                            objectTypeId,
+                        },
+                        versionReference: {
+                            type: "ontologyVersion",
+                            ontologyVersion,
+                        },
                     })),
                     loadRedacted: true,
                     includeObjectTypesWithoutSearchableDatasources: true,
@@ -144,7 +155,10 @@ export async function loadActionTypeOmsMetadata(
                 const objectTypeId = getActionParameterObjectTypeId(response.actionType, parameterId);
                 if (!objectTypeId) continue;
                 const objectType = objectTypes.get(
-                    objectTypeDependencyKey({ objectTypeId, ontologyVersion: response.ontologyVersion })
+                    objectTypeDependencyKey({
+                        objectTypeId,
+                        ontologyVersion: response.ontologyVersion,
+                    })
                 );
                 const propertyApiName = Object.values(objectType?.propertyTypes ?? {}).find(
                     (property) => property.id === propertyTypeId
@@ -156,7 +170,13 @@ export async function loadActionTypeOmsMetadata(
                 propertyApiNamesByParameter.set(parameterId, properties);
             }
 
-            return [rid, { actionType: response.actionType, propertyApiNamesByParameter }];
+            return [
+                rid,
+                {
+                    actionType: response.actionType,
+                    propertyApiNamesByParameter,
+                },
+            ];
         })
     );
 }

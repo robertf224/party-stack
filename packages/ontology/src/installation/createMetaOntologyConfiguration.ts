@@ -10,7 +10,10 @@ export function createMetaOntologyConfiguration(
 ): OntologyConfiguration {
     return {
         ...("ir" in options
-            ? { backend: () => createLocalMetaOntologyBackendAdapter(options.ir), persistObjects: false }
+            ? {
+                  backend: () => createLocalMetaOntologyBackendAdapter(options.ir),
+                  persistObjects: false,
+              }
             : options),
         ir: metaOntology,
     };

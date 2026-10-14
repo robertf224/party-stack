@@ -70,7 +70,9 @@ function ConnectedTaskManager({ ontologies }: { ontologies: SalesforceOntologies
                 .from({ Task: data.objects.Task })
                 .orderBy(({ Task }) => Task.CreatedDate, "desc")
                 .limit(50)
-                .select(({ Task }) => ({ ...Task })),
+                .select(({ Task }) => ({
+                    ...Task,
+                })),
         [data]
     );
     const [taskDialog, setTaskDialog] = useState<Task | null>();
@@ -81,7 +83,11 @@ function ConnectedTaskManager({ ontologies }: { ontologies: SalesforceOntologies
     const [searching, setSearching] = useState(false);
     const [actionTypes, setActionTypes] = useState<MetaActionType[]>([]);
     const devtools = useMemo(
-        () => createOntologyDevtoolsPlugin({ ontology: data, metaOntology: meta }),
+        () =>
+            createOntologyDevtoolsPlugin({
+                ontology: data,
+                metaOntology: meta,
+            }),
         [data, meta]
     );
 
@@ -99,7 +105,10 @@ function ConnectedTaskManager({ ontologies }: { ontologies: SalesforceOntologies
         setSaving(true);
         try {
             if (taskDialog) {
-                await data.actions.updateTask({ recordId: taskDialog.Id, ...input });
+                await data.actions.updateTask({
+                    recordId: taskDialog.Id,
+                    ...input,
+                });
             } else {
                 await data.actions.createTask(input);
             }
@@ -118,7 +127,9 @@ function ConnectedTaskManager({ ontologies }: { ontologies: SalesforceOntologies
             return;
         }
         try {
-            await data.actions.deleteTask({ recordId: task.Id });
+            await data.actions.deleteTask({
+                recordId: task.Id,
+            });
         } catch (reason) {
             setError(reason instanceof Error ? reason.message : String(reason));
         }
@@ -130,7 +141,10 @@ function ConnectedTaskManager({ ontologies }: { ontologies: SalesforceOntologies
         }
         setMovingTaskId(task.Id);
         try {
-            await data.actions.updateTask({ recordId: task.Id, Status: status });
+            await data.actions.updateTask({
+                recordId: task.Id,
+                Status: status,
+            });
             setError(undefined);
         } catch (reason) {
             setError(reason instanceof Error ? reason.message : String(reason));
@@ -154,7 +168,9 @@ function ConnectedTaskManager({ ontologies }: { ontologies: SalesforceOntologies
         setSearching(true);
         try {
             const rows = await queryOnce((query) => {
-                const from = query.from({ ActionType: meta.objects.ActionType });
+                const from = query.from({
+                    ActionType: meta.objects.ActionType,
+                });
                 if (exact && normalized) {
                     return from.where(({ ActionType }) => eq(ActionType.name, normalized));
                 }
@@ -175,7 +191,13 @@ function ConnectedTaskManager({ ontologies }: { ontologies: SalesforceOntologies
     const taskType = ontology.objectTypes.find((objectType) => objectType.name === "Task");
     const statusOptions = enumOptions("Status");
     const priorityOptions = enumOptions("Priority");
-    const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+    const sensors = useSensors(
+        useSensor(PointerSensor, {
+            activationConstraint: {
+                distance: 6,
+            },
+        })
+    );
 
     return (
         <>
@@ -304,7 +326,12 @@ function ConnectedTaskManager({ ontologies }: { ontologies: SalesforceOntologies
                     ) : null}
                 </main>
             </div>
-            <TanStackDevtools config={{ customTrigger: ontologyDevtoolsTrigger }} plugins={[devtools]} />
+            <TanStackDevtools
+                config={{
+                    customTrigger: ontologyDevtoolsTrigger,
+                }}
+                plugins={[devtools]}
+            />
         </>
     );
 }
@@ -324,7 +351,9 @@ function TaskColumn({
     status: Task["Status"];
     tasks: Task[];
 }) {
-    const { isOver, setNodeRef } = useDroppable({ id: status });
+    const { isOver, setNodeRef } = useDroppable({
+        id: status,
+    });
     return (
         <section className={`kanban-column${isOver ? " is-over" : ""}`} ref={setNodeRef}>
             <div className="kanban-column-head">
@@ -358,7 +387,9 @@ function TaskCard({
     onEdit: (task: Task) => void;
     task: Task;
 }) {
-    const { attributes, isDragging, listeners, setNodeRef, transform } = useDraggable({ id: task.Id });
+    const { attributes, isDragging, listeners, setNodeRef, transform } = useDraggable({
+        id: task.Id,
+    });
     return (
         <article
             className={`task-card${isDragging ? " is-dragging" : ""}`}
@@ -411,9 +442,15 @@ function TaskEditorDialog({
 }: {
     onClose: () => void;
     onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-    priorityOptions: Array<{ label: string; value: string }>;
+    priorityOptions: Array<{
+        label: string;
+        value: string;
+    }>;
     saving: boolean;
-    statusOptions: Array<{ label: string; value: string }>;
+    statusOptions: Array<{
+        label: string;
+        value: string;
+    }>;
     task: Task | null;
 }) {
     const dialog = useRef<HTMLDialogElement>(null);

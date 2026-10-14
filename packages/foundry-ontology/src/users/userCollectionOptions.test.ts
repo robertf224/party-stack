@@ -13,7 +13,10 @@ describe("convertQuery", () => {
             ilike(new IR.PropRef<string>(["familyName"]), "alex%")
         );
 
-        expect(convertQuery({ where }, identityLens)).toEqual({ type: "search", query: "alex" });
+        expect(convertQuery({ where }, identityLens)).toEqual({
+            type: "search",
+            query: "alex",
+        });
     });
 
     it("falls back to listing when OR search terms differ", () => {

@@ -25,7 +25,9 @@ export interface FoundryCodec {
 
 export function createFoundryCodec(
     ir: OntologyIR,
-    options?: { resolveMediaReference?: (id: string) => MediaReference | undefined }
+    options?: {
+        resolveMediaReference?: (id: string) => MediaReference | undefined;
+    }
 ): FoundryCodec {
     const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
     const namedTypes = new Map(ir.types.map((type) => [type.name, type.type]));
@@ -51,7 +53,10 @@ export function createFoundryCodec(
     const decodeValue = (
         type: TypeDef,
         value: unknown,
-        context: { editHistory: boolean; optional: boolean } = { editHistory: false, optional: false }
+        context: { editHistory: boolean; optional: boolean } = {
+            editHistory: false,
+            optional: false,
+        }
     ): unknown => {
         const resolvedType = resolveType(type);
 
@@ -63,7 +68,10 @@ export function createFoundryCodec(
             ) {
                 return undefined;
             }
-            return decodeValue(resolvedType.value.type, value, { ...context, optional: true });
+            return decodeValue(resolvedType.value.type, value, {
+                ...context,
+                optional: true,
+            });
         }
 
         if (value === undefined || value === null) {
@@ -136,7 +144,12 @@ export function createFoundryCodec(
                 const property = objectType.properties.find((candidate) => candidate.name === key);
                 return [
                     key,
-                    property ? decodeValue(property.type, value, { editHistory, optional: false }) : value,
+                    property
+                        ? decodeValue(property.type, value, {
+                              editHistory,
+                              optional: false,
+                          })
+                        : value,
                 ];
             })
         );
@@ -270,7 +283,10 @@ function unwrapEditHistoryValue(type: TypeDef, value: unknown): unknown {
             value
         );
         if (match) {
-            return { lat: Number(match[1]), lon: Number(match[2]) };
+            return {
+                lat: Number(match[1]),
+                lon: Number(match[2]),
+            };
         }
     }
     if (
@@ -330,7 +346,10 @@ function decodeMediaReference(value: unknown): unknown {
     if (!decodeFoundryMediaId(id)) {
         return undefined;
     }
-    return { id, type: mediaReference.mimeType };
+    return {
+        id,
+        type: mediaReference.mimeType,
+    };
 }
 
 function encodeAttachment(

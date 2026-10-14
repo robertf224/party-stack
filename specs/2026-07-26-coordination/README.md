@@ -279,7 +279,12 @@ interface PersistenceCoordinationService {
         pullSince(input: PullSinceInput): Promise<PullSinceResponse>;
         relayMessage(input: { collectionId: string; message: ProtocolEnvelope<unknown> }): Promise<void>;
     };
-    events: { message: { collectionId: string; message: ProtocolEnvelope<unknown> } };
+    events: {
+        message: {
+            collectionId: string;
+            message: ProtocolEnvelope<unknown>;
+        };
+    };
 }
 ```
 

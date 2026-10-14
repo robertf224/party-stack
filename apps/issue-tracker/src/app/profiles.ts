@@ -32,7 +32,10 @@ interface ProfileHandle {
     ontologyId: string;
 }
 
-const writes = { defaultMode: "outbox" as const, defaultVisibility: "optimistic" as const };
+const writes = {
+    defaultMode: "outbox" as const,
+    defaultVisibility: "optimistic" as const,
+};
 
 function requiredEnv(name: string, value: string | undefined): string {
     if (!value) {
@@ -56,7 +59,10 @@ const FOUNDRY_REDIRECT_URL =
 const handles = new Map<string, ProfileHandle>();
 let foundryOAuthCompletion: Promise<ConnectedProfile | undefined> | undefined;
 
-const foundryUsers = createFoundryUsersIntegration({ objectType: "User", lens: foundryUserToUser });
+const foundryUsers = createFoundryUsersIntegration({
+    objectType: "User",
+    lens: foundryUserToUser,
+});
 
 const foundryInstallation = await createFoundryBackendInstallation({
     baseUrl: FOUNDRY_URL,
@@ -91,7 +97,9 @@ const foundryInstallation = await createFoundryBackendInstallation({
 
 const sqliteInstallation = await createOntologyBackendInstallation<typeof authClient>({
     installationId: "issue-tracker-sqlite",
-    connections: createBetterAuthConnectionAdapter({ client: authClient }),
+    connections: createBetterAuthConnectionAdapter({
+        client: authClient,
+    }),
     runtime: createWebRuntime,
     routes: [
         {
@@ -130,7 +138,12 @@ async function openProfile(options: {
         userId: options.userId,
         ontologyId: options.ontologyId,
     });
-    return { id, kind: options.kind, label: options.label, ontology };
+    return {
+        id,
+        kind: options.kind,
+        label: options.label,
+        ontology,
+    };
 }
 
 const foundryProfile = (userId: string) =>
@@ -167,7 +180,9 @@ export async function connectSqliteProfile(credentials: {
 }
 
 export async function connectGoogleProfile(): Promise<ConnectedProfile> {
-    const result = await sqliteInstallation.authentication.signIn.popup({ provider: "google" });
+    const result = await sqliteInstallation.authentication.signIn.popup({
+        provider: "google",
+    });
     if (result.error) {
         throw new Error(result.error.message ?? "Google sign-in failed.");
     }
@@ -227,9 +242,15 @@ export function subscribeProfileConnection(
     const connections = handle.installation.connections;
     const subscription = connections.subscribeChanges(
         () => {
-            listener(connections.get(handle.userId)?.state ?? { status: "inactive" });
+            listener(
+                connections.get(handle.userId)?.state ?? {
+                    status: "inactive",
+                }
+            );
         },
-        { where: (connection) => eq(connection.userId, handle.userId) }
+        {
+            where: (connection) => eq(connection.userId, handle.userId),
+        }
     );
     return () => subscription.unsubscribe();
 }

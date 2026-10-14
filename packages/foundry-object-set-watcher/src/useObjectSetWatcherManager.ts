@@ -97,7 +97,11 @@ export function useObjectSetWatcherManager(client: OntologyClient): Operation<Ob
                     const id = JSON.stringify(objectSet);
                     let subscription = sharedSubscriptions.get(id);
                     if (!subscription) {
-                        subscription = { objectSet, channel: createChannel(), consumers: 0 };
+                        subscription = {
+                            objectSet,
+                            channel: createChannel(),
+                            consumers: 0,
+                        };
                         sharedSubscriptions.set(id, subscription);
                     }
 

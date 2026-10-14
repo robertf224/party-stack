@@ -88,5 +88,11 @@ export async function pull(ontology: LiveOntology<MetaOntology>, options: PullOp
         q.from({ ValueType }).where(({ ValueType }) => inArray(ValueType.name, valueTypeNames))
     );
 
-    return { types, objectTypes, linkTypes, actionTypes, queryFunctionTypes };
+    return {
+        types,
+        objectTypes,
+        linkTypes,
+        actionTypes,
+        queryFunctionTypes,
+    };
 }

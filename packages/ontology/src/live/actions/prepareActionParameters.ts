@@ -43,20 +43,37 @@ function collectAttachment(
     attachments: ActionAttachment[]
 ) {
     if (!isAttachment(opts.value)) return;
-    attachments.push({ attachment: opts.value, target: type });
+    attachments.push({
+        attachment: opts.value,
+        target: type,
+    });
 }
 
 function collectList(opts: MaterializeValueOptions, type: ListTypeDef, attachments: ActionAttachment[]) {
     if (!Array.isArray(opts.value)) return;
     for (const value of opts.value) {
-        collectValue({ ...opts, type: type.elementType, value }, attachments);
+        collectValue(
+            {
+                ...opts,
+                type: type.elementType,
+                value,
+            },
+            attachments
+        );
     }
 }
 
 function collectMap(opts: MaterializeValueOptions, type: MapTypeDef, attachments: ActionAttachment[]) {
     if (typeof opts.value !== "object" || opts.value === null) return;
     for (const value of Object.values(opts.value as Record<string, unknown>)) {
-        collectValue({ ...opts, type: type.valueType, value }, attachments);
+        collectValue(
+            {
+                ...opts,
+                type: type.valueType,
+                value,
+            },
+            attachments
+        );
     }
 }
 
@@ -66,7 +83,14 @@ function collectStruct(opts: MaterializeValueOptions, type: StructTypeDef, attac
     for (const [key, value] of Object.entries(opts.value as Record<string, unknown>)) {
         const fieldType = fieldsByName.get(key);
         if (!fieldType) continue;
-        collectValue({ ...opts, type: fieldType, value }, attachments);
+        collectValue(
+            {
+                ...opts,
+                type: fieldType,
+                value,
+            },
+            attachments
+        );
     }
 }
 
@@ -79,7 +103,13 @@ function collectValue(opts: MaterializeValueOptions, attachments: ActionAttachme
             collectAttachment(opts, type.value, attachments);
             return;
         case "optional":
-            collectValue({ ...opts, type: type.value.type }, attachments);
+            collectValue(
+                {
+                    ...opts,
+                    type: type.value.type,
+                },
+                attachments
+            );
             return;
         case "list":
             collectList(opts, type.value, attachments);
@@ -104,7 +134,11 @@ function collectActionAttachments(opts: {
     const attachments: ActionAttachment[] = [];
     for (const parameter of action.parameters) {
         collectValue(
-            { ir: opts.ir, type: parameter.type, value: opts.parameters[parameter.name] },
+            {
+                ir: opts.ir,
+                type: parameter.type,
+                value: opts.parameters[parameter.name],
+            },
             attachments
         );
     }
@@ -148,7 +182,9 @@ async function materializeValue(opts: {
             const local = opts.value;
             let pending = opts.materialized.get(local.id);
             if (!pending) {
-                const materializeOptions = { target: type.value };
+                const materializeOptions = {
+                    target: type.value,
+                };
                 const canMaterialize =
                     opts.backendAdapter.attachments?.canMaterializeAttachment?.(local, materializeOptions) ??
                     true;
@@ -156,7 +192,11 @@ async function materializeValue(opts: {
                     .read(local.id)
                     .then(async (blob) => {
                         if (!canMaterialize) {
-                            opts.uploads.push({ attachment: local, target: type.value, blob });
+                            opts.uploads.push({
+                                attachment: local,
+                                target: type.value,
+                                blob,
+                            });
                             return local;
                         }
                         return (await materializeAttachment(local, blob, materializeOptions)) ?? local;
@@ -164,7 +204,10 @@ async function materializeValue(opts: {
                     .then((result) => {
                         const remote = result;
                         if (remote.id !== local.id) {
-                            opts.mappings.push({ localId: local.id, remoteId: remote.id });
+                            opts.mappings.push({
+                                localId: local.id,
+                                remoteId: remote.id,
+                            });
                         }
                         return remote;
                     });
@@ -173,11 +216,20 @@ async function materializeValue(opts: {
             return pending;
         }
         case "optional":
-            return materializeValue({ ...opts, type: type.value.type });
+            return materializeValue({
+                ...opts,
+                type: type.value.type,
+            });
         case "list":
             if (!Array.isArray(opts.value)) return opts.value;
             return Promise.all(
-                opts.value.map((value) => materializeValue({ ...opts, type: type.value.elementType, value }))
+                opts.value.map((value) =>
+                    materializeValue({
+                        ...opts,
+                        type: type.value.elementType,
+                        value,
+                    })
+                )
             );
         case "map":
             if (typeof opts.value !== "object" || opts.value === null || Array.isArray(opts.value)) {
@@ -187,7 +239,11 @@ async function materializeValue(opts: {
                 await Promise.all(
                     Object.entries(opts.value as Record<string, unknown>).map(async ([key, value]) => [
                         key,
-                        await materializeValue({ ...opts, type: type.value.valueType, value }),
+                        await materializeValue({
+                            ...opts,
+                            type: type.value.valueType,
+                            value,
+                        }),
                     ])
                 )
             );
@@ -202,7 +258,13 @@ async function materializeValue(opts: {
                         const fieldType = fields.get(key);
                         return [
                             key,
-                            fieldType ? await materializeValue({ ...opts, type: fieldType, value }) : value,
+                            fieldType
+                                ? await materializeValue({
+                                      ...opts,
+                                      type: fieldType,
+                                      value,
+                                  })
+                                : value,
                         ];
                     })
                 )
@@ -228,7 +290,9 @@ async function materializeActionParameters(opts: {
     const materialized = new Map<string, Promise<attachment>>();
     const attachmentIdMappings: OntologyAttachmentIdMapping[] = [];
     const attachmentUploads: OntologyAttachmentUpload[] = [];
-    const parameters: Record<string, unknown> = { ...opts.parameters };
+    const parameters: Record<string, unknown> = {
+        ...opts.parameters,
+    };
     await Promise.all(
         action.parameters.map(async (parameter) => {
             parameters[parameter.name] = await materializeValue({
@@ -243,7 +307,11 @@ async function materializeActionParameters(opts: {
             });
         })
     );
-    return { parameters, attachmentIdMappings, attachmentUploads };
+    return {
+        parameters,
+        attachmentIdMappings,
+        attachmentUploads,
+    };
 }
 
 export async function prepareActionParameters(opts: {

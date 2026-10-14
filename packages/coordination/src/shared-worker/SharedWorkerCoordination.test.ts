@@ -10,7 +10,9 @@ type TestService = {
         fail(input: undefined): Promise<void>;
         wait(input: undefined): Promise<void>;
     };
-    events: { changed: { value: string } };
+    events: {
+        changed: { value: string };
+    };
 };
 
 class TestMessagePort implements CoordinationMessagePort {
@@ -63,7 +65,10 @@ class TestMessagePort implements CoordinationMessagePort {
     }
 }
 
-function messageChannel(): { port1: TestMessagePort; port2: TestMessagePort } {
+function messageChannel(): {
+    port1: TestMessagePort;
+    port2: TestMessagePort;
+} {
     const port1 = new TestMessagePort();
     const port2 = new TestMessagePort();
     port1.peer = port2;
@@ -136,7 +141,9 @@ describe("SharedWorker coordination", () => {
     });
 
     it("handshakes, invokes typed services, and fans out events", async () => {
-        const host = new SharedWorkerCoordinationHost({ scope: "shared" });
+        const host = new SharedWorkerCoordinationHost({
+            scope: "shared",
+        });
         const server = serve(host);
         const channel = messageChannel();
         host.connect(channel.port1);
@@ -152,7 +159,11 @@ describe("SharedWorker coordination", () => {
             "hello"
         );
         server.events.publish("changed", { value: "one" });
-        await vi.waitFor(() => expect(listener).toHaveBeenCalledWith({ value: "one" }));
+        await vi.waitFor(() =>
+            expect(listener).toHaveBeenCalledWith({
+                value: "one",
+            })
+        );
         await expect(client.service<TestService>("test.v1").methods.fail(undefined)).rejects.toMatchObject({
             name: "RangeError",
             message: "handler failed",
@@ -163,7 +174,9 @@ describe("SharedWorker coordination", () => {
     });
 
     it("rejects pending calls on disconnect and reconnects with a new identity", async () => {
-        const host = new SharedWorkerCoordinationHost({ scope: "reconnect" });
+        const host = new SharedWorkerCoordinationHost({
+            scope: "reconnect",
+        });
         serve(host);
         const firstChannel = messageChannel();
         const disconnect = host.connect(firstChannel.port1);
@@ -179,7 +192,9 @@ describe("SharedWorker coordination", () => {
 
         disconnect();
 
-        await expect(pending).rejects.toMatchObject({ code: "DISCONNECTED" });
+        await expect(pending).rejects.toMatchObject({
+            code: "DISCONNECTED",
+        });
         const secondChannel = messageChannel();
         host.connect(secondChannel.port1);
         const second = new SharedWorkerCoordinationClient({
@@ -197,7 +212,9 @@ describe("SharedWorker coordination", () => {
     });
 
     it("rejects protocol and scope mismatches during handshake", async () => {
-        const host = new SharedWorkerCoordinationHost({ scope: "host-scope" });
+        const host = new SharedWorkerCoordinationHost({
+            scope: "host-scope",
+        });
         const channel = messageChannel();
         host.connect(channel.port1);
         const client = new SharedWorkerCoordinationClient({
@@ -208,7 +225,9 @@ describe("SharedWorker coordination", () => {
 
         await expect(
             client.service<TestService>("test.v1").methods.echo({ value: "no" })
-        ).rejects.toMatchObject({ code: "PROTOCOL_MISMATCH" });
+        ).rejects.toMatchObject({
+            code: "PROTOCOL_MISMATCH",
+        });
         await client.close();
         await host.close();
     });
@@ -229,7 +248,9 @@ describe("SharedWorker coordination", () => {
     });
 
     it("aborts worker handlers when the client cancels", async () => {
-        const host = new SharedWorkerCoordinationHost({ scope: "cancel" });
+        const host = new SharedWorkerCoordinationHost({
+            scope: "cancel",
+        });
         const started = promiseWithResolvers<void>();
         const aborted = promiseWithResolvers<void>();
         host.serve<TestService>("test.v1", {
@@ -251,14 +272,16 @@ describe("SharedWorker coordination", () => {
             requestTimeoutMs: 100,
         });
         const controller = new AbortController();
-        const request = client
-            .service<TestService>("test.v1")
-            .methods.wait(undefined, { signal: controller.signal });
+        const request = client.service<TestService>("test.v1").methods.wait(undefined, {
+            signal: controller.signal,
+        });
         await started.promise;
 
         controller.abort();
 
-        await expect(request).rejects.toMatchObject({ name: "AbortError" });
+        await expect(request).rejects.toMatchObject({
+            name: "AbortError",
+        });
         await expect(aborted.promise).resolves.toBeUndefined();
         await client.close();
         await host.close();

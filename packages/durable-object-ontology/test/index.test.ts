@@ -33,7 +33,11 @@ describe("Durable Object ontology", () => {
                 )
                 .toArray()
         );
-        expect(rows).toEqual([{ name: "party_stack_sqlite_Note" }]);
+        expect(rows).toEqual([
+            {
+                name: "party_stack_sqlite_Note",
+            },
+        ]);
     });
 
     it("isolates ontologies by Durable Object", async () => {
@@ -57,7 +61,10 @@ describe("Durable Object ontology", () => {
     });
 
     it("quiesces the backend and deletes installation-scoped R2 objects", async () => {
-        await expect(createStub().runR2Destruction()).resolves.toEqual({ quiesced: true, r2Empty: true });
+        await expect(createStub().runR2Destruction()).resolves.toEqual({
+            quiesced: true,
+            r2Empty: true,
+        });
     });
 
     it("deletes whole Durable Object SQL storage explicitly", async () => {

@@ -73,7 +73,10 @@ function scopeObjectReferences(type: TypeDef, objectTypeNames: ReadonlySet<strin
         case "optional":
             return {
                 ...type,
-                value: { ...type.value, type: scopeObjectReferences(type.value.type, objectTypeNames) },
+                value: {
+                    ...type.value,
+                    type: scopeObjectReferences(type.value.type, objectTypeNames),
+                },
             };
         case "result":
             return {
@@ -94,7 +97,10 @@ function scopePulledOntology(ontology: OntologyIR): OntologyIR {
     const scope = (type: TypeDef) => scopeObjectReferences(type, objectTypeNames);
     return {
         ...ontology,
-        types: ontology.types.map((type) => ({ ...type, type: scope(type.type) })),
+        types: ontology.types.map((type) => ({
+            ...type,
+            type: scope(type.type),
+        })),
         objectTypes: ontology.objectTypes.map((objectType) => ({
             ...objectType,
             properties: objectType.properties.map((property) => ({
@@ -163,7 +169,9 @@ export function createSalesforceOntologyPullSource(
                 );
             }
             let connection = options.connection.token
-                ? await installation.authentication.signIn.accessToken({ userId: configuredUserId })
+                ? await installation.authentication.signIn.accessToken({
+                      userId: configuredUserId,
+                  })
                 : configuredUserId
                   ? activeConnections.find((candidate) => candidate.userId === configuredUserId)
                   : activeConnections[0];

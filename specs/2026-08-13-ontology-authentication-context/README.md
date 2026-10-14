@@ -61,12 +61,20 @@ FoundryUser source schema:
 ```ts
 export const foundryUserToUser = {
     operations: [
-        o.LensOp.move({ from: ["profilePicture"], to: ["avatar"] }),
-        o.LensOp.select({ properties: ["id", "givenName", "familyName", "email", "avatar"] }),
+        o.LensOp.move({
+            from: ["profilePicture"],
+            to: ["avatar"],
+        }),
+        o.LensOp.select({
+            properties: ["id", "givenName", "familyName", "email", "avatar"],
+        }),
     ],
 } satisfies Lens;
 
-export const foundryUsers = defineFoundryUsers({ objectType: "User", lens: foundryUserToUser });
+export const foundryUsers = defineFoundryUsers({
+    objectType: "User",
+    lens: foundryUserToUser,
+});
 ```
 
 Foundry pull applies the lens to derive/add the final User ObjectTypeDef. The
@@ -96,7 +104,9 @@ defineOntology({
             {
                 name: "user",
                 displayName: "User",
-                type: o.optional({ type: o.objectReference({ objectType: "User" }) }),
+                type: o.optional({
+                    type: o.objectReference({ objectType: "User" }),
+                }),
             },
         ],
     }),
@@ -110,7 +120,12 @@ Other apps may add ordinary fields:
 ```ts
 contextType: o.struct({
     fields: [
-        { name: "user", type: o.optional({ type: o.objectReference({ objectType: "Membership" }) }) },
+        {
+            name: "user",
+            type: o.optional({
+                type: o.objectReference({ objectType: "Membership" }),
+            }),
+        },
         { name: "requestIp", type: o.optional({ type: o.string({}) }) },
     ],
 });
@@ -190,7 +205,13 @@ rather than supplying a second caller-controlled ID.
 ```ts
 type ConnectionState =
     | { status: "pending" }
-    | { status: "active"; expiration?: { expiresAt: number; refreshable: boolean } }
+    | {
+          status: "active";
+          expiration?: {
+              expiresAt: number;
+              refreshable: boolean;
+          };
+      }
     | { status: "inactive" }
     | { status: "needs-auth"; error?: string }
     | { status: "error"; error: string };
@@ -325,12 +346,17 @@ Use the same definition for pull and runtime:
 // ontology/config.ts
 export default {
     source: foundryOntologyPullSource,
-    options: { users: foundryUsers },
+    options: {
+        users: foundryUsers,
+    },
     // ...
 };
 
 // app runtime
-const backend = createFoundryOntologyBackend({ client, users: foundryUsers });
+const backend = createFoundryOntologyBackend({
+    client,
+    users: foundryUsers,
+});
 ```
 
 During pull:
@@ -369,8 +395,15 @@ V0 defers durable credential persistence. Foundry pull accepts:
 
 ```ts
 type FoundryPullAuth =
-    | { type: "token"; token: string | (() => Promise<string>) }
-    | { type: "local-oauth"; clientId: string; redirectUrl: string };
+    | {
+          type: "token";
+          token: string | (() => Promise<string>);
+      }
+    | {
+          type: "local-oauth";
+          clientId: string;
+          redirectUrl: string;
+      };
 ```
 
 Configuration:

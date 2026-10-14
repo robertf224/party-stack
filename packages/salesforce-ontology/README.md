@@ -14,8 +14,18 @@ const installation = await createSalesforceBackendInstallation({
     instanceUrl: "https://example.my.salesforce.com",
     apiVersion: "65.0",
     runtime,
-    connections: { oauth: { clientId, redirectUrl: "http://localhost:1717/oauth/callback" } },
-    routes: [createSalesforceOntologyRoute({ ontologyId: "salesforce:task-manager", ir: generatedOntology })],
+    connections: {
+        oauth: {
+            clientId,
+            redirectUrl: "http://localhost:1717/oauth/callback",
+        },
+    },
+    routes: [
+        createSalesforceOntologyRoute({
+            ontologyId: "salesforce:task-manager",
+            ir: generatedOntology,
+        }),
+    ],
 });
 ```
 
@@ -39,8 +49,18 @@ export default createSalesforceOntologyPullConfig({
     flowActionTypeNames: ["Create_Task_Flow"],
     standardActionTypeNames: ["confirmSalesMeeting"],
     standardQueryFunctionTypeNames: ["getAvailableMeetingTimes"],
-    crudActionTypes: [{ objectType: "Task", operations: ["create", "update", "delete"] }],
-    connection: { oauth: { clientId, redirectUrl } },
+    crudActionTypes: [
+        {
+            objectType: "Task",
+            operations: ["create", "update", "delete"],
+        },
+    ],
+    connection: {
+        oauth: {
+            clientId,
+            redirectUrl,
+        },
+    },
 });
 ```
 
@@ -68,7 +88,10 @@ const client = createSalesforceClient({
     tokenProvider: async () => process.env.SALESFORCE_ACCESS_TOKEN!,
 });
 
-const ontology = await createLiveOntology({ ir, backend: createSalesforceOntologyBackend({ client }) });
+const ontology = await createLiveOntology({
+    ir,
+    backend: createSalesforceOntologyBackend({ client }),
+});
 ```
 
 ## Metadata adapter
@@ -79,7 +102,10 @@ import { createSalesforceMetaOntologyBackendAdapter } from "@party-stack/salesfo
 
 const meta = await createMetaLiveOntology({
     backend: () =>
-        createSalesforceMetaOntologyBackendAdapter({ client, objectTypeNames: ["Account", "Contact"] }),
+        createSalesforceMetaOntologyBackendAdapter({
+            client,
+            objectTypeNames: ["Account", "Contact"],
+        }),
 });
 ```
 

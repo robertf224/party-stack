@@ -41,8 +41,14 @@ function create(typeRegistry: TypeRegistry): GraphQLObjectType {
                     description: "The unique username for the User.",
                     type: Schemas.required(GraphQLString),
                 },
-                givenName: { description: "The given name of the User.", type: GraphQLString },
-                familyName: { description: "The family name (last name) of the User.", type: GraphQLString },
+                givenName: {
+                    description: "The given name of the User.",
+                    type: GraphQLString,
+                },
+                familyName: {
+                    description: "The family name (last name) of the User.",
+                    type: GraphQLString,
+                },
                 email: {
                     description:
                         "The email at which to contact a User. Multiple Users may have the same email address.",
@@ -67,4 +73,8 @@ function getReference(getTypeReference: GetTypeReference): GraphQLObjectType {
     return getTypeReference(TYPE_NAME) as GraphQLObjectType;
 }
 
-export const UserType = { create, getReference, NODE_ID_HANDLER };
+export const UserType = {
+    create,
+    getReference,
+    NODE_ID_HANDLER,
+};

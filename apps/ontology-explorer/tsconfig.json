@@ -1,1 +1,3 @@
-{ "extends": "@party-stack/tanstack-start-build-config/tsconfig.json" }
+{
+    "extends": "@party-stack/tanstack-start-build-config/tsconfig.json"
+}

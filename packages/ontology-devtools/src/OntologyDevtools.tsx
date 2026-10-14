@@ -139,7 +139,11 @@ function PartyStackLogo({ theme }: OntologyDevtoolsChromeProps) {
     return (
         <svg
             aria-hidden="true"
-            style={{ display: "block", height: "100%", width: "100%" }}
+            style={{
+                display: "block",
+                height: "100%",
+                width: "100%",
+            }}
             viewBox="0 0 1200 300"
         >
             <defs>
@@ -184,7 +188,11 @@ function PartyStackLogomark() {
     return (
         <svg
             aria-hidden="true"
-            style={{ display: "block", height: "100%", width: "100%" }}
+            style={{
+                display: "block",
+                height: "100%",
+                width: "100%",
+            }}
             viewBox="0 0 512 512"
         >
             <defs>
@@ -459,7 +467,11 @@ function outboxBadgeClass(activity: OutboxActivity): string {
 const ontologyViews: Array<{
     id: OntologyDevtoolsView;
     label: string;
-    icon: ComponentType<{ "aria-hidden"?: boolean; className?: string; style?: CSSProperties }>;
+    icon: ComponentType<{
+        "aria-hidden"?: boolean;
+        className?: string;
+        style?: CSSProperties;
+    }>;
 }> = [
     { id: "outbox", label: "Outbox", icon: InboxStackIcon },
     { id: "schema", label: "Schema", icon: ShareIcon },
@@ -672,9 +684,10 @@ export function timestampPreview(value: unknown): { display: string; exact: stri
         return { display: exact, exact };
     }
     return {
-        display: new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(
-            new Date(epochMilliseconds)
-        ),
+        display: new Intl.DateTimeFormat(undefined, {
+            dateStyle: "medium",
+            timeStyle: "medium",
+        }).format(new Date(epochMilliseconds)),
         exact,
     };
 }
@@ -684,7 +697,10 @@ function isAttachment(value: unknown): value is v.attachment {
 }
 
 function AttachmentPreview({ attachment, ontology }: { attachment: v.attachment; ontology: LiveOntology }) {
-    const [preview, setPreview] = useState<{ metadata: AttachmentMetadata; src?: string }>();
+    const [preview, setPreview] = useState<{
+        metadata: AttachmentMetadata;
+        src?: string;
+    }>();
     useEffect(() => {
         let cancelled = false;
         let objectUrl: string | undefined;
@@ -1333,9 +1349,15 @@ interface SchemaGraphEdgeLabel extends EdgeLabel {
 const SCHEMA_CARD_WIDTH = 230;
 const SCHEMA_CARD_HEIGHT = 176;
 
-function schemaEdgeLabel(link: OntologyIR["linkTypes"][number]): { label: string; width: number } {
+function schemaEdgeLabel(link: OntologyIR["linkTypes"][number]): {
+    label: string;
+    width: number;
+} {
     const label = `${link.source.displayName} · ${link.cardinality}`;
-    return { label, width: Math.min(180, Math.max(72, label.length * 6 + 16)) };
+    return {
+        label,
+        width: Math.min(180, Math.max(72, label.length * 6 + 16)),
+    };
 }
 
 export function layoutSchema(ir: OntologyIR): {
@@ -1345,18 +1367,31 @@ export function layoutSchema(ir: OntologyIR): {
     height: number;
 } {
     const graph = new Graph<GraphLabel, NodeLabel, SchemaGraphEdgeLabel>({ multigraph: true })
-        .setGraph({ marginx: 40, marginy: 40, nodesep: 72, rankdir: "LR", ranksep: 120 })
+        .setGraph({
+            marginx: 40,
+            marginy: 40,
+            nodesep: 72,
+            rankdir: "LR",
+            ranksep: 120,
+        })
         .setDefaultEdgeLabel(() => ({ label: "" }));
 
     for (const objectType of ir.objectTypes) {
-        graph.setNode(objectType.name, { height: SCHEMA_CARD_HEIGHT, width: SCHEMA_CARD_WIDTH });
+        graph.setNode(objectType.name, {
+            height: SCHEMA_CARD_HEIGHT,
+            width: SCHEMA_CARD_WIDTH,
+        });
     }
     for (const link of ir.linkTypes) {
         const edgeLabel = schemaEdgeLabel(link);
         graph.setEdge(
             link.source.objectType,
             link.target.objectType,
-            { height: 24, label: edgeLabel.label, width: edgeLabel.width },
+            {
+                height: 24,
+                label: edgeLabel.label,
+                width: edgeLabel.width,
+            },
             link.id
         );
     }
@@ -1564,7 +1599,13 @@ export function OntologyDevtoolsPanel<
                     {[
                         ...ontologyViews,
                         ...(metaOntology
-                            ? [{ id: "meta" as const, label: "Meta", icon: CodeBracketSquareIcon }]
+                            ? [
+                                  {
+                                      id: "meta" as const,
+                                      label: "Meta",
+                                      icon: CodeBracketSquareIcon,
+                                  },
+                              ]
                             : []),
                     ].map((view) => {
                         const Icon = view.icon;

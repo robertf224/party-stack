@@ -16,7 +16,10 @@ function normalizeUrl(value) {
 
 async function resolveSalesforceUserId(loginUrl, accessToken) {
     const response = await fetch(`${loginUrl}/services/oauth2/userinfo`, {
-        headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: "application/json",
+        },
     });
     if (!response.ok) {
         throw new Error(`Salesforce userinfo failed (${response.status}): ${await response.text()}`);

@@ -2,12 +2,20 @@ import { FieldPath, type LoadSubsetOptions, parseWhereExpression } from "@tansta
 
 export type MetaNameQuery =
     | { type: "getBatch"; names: string[] }
-    | { type: "search"; field: "name" | "displayName"; pattern: string; caseInsensitive: boolean }
+    | {
+          type: "search";
+          field: "name" | "displayName";
+          pattern: string;
+          caseInsensitive: boolean;
+      }
     | { type: "list" };
 
 export function matchesMetaNameQuery(
     query: MetaNameQuery,
-    value: { name: string; displayName: string }
+    value: {
+        name: string;
+        displayName: string;
+    }
 ): boolean {
     if (query.type !== "search") return true;
     const escaped = query.pattern.replace(/[|\\{}()[\]^$+*?.-]/g, "\\$&");
@@ -21,7 +29,12 @@ export function convertMetaNameQuery(options?: LoadSubsetOptions): MetaNameQuery
         parseWhereExpression<MetaNameQuery | undefined>(options.where, {
             handlers: {
                 eq: (field: FieldPath, value: unknown) =>
-                    field.join(".") === "name" ? { type: "getBatch", names: [String(value)] } : undefined,
+                    field.join(".") === "name"
+                        ? {
+                              type: "getBatch",
+                              names: [String(value)],
+                          }
+                        : undefined,
                 in: (field: FieldPath, values: unknown[]) =>
                     field.join(".") === "name"
                         ? {
@@ -34,13 +47,23 @@ export function convertMetaNameQuery(options?: LoadSubsetOptions): MetaNameQuery
                 like: (field: FieldPath, pattern: string) => {
                     const name = field.join(".");
                     return name === "name" || name === "displayName"
-                        ? { type: "search", field: name, pattern, caseInsensitive: false }
+                        ? {
+                              type: "search",
+                              field: name,
+                              pattern,
+                              caseInsensitive: false,
+                          }
                         : undefined;
                 },
                 ilike: (field: FieldPath, pattern: string) => {
                     const name = field.join(".");
                     return name === "name" || name === "displayName"
-                        ? { type: "search", field: name, pattern, caseInsensitive: true }
+                        ? {
+                              type: "search",
+                              field: name,
+                              pattern,
+                              caseInsensitive: true,
+                          }
                         : undefined;
                 },
             },

@@ -38,18 +38,35 @@ function maybeOptional(type: TypeDef, required: boolean): TypeDef {
 }
 
 function stringType(constraint?: StringConstraint, suggestions?: StringSuggestion[]): TypeDef {
-    return { kind: "string", value: { constraint, suggestions } };
+    return {
+        kind: "string",
+        value: {
+            constraint,
+            suggestions,
+        },
+    };
 }
 
 function applyStringConstraintFallback(type: TypeDef, constraint: StringConstraint | undefined): TypeDef {
     if (!constraint) return type;
     switch (type.kind) {
         case "string":
-            return type.value.constraint ? type : { ...type, value: { ...type.value, constraint } };
+            return type.value.constraint
+                ? type
+                : {
+                      ...type,
+                      value: {
+                          ...type.value,
+                          constraint,
+                      },
+                  };
         case "optional":
             return {
                 ...type,
-                value: { ...type.value, type: applyStringConstraintFallback(type.value.type, constraint) },
+                value: {
+                    ...type.value,
+                    type: applyStringConstraintFallback(type.value.type, constraint),
+                },
             };
         case "list":
             return {
@@ -68,11 +85,22 @@ function applyStringSuggestionsFallback(type: TypeDef, suggestions: StringSugges
     if (!suggestions) return type;
     switch (type.kind) {
         case "string":
-            return type.value.suggestions ? type : { ...type, value: { ...type.value, suggestions } };
+            return type.value.suggestions
+                ? type
+                : {
+                      ...type,
+                      value: {
+                          ...type.value,
+                          suggestions,
+                      },
+                  };
         case "optional":
             return {
                 ...type,
-                value: { ...type.value, type: applyStringSuggestionsFallback(type.value.type, suggestions) },
+                value: {
+                    ...type.value,
+                    type: applyStringSuggestionsFallback(type.value.type, suggestions),
+                },
             };
         case "list":
             return {
@@ -169,7 +197,10 @@ function geopointType(): TypeDef {
 }
 
 function attachmentType(type: "attachment" | "media"): TypeDef {
-    return { kind: "attachment", value: { meta: foundryAttachmentMeta(type) } };
+    return {
+        kind: "attachment",
+        value: { meta: foundryAttachmentMeta(type) },
+    };
 }
 
 function createUniqueIdentifierParameterName(linkId: string): string {
@@ -190,7 +221,13 @@ function convertActionParameterType(
 ): TypeDef {
     const allowedValues = validation?.defaultValidation.allowedValues;
     if (allowedValues?.type === "valueType") {
-        return maybeOptional({ kind: "ref", value: { name: allowedValues.apiName } }, required);
+        return maybeOptional(
+            {
+                kind: "ref",
+                value: { name: allowedValues.apiName },
+            },
+            required
+        );
     }
 
     const baseType: TypeDef = (() => {
@@ -229,9 +266,15 @@ function convertActionParameterType(
             case "marking":
                 return stringType();
             case "vector":
-                return { kind: "list", value: { elementType: doubleType() } };
+                return {
+                    kind: "list",
+                    value: { elementType: doubleType() },
+                };
             case "array":
-                return { kind: "list", value: { elementType: convertActionParameterType(type.subType) } };
+                return {
+                    kind: "list",
+                    value: { elementType: convertActionParameterType(type.subType) },
+                };
             case "struct":
                 return {
                     kind: "struct",
@@ -244,7 +287,10 @@ function convertActionParameterType(
                     },
                 };
             case "object":
-                return { kind: "objectReference", value: { objectType: type.objectTypeApiName } };
+                return {
+                    kind: "objectReference",
+                    value: { objectType: type.objectTypeApiName },
+                };
             case "objectType":
             case "interfaceObject":
             case "objectSet":
@@ -269,10 +315,18 @@ function convertActionParameterStringConstraint(
             const value: unknown = option.value;
             return typeof value === "string" ? [{ value, label: option.displayName }] : [];
         });
-        return options.length > 0 ? { kind: "enum", value: { options } } : undefined;
+        return options.length > 0
+            ? {
+                  kind: "enum",
+                  value: { options },
+              }
+            : undefined;
     }
     if (allowedValues?.type === "text" && allowedValues.regex) {
-        return { kind: "regex", value: { regex: allowedValues.regex } };
+        return {
+            kind: "regex",
+            value: { regex: allowedValues.regex },
+        };
     }
     return undefined;
 }
@@ -286,7 +340,14 @@ function convertActionParameterStringSuggestions(
     }
     const suggestions = allowedValues.options.flatMap((option) => {
         const value: unknown = option.value;
-        return typeof value === "string" ? [{ value, label: option.displayName }] : [];
+        return typeof value === "string"
+            ? [
+                  {
+                      value,
+                      label: option.displayName,
+                  },
+              ]
+            : [];
     });
     return suggestions.length > 0 ? suggestions : undefined;
 }
@@ -318,7 +379,10 @@ function convertOntologyDataType(type: OntologyDataType, required = true): TypeD
                 return attachmentType("media");
             case "array":
             case "set":
-                return { kind: "list", value: { elementType: convertOntologyDataType(type.itemType) } };
+                return {
+                    kind: "list",
+                    value: { elementType: convertOntologyDataType(type.itemType) },
+                };
             case "struct":
                 return {
                     kind: "struct",
@@ -331,7 +395,10 @@ function convertOntologyDataType(type: OntologyDataType, required = true): TypeD
                     },
                 };
             case "object":
-                return { kind: "objectReference", value: { objectType: type.objectTypeApiName } };
+                return {
+                    kind: "objectReference",
+                    value: { objectType: type.objectTypeApiName },
+                };
             default:
                 return stringType();
         }
@@ -403,7 +470,10 @@ function createSyntheticParameters(actionType: ActionTypeFullMetadata): {
             name,
             displayName: `Generated UUID ${index + 1}`,
             type: { kind: "string", value: {} },
-            defaultValue: { kind: "uuid", value: {} },
+            defaultValue: {
+                kind: "uuid",
+                value: {},
+            },
         })
     );
 
@@ -412,7 +482,10 @@ function createSyntheticParameters(actionType: ActionTypeFullMetadata): {
             name: nowParameterName,
             displayName: "Current time",
             type: { kind: "timestamp", value: {} },
-            defaultValue: { kind: "now", value: {} },
+            defaultValue: {
+                kind: "now",
+                value: {},
+            },
         });
     }
 
@@ -448,16 +521,27 @@ export function getFoundryActionOverrideParameterMapping(actionType: ActionTypeD
 }
 
 function inputReference(name: string): Expression {
-    return { kind: "inputReference", value: { name } };
+    return {
+        kind: "inputReference",
+        value: { name },
+    };
 }
 
 function getAtExpression(source: Expression, path: string[]): Expression {
-    return { kind: "getAt", value: { source, path } };
+    return {
+        kind: "getAt",
+        value: { source, path },
+    };
 }
 
 function objectField(parameterName: string, path: string[]): Expression {
     return getAtExpression(
-        { kind: "objectLookup", value: { reference: inputReference(parameterName) } },
+        {
+            kind: "objectLookup",
+            value: {
+                reference: inputReference(parameterName),
+            },
+        },
         path
     );
 }
@@ -521,16 +605,30 @@ function convertLogicRuleArgument(
             const parameterName = argument.linkId
                 ? syntheticParameters.uniqueIdentifierParametersByLinkId.get(argument.linkId)
                 : undefined;
-            return parameterName ? inputReference(parameterName) : { kind: "uuid", value: {} };
+            return parameterName
+                ? inputReference(parameterName)
+                : {
+                      kind: "uuid",
+                      value: {},
+                  };
         }
         case "currentTime":
             return syntheticParameters.nowParameterName
                 ? inputReference(syntheticParameters.nowParameterName)
-                : { kind: "now", value: {} };
+                : {
+                      kind: "now",
+                      value: {},
+                  };
         case "staticValue":
-            return { kind: "literal", value: { value: decodeLiteralValue(argument.value) } };
+            return {
+                kind: "literal",
+                value: { value: decodeLiteralValue(argument.value) },
+            };
         case "currentUser":
-            return { kind: "contextReference", value: { name: FOUNDRY_CURRENT_USER_CONTEXT_PATH[0]! } };
+            return {
+                kind: "contextReference",
+                value: { name: FOUNDRY_CURRENT_USER_CONTEXT_PATH[0]! },
+            };
         default:
             throw new Error(`Unsupported Foundry action argument "${argument.type}".`);
     }
@@ -623,7 +721,9 @@ function convertStructPropertyAssignments(
                                         ? getAtExpression(
                                               {
                                                   kind: "localReference",
-                                                  value: { name: FOUNDRY_LIST_ITEM_BINDING },
+                                                  value: {
+                                                      name: FOUNDRY_LIST_ITEM_BINDING,
+                                                  },
                                               },
                                               [argument.structParameterFieldApiName]
                                           )
@@ -658,12 +758,21 @@ function convertLogicStep(
             return {
                 kind: "updateObject",
                 value: {
-                    object: { name: rule.objectToModify },
+                    object: {
+                        name: rule.objectToModify,
+                    },
                     values: convertAssignments(rule, parameters, syntheticParameters),
                 },
             };
         case "deleteObject":
-            return { kind: "deleteObject", value: { object: { name: rule.objectToDelete } } };
+            return {
+                kind: "deleteObject",
+                value: {
+                    object: {
+                        name: rule.objectToDelete,
+                    },
+                },
+            };
         default:
             return null;
     }

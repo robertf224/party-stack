@@ -2,7 +2,9 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { completeFoundryOAuthRedirect } from "../app/profiles";
 
-export const Route = createFileRoute("/auth/callback")({ component: FoundryOAuthCallback });
+export const Route = createFileRoute("/auth/callback")({
+    component: FoundryOAuthCallback,
+});
 
 function FoundryOAuthCallback() {
     const navigate = useNavigate();
@@ -11,7 +13,12 @@ function FoundryOAuthCallback() {
     useEffect(() => {
         if (window.opener) return;
         void completeFoundryOAuthRedirect(window.location.href)
-            .then(() => navigate({ to: "/", replace: true }))
+            .then(() =>
+                navigate({
+                    to: "/",
+                    replace: true,
+                })
+            )
             .catch((cause: unknown) => {
                 setError(cause instanceof Error ? cause.message : String(cause));
             });

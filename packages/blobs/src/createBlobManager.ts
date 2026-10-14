@@ -37,7 +37,9 @@ function waitForAbort(signal: AbortSignal): Operation<void> {
             abort();
             return () => undefined;
         }
-        signal.addEventListener("abort", abort, { once: true });
+        signal.addEventListener("abort", abort, {
+            once: true,
+        });
         return () => signal.removeEventListener("abort", abort);
     });
 }
@@ -66,7 +68,9 @@ function* useBlobLeader(store: BlobStore, wake: Signal<void, never>, gcTime: num
             return;
         }
 
-        const wakes = yield* batch({ maxTime: GC_WAKE_BATCH_TIME })(wake);
+        const wakes = yield* batch({
+            maxTime: GC_WAKE_BATCH_TIME,
+        })(wake);
         while (true) {
             const now = Date.now();
             yield* until(
@@ -162,7 +166,10 @@ function toPartialMetadata(ref: BlobMetadataRecord): PartialBlobMetadata {
 export function createBlobManager(options: BlobManagerOptions): BlobManager {
     const gcTime = normalizeGCTime(options.gcTime);
     const wake = createSignal<void>();
-    const store = createBlobStore({ runtime: options.runtime, onCacheChanged: () => wake.send() });
+    const store = createBlobStore({
+        runtime: options.runtime,
+        onCacheChanged: () => wake.send(),
+    });
 
     const lifetime = run(() => useManagerLifetime(options, store, wake, gcTime));
     void lifetime.catch(() => undefined);
@@ -238,7 +245,9 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
         const unresolved = selection.filter((field) => !isResolved(record, field));
         if (unresolved.length > 0) {
             try {
-                localBlob ??= await readBytes(id, { meta: metadataOptions.meta });
+                localBlob ??= await readBytes(id, {
+                    meta: metadataOptions.meta,
+                });
                 record = await mergeBlobMetadata(id, record, localBlob, unresolved, true);
             } catch (error) {
                 if (remoteMetadataError !== undefined) {
@@ -267,8 +276,12 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
         const blob = await options.remote.read(remoteId, readOptions);
         const name = typeof ref?.name === "string" ? ref.name : undefined;
         const cached = name
-            ? new File([blob], name, { type: ref?.type || blob.type })
-            : new Blob([blob], { type: ref?.type || blob.type });
+            ? new File([blob], name, {
+                  type: ref?.type || blob.type,
+              })
+            : new Blob([blob], {
+                  type: ref?.type || blob.type,
+              });
         await store.cache(ref?.id ?? id, cached);
         return blob;
     };

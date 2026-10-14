@@ -31,7 +31,11 @@ export function getObjectLoader(objectType: ObjectTypeV2): ObjectLoader {
                 context.ontologyRid,
                 objectType.apiName,
                 {
-                    where: { type: "in", field: objectType.primaryKey, value: ids as PrimaryKeyValue[] },
+                    where: {
+                        type: "in",
+                        field: objectType.primaryKey,
+                        value: ids as PrimaryKeyValue[],
+                    },
                     pageSize: ids.length,
                     select: attributes as PropertyApiName[],
                     excludeRid: true,

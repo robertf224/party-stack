@@ -7,9 +7,15 @@ export const Route = createRootRoute({
     head: () => ({
         meta: [
             { charSet: "utf-8" },
-            { name: "viewport", content: "width=device-width, initial-scale=1" },
+            {
+                name: "viewport",
+                content: "width=device-width, initial-scale=1",
+            },
             { title: "Issue tracker" },
-            { name: "description", content: "Live issue and project tracking" },
+            {
+                name: "description",
+                content: "Live issue and project tracking",
+            },
         ],
     }),
     component: RootComponent,

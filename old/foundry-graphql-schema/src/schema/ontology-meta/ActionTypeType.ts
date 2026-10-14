@@ -35,7 +35,10 @@ function create(typeRegistry: TypeRegistry): GraphQLObjectType {
                     description: "The display name of the Action type.",
                     type: Schemas.required(GraphQLString),
                 },
-                description: { description: "The description of the Action type.", type: GraphQLString },
+                description: {
+                    description: "The description of the Action type.",
+                    type: GraphQLString,
+                },
             },
             interfaces: typeRegistry.use((getTypeReference) => [
                 NodeInterface.getReference(getTypeReference),
@@ -48,4 +51,8 @@ function getReference(getTypeReference: GetTypeReference): GraphQLObjectType {
     return getTypeReference(TYPE_NAME) as GraphQLObjectType;
 }
 
-export const UserType = { create, getReference, NODE_ID_HANDLER };
+export const UserType = {
+    create,
+    getReference,
+    NODE_ID_HANDLER,
+};

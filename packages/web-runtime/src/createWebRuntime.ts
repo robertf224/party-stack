@@ -11,7 +11,11 @@ function deleteIndexedDB(name: string): Promise<void> {
         const request = indexedDB.deleteDatabase(name);
         request.onsuccess = () => resolve();
         request.onerror = () =>
-            reject(new Error(`IndexedDB database "${name}" could not be deleted.`, { cause: request.error }));
+            reject(
+                new Error(`IndexedDB database "${name}" could not be deleted.`, {
+                    cause: request.error,
+                })
+            );
         request.onblocked = () =>
             reject(new Error(`IndexedDB database "${name}" could not be deleted because it is open.`));
     });
@@ -20,10 +24,16 @@ function deleteIndexedDB(name: string): Promise<void> {
 export const createWebRuntime: (owner: string, namespace: string) => RuntimeAdapter = defineRuntime(
     (owner, namespace) => {
         const name = `party-stack:${owner}:${namespace}`;
-        const persistence = createIndexedDBPersistence({ databaseName: name });
+        const persistence = createIndexedDBPersistence({
+            databaseName: name,
+        });
         const connectivity = NavigatorNetworkConnectivity.create();
-        const coordination = new LockBroadcastCoordination({ scope: name });
-        const blobBytes = new OPFSBlobBytesStore({ directoryName: `${name}:blobs` });
+        const coordination = new LockBroadcastCoordination({
+            scope: name,
+        });
+        const blobBytes = new OPFSBlobBytesStore({
+            directoryName: `${name}:blobs`,
+        });
         return {
             owner,
             namespace,

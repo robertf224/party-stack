@@ -22,7 +22,9 @@ export default defineAppConfig();
 ```
 
 ```json
-{ "extends": "@party-stack/tanstack-start-build-config/tsconfig.json" }
+{
+    "extends": "@party-stack/tanstack-start-build-config/tsconfig.json"
+}
 ```
 
 The TSConfig inherits strict app settings from `@party-stack/build-config`, which
@@ -37,7 +39,9 @@ Import Tailwind in your app CSS with `@import "tailwindcss"`.
 Override the stable app name when it should differ from the package name:
 
 ```ts
-export default defineAppConfig({ worktreeDev: { name: "notes" } }); // notes.localhost, or <automatic-worktree-label>.notes.localhost
+export default defineAppConfig({
+    worktreeDev: { name: "notes" },
+}); // notes.localhost, or <automatic-worktree-label>.notes.localhost
 ```
 
 Use `worktreeDev: false` or `PORTLESS=0` to disable it. See the

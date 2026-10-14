@@ -17,9 +17,15 @@ function create(
             description: `A list of ${objectType.pluralDisplayName}.`,
             // TODO: args
             args: {
-                after: { type: GraphQLString },
-                first: { type: GraphQLInt },
-                orderBy: { type: ObjectListTypes.getOrderByTypeReference(getTypeReference, objectType) },
+                after: {
+                    type: GraphQLString,
+                },
+                first: {
+                    type: GraphQLInt,
+                },
+                orderBy: {
+                    type: ObjectListTypes.getOrderByTypeReference(getTypeReference, objectType),
+                },
             },
             type: ObjectListTypes.getPageTypeReference(getTypeReference, objectType),
             plan: ($objectSet, $args) =>
@@ -28,7 +34,9 @@ function create(
                     $args.getRaw() as Step<{
                         first: Maybe<number>;
                         after: Maybe<string>;
-                        orderBy: Maybe<{ fields: { field: PropertyApiName; direction: "asc" | "desc" }[] }>;
+                        orderBy: Maybe<{
+                            fields: { field: PropertyApiName; direction: "asc" | "desc" }[];
+                        }>;
                     }>
                 ),
         },
@@ -38,4 +46,6 @@ function create(
     return ["list", field];
 }
 
-export const ObjectListField = { create };
+export const ObjectListField = {
+    create,
+};

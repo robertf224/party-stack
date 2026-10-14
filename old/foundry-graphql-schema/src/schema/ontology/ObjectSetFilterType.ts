@@ -52,10 +52,12 @@ function create(typeRegistry: TypeRegistry, objectType: ObjectTypeFullMetadata):
                     .map(([propertyApiName, property]) => {
                         const filterType = getFilterType(getTypeReference, property);
                         return filterType
-                            ? ([propertyApiName, { type: filterType }] satisfies [
-                                  string,
-                                  GraphQLInputFieldConfig,
-                              ])
+                            ? ([
+                                  propertyApiName,
+                                  {
+                                      type: filterType,
+                                  },
+                              ] satisfies [string, GraphQLInputFieldConfig])
                             : undefined;
                     })
                     .filter((propertyFilterField) => propertyFilterField !== undefined)
@@ -72,4 +74,8 @@ function getReference(getTypeReference: GetTypeReference, objectType: ObjectType
     return getTypeReference(getName(objectType)) as GraphQLInputObjectType;
 }
 
-export const ObjectSetFilterType = { create, getReference, toObjectSetFilter };
+export const ObjectSetFilterType = {
+    create,
+    getReference,
+    toObjectSetFilter,
+};

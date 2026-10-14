@@ -20,16 +20,25 @@ function ref(id: string, overrides: Partial<TestBlobRecord> = {}): TestBlobRecor
 
 function setup(refs: TestBlobRecord[]) {
     const blobBytes = new MemoryBlobBytesStore(new Map(refs.map(({ id }) => [id, new Blob([id])])));
-    const coordination = new SingleProcessCoordination({ scope: `blob-gc-${crypto.randomUUID()}` });
+    const coordination = new SingleProcessCoordination({
+        scope: `blob-gc-${crypto.randomUUID()}`,
+    });
     const store = createBlobStore({
-        runtime: { owner: "user-1", namespace: "ontology-1", blobBytes, coordination },
+        runtime: {
+            owner: "user-1",
+            namespace: "ontology-1",
+            blobBytes,
+            coordination,
+        },
     });
     return { blobBytes, coordination, store };
 }
 
 async function insertRefs(store: ReturnType<typeof createBlobStore>, refs: TestBlobRecord[]): Promise<void> {
     for (const value of refs) {
-        await store.collection.insert(value, { optimistic: false }).isPersisted.promise;
+        await store.collection.insert(value, {
+            optimistic: false,
+        }).isPersisted.promise;
     }
 }
 
@@ -37,9 +46,16 @@ describe("collectBlobGarbage", () => {
     it("purges completed remote-backed refs older than the cutoff", async () => {
         const refs = [
             ref("expired", { updatedAt: 10 }),
-            ref("persisted", { state: "persisted", remoteId: "remote-persisted", updatedAt: 10 }),
+            ref("persisted", {
+                state: "persisted",
+                remoteId: "remote-persisted",
+                updatedAt: 10,
+            }),
             ref("recent", { updatedAt: 100 }),
-            ref("staged", { state: "staged", updatedAt: 10 }),
+            ref("staged", {
+                state: "staged",
+                updatedAt: 10,
+            }),
             ref("failed", {
                 updatedAt: 10,
                 operation: {
@@ -53,7 +69,10 @@ describe("collectBlobGarbage", () => {
         const { blobBytes, coordination, store } = setup(refs);
         try {
             await insertRefs(store, refs);
-            await collectBlobGarbage(store, { cutoff: 100, now: 200 });
+            await collectBlobGarbage(store, {
+                cutoff: 100,
+                now: 200,
+            });
 
             await expect(store.find("expired")).resolves.toBeUndefined();
             await expect(store.find("persisted")).resolves.toBeUndefined();
@@ -73,10 +92,19 @@ describe("collectBlobGarbage", () => {
         const now = 2 * day;
         const refs = [
             ...Array.from({ length: BLOB_GC_BATCH_SIZE - 1 }, (_, index) =>
-                ref(`filler-${index}`, { size: 100 * BLOB_GC_SIZE_UNIT_BYTES, updatedAt: 0 })
+                ref(`filler-${index}`, {
+                    size: 100 * BLOB_GC_SIZE_UNIT_BYTES,
+                    updatedAt: 0,
+                })
             ),
-            ref("large-day-old", { size: 10 * BLOB_GC_SIZE_UNIT_BYTES, updatedAt: day }),
-            ref("tiny-two-days-old", { size: 1024, updatedAt: 0 }),
+            ref("large-day-old", {
+                size: 10 * BLOB_GC_SIZE_UNIT_BYTES,
+                updatedAt: day,
+            }),
+            ref("tiny-two-days-old", {
+                size: 1024,
+                updatedAt: 0,
+            }),
         ];
         const { coordination, store } = setup(refs);
         try {
@@ -87,7 +115,10 @@ describe("collectBlobGarbage", () => {
                 purged.push(id);
                 await purge(id, options);
             });
-            await collectBlobGarbage(store, { cutoff: now, now });
+            await collectBlobGarbage(store, {
+                cutoff: now,
+                now,
+            });
 
             expect(purged.slice(0, BLOB_GC_BATCH_SIZE)).toContain("large-day-old");
             expect(purged.slice(0, BLOB_GC_BATCH_SIZE)).not.toContain("tiny-two-days-old");

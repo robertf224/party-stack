@@ -132,7 +132,9 @@ for (const [name, blueprintName] of Object.entries(BlueprintIconNames)) {
 }
 
 export interface BlueprintIconMeta extends Record<string, unknown> {
-    blueprint: { name: string };
+    blueprint: {
+        name: string;
+    };
 }
 
 export function fromBlueprintIconName(name: string): IconDescriptor | undefined {
@@ -141,7 +143,12 @@ export function fromBlueprintIconName(name: string): IconDescriptor | undefined 
     if (!canonicalName || universalNames.length !== 1) {
         return undefined;
     }
-    return { name: canonicalName, meta: { blueprint: { name } } satisfies BlueprintIconMeta };
+    return {
+        name: canonicalName,
+        meta: {
+            blueprint: { name },
+        } satisfies BlueprintIconMeta,
+    };
 }
 
 export function toBlueprintIconName(icon: IconDescriptor): string | undefined {

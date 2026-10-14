@@ -8,5 +8,8 @@ import type { BlogOntology } from "./types.js";
 export async function createBlogLiveOntology<
     Context extends Record<string, unknown> = Record<string, unknown>,
 >(opts: Omit<CreateLiveOntologyOpts<Context>, "ir">): Promise<LiveOntology<BlogOntology>> {
-    return createLiveOntology<BlogOntology, Context>({ ...opts, ir: ontology });
+    return createLiveOntology<BlogOntology, Context>({
+        ...opts,
+        ir: ontology,
+    });
 }

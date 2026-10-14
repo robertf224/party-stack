@@ -14,10 +14,17 @@ export function useWebLock(name: string, options: UseWebLockOptions = {}): Opera
         const hold = new Promise<void>((resolve) => {
             release = resolve;
         });
-        const request = navigator.locks.request(name, { ...options, signal }, async (lock) => {
-            acquired.resolve(lock);
-            await hold;
-        });
+        const request = navigator.locks.request(
+            name,
+            {
+                ...options,
+                signal,
+            },
+            async (lock) => {
+                acquired.resolve(lock);
+                await hold;
+            }
+        );
         const task = yield* spawn(function* () {
             try {
                 yield* until(request);

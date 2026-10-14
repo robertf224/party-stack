@@ -40,4 +40,6 @@ function createBasicHandler(
     };
 }
 
-export const NodeHandlers = { createBasicHandler };
+export const NodeHandlers = {
+    createBasicHandler,
+};

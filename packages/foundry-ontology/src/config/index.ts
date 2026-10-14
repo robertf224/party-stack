@@ -37,7 +37,10 @@ export interface CreateFoundryOntologyPullSourceOptions {
     ontologyRid: string;
     connection: FoundryOntologyPullConnectionOptions;
     attachmentConstraints?: FoundryAttachmentConstraintOverride[];
-    users?: { objectType: string; lens: Lens };
+    users?: {
+        objectType: string;
+        lens: Lens;
+    };
 }
 
 function addConfiguredUser(
@@ -77,9 +80,18 @@ export function createFoundryOntologyPullSource(
                 runtime,
                 connections: {
                     token: options.connection.token,
-                    oauth: options.connection.oauth ? { ...options.connection.oauth, scopes } : undefined,
+                    oauth: options.connection.oauth
+                        ? {
+                              ...options.connection.oauth,
+                              scopes,
+                          }
+                        : undefined,
                 },
-                routes: [createFoundryOntologyRoute({ ontologyId: options.ontologyRid })],
+                routes: [
+                    createFoundryOntologyRoute({
+                        ontologyId: options.ontologyRid,
+                    }),
+                ],
             });
         },
         async resolveConnection(installation) {

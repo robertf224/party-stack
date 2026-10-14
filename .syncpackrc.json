@@ -23,7 +23,14 @@
             "dependencies": ["@tanstack/db", "@tanstack/db-*", "@tanstack/*-db", "@tanstack/*-db-*"],
             "range": ""
         },
-        { "label": "Allow TypeScript patch updates", "dependencies": ["typescript"], "range": "~" },
-        { "label": "Use caret ranges for other dependencies", "range": "^" }
+        {
+            "label": "Allow TypeScript patch updates",
+            "dependencies": ["typescript"],
+            "range": "~"
+        },
+        {
+            "label": "Use caret ranges for other dependencies",
+            "range": "^"
+        }
     ]
 }

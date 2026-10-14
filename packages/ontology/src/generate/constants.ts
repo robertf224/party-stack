@@ -1,12 +1,17 @@
 import { Project, VariableDeclarationKind } from "ts-morph";
 import type { OntologyIR } from "../ir/generated/types.js";
 
-function isNamedStringEnum(
-    type: OntologyIR["types"][number]
-): type is OntologyIR["types"][number] & {
+function isNamedStringEnum(type: OntologyIR["types"][number]): type is OntologyIR["types"][number] & {
     type: {
         kind: "string";
-        value: { constraint: { kind: "enum"; value: { options: Array<{ value: string; label?: string }> } } };
+        value: {
+            constraint: {
+                kind: "enum";
+                value: {
+                    options: Array<{ value: string; label?: string }>;
+                };
+            };
+        };
     };
 } {
     return type.type.kind === "string" && type.type.value.constraint?.kind === "enum";

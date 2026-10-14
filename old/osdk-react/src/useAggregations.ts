@@ -24,7 +24,9 @@ export function useAggregations<
     R extends AggregationsResults<T, AO>,
 >(
     type: T,
-    opts: { $where?: WhereClause<T> } & AggregateOptsThatErrorsAndDisallowsOrderingWithMultipleGroupBy<T, AO>,
+    opts: {
+        $where?: WhereClause<T>;
+    } & AggregateOptsThatErrorsAndDisallowsOrderingWithMultipleGroupBy<T, AO>,
     queryOpts?: Omit<
         UseSuspenseQueryOptions<AggregationsResults<T, AO> | null, Error, R>,
         "queryKey" | "queryFn" | "initialData" | "initialDataUpdatedAt"
@@ -32,7 +34,10 @@ export function useAggregations<
 ): UseSuspenseQueryResult<AggregationsResults<T, AO>> {
     const { client } = useOsdkContext();
     const { $where, ...aggregateOpts } = opts;
-    const objectSet: ObjectSet<T> = { type, filter: $where };
+    const objectSet: ObjectSet<T> = {
+        type,
+        filter: $where,
+    };
     return useSuspenseQuery({
         ...queryOpts,
         queryFn: () =>

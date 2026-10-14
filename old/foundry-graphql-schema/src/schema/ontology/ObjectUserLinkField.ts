@@ -28,4 +28,6 @@ function create(
     return [fieldName, field];
 }
 
-export const ObjectUserLinkField = { create };
+export const ObjectUserLinkField = {
+    create,
+};

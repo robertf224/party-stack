@@ -127,7 +127,10 @@ function ensureObjectTable(opts: {
     objectType: ObjectTypeDef;
 }): void {
     const { database, adapterName, objectType } = opts;
-    const tableName = getObjectTableName({ adapterName, objectTypeName: objectType.name });
+    const tableName = getObjectTableName({
+        adapterName,
+        objectTypeName: objectType.name,
+    });
     if (objectType.primaryKey === "data") {
         throw new Error(`Object type "${objectType.name}" cannot use "data" as its primary key.`);
     }
@@ -176,7 +179,11 @@ function ensureSchema(opts: { database: SQLiteDatabase; adapterName: string; ir:
     ensureDatabaseOntology(opts.database, opts.adapterName);
     ensureSQLiteAttachmentSchema(opts.database);
     for (const objectType of opts.ir.objectTypes) {
-        ensureObjectTable({ database: opts.database, adapterName: opts.adapterName, objectType });
+        ensureObjectTable({
+            database: opts.database,
+            adapterName: opts.adapterName,
+            objectType,
+        });
     }
 }
 
@@ -263,7 +270,10 @@ function persistObjectMutations(opts: {
 }): void {
     if (opts.mutations.length === 0) return;
 
-    const objectType = getObjectType({ ir: opts.ir, objectTypeName: opts.objectTypeName });
+    const objectType = getObjectType({
+        ir: opts.ir,
+        objectTypeName: opts.objectTypeName,
+    });
     const tableName = getObjectTableName({
         adapterName: opts.adapterName,
         objectTypeName: opts.objectTypeName,
@@ -307,8 +317,14 @@ function createCollectionOptions(opts: {
     ir: OntologyIR;
     objectTypeName: string;
 }): OntologyCollectionOptions {
-    const objectType = getObjectType({ ir: opts.ir, objectTypeName: opts.objectTypeName });
-    const tableName = getObjectTableName({ adapterName: opts.adapterName, objectTypeName: objectType.name });
+    const objectType = getObjectType({
+        ir: opts.ir,
+        objectTypeName: opts.objectTypeName,
+    });
+    const tableName = getObjectTableName({
+        adapterName: opts.adapterName,
+        objectTypeName: objectType.name,
+    });
 
     const sync: SyncConfig<OntologyObject, string | number> = {
         sync: ({ begin, collection, commit, markError, markReady, write }) => {
@@ -331,7 +347,10 @@ function createCollectionOptions(opts: {
                     }) as OntologyObject;
                     const key = hydratedObject[objectType.primaryKey] as string | number;
                     persistedKeys.add(key);
-                    write({ type: currentKeys.has(key) ? "update" : "insert", value: hydratedObject });
+                    write({
+                        type: currentKeys.has(key) ? "update" : "insert",
+                        value: hydratedObject,
+                    });
                 }
 
                 for (const key of currentKeys) {
@@ -349,11 +368,18 @@ function createCollectionOptions(opts: {
                 void initialLoad.then(markReady, markError);
             }
 
-            return { loadSubset: load, cleanup: () => {} };
+            return {
+                loadSubset: load,
+                cleanup: () => {},
+            };
         },
     };
 
-    return { syncMode: "on-demand", startSync: true, sync };
+    return {
+        syncMode: "on-demand",
+        startSync: true,
+        sync,
+    };
 }
 
 function toAttachmentBlobPart(bytes: unknown): ArrayBuffer {
@@ -380,7 +406,11 @@ function createAttachmentsAdapter(
             if (!row) {
                 throw new Error(`Attachment "${attachmentValue.id}" not found.`);
             }
-            return readSQLiteAttachmentBlob({ row, storage, inlineBlobPart: toAttachmentBlobPart });
+            return readSQLiteAttachmentBlob({
+                row,
+                storage,
+                inlineBlobPart: toAttachmentBlobPart,
+            });
         },
         getAttachmentMetadata: (attachmentValue): Promise<AttachmentMetadata & { name: string }> => {
             const row = getAttachmentRow(attachmentValue.id);
@@ -402,13 +432,22 @@ export function createSQLiteOntologyBackendAdapter(
 ): OntologyBackendAdapter {
     const adapterName = opts.name ?? "sqlite";
     opts.database.transaction(() => {
-        ensureSchema({ database: opts.database, adapterName, ir: opts.ir });
+        ensureSchema({
+            database: opts.database,
+            adapterName,
+            ir: opts.ir,
+        });
     })();
 
     return {
         name: adapterName,
         getCollectionOptions: (objectTypeName) =>
-            createCollectionOptions({ database: opts.database, adapterName, ir: opts.ir, objectTypeName }),
+            createCollectionOptions({
+                database: opts.database,
+                adapterName,
+                ir: opts.ir,
+                objectTypeName,
+            }),
         applyAction: async (actionTypeName, parameters, live) => {
             const actionType = opts.ir.actionTypes.find((candidate) => candidate.name === actionTypeName);
             if (!actionType) {
@@ -471,7 +510,10 @@ export function createSQLiteOntologyBackendAdapter(
                                 adapterName,
                                 ir: opts.ir,
                                 objectTypeName,
-                                mutations: collectCollectionMutations({ transaction, collection }),
+                                mutations: collectCollectionMutations({
+                                    transaction,
+                                    collection,
+                                }),
                             });
                         }
                         persistSQLiteAttachmentRows(opts.database, prepared);
@@ -516,8 +558,12 @@ export type CreateSQLiteOntologyBackendOptions<
     mutators?: OntologyMutatorRegistry;
     queryFunctions?: OntologyQueryFunctionRegistry;
 } & (
-    | { database: SQLiteDatabase }
-    | { createDatabase: (ir: OntologyIR, context: Context) => SQLiteDatabase | Promise<SQLiteDatabase> }
+    | {
+          database: SQLiteDatabase;
+      }
+    | {
+          createDatabase: (ir: OntologyIR, context: Context) => SQLiteDatabase | Promise<SQLiteDatabase>;
+      }
 );
 
 export function createSQLiteOntologyBackend<

@@ -16,8 +16,16 @@ describe("createSalesforceCodec", () => {
                     { name: "Id", displayName: "Id", type: o.string({}) },
                     { name: "Name", displayName: "Name", type: o.string({}) },
                     { name: "CreatedDate", displayName: "Created Date", type: o.timestamp({}) },
-                    { name: "CloseDate", displayName: "Close Date", type: o.optional({ type: o.date({}) }) },
-                    { name: "Tags", displayName: "Tags", type: o.list({ elementType: o.string({}) }) },
+                    {
+                        name: "CloseDate",
+                        displayName: "Close Date",
+                        type: o.optional({ type: o.date({}) }),
+                    },
+                    {
+                        name: "Tags",
+                        displayName: "Tags",
+                        type: o.list({ elementType: o.string({}) }),
+                    },
                 ],
             },
         ],

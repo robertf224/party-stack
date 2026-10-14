@@ -11,12 +11,24 @@ export default defineOntology({
             primaryKey: "Id",
             title: "Subject",
             properties: [
-                { name: "Id", displayName: "Activity ID", type: o.string({}) },
-                { name: "Subject", displayName: "Subject", type: o.optional({ type: o.string({}) }) },
+                {
+                    name: "Id",
+                    displayName: "Activity ID",
+                    type: o.string({}),
+                },
+                {
+                    name: "Subject",
+                    displayName: "Subject",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
                 {
                     name: "ActivityDate",
                     displayName: "Due Date Only",
-                    type: o.optional({ type: o.date({}) }),
+                    type: o.optional({
+                        type: o.date({}),
+                    }),
                 },
                 {
                     name: "Status",
@@ -24,11 +36,26 @@ export default defineOntology({
                     type: o.string({
                         constraint: o.StringConstraint.enum({
                             options: [
-                                { value: "Not Started", label: "Not Started" },
-                                { value: "In Progress", label: "In Progress" },
-                                { value: "Completed", label: "Completed" },
-                                { value: "Waiting on someone else", label: "Waiting on someone else" },
-                                { value: "Deferred", label: "Deferred" },
+                                {
+                                    value: "Not Started",
+                                    label: "Not Started",
+                                },
+                                {
+                                    value: "In Progress",
+                                    label: "In Progress",
+                                },
+                                {
+                                    value: "Completed",
+                                    label: "Completed",
+                                },
+                                {
+                                    value: "Waiting on someone else",
+                                    label: "Waiting on someone else",
+                                },
+                                {
+                                    value: "Deferred",
+                                    label: "Deferred",
+                                },
                             ],
                         }),
                     }),
@@ -39,27 +66,62 @@ export default defineOntology({
                     type: o.string({
                         constraint: o.StringConstraint.enum({
                             options: [
-                                { value: "High", label: "High" },
-                                { value: "Normal", label: "Normal" },
-                                { value: "Low", label: "Low" },
+                                {
+                                    value: "High",
+                                    label: "High",
+                                },
+                                {
+                                    value: "Normal",
+                                    label: "Normal",
+                                },
+                                {
+                                    value: "Low",
+                                    label: "Low",
+                                },
                             ],
                         }),
                     }),
                 },
-                { name: "OwnerId", displayName: "Assigned To ID", type: o.string({}) },
-                { name: "Description", displayName: "Description", type: o.optional({ type: o.string({}) }) },
-                { name: "IsClosed", displayName: "Closed", type: o.boolean({}) },
-                { name: "CreatedDate", displayName: "Created Date", type: o.timestamp({}) },
+                {
+                    name: "OwnerId",
+                    displayName: "Assigned To ID",
+                    type: o.string({}),
+                },
+                {
+                    name: "Description",
+                    displayName: "Description",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "IsClosed",
+                    displayName: "Closed",
+                    type: o.boolean({}),
+                },
+                {
+                    name: "CreatedDate",
+                    displayName: "Created Date",
+                    type: o.timestamp({}),
+                },
                 {
                     name: "CreatedById",
                     displayName: "Created By ID",
-                    type: o.objectReference({ objectType: "User" }),
+                    type: o.objectReference({
+                        objectType: "User",
+                    }),
                 },
-                { name: "LastModifiedDate", displayName: "Last Modified Date", type: o.timestamp({}) },
+                {
+                    name: "LastModifiedDate",
+                    displayName: "Last Modified Date",
+                    type: o.timestamp({}),
+                },
                 {
                     name: "LastModifiedById",
                     displayName: "Last Modified By ID",
-                    type: o.objectReference({ objectType: "User" }),
+                    type: o.objectReference({
+                        objectType: "User",
+                    }),
                 },
             ],
         },
@@ -70,32 +132,69 @@ export default defineOntology({
             primaryKey: "Id",
             title: "Name",
             properties: [
-                { name: "Id", displayName: "User ID", type: o.string({}) },
-                { name: "Username", displayName: "Username", type: o.string({}) },
-                { name: "Name", displayName: "Full Name", type: o.string({}) },
-                { name: "Email", displayName: "Email", type: o.string({}) },
+                {
+                    name: "Id",
+                    displayName: "User ID",
+                    type: o.string({}),
+                },
+                {
+                    name: "Username",
+                    displayName: "Username",
+                    type: o.string({}),
+                },
+                {
+                    name: "Name",
+                    displayName: "Full Name",
+                    type: o.string({}),
+                },
+                {
+                    name: "Email",
+                    displayName: "Email",
+                    type: o.string({}),
+                },
             ],
         },
     ],
     linkTypes: [
         {
             id: "salesforce:link:Task.CreatedById",
-            source: { objectType: "Task", name: "tasks", displayName: "Tasks" },
-            target: { objectType: "User", name: "CreatedBy", displayName: "Created By ID" },
+            source: {
+                objectType: "Task",
+                name: "tasks",
+                displayName: "Tasks",
+            },
+            target: {
+                objectType: "User",
+                name: "CreatedBy",
+                displayName: "Created By ID",
+            },
             foreignKey: "CreatedById",
             cardinality: "many",
         },
         {
             id: "salesforce:link:Task.LastModifiedById",
-            source: { objectType: "Task", name: "tasks", displayName: "Tasks" },
-            target: { objectType: "User", name: "LastModifiedBy", displayName: "Last Modified By ID" },
+            source: {
+                objectType: "Task",
+                name: "tasks",
+                displayName: "Tasks",
+            },
+            target: {
+                objectType: "User",
+                name: "LastModifiedBy",
+                displayName: "Last Modified By ID",
+            },
             foreignKey: "LastModifiedById",
             cardinality: "many",
         },
     ],
     actionTypes: [
         {
-            meta: { salesforce: { kind: "standard", apiName: "confirmSalesMeeting" } },
+            meta: {
+                salesforce: {
+                    kind: "standard",
+                    apiName: "confirmSalesMeeting",
+                },
+            },
             name: "confirmSalesMeeting",
             displayName: "Confirm Sales Meeting",
             parameters: [
@@ -118,17 +217,43 @@ export default defineOntology({
             description: "Confirms a meeting time that’s part of a request to Get Meeting Time Slots.",
         },
         {
-            meta: { salesforce: { kind: "crud", objectType: "Task", operation: "create" } },
+            meta: {
+                salesforce: {
+                    kind: "crud",
+                    objectType: "Task",
+                    operation: "create",
+                },
+            },
             name: "createTask",
             displayName: "Create Task",
             parameters: [
-                { name: "WhoId", displayName: "Name ID", type: o.optional({ type: o.string({}) }) },
-                { name: "WhatId", displayName: "Related To ID", type: o.optional({ type: o.string({}) }) },
-                { name: "Subject", displayName: "Subject", type: o.optional({ type: o.string({}) }) },
+                {
+                    name: "WhoId",
+                    displayName: "Name ID",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "WhatId",
+                    displayName: "Related To ID",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "Subject",
+                    displayName: "Subject",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
                 {
                     name: "ActivityDate",
                     displayName: "Due Date Only",
-                    type: o.optional({ type: o.date({}) }),
+                    type: o.optional({
+                        type: o.date({}),
+                    }),
                 },
                 {
                     name: "Status",
@@ -137,11 +262,26 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "Not Started", label: "Not Started" },
-                                    { value: "In Progress", label: "In Progress" },
-                                    { value: "Completed", label: "Completed" },
-                                    { value: "Waiting on someone else", label: "Waiting on someone else" },
-                                    { value: "Deferred", label: "Deferred" },
+                                    {
+                                        value: "Not Started",
+                                        label: "Not Started",
+                                    },
+                                    {
+                                        value: "In Progress",
+                                        label: "In Progress",
+                                    },
+                                    {
+                                        value: "Completed",
+                                        label: "Completed",
+                                    },
+                                    {
+                                        value: "Waiting on someone else",
+                                        label: "Waiting on someone else",
+                                    },
+                                    {
+                                        value: "Deferred",
+                                        label: "Deferred",
+                                    },
                                 ],
                             }),
                         }),
@@ -154,20 +294,43 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "High", label: "High" },
-                                    { value: "Normal", label: "Normal" },
-                                    { value: "Low", label: "Low" },
+                                    {
+                                        value: "High",
+                                        label: "High",
+                                    },
+                                    {
+                                        value: "Normal",
+                                        label: "Normal",
+                                    },
+                                    {
+                                        value: "Low",
+                                        label: "Low",
+                                    },
                                 ],
                             }),
                         }),
                     }),
                 },
-                { name: "OwnerId", displayName: "Assigned To ID", type: o.optional({ type: o.string({}) }) },
-                { name: "Description", displayName: "Description", type: o.optional({ type: o.string({}) }) },
+                {
+                    name: "OwnerId",
+                    displayName: "Assigned To ID",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "Description",
+                    displayName: "Description",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
                 {
                     name: "CallDurationInSeconds",
                     displayName: "Call Duration",
-                    type: o.optional({ type: o.integer({}) }),
+                    type: o.optional({
+                        type: o.integer({}),
+                    }),
                 },
                 {
                     name: "CallType",
@@ -176,9 +339,18 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "Internal", label: "Internal" },
-                                    { value: "Inbound", label: "Inbound" },
-                                    { value: "Outbound", label: "Outbound" },
+                                    {
+                                        value: "Internal",
+                                        label: "Internal",
+                                    },
+                                    {
+                                        value: "Inbound",
+                                        label: "Inbound",
+                                    },
+                                    {
+                                        value: "Outbound",
+                                        label: "Outbound",
+                                    },
                                 ],
                             }),
                         }),
@@ -187,37 +359,51 @@ export default defineOntology({
                 {
                     name: "CallDisposition",
                     displayName: "Call Result",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                 },
                 {
                     name: "CallObject",
                     displayName: "Call Object Identifier",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                 },
                 {
                     name: "ReminderDateTime",
                     displayName: "Reminder Date/Time",
-                    type: o.optional({ type: o.timestamp({}) }),
+                    type: o.optional({
+                        type: o.timestamp({}),
+                    }),
                 },
                 {
                     name: "IsReminderSet",
                     displayName: "Reminder Set",
-                    type: o.optional({ type: o.boolean({}) }),
+                    type: o.optional({
+                        type: o.boolean({}),
+                    }),
                 },
                 {
                     name: "IsRecurrence",
                     displayName: "Create Recurring Series of Tasks",
-                    type: o.optional({ type: o.boolean({}) }),
+                    type: o.optional({
+                        type: o.boolean({}),
+                    }),
                 },
                 {
                     name: "RecurrenceStartDateOnly",
                     displayName: "Recurrence Start",
-                    type: o.optional({ type: o.date({}) }),
+                    type: o.optional({
+                        type: o.date({}),
+                    }),
                 },
                 {
                     name: "RecurrenceEndDateOnly",
                     displayName: "Recurrence End",
-                    type: o.optional({ type: o.date({}) }),
+                    type: o.optional({
+                        type: o.date({}),
+                    }),
                 },
                 {
                     name: "RecurrenceTimeZoneSidKey",
@@ -394,7 +580,10 @@ export default defineOntology({
                                         value: "Pacific/Saipan",
                                         label: "(GMT+10:00) Chamorro Standard Time (Pacific/Saipan)",
                                     },
-                                    { value: "Pacific/Truk", label: "(GMT+10:00) Chuuk Time (Pacific/Truk)" },
+                                    {
+                                        value: "Pacific/Truk",
+                                        label: "(GMT+10:00) Chuuk Time (Pacific/Truk)",
+                                    },
                                     {
                                         value: "Australia/Adelaide",
                                         label: "(GMT+09:30) Australian Central Standard Time (Australia/Adelaide)",
@@ -411,7 +600,10 @@ export default defineOntology({
                                         value: "Asia/Chita",
                                         label: "(GMT+09:00) Yakutsk Standard Time (Asia/Chita)",
                                     },
-                                    { value: "Asia/Dili", label: "(GMT+09:00) East Timor Time (Asia/Dili)" },
+                                    {
+                                        value: "Asia/Dili",
+                                        label: "(GMT+09:00) East Timor Time (Asia/Dili)",
+                                    },
                                     {
                                         value: "Asia/Jayapura",
                                         label: "(GMT+09:00) Eastern Indonesia Time (Asia/Jayapura)",
@@ -556,7 +748,10 @@ export default defineOntology({
                                         value: "Indian/Christmas",
                                         label: "(GMT+07:00) Christmas Island Time (Indian/Christmas)",
                                     },
-                                    { value: "Asia/Yangon", label: "(GMT+06:30) Myanmar Time (Asia/Yangon)" },
+                                    {
+                                        value: "Asia/Yangon",
+                                        label: "(GMT+06:30) Myanmar Time (Asia/Yangon)",
+                                    },
                                     {
                                         value: "Indian/Cocos",
                                         label: "(GMT+06:30) Cocos Islands Time (Indian/Cocos)",
@@ -1249,7 +1444,10 @@ export default defineOntology({
                                         value: "Atlantic/St_Helena",
                                         label: "(GMT+00:00) Greenwich Mean Time (Atlantic/St_Helena)",
                                     },
-                                    { value: "GMT", label: "(GMT+00:00) Greenwich Mean Time (GMT)" },
+                                    {
+                                        value: "GMT",
+                                        label: "(GMT+00:00) Greenwich Mean Time (GMT)",
+                                    },
                                     {
                                         value: "America/Nuuk",
                                         label: "(GMT-01:00) West Greenland Summer Time (America/Nuuk)",
@@ -1902,7 +2100,10 @@ export default defineOntology({
                                         value: "Pacific/Midway",
                                         label: "(GMT-11:00) Samoa Standard Time (Pacific/Midway)",
                                     },
-                                    { value: "Pacific/Niue", label: "(GMT-11:00) Niue Time (Pacific/Niue)" },
+                                    {
+                                        value: "Pacific/Niue",
+                                        label: "(GMT-11:00) Niue Time (Pacific/Niue)",
+                                    },
                                     {
                                         value: "Pacific/Pago_Pago",
                                         label: "(GMT-11:00) Samoa Standard Time (Pacific/Pago_Pago)",
@@ -1919,13 +2120,34 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "RecursDaily", label: "Recurs Daily" },
-                                    { value: "RecursEveryWeekday", label: "Recurs Every Weekday" },
-                                    { value: "RecursMonthly", label: "Recurs Monthly" },
-                                    { value: "RecursMonthlyNth", label: "Recurs Monthly Nth" },
-                                    { value: "RecursWeekly", label: "Recurs Weekly" },
-                                    { value: "RecursYearly", label: "Recurs Yearly" },
-                                    { value: "RecursYearlyNth", label: "Recurs Yearly Nth" },
+                                    {
+                                        value: "RecursDaily",
+                                        label: "Recurs Daily",
+                                    },
+                                    {
+                                        value: "RecursEveryWeekday",
+                                        label: "Recurs Every Weekday",
+                                    },
+                                    {
+                                        value: "RecursMonthly",
+                                        label: "Recurs Monthly",
+                                    },
+                                    {
+                                        value: "RecursMonthlyNth",
+                                        label: "Recurs Monthly Nth",
+                                    },
+                                    {
+                                        value: "RecursWeekly",
+                                        label: "Recurs Weekly",
+                                    },
+                                    {
+                                        value: "RecursYearly",
+                                        label: "Recurs Yearly",
+                                    },
+                                    {
+                                        value: "RecursYearlyNth",
+                                        label: "Recurs Yearly Nth",
+                                    },
                                 ],
                             }),
                         }),
@@ -1934,17 +2156,23 @@ export default defineOntology({
                 {
                     name: "RecurrenceInterval",
                     displayName: "Recurrence Interval",
-                    type: o.optional({ type: o.integer({}) }),
+                    type: o.optional({
+                        type: o.integer({}),
+                    }),
                 },
                 {
                     name: "RecurrenceDayOfWeekMask",
                     displayName: "Recurrence Day of Week Mask",
-                    type: o.optional({ type: o.integer({}) }),
+                    type: o.optional({
+                        type: o.integer({}),
+                    }),
                 },
                 {
                     name: "RecurrenceDayOfMonth",
                     displayName: "Recurrence Day of Month",
-                    type: o.optional({ type: o.integer({}) }),
+                    type: o.optional({
+                        type: o.integer({}),
+                    }),
                 },
                 {
                     name: "RecurrenceInstance",
@@ -1953,11 +2181,26 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "First", label: "1st" },
-                                    { value: "Second", label: "2nd" },
-                                    { value: "Third", label: "3rd" },
-                                    { value: "Fourth", label: "4th" },
-                                    { value: "Last", label: "last" },
+                                    {
+                                        value: "First",
+                                        label: "1st",
+                                    },
+                                    {
+                                        value: "Second",
+                                        label: "2nd",
+                                    },
+                                    {
+                                        value: "Third",
+                                        label: "3rd",
+                                    },
+                                    {
+                                        value: "Fourth",
+                                        label: "4th",
+                                    },
+                                    {
+                                        value: "Last",
+                                        label: "last",
+                                    },
                                 ],
                             }),
                         }),
@@ -1970,18 +2213,54 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "January", label: "January" },
-                                    { value: "February", label: "February" },
-                                    { value: "March", label: "March" },
-                                    { value: "April", label: "April" },
-                                    { value: "May", label: "May" },
-                                    { value: "June", label: "June" },
-                                    { value: "July", label: "July" },
-                                    { value: "August", label: "August" },
-                                    { value: "September", label: "September" },
-                                    { value: "October", label: "October" },
-                                    { value: "November", label: "November" },
-                                    { value: "December", label: "December" },
+                                    {
+                                        value: "January",
+                                        label: "January",
+                                    },
+                                    {
+                                        value: "February",
+                                        label: "February",
+                                    },
+                                    {
+                                        value: "March",
+                                        label: "March",
+                                    },
+                                    {
+                                        value: "April",
+                                        label: "April",
+                                    },
+                                    {
+                                        value: "May",
+                                        label: "May",
+                                    },
+                                    {
+                                        value: "June",
+                                        label: "June",
+                                    },
+                                    {
+                                        value: "July",
+                                        label: "July",
+                                    },
+                                    {
+                                        value: "August",
+                                        label: "August",
+                                    },
+                                    {
+                                        value: "September",
+                                        label: "September",
+                                    },
+                                    {
+                                        value: "October",
+                                        label: "October",
+                                    },
+                                    {
+                                        value: "November",
+                                        label: "November",
+                                    },
+                                    {
+                                        value: "December",
+                                        label: "December",
+                                    },
                                 ],
                             }),
                         }),
@@ -1994,12 +2273,18 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "RecurrenceRegenerateAfterDueDate", label: "After due date" },
+                                    {
+                                        value: "RecurrenceRegenerateAfterDueDate",
+                                        label: "After due date",
+                                    },
                                     {
                                         value: "RecurrenceRegenerateAfterToday",
                                         label: "After date completed",
                                     },
-                                    { value: "RecurrenceRegenerated", label: "(Task Closed)" },
+                                    {
+                                        value: "RecurrenceRegenerated",
+                                        label: "(Task Closed)",
+                                    },
                                 ],
                             }),
                         }),
@@ -2012,12 +2297,30 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "Task", label: "Task" },
-                                    { value: "Email", label: "Email" },
-                                    { value: "ListEmail", label: "List Email" },
-                                    { value: "Cadence", label: "Cadence" },
-                                    { value: "Call", label: "Call" },
-                                    { value: "LinkedIn", label: "LinkedIn" },
+                                    {
+                                        value: "Task",
+                                        label: "Task",
+                                    },
+                                    {
+                                        value: "Email",
+                                        label: "Email",
+                                    },
+                                    {
+                                        value: "ListEmail",
+                                        label: "List Email",
+                                    },
+                                    {
+                                        value: "Cadence",
+                                        label: "Cadence",
+                                    },
+                                    {
+                                        value: "Call",
+                                        label: "Call",
+                                    },
+                                    {
+                                        value: "LinkedIn",
+                                        label: "LinkedIn",
+                                    },
                                 ],
                             }),
                         }),
@@ -2030,9 +2333,18 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "FTX", label: "FTX" },
-                                    { value: "Deployment", label: "Deployment" },
-                                    { value: "Customer Demo", label: "Customer Demo" },
+                                    {
+                                        value: "FTX",
+                                        label: "FTX",
+                                    },
+                                    {
+                                        value: "Deployment",
+                                        label: "Deployment",
+                                    },
+                                    {
+                                        value: "Customer Demo",
+                                        label: "Customer Demo",
+                                    },
                                 ],
                             }),
                         }),
@@ -2041,124 +2353,234 @@ export default defineOntology({
                 {
                     name: "Customer_POC__c",
                     displayName: "Customer POC",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                 },
-                { name: "Mission__c", displayName: "Mission", type: o.optional({ type: o.string({}) }) },
+                {
+                    name: "Mission__c",
+                    displayName: "Mission",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
             ],
             logic: [
                 o.ActionLogicStep.createObject({
                     objectType: "Task",
                     values: [
-                        { property: ["WhoId"], value: o.Expression.inputReference({ name: "WhoId" }) },
-                        { property: ["WhatId"], value: o.Expression.inputReference({ name: "WhatId" }) },
-                        { property: ["Subject"], value: o.Expression.inputReference({ name: "Subject" }) },
+                        {
+                            property: ["WhoId"],
+                            value: o.Expression.inputReference({
+                                name: "WhoId",
+                            }),
+                        },
+                        {
+                            property: ["WhatId"],
+                            value: o.Expression.inputReference({
+                                name: "WhatId",
+                            }),
+                        },
+                        {
+                            property: ["Subject"],
+                            value: o.Expression.inputReference({
+                                name: "Subject",
+                            }),
+                        },
                         {
                             property: ["ActivityDate"],
-                            value: o.Expression.inputReference({ name: "ActivityDate" }),
+                            value: o.Expression.inputReference({
+                                name: "ActivityDate",
+                            }),
                         },
-                        { property: ["Status"], value: o.Expression.inputReference({ name: "Status" }) },
-                        { property: ["Priority"], value: o.Expression.inputReference({ name: "Priority" }) },
-                        { property: ["OwnerId"], value: o.Expression.inputReference({ name: "OwnerId" }) },
+                        {
+                            property: ["Status"],
+                            value: o.Expression.inputReference({
+                                name: "Status",
+                            }),
+                        },
+                        {
+                            property: ["Priority"],
+                            value: o.Expression.inputReference({
+                                name: "Priority",
+                            }),
+                        },
+                        {
+                            property: ["OwnerId"],
+                            value: o.Expression.inputReference({
+                                name: "OwnerId",
+                            }),
+                        },
                         {
                             property: ["Description"],
-                            value: o.Expression.inputReference({ name: "Description" }),
+                            value: o.Expression.inputReference({
+                                name: "Description",
+                            }),
                         },
                         {
                             property: ["CallDurationInSeconds"],
-                            value: o.Expression.inputReference({ name: "CallDurationInSeconds" }),
+                            value: o.Expression.inputReference({
+                                name: "CallDurationInSeconds",
+                            }),
                         },
-                        { property: ["CallType"], value: o.Expression.inputReference({ name: "CallType" }) },
+                        {
+                            property: ["CallType"],
+                            value: o.Expression.inputReference({
+                                name: "CallType",
+                            }),
+                        },
                         {
                             property: ["CallDisposition"],
-                            value: o.Expression.inputReference({ name: "CallDisposition" }),
+                            value: o.Expression.inputReference({
+                                name: "CallDisposition",
+                            }),
                         },
                         {
                             property: ["CallObject"],
-                            value: o.Expression.inputReference({ name: "CallObject" }),
+                            value: o.Expression.inputReference({
+                                name: "CallObject",
+                            }),
                         },
                         {
                             property: ["ReminderDateTime"],
-                            value: o.Expression.inputReference({ name: "ReminderDateTime" }),
+                            value: o.Expression.inputReference({
+                                name: "ReminderDateTime",
+                            }),
                         },
                         {
                             property: ["IsReminderSet"],
-                            value: o.Expression.inputReference({ name: "IsReminderSet" }),
+                            value: o.Expression.inputReference({
+                                name: "IsReminderSet",
+                            }),
                         },
                         {
                             property: ["IsRecurrence"],
-                            value: o.Expression.inputReference({ name: "IsRecurrence" }),
+                            value: o.Expression.inputReference({
+                                name: "IsRecurrence",
+                            }),
                         },
                         {
                             property: ["RecurrenceStartDateOnly"],
-                            value: o.Expression.inputReference({ name: "RecurrenceStartDateOnly" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceStartDateOnly",
+                            }),
                         },
                         {
                             property: ["RecurrenceEndDateOnly"],
-                            value: o.Expression.inputReference({ name: "RecurrenceEndDateOnly" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceEndDateOnly",
+                            }),
                         },
                         {
                             property: ["RecurrenceTimeZoneSidKey"],
-                            value: o.Expression.inputReference({ name: "RecurrenceTimeZoneSidKey" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceTimeZoneSidKey",
+                            }),
                         },
                         {
                             property: ["RecurrenceType"],
-                            value: o.Expression.inputReference({ name: "RecurrenceType" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceType",
+                            }),
                         },
                         {
                             property: ["RecurrenceInterval"],
-                            value: o.Expression.inputReference({ name: "RecurrenceInterval" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceInterval",
+                            }),
                         },
                         {
                             property: ["RecurrenceDayOfWeekMask"],
-                            value: o.Expression.inputReference({ name: "RecurrenceDayOfWeekMask" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceDayOfWeekMask",
+                            }),
                         },
                         {
                             property: ["RecurrenceDayOfMonth"],
-                            value: o.Expression.inputReference({ name: "RecurrenceDayOfMonth" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceDayOfMonth",
+                            }),
                         },
                         {
                             property: ["RecurrenceInstance"],
-                            value: o.Expression.inputReference({ name: "RecurrenceInstance" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceInstance",
+                            }),
                         },
                         {
                             property: ["RecurrenceMonthOfYear"],
-                            value: o.Expression.inputReference({ name: "RecurrenceMonthOfYear" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceMonthOfYear",
+                            }),
                         },
                         {
                             property: ["RecurrenceRegeneratedType"],
-                            value: o.Expression.inputReference({ name: "RecurrenceRegeneratedType" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceRegeneratedType",
+                            }),
                         },
                         {
                             property: ["TaskSubtype"],
-                            value: o.Expression.inputReference({ name: "TaskSubtype" }),
+                            value: o.Expression.inputReference({
+                                name: "TaskSubtype",
+                            }),
                         },
                         {
                             property: ["Event_Type__c"],
-                            value: o.Expression.inputReference({ name: "Event_Type__c" }),
+                            value: o.Expression.inputReference({
+                                name: "Event_Type__c",
+                            }),
                         },
                         {
                             property: ["Customer_POC__c"],
-                            value: o.Expression.inputReference({ name: "Customer_POC__c" }),
+                            value: o.Expression.inputReference({
+                                name: "Customer_POC__c",
+                            }),
                         },
                         {
                             property: ["Mission__c"],
-                            value: o.Expression.inputReference({ name: "Mission__c" }),
+                            value: o.Expression.inputReference({
+                                name: "Mission__c",
+                            }),
                         },
                     ],
                 }),
             ],
         },
         {
-            meta: { salesforce: { kind: "crud", objectType: "Task", operation: "delete" } },
+            meta: {
+                salesforce: {
+                    kind: "crud",
+                    objectType: "Task",
+                    operation: "delete",
+                },
+            },
             name: "deleteTask",
             displayName: "Delete Task",
             parameters: [
-                { name: "recordId", displayName: "Task ID", type: o.objectReference({ objectType: "Task" }) },
+                {
+                    name: "recordId",
+                    displayName: "Task ID",
+                    type: o.objectReference({
+                        objectType: "Task",
+                    }),
+                },
             ],
-            logic: [o.ActionLogicStep.deleteObject({ object: { name: "recordId" } })],
+            logic: [
+                o.ActionLogicStep.deleteObject({
+                    object: {
+                        name: "recordId",
+                    },
+                }),
+            ],
         },
         {
-            meta: { salesforce: { kind: "flow", apiName: "sales_sfa_flows__CreateSalesLead" } },
+            meta: {
+                salesforce: {
+                    kind: "flow",
+                    apiName: "sales_sfa_flows__CreateSalesLead",
+                },
+            },
             name: "sales_sfa_flows__CreateSalesLead",
             displayName: "Create Sales Lead Record",
             parameters: [
@@ -2171,27 +2593,37 @@ export default defineOntology({
                                 {
                                     name: "Id",
                                     displayName: "Lead ID",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "IsDeleted",
                                     displayName: "Deleted",
-                                    type: o.optional({ type: o.boolean({}) }),
+                                    type: o.optional({
+                                        type: o.boolean({}),
+                                    }),
                                 },
                                 {
                                     name: "MasterRecordId",
                                     displayName: "Master Record ID",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "LastName",
                                     displayName: "Last Name",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "FirstName",
                                     displayName: "First Name",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "Salutation",
@@ -2200,12 +2632,30 @@ export default defineOntology({
                                         type: o.string({
                                             constraint: o.StringConstraint.enum({
                                                 options: [
-                                                    { value: "Mr.", label: "Mr." },
-                                                    { value: "Ms.", label: "Ms." },
-                                                    { value: "Mrs.", label: "Mrs." },
-                                                    { value: "Dr.", label: "Dr." },
-                                                    { value: "Prof.", label: "Prof." },
-                                                    { value: "Mx.", label: "Mx." },
+                                                    {
+                                                        value: "Mr.",
+                                                        label: "Mr.",
+                                                    },
+                                                    {
+                                                        value: "Ms.",
+                                                        label: "Ms.",
+                                                    },
+                                                    {
+                                                        value: "Mrs.",
+                                                        label: "Mrs.",
+                                                    },
+                                                    {
+                                                        value: "Dr.",
+                                                        label: "Dr.",
+                                                    },
+                                                    {
+                                                        value: "Prof.",
+                                                        label: "Prof.",
+                                                    },
+                                                    {
+                                                        value: "Mx.",
+                                                        label: "Mx.",
+                                                    },
                                                 ],
                                             }),
                                         }),
@@ -2214,52 +2664,72 @@ export default defineOntology({
                                 {
                                     name: "Name",
                                     displayName: "Full Name",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "Title",
                                     displayName: "Title",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "Company",
                                     displayName: "Company",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "Street",
                                     displayName: "Street",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "City",
                                     displayName: "City",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "State",
                                     displayName: "State/Province",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "PostalCode",
                                     displayName: "Zip/Postal Code",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "Country",
                                     displayName: "Country",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "Latitude",
                                     displayName: "Latitude",
-                                    type: o.optional({ type: o.double({}) }),
+                                    type: o.optional({
+                                        type: o.double({}),
+                                    }),
                                 },
                                 {
                                     name: "Longitude",
                                     displayName: "Longitude",
-                                    type: o.optional({ type: o.double({}) }),
+                                    type: o.optional({
+                                        type: o.double({}),
+                                    }),
                                 },
                                 {
                                     name: "GeocodeAccuracy",
@@ -2268,17 +2738,50 @@ export default defineOntology({
                                         type: o.string({
                                             constraint: o.StringConstraint.enum({
                                                 options: [
-                                                    { value: "Address", label: "Address" },
-                                                    { value: "NearAddress", label: "Near Address" },
-                                                    { value: "Block", label: "Block" },
-                                                    { value: "Street", label: "Street" },
-                                                    { value: "ExtendedZip", label: "Extended Zip" },
-                                                    { value: "Zip", label: "Zip" },
-                                                    { value: "Neighborhood", label: "Neighborhood" },
-                                                    { value: "City", label: "City" },
-                                                    { value: "County", label: "County" },
-                                                    { value: "State", label: "State" },
-                                                    { value: "Unknown", label: "Unknown" },
+                                                    {
+                                                        value: "Address",
+                                                        label: "Address",
+                                                    },
+                                                    {
+                                                        value: "NearAddress",
+                                                        label: "Near Address",
+                                                    },
+                                                    {
+                                                        value: "Block",
+                                                        label: "Block",
+                                                    },
+                                                    {
+                                                        value: "Street",
+                                                        label: "Street",
+                                                    },
+                                                    {
+                                                        value: "ExtendedZip",
+                                                        label: "Extended Zip",
+                                                    },
+                                                    {
+                                                        value: "Zip",
+                                                        label: "Zip",
+                                                    },
+                                                    {
+                                                        value: "Neighborhood",
+                                                        label: "Neighborhood",
+                                                    },
+                                                    {
+                                                        value: "City",
+                                                        label: "City",
+                                                    },
+                                                    {
+                                                        value: "County",
+                                                        label: "County",
+                                                    },
+                                                    {
+                                                        value: "State",
+                                                        label: "State",
+                                                    },
+                                                    {
+                                                        value: "Unknown",
+                                                        label: "Unknown",
+                                                    },
                                                 ],
                                             }),
                                         }),
@@ -2287,27 +2790,37 @@ export default defineOntology({
                                 {
                                     name: "Phone",
                                     displayName: "Phone",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "Email",
                                     displayName: "Email",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "Website",
                                     displayName: "Website",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "PhotoUrl",
                                     displayName: "Photo URL",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "Description",
                                     displayName: "Description",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "LeadSource",
@@ -2316,7 +2829,10 @@ export default defineOntology({
                                         type: o.string({
                                             constraint: o.StringConstraint.enum({
                                                 options: [
-                                                    { value: "Advertisement", label: "Advertisement" },
+                                                    {
+                                                        value: "Advertisement",
+                                                        label: "Advertisement",
+                                                    },
                                                     {
                                                         value: "Employee Referral",
                                                         label: "Employee Referral",
@@ -2325,8 +2841,14 @@ export default defineOntology({
                                                         value: "External Referral",
                                                         label: "External Referral",
                                                     },
-                                                    { value: "Partner", label: "Partner" },
-                                                    { value: "Public Relations", label: "Public Relations" },
+                                                    {
+                                                        value: "Partner",
+                                                        label: "Partner",
+                                                    },
+                                                    {
+                                                        value: "Public Relations",
+                                                        label: "Public Relations",
+                                                    },
                                                     {
                                                         value: "Seminar - Internal",
                                                         label: "Seminar - Internal",
@@ -2335,10 +2857,22 @@ export default defineOntology({
                                                         value: "Seminar - Partner",
                                                         label: "Seminar - Partner",
                                                     },
-                                                    { value: "Trade Show", label: "Trade Show" },
-                                                    { value: "Web", label: "Web" },
-                                                    { value: "Word of mouth", label: "Word of mouth" },
-                                                    { value: "Other", label: "Other" },
+                                                    {
+                                                        value: "Trade Show",
+                                                        label: "Trade Show",
+                                                    },
+                                                    {
+                                                        value: "Web",
+                                                        label: "Web",
+                                                    },
+                                                    {
+                                                        value: "Word of mouth",
+                                                        label: "Word of mouth",
+                                                    },
+                                                    {
+                                                        value: "Other",
+                                                        label: "Other",
+                                                    },
                                                 ],
                                             }),
                                         }),
@@ -2351,11 +2885,26 @@ export default defineOntology({
                                         type: o.string({
                                             constraint: o.StringConstraint.enum({
                                                 options: [
-                                                    { value: "New", label: "New" },
-                                                    { value: "Contacted", label: "Contacted" },
-                                                    { value: "Nurturing", label: "Nurturing" },
-                                                    { value: "Qualified", label: "Qualified" },
-                                                    { value: "Unqualified", label: "Unqualified" },
+                                                    {
+                                                        value: "New",
+                                                        label: "New",
+                                                    },
+                                                    {
+                                                        value: "Contacted",
+                                                        label: "Contacted",
+                                                    },
+                                                    {
+                                                        value: "Nurturing",
+                                                        label: "Nurturing",
+                                                    },
+                                                    {
+                                                        value: "Qualified",
+                                                        label: "Qualified",
+                                                    },
+                                                    {
+                                                        value: "Unqualified",
+                                                        label: "Unqualified",
+                                                    },
                                                 ],
                                             }),
                                         }),
@@ -2368,41 +2917,134 @@ export default defineOntology({
                                         type: o.string({
                                             constraint: o.StringConstraint.enum({
                                                 options: [
-                                                    { value: "Agriculture", label: "Agriculture" },
-                                                    { value: "Apparel", label: "Apparel" },
-                                                    { value: "Banking", label: "Banking" },
-                                                    { value: "Biotechnology", label: "Biotechnology" },
-                                                    { value: "Chemicals", label: "Chemicals" },
-                                                    { value: "Communications", label: "Communications" },
-                                                    { value: "Construction", label: "Construction" },
-                                                    { value: "Consulting", label: "Consulting" },
-                                                    { value: "Education", label: "Education" },
-                                                    { value: "Electronics", label: "Electronics" },
-                                                    { value: "Energy", label: "Energy" },
-                                                    { value: "Engineering", label: "Engineering" },
-                                                    { value: "Entertainment", label: "Entertainment" },
-                                                    { value: "Environmental", label: "Environmental" },
-                                                    { value: "Finance", label: "Finance" },
-                                                    { value: "Food & Beverage", label: "Food & Beverage" },
-                                                    { value: "Government", label: "Government" },
-                                                    { value: "Healthcare", label: "Healthcare" },
-                                                    { value: "Hospitality", label: "Hospitality" },
-                                                    { value: "Insurance", label: "Insurance" },
-                                                    { value: "Machinery", label: "Machinery" },
-                                                    { value: "Manufacturing", label: "Manufacturing" },
-                                                    { value: "Media", label: "Media" },
-                                                    { value: "Not For Profit", label: "Not For Profit" },
-                                                    { value: "Other", label: "Other" },
-                                                    { value: "Recreation", label: "Recreation" },
-                                                    { value: "Retail", label: "Retail" },
-                                                    { value: "Shipping", label: "Shipping" },
-                                                    { value: "Technology", label: "Technology" },
+                                                    {
+                                                        value: "Agriculture",
+                                                        label: "Agriculture",
+                                                    },
+                                                    {
+                                                        value: "Apparel",
+                                                        label: "Apparel",
+                                                    },
+                                                    {
+                                                        value: "Banking",
+                                                        label: "Banking",
+                                                    },
+                                                    {
+                                                        value: "Biotechnology",
+                                                        label: "Biotechnology",
+                                                    },
+                                                    {
+                                                        value: "Chemicals",
+                                                        label: "Chemicals",
+                                                    },
+                                                    {
+                                                        value: "Communications",
+                                                        label: "Communications",
+                                                    },
+                                                    {
+                                                        value: "Construction",
+                                                        label: "Construction",
+                                                    },
+                                                    {
+                                                        value: "Consulting",
+                                                        label: "Consulting",
+                                                    },
+                                                    {
+                                                        value: "Education",
+                                                        label: "Education",
+                                                    },
+                                                    {
+                                                        value: "Electronics",
+                                                        label: "Electronics",
+                                                    },
+                                                    {
+                                                        value: "Energy",
+                                                        label: "Energy",
+                                                    },
+                                                    {
+                                                        value: "Engineering",
+                                                        label: "Engineering",
+                                                    },
+                                                    {
+                                                        value: "Entertainment",
+                                                        label: "Entertainment",
+                                                    },
+                                                    {
+                                                        value: "Environmental",
+                                                        label: "Environmental",
+                                                    },
+                                                    {
+                                                        value: "Finance",
+                                                        label: "Finance",
+                                                    },
+                                                    {
+                                                        value: "Food & Beverage",
+                                                        label: "Food & Beverage",
+                                                    },
+                                                    {
+                                                        value: "Government",
+                                                        label: "Government",
+                                                    },
+                                                    {
+                                                        value: "Healthcare",
+                                                        label: "Healthcare",
+                                                    },
+                                                    {
+                                                        value: "Hospitality",
+                                                        label: "Hospitality",
+                                                    },
+                                                    {
+                                                        value: "Insurance",
+                                                        label: "Insurance",
+                                                    },
+                                                    {
+                                                        value: "Machinery",
+                                                        label: "Machinery",
+                                                    },
+                                                    {
+                                                        value: "Manufacturing",
+                                                        label: "Manufacturing",
+                                                    },
+                                                    {
+                                                        value: "Media",
+                                                        label: "Media",
+                                                    },
+                                                    {
+                                                        value: "Not For Profit",
+                                                        label: "Not For Profit",
+                                                    },
+                                                    {
+                                                        value: "Other",
+                                                        label: "Other",
+                                                    },
+                                                    {
+                                                        value: "Recreation",
+                                                        label: "Recreation",
+                                                    },
+                                                    {
+                                                        value: "Retail",
+                                                        label: "Retail",
+                                                    },
+                                                    {
+                                                        value: "Shipping",
+                                                        label: "Shipping",
+                                                    },
+                                                    {
+                                                        value: "Technology",
+                                                        label: "Technology",
+                                                    },
                                                     {
                                                         value: "Telecommunications",
                                                         label: "Telecommunications",
                                                     },
-                                                    { value: "Transportation", label: "Transportation" },
-                                                    { value: "Utilities", label: "Utilities" },
+                                                    {
+                                                        value: "Transportation",
+                                                        label: "Transportation",
+                                                    },
+                                                    {
+                                                        value: "Utilities",
+                                                        label: "Utilities",
+                                                    },
                                                 ],
                                             }),
                                         }),
@@ -2415,9 +3057,18 @@ export default defineOntology({
                                         type: o.string({
                                             constraint: o.StringConstraint.enum({
                                                 options: [
-                                                    { value: "Hot", label: "Hot" },
-                                                    { value: "Warm", label: "Warm" },
-                                                    { value: "Cold", label: "Cold" },
+                                                    {
+                                                        value: "Hot",
+                                                        label: "Hot",
+                                                    },
+                                                    {
+                                                        value: "Warm",
+                                                        label: "Warm",
+                                                    },
+                                                    {
+                                                        value: "Cold",
+                                                        label: "Cold",
+                                                    },
                                                 ],
                                             }),
                                         }),
@@ -2426,127 +3077,181 @@ export default defineOntology({
                                 {
                                     name: "AnnualRevenue",
                                     displayName: "Annual Revenue",
-                                    type: o.optional({ type: o.double({}) }),
+                                    type: o.optional({
+                                        type: o.double({}),
+                                    }),
                                 },
                                 {
                                     name: "NumberOfEmployees",
                                     displayName: "Employees",
-                                    type: o.optional({ type: o.integer({}) }),
+                                    type: o.optional({
+                                        type: o.integer({}),
+                                    }),
                                 },
                                 {
                                     name: "OwnerId",
                                     displayName: "Owner ID",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "HasOptedOutOfEmail",
                                     displayName: "Email Opt Out",
-                                    type: o.optional({ type: o.boolean({}) }),
+                                    type: o.optional({
+                                        type: o.boolean({}),
+                                    }),
                                 },
                                 {
                                     name: "IsConverted",
                                     displayName: "Converted",
-                                    type: o.optional({ type: o.boolean({}) }),
+                                    type: o.optional({
+                                        type: o.boolean({}),
+                                    }),
                                 },
                                 {
                                     name: "ConvertedDate",
                                     displayName: "Converted Date",
-                                    type: o.optional({ type: o.date({}) }),
+                                    type: o.optional({
+                                        type: o.date({}),
+                                    }),
                                 },
                                 {
                                     name: "ConvertedAccountId",
                                     displayName: "Converted Account ID",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "ConvertedContactId",
                                     displayName: "Converted Contact ID",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "ConvertedOpportunityId",
                                     displayName: "Converted Opportunity ID",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "IsUnreadByOwner",
                                     displayName: "Unread By Owner",
-                                    type: o.optional({ type: o.boolean({}) }),
+                                    type: o.optional({
+                                        type: o.boolean({}),
+                                    }),
                                 },
                                 {
                                     name: "CreatedDate",
                                     displayName: "Created Date",
-                                    type: o.optional({ type: o.timestamp({}) }),
+                                    type: o.optional({
+                                        type: o.timestamp({}),
+                                    }),
                                 },
                                 {
                                     name: "CreatedById",
                                     displayName: "Created By ID",
-                                    type: o.optional({ type: o.objectReference({ objectType: "User" }) }),
+                                    type: o.optional({
+                                        type: o.objectReference({
+                                            objectType: "User",
+                                        }),
+                                    }),
                                 },
                                 {
                                     name: "LastModifiedDate",
                                     displayName: "Last Modified Date",
-                                    type: o.optional({ type: o.timestamp({}) }),
+                                    type: o.optional({
+                                        type: o.timestamp({}),
+                                    }),
                                 },
                                 {
                                     name: "LastModifiedById",
                                     displayName: "Last Modified By ID",
-                                    type: o.optional({ type: o.objectReference({ objectType: "User" }) }),
+                                    type: o.optional({
+                                        type: o.objectReference({
+                                            objectType: "User",
+                                        }),
+                                    }),
                                 },
                                 {
                                     name: "SystemModstamp",
                                     displayName: "System Modstamp",
-                                    type: o.optional({ type: o.timestamp({}) }),
+                                    type: o.optional({
+                                        type: o.timestamp({}),
+                                    }),
                                 },
                                 {
                                     name: "LastActivityDate",
                                     displayName: "Last Activity",
-                                    type: o.optional({ type: o.date({}) }),
+                                    type: o.optional({
+                                        type: o.date({}),
+                                    }),
                                 },
                                 {
                                     name: "LastViewedDate",
                                     displayName: "Last Viewed Date",
-                                    type: o.optional({ type: o.timestamp({}) }),
+                                    type: o.optional({
+                                        type: o.timestamp({}),
+                                    }),
                                 },
                                 {
                                     name: "LastReferencedDate",
                                     displayName: "Last Referenced Date",
-                                    type: o.optional({ type: o.timestamp({}) }),
+                                    type: o.optional({
+                                        type: o.timestamp({}),
+                                    }),
                                 },
                                 {
                                     name: "Jigsaw",
                                     displayName: "Data.com Key",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "JigsawContactId",
                                     displayName: "Jigsaw Contact ID",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "EmailBouncedReason",
                                     displayName: "Email Bounced Reason",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "EmailBouncedDate",
                                     displayName: "Email Bounced Date",
-                                    type: o.optional({ type: o.timestamp({}) }),
+                                    type: o.optional({
+                                        type: o.timestamp({}),
+                                    }),
                                 },
                                 {
                                     name: "IndividualId",
                                     displayName: "Individual ID",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "ActionCadenceId",
                                     displayName: "Cadence ID",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "ActionCadenceAssigneeId",
                                     displayName: "Cadence Assignee ID",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "ActionCadenceState",
@@ -2555,12 +3260,30 @@ export default defineOntology({
                                         type: o.string({
                                             constraint: o.StringConstraint.enum({
                                                 options: [
-                                                    { value: "Running", label: "Running" },
-                                                    { value: "Complete", label: "Complete" },
-                                                    { value: "Initializing", label: "Initializing" },
-                                                    { value: "Paused", label: "Paused" },
-                                                    { value: "Processing", label: "Processing" },
-                                                    { value: "Error", label: "Error" },
+                                                    {
+                                                        value: "Running",
+                                                        label: "Running",
+                                                    },
+                                                    {
+                                                        value: "Complete",
+                                                        label: "Complete",
+                                                    },
+                                                    {
+                                                        value: "Initializing",
+                                                        label: "Initializing",
+                                                    },
+                                                    {
+                                                        value: "Paused",
+                                                        label: "Paused",
+                                                    },
+                                                    {
+                                                        value: "Processing",
+                                                        label: "Processing",
+                                                    },
+                                                    {
+                                                        value: "Error",
+                                                        label: "Error",
+                                                    },
                                                 ],
                                             }),
                                         }),
@@ -2569,32 +3292,44 @@ export default defineOntology({
                                 {
                                     name: "ScheduledResumeDateTime",
                                     displayName: "Cadence Resume Time",
-                                    type: o.optional({ type: o.timestamp({}) }),
+                                    type: o.optional({
+                                        type: o.timestamp({}),
+                                    }),
                                 },
                                 {
                                     name: "ActiveTrackerCount",
                                     displayName: "Total Cadences",
-                                    type: o.optional({ type: o.integer({}) }),
+                                    type: o.optional({
+                                        type: o.integer({}),
+                                    }),
                                 },
                                 {
                                     name: "FirstCallDateTime",
                                     displayName: "First Call Date",
-                                    type: o.optional({ type: o.timestamp({}) }),
+                                    type: o.optional({
+                                        type: o.timestamp({}),
+                                    }),
                                 },
                                 {
                                     name: "FirstEmailDateTime",
                                     displayName: "First Email Date",
-                                    type: o.optional({ type: o.timestamp({}) }),
+                                    type: o.optional({
+                                        type: o.timestamp({}),
+                                    }),
                                 },
                                 {
                                     name: "ActivityMetricId",
                                     displayName: "Activity Metric ID",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                                 {
                                     name: "ActivityMetricRollupId",
                                     displayName: "Activity Metric Rollup ID",
-                                    type: o.optional({ type: o.string({}) }),
+                                    type: o.optional({
+                                        type: o.string({}),
+                                    }),
                                 },
                             ],
                         }),
@@ -2607,18 +3342,50 @@ export default defineOntology({
                 "Searches for an existing lead record. If one isn’t found, creates a new lead record.",
         },
         {
-            meta: { salesforce: { kind: "crud", objectType: "Task", operation: "update" } },
+            meta: {
+                salesforce: {
+                    kind: "crud",
+                    objectType: "Task",
+                    operation: "update",
+                },
+            },
             name: "updateTask",
             displayName: "Update Task",
             parameters: [
-                { name: "recordId", displayName: "Task ID", type: o.objectReference({ objectType: "Task" }) },
-                { name: "WhoId", displayName: "Name ID", type: o.optional({ type: o.string({}) }) },
-                { name: "WhatId", displayName: "Related To ID", type: o.optional({ type: o.string({}) }) },
-                { name: "Subject", displayName: "Subject", type: o.optional({ type: o.string({}) }) },
+                {
+                    name: "recordId",
+                    displayName: "Task ID",
+                    type: o.objectReference({
+                        objectType: "Task",
+                    }),
+                },
+                {
+                    name: "WhoId",
+                    displayName: "Name ID",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "WhatId",
+                    displayName: "Related To ID",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "Subject",
+                    displayName: "Subject",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
                 {
                     name: "ActivityDate",
                     displayName: "Due Date Only",
-                    type: o.optional({ type: o.date({}) }),
+                    type: o.optional({
+                        type: o.date({}),
+                    }),
                 },
                 {
                     name: "Status",
@@ -2627,11 +3394,26 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "Not Started", label: "Not Started" },
-                                    { value: "In Progress", label: "In Progress" },
-                                    { value: "Completed", label: "Completed" },
-                                    { value: "Waiting on someone else", label: "Waiting on someone else" },
-                                    { value: "Deferred", label: "Deferred" },
+                                    {
+                                        value: "Not Started",
+                                        label: "Not Started",
+                                    },
+                                    {
+                                        value: "In Progress",
+                                        label: "In Progress",
+                                    },
+                                    {
+                                        value: "Completed",
+                                        label: "Completed",
+                                    },
+                                    {
+                                        value: "Waiting on someone else",
+                                        label: "Waiting on someone else",
+                                    },
+                                    {
+                                        value: "Deferred",
+                                        label: "Deferred",
+                                    },
                                 ],
                             }),
                         }),
@@ -2644,20 +3426,43 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "High", label: "High" },
-                                    { value: "Normal", label: "Normal" },
-                                    { value: "Low", label: "Low" },
+                                    {
+                                        value: "High",
+                                        label: "High",
+                                    },
+                                    {
+                                        value: "Normal",
+                                        label: "Normal",
+                                    },
+                                    {
+                                        value: "Low",
+                                        label: "Low",
+                                    },
                                 ],
                             }),
                         }),
                     }),
                 },
-                { name: "OwnerId", displayName: "Assigned To ID", type: o.optional({ type: o.string({}) }) },
-                { name: "Description", displayName: "Description", type: o.optional({ type: o.string({}) }) },
+                {
+                    name: "OwnerId",
+                    displayName: "Assigned To ID",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
+                {
+                    name: "Description",
+                    displayName: "Description",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
                 {
                     name: "CallDurationInSeconds",
                     displayName: "Call Duration",
-                    type: o.optional({ type: o.integer({}) }),
+                    type: o.optional({
+                        type: o.integer({}),
+                    }),
                 },
                 {
                     name: "CallType",
@@ -2666,9 +3471,18 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "Internal", label: "Internal" },
-                                    { value: "Inbound", label: "Inbound" },
-                                    { value: "Outbound", label: "Outbound" },
+                                    {
+                                        value: "Internal",
+                                        label: "Internal",
+                                    },
+                                    {
+                                        value: "Inbound",
+                                        label: "Inbound",
+                                    },
+                                    {
+                                        value: "Outbound",
+                                        label: "Outbound",
+                                    },
                                 ],
                             }),
                         }),
@@ -2677,32 +3491,44 @@ export default defineOntology({
                 {
                     name: "CallDisposition",
                     displayName: "Call Result",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                 },
                 {
                     name: "CallObject",
                     displayName: "Call Object Identifier",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                 },
                 {
                     name: "ReminderDateTime",
                     displayName: "Reminder Date/Time",
-                    type: o.optional({ type: o.timestamp({}) }),
+                    type: o.optional({
+                        type: o.timestamp({}),
+                    }),
                 },
                 {
                     name: "IsReminderSet",
                     displayName: "Reminder Set",
-                    type: o.optional({ type: o.boolean({}) }),
+                    type: o.optional({
+                        type: o.boolean({}),
+                    }),
                 },
                 {
                     name: "RecurrenceStartDateOnly",
                     displayName: "Recurrence Start",
-                    type: o.optional({ type: o.date({}) }),
+                    type: o.optional({
+                        type: o.date({}),
+                    }),
                 },
                 {
                     name: "RecurrenceEndDateOnly",
                     displayName: "Recurrence End",
-                    type: o.optional({ type: o.date({}) }),
+                    type: o.optional({
+                        type: o.date({}),
+                    }),
                 },
                 {
                     name: "RecurrenceTimeZoneSidKey",
@@ -2879,7 +3705,10 @@ export default defineOntology({
                                         value: "Pacific/Saipan",
                                         label: "(GMT+10:00) Chamorro Standard Time (Pacific/Saipan)",
                                     },
-                                    { value: "Pacific/Truk", label: "(GMT+10:00) Chuuk Time (Pacific/Truk)" },
+                                    {
+                                        value: "Pacific/Truk",
+                                        label: "(GMT+10:00) Chuuk Time (Pacific/Truk)",
+                                    },
                                     {
                                         value: "Australia/Adelaide",
                                         label: "(GMT+09:30) Australian Central Standard Time (Australia/Adelaide)",
@@ -2896,7 +3725,10 @@ export default defineOntology({
                                         value: "Asia/Chita",
                                         label: "(GMT+09:00) Yakutsk Standard Time (Asia/Chita)",
                                     },
-                                    { value: "Asia/Dili", label: "(GMT+09:00) East Timor Time (Asia/Dili)" },
+                                    {
+                                        value: "Asia/Dili",
+                                        label: "(GMT+09:00) East Timor Time (Asia/Dili)",
+                                    },
                                     {
                                         value: "Asia/Jayapura",
                                         label: "(GMT+09:00) Eastern Indonesia Time (Asia/Jayapura)",
@@ -3041,7 +3873,10 @@ export default defineOntology({
                                         value: "Indian/Christmas",
                                         label: "(GMT+07:00) Christmas Island Time (Indian/Christmas)",
                                     },
-                                    { value: "Asia/Yangon", label: "(GMT+06:30) Myanmar Time (Asia/Yangon)" },
+                                    {
+                                        value: "Asia/Yangon",
+                                        label: "(GMT+06:30) Myanmar Time (Asia/Yangon)",
+                                    },
                                     {
                                         value: "Indian/Cocos",
                                         label: "(GMT+06:30) Cocos Islands Time (Indian/Cocos)",
@@ -3734,7 +4569,10 @@ export default defineOntology({
                                         value: "Atlantic/St_Helena",
                                         label: "(GMT+00:00) Greenwich Mean Time (Atlantic/St_Helena)",
                                     },
-                                    { value: "GMT", label: "(GMT+00:00) Greenwich Mean Time (GMT)" },
+                                    {
+                                        value: "GMT",
+                                        label: "(GMT+00:00) Greenwich Mean Time (GMT)",
+                                    },
                                     {
                                         value: "America/Nuuk",
                                         label: "(GMT-01:00) West Greenland Summer Time (America/Nuuk)",
@@ -4387,7 +5225,10 @@ export default defineOntology({
                                         value: "Pacific/Midway",
                                         label: "(GMT-11:00) Samoa Standard Time (Pacific/Midway)",
                                     },
-                                    { value: "Pacific/Niue", label: "(GMT-11:00) Niue Time (Pacific/Niue)" },
+                                    {
+                                        value: "Pacific/Niue",
+                                        label: "(GMT-11:00) Niue Time (Pacific/Niue)",
+                                    },
                                     {
                                         value: "Pacific/Pago_Pago",
                                         label: "(GMT-11:00) Samoa Standard Time (Pacific/Pago_Pago)",
@@ -4404,13 +5245,34 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "RecursDaily", label: "Recurs Daily" },
-                                    { value: "RecursEveryWeekday", label: "Recurs Every Weekday" },
-                                    { value: "RecursMonthly", label: "Recurs Monthly" },
-                                    { value: "RecursMonthlyNth", label: "Recurs Monthly Nth" },
-                                    { value: "RecursWeekly", label: "Recurs Weekly" },
-                                    { value: "RecursYearly", label: "Recurs Yearly" },
-                                    { value: "RecursYearlyNth", label: "Recurs Yearly Nth" },
+                                    {
+                                        value: "RecursDaily",
+                                        label: "Recurs Daily",
+                                    },
+                                    {
+                                        value: "RecursEveryWeekday",
+                                        label: "Recurs Every Weekday",
+                                    },
+                                    {
+                                        value: "RecursMonthly",
+                                        label: "Recurs Monthly",
+                                    },
+                                    {
+                                        value: "RecursMonthlyNth",
+                                        label: "Recurs Monthly Nth",
+                                    },
+                                    {
+                                        value: "RecursWeekly",
+                                        label: "Recurs Weekly",
+                                    },
+                                    {
+                                        value: "RecursYearly",
+                                        label: "Recurs Yearly",
+                                    },
+                                    {
+                                        value: "RecursYearlyNth",
+                                        label: "Recurs Yearly Nth",
+                                    },
                                 ],
                             }),
                         }),
@@ -4419,17 +5281,23 @@ export default defineOntology({
                 {
                     name: "RecurrenceInterval",
                     displayName: "Recurrence Interval",
-                    type: o.optional({ type: o.integer({}) }),
+                    type: o.optional({
+                        type: o.integer({}),
+                    }),
                 },
                 {
                     name: "RecurrenceDayOfWeekMask",
                     displayName: "Recurrence Day of Week Mask",
-                    type: o.optional({ type: o.integer({}) }),
+                    type: o.optional({
+                        type: o.integer({}),
+                    }),
                 },
                 {
                     name: "RecurrenceDayOfMonth",
                     displayName: "Recurrence Day of Month",
-                    type: o.optional({ type: o.integer({}) }),
+                    type: o.optional({
+                        type: o.integer({}),
+                    }),
                 },
                 {
                     name: "RecurrenceInstance",
@@ -4438,11 +5306,26 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "First", label: "1st" },
-                                    { value: "Second", label: "2nd" },
-                                    { value: "Third", label: "3rd" },
-                                    { value: "Fourth", label: "4th" },
-                                    { value: "Last", label: "last" },
+                                    {
+                                        value: "First",
+                                        label: "1st",
+                                    },
+                                    {
+                                        value: "Second",
+                                        label: "2nd",
+                                    },
+                                    {
+                                        value: "Third",
+                                        label: "3rd",
+                                    },
+                                    {
+                                        value: "Fourth",
+                                        label: "4th",
+                                    },
+                                    {
+                                        value: "Last",
+                                        label: "last",
+                                    },
                                 ],
                             }),
                         }),
@@ -4455,18 +5338,54 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "January", label: "January" },
-                                    { value: "February", label: "February" },
-                                    { value: "March", label: "March" },
-                                    { value: "April", label: "April" },
-                                    { value: "May", label: "May" },
-                                    { value: "June", label: "June" },
-                                    { value: "July", label: "July" },
-                                    { value: "August", label: "August" },
-                                    { value: "September", label: "September" },
-                                    { value: "October", label: "October" },
-                                    { value: "November", label: "November" },
-                                    { value: "December", label: "December" },
+                                    {
+                                        value: "January",
+                                        label: "January",
+                                    },
+                                    {
+                                        value: "February",
+                                        label: "February",
+                                    },
+                                    {
+                                        value: "March",
+                                        label: "March",
+                                    },
+                                    {
+                                        value: "April",
+                                        label: "April",
+                                    },
+                                    {
+                                        value: "May",
+                                        label: "May",
+                                    },
+                                    {
+                                        value: "June",
+                                        label: "June",
+                                    },
+                                    {
+                                        value: "July",
+                                        label: "July",
+                                    },
+                                    {
+                                        value: "August",
+                                        label: "August",
+                                    },
+                                    {
+                                        value: "September",
+                                        label: "September",
+                                    },
+                                    {
+                                        value: "October",
+                                        label: "October",
+                                    },
+                                    {
+                                        value: "November",
+                                        label: "November",
+                                    },
+                                    {
+                                        value: "December",
+                                        label: "December",
+                                    },
                                 ],
                             }),
                         }),
@@ -4479,12 +5398,18 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "RecurrenceRegenerateAfterDueDate", label: "After due date" },
+                                    {
+                                        value: "RecurrenceRegenerateAfterDueDate",
+                                        label: "After due date",
+                                    },
                                     {
                                         value: "RecurrenceRegenerateAfterToday",
                                         label: "After date completed",
                                     },
-                                    { value: "RecurrenceRegenerated", label: "(Task Closed)" },
+                                    {
+                                        value: "RecurrenceRegenerated",
+                                        label: "(Task Closed)",
+                                    },
                                 ],
                             }),
                         }),
@@ -4497,9 +5422,18 @@ export default defineOntology({
                         type: o.string({
                             constraint: o.StringConstraint.enum({
                                 options: [
-                                    { value: "FTX", label: "FTX" },
-                                    { value: "Deployment", label: "Deployment" },
-                                    { value: "Customer Demo", label: "Customer Demo" },
+                                    {
+                                        value: "FTX",
+                                        label: "FTX",
+                                    },
+                                    {
+                                        value: "Deployment",
+                                        label: "Deployment",
+                                    },
+                                    {
+                                        value: "Customer Demo",
+                                        label: "Customer Demo",
+                                    },
                                 ],
                             }),
                         }),
@@ -4508,100 +5442,185 @@ export default defineOntology({
                 {
                     name: "Customer_POC__c",
                     displayName: "Customer POC",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                 },
-                { name: "Mission__c", displayName: "Mission", type: o.optional({ type: o.string({}) }) },
+                {
+                    name: "Mission__c",
+                    displayName: "Mission",
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
+                },
             ],
             logic: [
                 o.ActionLogicStep.updateObject({
-                    object: { name: "recordId" },
+                    object: {
+                        name: "recordId",
+                    },
                     values: [
-                        { property: ["WhoId"], value: o.Expression.inputReference({ name: "WhoId" }) },
-                        { property: ["WhatId"], value: o.Expression.inputReference({ name: "WhatId" }) },
-                        { property: ["Subject"], value: o.Expression.inputReference({ name: "Subject" }) },
+                        {
+                            property: ["WhoId"],
+                            value: o.Expression.inputReference({
+                                name: "WhoId",
+                            }),
+                        },
+                        {
+                            property: ["WhatId"],
+                            value: o.Expression.inputReference({
+                                name: "WhatId",
+                            }),
+                        },
+                        {
+                            property: ["Subject"],
+                            value: o.Expression.inputReference({
+                                name: "Subject",
+                            }),
+                        },
                         {
                             property: ["ActivityDate"],
-                            value: o.Expression.inputReference({ name: "ActivityDate" }),
+                            value: o.Expression.inputReference({
+                                name: "ActivityDate",
+                            }),
                         },
-                        { property: ["Status"], value: o.Expression.inputReference({ name: "Status" }) },
-                        { property: ["Priority"], value: o.Expression.inputReference({ name: "Priority" }) },
-                        { property: ["OwnerId"], value: o.Expression.inputReference({ name: "OwnerId" }) },
+                        {
+                            property: ["Status"],
+                            value: o.Expression.inputReference({
+                                name: "Status",
+                            }),
+                        },
+                        {
+                            property: ["Priority"],
+                            value: o.Expression.inputReference({
+                                name: "Priority",
+                            }),
+                        },
+                        {
+                            property: ["OwnerId"],
+                            value: o.Expression.inputReference({
+                                name: "OwnerId",
+                            }),
+                        },
                         {
                             property: ["Description"],
-                            value: o.Expression.inputReference({ name: "Description" }),
+                            value: o.Expression.inputReference({
+                                name: "Description",
+                            }),
                         },
                         {
                             property: ["CallDurationInSeconds"],
-                            value: o.Expression.inputReference({ name: "CallDurationInSeconds" }),
+                            value: o.Expression.inputReference({
+                                name: "CallDurationInSeconds",
+                            }),
                         },
-                        { property: ["CallType"], value: o.Expression.inputReference({ name: "CallType" }) },
+                        {
+                            property: ["CallType"],
+                            value: o.Expression.inputReference({
+                                name: "CallType",
+                            }),
+                        },
                         {
                             property: ["CallDisposition"],
-                            value: o.Expression.inputReference({ name: "CallDisposition" }),
+                            value: o.Expression.inputReference({
+                                name: "CallDisposition",
+                            }),
                         },
                         {
                             property: ["CallObject"],
-                            value: o.Expression.inputReference({ name: "CallObject" }),
+                            value: o.Expression.inputReference({
+                                name: "CallObject",
+                            }),
                         },
                         {
                             property: ["ReminderDateTime"],
-                            value: o.Expression.inputReference({ name: "ReminderDateTime" }),
+                            value: o.Expression.inputReference({
+                                name: "ReminderDateTime",
+                            }),
                         },
                         {
                             property: ["IsReminderSet"],
-                            value: o.Expression.inputReference({ name: "IsReminderSet" }),
+                            value: o.Expression.inputReference({
+                                name: "IsReminderSet",
+                            }),
                         },
                         {
                             property: ["RecurrenceStartDateOnly"],
-                            value: o.Expression.inputReference({ name: "RecurrenceStartDateOnly" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceStartDateOnly",
+                            }),
                         },
                         {
                             property: ["RecurrenceEndDateOnly"],
-                            value: o.Expression.inputReference({ name: "RecurrenceEndDateOnly" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceEndDateOnly",
+                            }),
                         },
                         {
                             property: ["RecurrenceTimeZoneSidKey"],
-                            value: o.Expression.inputReference({ name: "RecurrenceTimeZoneSidKey" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceTimeZoneSidKey",
+                            }),
                         },
                         {
                             property: ["RecurrenceType"],
-                            value: o.Expression.inputReference({ name: "RecurrenceType" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceType",
+                            }),
                         },
                         {
                             property: ["RecurrenceInterval"],
-                            value: o.Expression.inputReference({ name: "RecurrenceInterval" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceInterval",
+                            }),
                         },
                         {
                             property: ["RecurrenceDayOfWeekMask"],
-                            value: o.Expression.inputReference({ name: "RecurrenceDayOfWeekMask" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceDayOfWeekMask",
+                            }),
                         },
                         {
                             property: ["RecurrenceDayOfMonth"],
-                            value: o.Expression.inputReference({ name: "RecurrenceDayOfMonth" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceDayOfMonth",
+                            }),
                         },
                         {
                             property: ["RecurrenceInstance"],
-                            value: o.Expression.inputReference({ name: "RecurrenceInstance" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceInstance",
+                            }),
                         },
                         {
                             property: ["RecurrenceMonthOfYear"],
-                            value: o.Expression.inputReference({ name: "RecurrenceMonthOfYear" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceMonthOfYear",
+                            }),
                         },
                         {
                             property: ["RecurrenceRegeneratedType"],
-                            value: o.Expression.inputReference({ name: "RecurrenceRegeneratedType" }),
+                            value: o.Expression.inputReference({
+                                name: "RecurrenceRegeneratedType",
+                            }),
                         },
                         {
                             property: ["Event_Type__c"],
-                            value: o.Expression.inputReference({ name: "Event_Type__c" }),
+                            value: o.Expression.inputReference({
+                                name: "Event_Type__c",
+                            }),
                         },
                         {
                             property: ["Customer_POC__c"],
-                            value: o.Expression.inputReference({ name: "Customer_POC__c" }),
+                            value: o.Expression.inputReference({
+                                name: "Customer_POC__c",
+                            }),
                         },
                         {
                             property: ["Mission__c"],
-                            value: o.Expression.inputReference({ name: "Mission__c" }),
+                            value: o.Expression.inputReference({
+                                name: "Mission__c",
+                            }),
                         },
                     ],
                 }),
@@ -4616,77 +5635,99 @@ export default defineOntology({
                 {
                     name: "meetingOwnerId",
                     displayName: "Meeting Owner ID",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "Optional. The ID of the Salesforce Inbox user who owns the meeting. If no owner is specified, the ID of the current user is used.",
                 },
                 {
                     name: "attendeeEmailAddresses",
                     displayName: "Attendee Email Addresses",
-                    type: o.list({ elementType: o.string({}) }),
+                    type: o.list({
+                        elementType: o.string({}),
+                    }),
                     description:
                         "A list of the meeting attendees’ email addresses, excluding the meeting owner.",
                 },
                 {
                     name: "metadataTargetId",
                     displayName: "Metadata Target ID",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "Optional. The target record ID associated with a lead, contact, or person account. This ID typically belongs to the attendee and is used to connect the meeting with the Action Cadence Step Tracker used by the agent to engage with the target.",
                 },
                 {
                     name: "metadataOrchestrationId",
                     displayName: "Metadata Orchestration ID",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "Optional. The ID of the this action’s orchestration. The ID can be an Action Cadence Step Tracker or other orchestration. The ID associates the meeting with the Action Cadence Step Tracker used by the agent to engage with the target.",
                 },
                 {
                     name: "startDate",
                     displayName: "Start Date",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "The start date in ISO date-time format for when to begin looking for available meeting time slots.",
                 },
                 {
                     name: "endDate",
                     displayName: "End Date",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "The end date in ISO date-time format for when to stop looking for available meeting time slots.",
                 },
                 {
                     name: "timeZone",
                     displayName: "Time Zone",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "Optional. The TimeZoneSidKey used to look up available meeting time slots. When not specified, the value is the same TimeZoneSidKey as the Meeting Owner.",
                 },
                 {
                     name: "numberOfTimeSlots",
                     displayName: "Max Number of Time Slots",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "Optional. The maximum number of meeting time slots to look for. When no number is set, the default value is 3.",
                 },
                 {
                     name: "limitPerDay",
                     displayName: "Limit Per Day",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "Optional. The maximum number of meeting time slots to find for a given date. When no number is set, value defaults to 1.",
                 },
                 {
                     name: "meetingName",
                     displayName: "Meeting Name",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description:
                         "Optional. The name of the scheduled meeting. When no name is entered, the default value is “Meeting with attendee”.",
                 },
                 {
                     name: "meetingDescription",
                     displayName: "Meeting Description",
-                    type: o.optional({ type: o.string({}) }),
+                    type: o.optional({
+                        type: o.string({}),
+                    }),
                     description: "Optional. A description of the scheduled meeting.",
                 },
             ],
@@ -4695,34 +5736,44 @@ export default defineOntology({
                     {
                         name: "timeSlots",
                         displayName: "Time Slots",
-                        type: o.optional({ type: o.string({}) }),
+                        type: o.optional({
+                            type: o.string({}),
+                        }),
                         description:
                             "The list of available time slots for booking a meeting from the Salesforce Inbox user’s calendar.",
                     },
                     {
                         name: "epochTimes",
                         displayName: "Epoch Times",
-                        type: o.optional({ type: o.string({}) }),
+                        type: o.optional({
+                            type: o.string({}),
+                        }),
                         description:
                             "The epoch time values in milliseconds corresponding to the available time slots.",
                     },
                     {
                         name: "meetingRequestId",
                         displayName: "Meeting Request ID",
-                        type: o.optional({ type: o.string({}) }),
+                        type: o.optional({
+                            type: o.string({}),
+                        }),
                         description:
                             "The ID of the meeting request associated with the group of generated time slots.",
                     },
                     {
                         name: "outputErrorMessage",
                         displayName: "Error Message",
-                        type: o.optional({ type: o.string({}) }),
+                        type: o.optional({
+                            type: o.string({}),
+                        }),
                         description: "The error message returned by the Get Available Meeting Times action.",
                     },
                     {
                         name: "outputErrorCode",
                         displayName: "Error Code",
-                        type: o.optional({ type: o.string({}) }),
+                        type: o.optional({
+                            type: o.string({}),
+                        }),
                         description: "The error code returned by the Get Available Meeting Times action.",
                     },
                 ],

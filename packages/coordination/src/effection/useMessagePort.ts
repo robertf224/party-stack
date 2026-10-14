@@ -28,7 +28,10 @@ export function useMessagePort(
         port.addEventListener("messageerror", close);
         port.addEventListener("close", close);
         port.start?.();
-        const resourceHandle: MessagePortResource = { port, [Symbol.iterator]: messages[Symbol.iterator] };
+        const resourceHandle: MessagePortResource = {
+            port,
+            [Symbol.iterator]: messages[Symbol.iterator],
+        };
         try {
             yield* race([closed.operation, provide(resourceHandle)]);
         } finally {

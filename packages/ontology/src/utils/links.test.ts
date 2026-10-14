@@ -25,8 +25,16 @@ describe("resolveLinkHop", () => {
             linkTypes: [
                 {
                     id: "postAuthor",
-                    source: { objectType: "Post", name: "posts", displayName: "Posts" },
-                    target: { objectType: "Author", name: "author", displayName: "Author" },
+                    source: {
+                        objectType: "Post",
+                        name: "posts",
+                        displayName: "Posts",
+                    },
+                    target: {
+                        objectType: "Author",
+                        name: "author",
+                        displayName: "Author",
+                    },
                     foreignKey: "authorId",
                     cardinality: "many",
                 },
@@ -45,8 +53,16 @@ describe("resolveLinkHop", () => {
             linkTypes: [
                 {
                     id: "postAuthor",
-                    source: { objectType: "Post", name: "posts", displayName: "Posts" },
-                    target: { objectType: "Author", name: "author", displayName: "Author" },
+                    source: {
+                        objectType: "Post",
+                        name: "posts",
+                        displayName: "Posts",
+                    },
+                    target: {
+                        objectType: "Author",
+                        name: "author",
+                        displayName: "Author",
+                    },
                     foreignKey: "authorId",
                     cardinality: "many" as const,
                 },
@@ -63,8 +79,16 @@ describe("resolveLinkHop", () => {
             linkTypes: [
                 {
                     id: "employeeManager",
-                    source: { objectType: "Employee", name: "reports", displayName: "Reports" },
-                    target: { objectType: "Employee", name: "manager", displayName: "Manager" },
+                    source: {
+                        objectType: "Employee",
+                        name: "reports",
+                        displayName: "Reports",
+                    },
+                    target: {
+                        objectType: "Employee",
+                        name: "manager",
+                        displayName: "Manager",
+                    },
                     foreignKey: "managerId",
                     cardinality: "many" as const,
                 },

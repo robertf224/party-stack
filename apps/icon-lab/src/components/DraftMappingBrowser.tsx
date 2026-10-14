@@ -265,7 +265,9 @@ export function DraftMappingBrowser({ catalog, draft }: { catalog: CatalogFile; 
     function exportFeedback() {
         const blob = new Blob(
             [JSON.stringify(createMappingFeedbackFile(feedback, undefined, confirmedConcepts), null, 2)],
-            { type: "application/json" }
+            {
+                type: "application/json",
+            }
         );
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
@@ -474,7 +476,10 @@ export function DraftMappingBrowser({ catalog, draft }: { catalog: CatalogFile; 
                                 const providerFeedback = feedbackByKey.get(
                                     mappingFeedbackKey(selected.concept, providerName)
                                 );
-                                const decisions: Array<{ value: MappingFeedbackDecision; label: string }> = [
+                                const decisions: Array<{
+                                    value: MappingFeedbackDecision;
+                                    label: string;
+                                }> = [
                                     { value: "approve", label: "Approve" },
                                     { value: "reject", label: "Reject" },
                                 ];

@@ -38,17 +38,20 @@ export function CommandBar() {
 
     const { data: objectTypes } = useLiveQuery(
         (q) =>
-            q
-                .from({ ot: metaOntology.objects.ObjectType })
-                .select(({ ot }) => ({ name: ot.name, displayName: ot.displayName })),
+            q.from({ ot: metaOntology.objects.ObjectType }).select(({ ot }) => ({
+                name: ot.name,
+                displayName: ot.displayName,
+            })),
         []
     );
 
     const { data: linkTypes } = useLiveQuery(
         (q) =>
-            q
-                .from({ lt: metaOntology.objects.LinkType })
-                .select(({ lt }) => ({ id: lt.id, sourceName: lt.source, targetName: lt.target })),
+            q.from({ lt: metaOntology.objects.LinkType }).select(({ lt }) => ({
+                id: lt.id,
+                sourceName: lt.source,
+                targetName: lt.target,
+            })),
         []
     );
 

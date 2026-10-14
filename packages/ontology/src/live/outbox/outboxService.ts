@@ -23,7 +23,10 @@ export function serveOntologyOutbox(
             publishResult({
                 type: "rejected",
                 id,
-                error: { name: "OutboxEntryRemoved", message: "Outbox entry removed." },
+                error: {
+                    name: "OutboxEntryRemoved",
+                    message: "Outbox entry removed.",
+                },
             });
         },
         retry: ({ id }) => repository.retry(id),
@@ -45,12 +48,20 @@ export function serveOntologyOutbox(
         nextRetryAt: () => repository.nextRetryAt(),
         complete: async ({ id, executionId, result }) => {
             await repository.complete(id, executionId);
-            publishResult({ type: "completed", id, result });
+            publishResult({
+                type: "completed",
+                id,
+                result,
+            });
         },
         fail: async ({ id, executionId, retryable, retryAt, error }) => {
             const entry = await repository.fail(id, executionId, retryable, error, retryAt);
             if (!retryable) {
-                publishResult({ type: "rejected", id, error });
+                publishResult({
+                    type: "rejected",
+                    id,
+                    error,
+                });
             }
             return entry;
         },

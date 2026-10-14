@@ -10,7 +10,10 @@ describe("createHelmChartProductManifest", () => {
                 helmChartName: "oci://ghcr.io/valinor-enterprises/streamline-studio-chart",
                 helmChartVersion: "2026.22.2-031979fc",
                 artifacts: [
-                    { type: "oci", uri: "ghcr.io/valinor-enterprises/streamline-studio:2026.22.2-031979fc" },
+                    {
+                        type: "oci",
+                        uri: "ghcr.io/valinor-enterprises/streamline-studio:2026.22.2-031979fc",
+                    },
                 ],
                 productDependencies: [
                     {
@@ -37,7 +40,10 @@ describe("createHelmChartProductManifest", () => {
                     "helm-repository-url": "oci://ghcr.io/valinor-enterprises/streamline-studio-chart",
                 },
                 artifacts: [
-                    { type: "oci", uri: "ghcr.io/valinor-enterprises/streamline-studio:2026.22.2-031979fc" },
+                    {
+                        type: "oci",
+                        uri: "ghcr.io/valinor-enterprises/streamline-studio:2026.22.2-031979fc",
+                    },
                 ],
                 "product-dependencies": [
                     {

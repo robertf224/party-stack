@@ -15,7 +15,9 @@ function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
             reject(
                 signal.reason instanceof Error
                     ? signal.reason
-                    : new Error("Sleep was aborted.", { cause: signal.reason })
+                    : new Error("Sleep was aborted.", {
+                          cause: signal.reason,
+                      })
             );
         };
         const timeout = setTimeout(() => {
@@ -26,7 +28,9 @@ function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
             abort();
             return;
         }
-        signal.addEventListener("abort", abort, { once: true });
+        signal.addEventListener("abort", abort, {
+            once: true,
+        });
     });
 }
 

@@ -66,7 +66,9 @@ function createClientOntology(userEmail: string) {
             createHttpRemoteOntologyTransport({
                 url: "/api/remote-ontology/",
                 ir,
-                headers: () => ({ "x-demo-user-email": userEmail }),
+                headers: () => ({
+                    "x-demo-user-email": userEmail,
+                }),
             }),
     });
     return createRemoteNotesLiveOntology({
@@ -74,8 +76,13 @@ function createClientOntology(userEmail: string) {
         id: "remote-notes",
         runtime: createWebRuntime,
         persistObjects: true,
-        writes: { defaultMode: "outbox", defaultVisibility: "optimistic" },
-        context: { user: userEmail },
+        writes: {
+            defaultMode: "outbox",
+            defaultVisibility: "optimistic",
+        },
+        context: {
+            user: userEmail,
+        },
     });
 }
 
@@ -178,7 +185,11 @@ function SelectChevron() {
     );
 }
 
-type NotesLayoutProps = { selectedNoteId?: string; showEditor: boolean; hideListOnMobile?: boolean };
+type NotesLayoutProps = {
+    selectedNoteId?: string;
+    showEditor: boolean;
+    hideListOnMobile?: boolean;
+};
 
 export function NotesHomePage() {
     return <NotesLayout showEditor={false} />;
@@ -448,7 +459,10 @@ function NoteEditor({
             },
         } satisfies attachment;
 
-        await ontology.actions.createNoteAttachment({ note: noteId, attachment: createdAttachment });
+        await ontology.actions.createNoteAttachment({
+            note: noteId,
+            attachment: createdAttachment,
+        });
 
         return markdownImage(fileAltText(file), attachmentContentUrl(attachmentForUrl, userEmail));
     }

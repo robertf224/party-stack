@@ -21,7 +21,13 @@ export interface UserCollectionOpts {
 
 export function userCollectionOptions({ client, lens }: UserCollectionOpts) {
     const project = (user: User) =>
-        applyLensToObject({ ...user, profilePicture: foundryUserProfilePictureAttachment(user.id) }, lens);
+        applyLensToObject(
+            {
+                ...user,
+                profilePicture: foundryUserProfilePictureAttachment(user.id),
+            },
+            lens
+        );
     return queryCollectionOptions<Record<string, unknown>>({
         queryClient: new QueryClient(),
         getKey: (user) => user.id as string,

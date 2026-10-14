@@ -4,7 +4,13 @@ import { generateLive } from "./live.js";
 describe("generateLive", () => {
     it("combines runtime value and type imports", () => {
         const output = generateLive(
-            { types: [], objectTypes: [], linkTypes: [], actionTypes: [], queryFunctionTypes: [] },
+            {
+                types: [],
+                objectTypes: [],
+                linkTypes: [],
+                actionTypes: [],
+                queryFunctionTypes: [],
+            },
             {
                 ontologyImportPath: "../ontology.js",
                 ontologyTypesImportPath: "./types.js",

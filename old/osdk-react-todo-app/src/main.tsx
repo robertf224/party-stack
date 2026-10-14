@@ -15,10 +15,22 @@ const queryClient = new QueryClient();
 
 const router = createBrowserRouter(
     [
-        { path: "/", element: <App /> },
-        { path: "/login", element: <Login /> },
-        { path: "/auth/callback", element: <AuthCallback /> },
-        { path: "/task/:taskId", element: <TaskPage /> },
+        {
+            path: "/",
+            element: <App />,
+        },
+        {
+            path: "/login",
+            element: <Login />,
+        },
+        {
+            path: "/auth/callback",
+            element: <AuthCallback />,
+        },
+        {
+            path: "/task/:taskId",
+            element: <TaskPage />,
+        },
     ],
     { basename: import.meta.env.BASE_URL }
 );

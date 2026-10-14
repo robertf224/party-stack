@@ -518,7 +518,10 @@ TanStack currently provides no public `queryOnce` option that propagates
 likely requires a small TanStack extension such as:
 
 ```ts
-queryOnce({ query, source: "device-only" | "device-then-remote" });
+queryOnce({
+    query,
+    source: "device-only" | "device-then-remote",
+});
 ```
 
 Without that extension Party Stack would need a custom query wrapper coupled
@@ -670,7 +673,13 @@ atomic commit on success, and rollback on throw. A Foundry function can call
 the same semantic mutator used for client prediction:
 
 ```ts
-await runFoundryOntologyMutator({ ir, client, mutator, args, objectTypes: { Task } });
+await runFoundryOntologyMutator({
+    ir,
+    client,
+    mutator,
+    args,
+    objectTypes: { Task },
+});
 ```
 
 This keeps client prediction and Foundry authoritative execution on one
@@ -904,7 +913,9 @@ Responsibilities:
 Live actions expose one callable async operation:
 
 ```ts
-await ontology.actions.createTask(parameters, { idempotencyKey });
+await ontology.actions.createTask(parameters, {
+    idempotencyKey,
+});
 ```
 
 `LiveOntologyActionExecution`, public `mutationFn`, and public `mutator`

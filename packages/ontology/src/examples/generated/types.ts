@@ -3,7 +3,13 @@
 import * as v from "@party-stack/ontology/values";
 
 /** A mailing address. */
-export type Address = { line1: string; line2?: string; city: string; state: string; zip: string };
+export type Address = {
+    line1: string;
+    line2?: string;
+    city: string;
+    state: string;
+    zip: string;
+};
 
 /** A blog author. */
 export type Author = {
@@ -48,11 +54,27 @@ export type CreatePostParameters = {
     tags: Array<string>;
     createdAt?: v.timestamp;
 };
-export type SearchPostsParameters = { query: string; limit?: v.integer | undefined };
+export type SearchPostsParameters = {
+    query: string;
+    limit?: v.integer | undefined;
+};
 /** Search blog posts by query text. */
 export type SearchPostsReturn = Array<string>;
 export type BlogOntology = {
-    objectTypes: { Author: Author; Post: Post; Comment: Comment };
-    actionTypes: { createPost: { parameters: CreatePostParameters } };
-    queryFunctionTypes: { searchPosts: { parameters: SearchPostsParameters; returnType: SearchPostsReturn } };
+    objectTypes: {
+        Author: Author;
+        Post: Post;
+        Comment: Comment;
+    };
+    actionTypes: {
+        createPost: {
+            parameters: CreatePostParameters;
+        };
+    };
+    queryFunctionTypes: {
+        searchPosts: {
+            parameters: SearchPostsParameters;
+            returnType: SearchPostsReturn;
+        };
+    };
 };

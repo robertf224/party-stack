@@ -12,7 +12,12 @@ const idField = (description: string): FieldDef => ({
 
 function addRuntimeId(type: NamedTypeDef, description: string): NamedTypeDef {
     invariant(type.type.kind === "struct", `${type.name} must be a struct.`);
-    return { ...type, type: o.struct({ fields: [idField(description), ...type.type.value.fields] }) };
+    return {
+        ...type,
+        type: o.struct({
+            fields: [idField(description), ...type.type.value.fields],
+        }),
+    };
 }
 
 function addRuntimeMetaFields(type: NamedTypeDef): NamedTypeDef {
@@ -98,7 +103,11 @@ export default {
         {
             id: "LinkType:source",
             source: { objectType: "LinkType", name: "outgoingLinkTypes", displayName: "Outgoing link types" },
-            target: { objectType: "ObjectType", name: "source", displayName: "Source" },
+            target: {
+                objectType: "ObjectType",
+                name: "source",
+                displayName: "Source",
+            },
             foreignKey: "source.objectType",
             cardinality: "many",
         },

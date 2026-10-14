@@ -183,7 +183,9 @@ export class HostCore {
                 abort();
                 break;
             }
-            signal.addEventListener("abort", abort, { once: true });
+            signal.addEventListener("abort", abort, {
+                once: true,
+            });
         }
         invocation.removeQueuedAbort = () => {
             for (const signal of signals) {

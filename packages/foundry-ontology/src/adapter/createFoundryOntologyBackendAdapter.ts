@@ -45,7 +45,10 @@ export function isFoundryNotFoundError(error: unknown): boolean {
     if (typeof error !== "object" || error === null) {
         return false;
     }
-    const foundryError = error as { statusCode?: unknown; errorCode?: unknown };
+    const foundryError = error as {
+        statusCode?: unknown;
+        errorCode?: unknown;
+    };
     return foundryError.statusCode === 404 || foundryError.errorCode === "NOT_FOUND";
 }
 
@@ -61,7 +64,9 @@ export interface FoundryUsersIntegration {
 }
 
 type CollectionWithUtils = Collection<Record<string, unknown>, string | number, ObjectCollectionUtils>;
-type ApplyActionResult = Awaited<ReturnType<typeof Actions.applyWithOverrides>> & { operationId?: string };
+type ApplyActionResult = Awaited<ReturnType<typeof Actions.applyWithOverrides>> & {
+    operationId?: string;
+};
 
 function serializeOverrideValue(value: unknown): string {
     if (typeof value === "string") {
@@ -139,7 +144,10 @@ function prepareFoundryActionInvocation(options: {
     codec: ReturnType<typeof createFoundryCodec>;
 }): {
     parameters: Record<string, unknown>;
-    overrides: { uniqueIdentifierLinkIdValues: Record<string, string>; actionExecutionTime?: string };
+    overrides: {
+        uniqueIdentifierLinkIdValues: Record<string, string>;
+        actionExecutionTime?: string;
+    };
 } {
     const actionType = options.ir.actionTypes.find((candidate) => candidate.name === options.name);
     if (!actionType) {
@@ -175,7 +183,13 @@ function prepareFoundryActionInvocation(options: {
         }
     }
 
-    return { parameters, overrides: { uniqueIdentifierLinkIdValues, actionExecutionTime } };
+    return {
+        parameters,
+        overrides: {
+            uniqueIdentifierLinkIdValues,
+            actionExecutionTime,
+        },
+    };
 }
 
 export interface CreateFoundryOntologyBackendAdapterOptions {
@@ -213,7 +227,10 @@ export function createFoundryOntologyBackendAdapter(
             const filename = getAttachmentName(blob) ?? "";
             if (!isFoundryAttachmentRid(attachment.id)) {
                 const uploaded = await Attachments.upload(opts.client, blob, { filename });
-                return { ...attachment, id: uploaded.rid };
+                return {
+                    ...attachment,
+                    id: uploaded.rid,
+                };
             }
             try {
                 await Attachments.get(opts.client, attachment.id);
@@ -223,7 +240,10 @@ export function createFoundryOntologyBackendAdapter(
                     throw error;
                 }
             }
-            await Attachments.uploadWithRid(opts.client, attachment.id, blob, { filename, preview: true });
+            await Attachments.uploadWithRid(opts.client, attachment.id, blob, {
+                filename,
+                preview: true,
+            });
         },
         getAttachmentContent: async (attachment) => {
             const userContent = await opts.users?.getAttachmentContent?.(opts.client, attachment);
@@ -292,7 +312,12 @@ export function createFoundryOntologyBackendAdapter(
                     source.property,
                     { preview: true }
                 );
-                return { ...result, size: Number(info.sizeBytes), type: info.mediaType, name: info.path };
+                return {
+                    ...result,
+                    size: Number(info.sizeBytes),
+                    type: info.mediaType,
+                    name: info.path,
+                };
             }
             const metadata = await Attachments.get(opts.client, attachment.id);
             return {
@@ -323,7 +348,12 @@ export function createFoundryOntologyBackendAdapter(
             });
         },
         validateAction: async (name: string, parameters: Record<string, unknown>) => {
-            const invocation = prepareFoundryActionInvocation({ ir: opts.ir, name, parameters, codec });
+            const invocation = prepareFoundryActionInvocation({
+                ir: opts.ir,
+                name,
+                parameters,
+                codec,
+            });
 
             let result: ApplyActionResult;
             try {
@@ -332,7 +362,12 @@ export function createFoundryOntologyBackendAdapter(
                     opts.client.ontologyRid,
                     toFoundryActionTypeName(name),
                     {
-                        request: { options: { mode: "VALIDATE_ONLY" }, parameters: invocation.parameters },
+                        request: {
+                            options: {
+                                mode: "VALIDATE_ONLY",
+                            },
+                            parameters: invocation.parameters,
+                        },
                         overrides: invocation.overrides,
                     },
                     // oxlint-disable-next-line typescript/no-unsafe-argument
@@ -358,8 +393,14 @@ export function createFoundryOntologyBackendAdapter(
                 certain: true,
                 value:
                     result.validation.result === "VALID"
-                        ? { kind: "ok", value: undefined }
-                        : { kind: "err", value: getFoundryValidationIssues(result) },
+                        ? {
+                              kind: "ok",
+                              value: undefined,
+                          }
+                        : {
+                              kind: "err",
+                              value: getFoundryValidationIssues(result),
+                          },
             };
         },
         validateActionDraft: async (
@@ -458,7 +499,10 @@ export function createFoundryOntologyBackendAdapter(
                     toFoundryActionTypeName(name),
                     {
                         request: {
-                            options: { mode: "VALIDATE_AND_EXECUTE", returnEdits: "ALL_V2_WITH_DELETIONS" },
+                            options: {
+                                mode: "VALIDATE_AND_EXECUTE",
+                                returnEdits: "ALL_V2_WITH_DELETIONS",
+                            },
                             parameters: invocation.parameters,
                         },
                         overrides: invocation.overrides,
@@ -497,7 +541,9 @@ export function createFoundryOntologyBackendAdapter(
             if (attachmentIdMappings.length === 0) {
                 return undefined;
             }
-            return { attachmentIdMappings };
+            return {
+                attachmentIdMappings,
+            };
         },
         runQueryFunction: async (name, parameters) => {
             const queryFunctionType = opts.ir.queryFunctionTypes.find((candidate) => candidate.name === name);
@@ -531,9 +577,16 @@ export function createFoundryOntologyBackendAdapter(
 export type CreateFoundryOntologyBackendOptions<
     Context extends Record<string, unknown> = Record<string, unknown>,
 > = (
-    | { client: OntologyClient }
-    | { createClient: (ir: OntologyIR, context: Context) => OntologyClient | Promise<OntologyClient> }
-) & { users?: FoundryUsersIntegration; live?: boolean };
+    | {
+          client: OntologyClient;
+      }
+    | {
+          createClient: (ir: OntologyIR, context: Context) => OntologyClient | Promise<OntologyClient>;
+      }
+) & {
+    users?: FoundryUsersIntegration;
+    live?: boolean;
+};
 
 export function createFoundryOntologyBackend<
     Context extends Record<string, unknown> = Record<string, unknown>,

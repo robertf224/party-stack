@@ -97,7 +97,11 @@ function convertLikeFilter(field: FieldPath, value: string): PushdownFilter {
         })
         .join("");
 
-    return pushdown({ type: "wildcard", propertyIdentifier, value: wildcard });
+    return pushdown({
+        type: "wildcard",
+        propertyIdentifier,
+        value: wildcard,
+    });
 }
 
 function convertQueryValue(value: unknown): unknown {
@@ -116,7 +120,10 @@ function convertQueryValue(value: unknown): unknown {
 
 function fieldPathToPropertyIdentifier(fieldPath: FieldPath): PropertyIdentifier {
     if (fieldPath.length === 1) {
-        return { type: "property", apiName: fieldPath[0]! as PropertyApiName };
+        return {
+            type: "property",
+            apiName: fieldPath[0]! as PropertyApiName,
+        };
     } else if (fieldPath.length === 2) {
         return {
             type: "structField",

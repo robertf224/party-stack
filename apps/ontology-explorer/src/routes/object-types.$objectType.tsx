@@ -18,7 +18,9 @@ import type { PropertyDef, TypeDef } from "@party-stack/ontology";
 
 const objectTableFeatures = tableFeatures({ rowSortingFeature, columnSizingFeature, columnResizingFeature });
 
-export const Route = createFileRoute("/object-types/$objectType")({ component: ObjectTypeDetail });
+export const Route = createFileRoute("/object-types/$objectType")({
+    component: ObjectTypeDetail,
+});
 
 function ObjectTypeDetail() {
     const { meta, data } = useOntology();

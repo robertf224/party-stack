@@ -359,7 +359,11 @@ async function attachLocalSfSymbolAssets(
             return {
                 ...icon,
                 textOnly: undefined,
-                asset: { archive: archiveName, path: assetPath, format: extension },
+                asset: {
+                    archive: archiveName,
+                    path: assetPath,
+                    format: extension,
+                },
             };
         })
     );
@@ -370,7 +374,11 @@ async function attachLocalSfSymbolAssets(
         );
     }
     await writeFile(archivePath, zipSync(files, { level: 6 }));
-    return { icons: withAssets, bytes: (await stat(archivePath)).size, assetCount };
+    return {
+        icons: withAssets,
+        bytes: (await stat(archivePath)).size,
+        assetCount,
+    };
 }
 
 async function buildCatalogFromSnapshot(
@@ -400,7 +408,11 @@ async function buildCatalogFromSnapshot(
                 name,
                 concept: mappedConcepts?.[0],
                 concepts: mappedConcepts,
-                asset: { archive: archiveName, path: assetPath, format: "svg" as const },
+                asset: {
+                    archive: archiveName,
+                    path: assetPath,
+                    format: "svg" as const,
+                },
                 labels,
             };
         });
@@ -428,7 +440,14 @@ async function main(): Promise<void> {
         : (Object.fromEntries(
               Object.entries(configuredSources).map(([provider, source]) => {
                   const version = packageVersion(source.package);
-                  return [provider, { ...source, version, archiveUrl: npmTarball(source.package, version) }];
+                  return [
+                      provider,
+                      {
+                          ...source,
+                          version,
+                          archiveUrl: npmTarball(source.package, version),
+                      },
+                  ];
               })
           ) as Sources);
 

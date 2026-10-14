@@ -22,7 +22,10 @@ class TestLockManager implements LockManager {
             if (options.signal?.aborted) {
                 throw options.signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
             }
-            return grant({ mode: options.mode ?? "exclusive", name });
+            return grant({
+                mode: options.mode ?? "exclusive",
+                name,
+            });
         });
         this.tails.set(
             name,
@@ -32,7 +35,10 @@ class TestLockManager implements LockManager {
     }
 
     query(): Promise<LockManagerSnapshot> {
-        return Promise.resolve({ held: [], pending: [] });
+        return Promise.resolve({
+            held: [],
+            pending: [],
+        });
     }
 }
 
@@ -42,7 +48,9 @@ beforeEach(() => {
     navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
     Object.defineProperty(globalThis, "navigator", {
         configurable: true,
-        value: { locks: new TestLockManager() },
+        value: {
+            locks: new TestLockManager(),
+        },
     });
 });
 

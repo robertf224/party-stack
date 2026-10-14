@@ -29,7 +29,9 @@ export function useChat<Status extends "submitted" | "streaming" | "ready" | "er
         | { type: "submitted"; messageId: string }
         | { type: "streaming"; messageId: string; message: string }
         | { type: "error"; error: Error }
-    >({ type: "ready" });
+    >({
+        type: "ready",
+    });
     const { data: exchanges } = useSuspenseQuery({
         queryFn: async () => {
             const content = await Contents.get(client, agentRid, opts.sessionRid, { preview: true });
@@ -47,7 +49,11 @@ export function useChat<Status extends "submitted" | "streaming" | "ready" | "er
                     client,
                     agentRid,
                     opts.sessionRid,
-                    { userInput: { text: content }, parameterInputs: {}, messageId },
+                    {
+                        userInput: { text: content },
+                        parameterInputs: {},
+                        messageId,
+                    },
                     { preview: true }
                 );
 

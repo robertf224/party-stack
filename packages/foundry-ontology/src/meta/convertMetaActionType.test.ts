@@ -22,8 +22,19 @@ function actionType(parameters: Record<string, ActionParameterV2>): ActionTypeFu
 function omsIconMetadata(locator: string, color: string): ActionTypeOmsMetadata {
     return {
         actionType: {
-            actionTypeLogic: { validation: { parameterValidations: {} } },
-            metadata: { displayMetadata: { icon: { type: "blueprint", blueprint: { locator, color } } } },
+            actionTypeLogic: {
+                validation: {
+                    parameterValidations: {},
+                },
+            },
+            metadata: {
+                displayMetadata: {
+                    icon: {
+                        type: "blueprint",
+                        blueprint: { locator, color },
+                    },
+                },
+            },
         },
         propertyApiNamesByParameter: new Map(),
     } as unknown as ActionTypeOmsMetadata;
@@ -32,7 +43,11 @@ function omsIconMetadata(locator: string, color: string): ActionTypeOmsMetadata 
 function objectParameter(objectType: string, required: boolean): ActionParameterV2 {
     return {
         displayName: objectType,
-        dataType: { type: "object", objectTypeApiName: objectType, objectApiName: objectType },
+        dataType: {
+            type: "object",
+            objectTypeApiName: objectType,
+            objectApiName: objectType,
+        },
         required,
         typeClasses: [],
     };
@@ -46,8 +61,16 @@ function structListParameter(): ActionParameterV2 {
             subType: {
                 type: "struct",
                 fields: [
-                    { name: "code", fieldType: { type: "string" }, required: true },
-                    { name: "enabled", fieldType: { type: "boolean" }, required: true },
+                    {
+                        name: "code",
+                        fieldType: { type: "string" },
+                        required: true,
+                    },
+                    {
+                        name: "enabled",
+                        fieldType: { type: "boolean" },
+                        required: true,
+                    },
                 ],
             },
         },
@@ -65,14 +88,22 @@ function structListField(parameterId: string, field: string): never {
 }
 
 function structField(parameterId: string, field: string): never {
-    return { type: "structParameterFieldValue", parameterId, structParameterFieldApiName: field } as never;
+    return {
+        type: "structParameterFieldValue",
+        parameterId,
+        structParameterFieldApiName: field,
+    } as never;
 }
 
 function omsActionMetadata(
     parameterName: string,
     allowedValues: Record<string, unknown>,
     prefill?: Record<string, unknown>,
-    resolvedProperty?: { parameterId: string; propertyTypeId: string; propertyApiName: string }
+    resolvedProperty?: {
+        parameterId: string;
+        propertyTypeId: string;
+        propertyApiName: string;
+    }
 ): never {
     return {
         actionType: {
@@ -80,7 +111,14 @@ function omsActionMetadata(
                 validation: {
                     parameterValidations: {
                         [parameterName]: {
-                            defaultValidation: { display: { prefill }, validation: { allowedValues } },
+                            defaultValidation: {
+                                display: {
+                                    prefill,
+                                },
+                                validation: {
+                                    allowedValues,
+                                },
+                            },
                         },
                     },
                 },
@@ -105,7 +143,10 @@ function omsOneOf(values: Array<{ label: string; value: string }>, allowed = fal
             oneOf: {
                 labelledValues: values.map(({ label, value }) => ({
                     label,
-                    value: { type: "string", string: value },
+                    value: {
+                        type: "string",
+                        string: value,
+                    },
                 })),
                 otherValueAllowed: { allowed },
             },
@@ -116,7 +157,15 @@ function omsOneOf(values: Array<{ label: string; value: string }>, allowed = fal
 function omsTextRegex(regex: string): Record<string, unknown> {
     return {
         type: "text",
-        text: { type: "text", text: { regex: { regex, failureMessage: "Invalid value." } } },
+        text: {
+            type: "text",
+            text: {
+                regex: {
+                    regex,
+                    failureMessage: "Invalid value.",
+                },
+            },
+        },
     };
 }
 
@@ -132,7 +181,12 @@ describe("convertFoundryMetaActionType parameter validation", () => {
         expect(
             convertFoundryMetaActionType(actionType({}), omsIconMetadata("person", "#2d72d2"))
         ).toMatchObject({
-            icon: { name: "person", meta: { blueprint: { name: "person" } } },
+            icon: {
+                name: "person",
+                meta: {
+                    blueprint: { name: "person" },
+                },
+            },
             color: "#2d72d2",
         });
     });
@@ -142,14 +196,21 @@ describe("convertFoundryMetaActionType parameter validation", () => {
             actionType({
                 amount: {
                     displayName: "Amount",
-                    dataType: { type: "decimal", precision: 38, scale: 18 },
+                    dataType: {
+                        type: "decimal",
+                        precision: 38,
+                        scale: 18,
+                    },
                     required: true,
                     typeClasses: [],
                 },
             })
         );
 
-        expect(result.parameters[0]?.type).toEqual({ kind: "string", value: {} });
+        expect(result.parameters[0]?.type).toEqual({
+            kind: "string",
+            value: {},
+        });
     });
 
     it("preserves object references nested inside array structs", () => {
@@ -190,7 +251,10 @@ describe("convertFoundryMetaActionType parameter validation", () => {
                             {
                                 name: "part",
                                 displayName: "part",
-                                type: { kind: "objectReference", value: { objectType: "Part" } },
+                                type: {
+                                    kind: "objectReference",
+                                    value: { objectType: "Part" },
+                                },
                             },
                         ],
                     },
@@ -262,7 +326,14 @@ describe("convertFoundryMetaActionType parameter validation", () => {
 
         expect(result.parameters[0]?.type).toEqual({
             kind: "string",
-            value: { suggestions: [{ value: "open", label: "Open" }] },
+            value: {
+                suggestions: [
+                    {
+                        value: "open",
+                        label: "Open",
+                    },
+                ],
+            },
         });
     });
 
@@ -274,7 +345,14 @@ describe("convertFoundryMetaActionType parameter validation", () => {
                     dataType: { type: "string" },
                     required: false,
                     typeClasses: [],
-                    validation: { defaultValidation: { allowedValues: { type: "text", regex: "^\\d{5}$" } } },
+                    validation: {
+                        defaultValidation: {
+                            allowedValues: {
+                                type: "text",
+                                regex: "^\\d{5}$",
+                            },
+                        },
+                    },
                 },
             })
         );
@@ -284,7 +362,12 @@ describe("convertFoundryMetaActionType parameter validation", () => {
             value: {
                 type: {
                     kind: "string",
-                    value: { constraint: { kind: "regex", value: { regex: "^\\d{5}$" } } },
+                    value: {
+                        constraint: {
+                            kind: "regex",
+                            value: { regex: "^\\d{5}$" },
+                        },
+                    },
                 },
             },
         });
@@ -312,7 +395,10 @@ describe("convertFoundryMetaActionType parameter validation", () => {
             })
         );
 
-        expect(result.parameters[0]?.type).toEqual({ kind: "ref", value: { name: "PostalCode" } });
+        expect(result.parameters[0]?.type).toEqual({
+            kind: "ref",
+            value: { name: "PostalCode" },
+        });
     });
 
     it("maps Foundry current user arguments to the canonical user context", () => {
@@ -321,7 +407,11 @@ describe("convertFoundryMetaActionType parameter validation", () => {
             {
                 type: "createObject",
                 objectTypeApiName: "Task",
-                propertyArguments: { createdBy: { type: "currentUser" } },
+                propertyArguments: {
+                    createdBy: {
+                        type: "currentUser",
+                    },
+                },
                 structPropertyArguments: {},
             } as never,
         ];
@@ -334,7 +424,12 @@ describe("convertFoundryMetaActionType parameter validation", () => {
                     values: [
                         {
                             property: ["createdBy"],
-                            value: { kind: "contextReference", value: { name: "user" } },
+                            value: {
+                                kind: "contextReference",
+                                value: {
+                                    name: "user",
+                                },
+                            },
                         },
                     ],
                 },
@@ -345,7 +440,9 @@ describe("convertFoundryMetaActionType parameter validation", () => {
 
 describe("convertFoundryMetaActionType mutation targets", () => {
     it("requires an optional object-reference update target", () => {
-        const metadata = actionType({ survey: objectParameter("HospitalSurveyDev", false) });
+        const metadata = actionType({
+            survey: objectParameter("HospitalSurveyDev", false),
+        });
         metadata.fullLogicRules = [
             {
                 type: "modifyObject",
@@ -368,8 +465,15 @@ describe("convertFoundryMetaActionType mutation targets", () => {
     });
 
     it("requires an optional object-reference delete target", () => {
-        const metadata = actionType({ survey: objectParameter("HospitalSurveyDev", false) });
-        metadata.fullLogicRules = [{ type: "deleteObject", objectToDelete: "survey" } as never];
+        const metadata = actionType({
+            survey: objectParameter("HospitalSurveyDev", false),
+        });
+        metadata.fullLogicRules = [
+            {
+                type: "deleteObject",
+                objectToDelete: "survey",
+            } as never,
+        ];
 
         expect(convertFoundryMetaActionType(metadata).parameters[0]?.type).toEqual({
             kind: "objectReference",
@@ -378,7 +482,9 @@ describe("convertFoundryMetaActionType mutation targets", () => {
     });
 
     it("leaves an already-required mutation target unchanged", () => {
-        const metadata = actionType({ survey: objectParameter("HospitalSurveyDev", true) });
+        const metadata = actionType({
+            survey: objectParameter("HospitalSurveyDev", true),
+        });
         metadata.fullLogicRules = [
             {
                 type: "modifyObject",
@@ -403,34 +509,59 @@ describe("convertFoundryMetaActionType mutation targets", () => {
             {
                 type: "modifyObject",
                 objectToModify: "survey",
-                propertyArguments: { relatedSurvey: { type: "parameterId", parameterId: "relatedSurvey" } },
+                propertyArguments: {
+                    relatedSurvey: {
+                        type: "parameterId",
+                        parameterId: "relatedSurvey",
+                    },
+                },
                 structPropertyArguments: {},
             } as never,
         ];
 
         expect(convertFoundryMetaActionType(metadata).parameters[1]?.type).toEqual({
             kind: "optional",
-            value: { type: { kind: "objectReference", value: { objectType: "HospitalSurveyDev" } } },
+            value: {
+                type: {
+                    kind: "objectReference",
+                    value: { objectType: "HospitalSurveyDev" },
+                },
+            },
         });
     });
 
     it("preserves optional scalar property parameters", () => {
         const metadata = actionType({
             survey: objectParameter("HospitalSurveyDev", true),
-            status: { displayName: "Status", dataType: { type: "string" }, required: false, typeClasses: [] },
+            status: {
+                displayName: "Status",
+                dataType: { type: "string" },
+                required: false,
+                typeClasses: [],
+            },
         });
         metadata.fullLogicRules = [
             {
                 type: "modifyObject",
                 objectToModify: "survey",
-                propertyArguments: { status: { type: "parameterId", parameterId: "status" } },
+                propertyArguments: {
+                    status: {
+                        type: "parameterId",
+                        parameterId: "status",
+                    },
+                },
                 structPropertyArguments: {},
             } as never,
         ];
 
         expect(convertFoundryMetaActionType(metadata).parameters[1]?.type).toEqual({
             kind: "optional",
-            value: { type: { kind: "string", value: {} } },
+            value: {
+                type: {
+                    kind: "string",
+                    value: {},
+                },
+            },
         });
     });
 
@@ -453,7 +584,10 @@ describe("convertFoundryMetaActionType mutation targets", () => {
                 },
                 structPropertyArguments: {},
             },
-            { type: "deleteObject", objectToDelete: "surveyToDelete" },
+            {
+                type: "deleteObject",
+                objectToDelete: "surveyToDelete",
+            },
         ] as never;
 
         const result = convertFoundryMetaActionType(metadata);
@@ -503,7 +637,11 @@ describe("convertFoundryMetaActionType struct assignments", () => {
             entries: structListParameter(),
             record: {
                 displayName: "Record",
-                dataType: { type: "object", objectTypeApiName: "Record", objectApiName: "record" },
+                dataType: {
+                    type: "object",
+                    objectTypeApiName: "Record",
+                    objectApiName: "record",
+                },
                 required: true,
                 typeClasses: [],
             },
@@ -520,7 +658,12 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                             value: {
                                 kind: "map",
                                 value: {
-                                    source: { kind: "inputReference", value: { name: "entries" } },
+                                    source: {
+                                        kind: "inputReference",
+                                        value: {
+                                            name: "entries",
+                                        },
+                                    },
                                     binding: "item",
                                     body: {
                                         kind: "struct",
@@ -533,7 +676,9 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                                                         value: {
                                                             source: {
                                                                 kind: "localReference",
-                                                                value: { name: "item" },
+                                                                value: {
+                                                                    name: "item",
+                                                                },
                                                             },
                                                             path: ["code"],
                                                         },
@@ -546,7 +691,9 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                                                         value: {
                                                             source: {
                                                                 kind: "localReference",
-                                                                value: { name: "item" },
+                                                                value: {
+                                                                    name: "item",
+                                                                },
                                                             },
                                                             path: ["enabled"],
                                                         },
@@ -570,7 +717,13 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                 displayName: "Details",
                 dataType: {
                     type: "struct",
-                    fields: [{ name: "code", fieldType: { type: "string" }, required: true }],
+                    fields: [
+                        {
+                            name: "code",
+                            fieldType: { type: "string" },
+                            required: true,
+                        },
+                    ],
                 },
                 required: true,
                 typeClasses: [],
@@ -581,7 +734,11 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                 type: "createObject",
                 objectTypeApiName: "Record",
                 propertyArguments: {},
-                structPropertyArguments: { details: { code: structField("details", "code") } },
+                structPropertyArguments: {
+                    details: {
+                        code: structField("details", "code"),
+                    },
+                },
             } as never,
         ];
 
@@ -594,7 +751,10 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                             value: {
                                 kind: "getAt",
                                 value: {
-                                    source: { kind: "inputReference", value: { name: "details" } },
+                                    source: {
+                                        kind: "inputReference",
+                                        value: { name: "details" },
+                                    },
                                     path: ["code"],
                                 },
                             },
@@ -608,14 +768,19 @@ describe("convertFoundryMetaActionType struct assignments", () => {
     it.each([
         {
             name: "partial",
-            fields: { code: structListField("entries", "code") },
+            fields: {
+                code: structListField("entries", "code"),
+            },
             expectedFields: [
                 {
                     name: "code",
                     value: {
                         kind: "getAt",
                         value: {
-                            source: { kind: "localReference", value: { name: "item" } },
+                            source: {
+                                kind: "localReference",
+                                value: { name: "item" },
+                            },
                             path: ["code"],
                         },
                     },
@@ -634,7 +799,10 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                     value: {
                         kind: "getAt",
                         value: {
-                            source: { kind: "localReference", value: { name: "item" } },
+                            source: {
+                                kind: "localReference",
+                                value: { name: "item" },
+                            },
                             path: ["code"],
                         },
                     },
@@ -644,7 +812,10 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                     value: {
                         kind: "getAt",
                         value: {
-                            source: { kind: "localReference", value: { name: "item" } },
+                            source: {
+                                kind: "localReference",
+                                value: { name: "item" },
+                            },
                             path: ["enabled"],
                         },
                     },
@@ -652,7 +823,9 @@ describe("convertFoundryMetaActionType struct assignments", () => {
             ],
         },
     ])("converts a $name list mapping to a map expression", ({ fields, expectedFields }) => {
-        const metadata = actionType({ entries: structListParameter() });
+        const metadata = actionType({
+            entries: structListParameter(),
+        });
         metadata.fullLogicRules = [
             {
                 type: "createObject",
@@ -671,9 +844,19 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                             value: {
                                 kind: "map",
                                 value: {
-                                    source: { kind: "inputReference", value: { name: "entries" } },
+                                    source: {
+                                        kind: "inputReference",
+                                        value: {
+                                            name: "entries",
+                                        },
+                                    },
                                     binding: "item",
-                                    body: { kind: "struct", value: { fields: expectedFields } },
+                                    body: {
+                                        kind: "struct",
+                                        value: {
+                                            fields: expectedFields,
+                                        },
+                                    },
                                 },
                             },
                         },
@@ -684,7 +867,10 @@ describe("convertFoundryMetaActionType struct assignments", () => {
     });
 
     it("rejects mappings driven by multiple list parameters", () => {
-        const metadata = actionType({ entries: structListParameter(), otherEntries: structListParameter() });
+        const metadata = actionType({
+            entries: structListParameter(),
+            otherEntries: structListParameter(),
+        });
         metadata.fullLogicRules = [
             {
                 type: "createObject",
@@ -711,7 +897,13 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                 displayName: "Details",
                 dataType: {
                     type: "struct",
-                    fields: [{ name: "enabled", fieldType: { type: "boolean" }, required: true }],
+                    fields: [
+                        {
+                            name: "enabled",
+                            fieldType: { type: "boolean" },
+                            required: true,
+                        },
+                    ],
                 },
                 required: true,
                 typeClasses: [],
@@ -741,7 +933,11 @@ describe("convertFoundryMetaActionType struct assignments", () => {
             entries: structListParameter(),
             record: {
                 displayName: "Record",
-                dataType: { type: "object", objectTypeApiName: "Record", objectApiName: "record" },
+                dataType: {
+                    type: "object",
+                    objectTypeApiName: "Record",
+                    objectApiName: "record",
+                },
                 required: true,
                 typeClasses: [],
             },
@@ -756,7 +952,9 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                         code: structListField("entries", "code"),
                         enabled: structListField("entries", "enabled"),
                     },
-                    summaries: { identifier: structListField("entries", "code") },
+                    summaries: {
+                        identifier: structListField("entries", "code"),
+                    },
                 },
             },
             {
@@ -781,8 +979,16 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                     pluralDisplayName: "Records",
                     primaryKey: "id",
                     properties: [
-                        { name: "id", displayName: "ID", type: { kind: "string", value: {} } },
-                        { name: "entries", displayName: "Entries", type: converted.parameters[0]!.type },
+                        {
+                            name: "id",
+                            displayName: "ID",
+                            type: { kind: "string", value: {} },
+                        },
+                        {
+                            name: "entries",
+                            displayName: "Entries",
+                            type: converted.parameters[0]!.type,
+                        },
                         {
                             name: "summaries",
                             displayName: "Summaries",
@@ -799,7 +1005,10 @@ describe("convertFoundryMetaActionType struct assignments", () => {
                                                         {
                                                             name: "identifier",
                                                             displayName: "Identifier",
-                                                            type: { kind: "string", value: {} },
+                                                            type: {
+                                                                kind: "string",
+                                                                value: {},
+                                                            },
                                                         },
                                                     ],
                                                 },
@@ -838,7 +1047,13 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
                     { label: "United States", value: "US" },
                     { label: "Canada", value: "CA" },
                 ]),
-                { type: "staticValue", staticValue: { type: "string", string: "US" } }
+                {
+                    type: "staticValue",
+                    staticValue: {
+                        type: "string",
+                        string: "US",
+                    },
+                }
             )
         );
 
@@ -856,7 +1071,10 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
                 },
             },
         });
-        expect(result.parameters[0]?.defaultValue).toEqual({ kind: "literal", value: { value: "US" } });
+        expect(result.parameters[0]?.defaultValue).toEqual({
+            kind: "literal",
+            value: { value: "US" },
+        });
     });
 
     it("preserves open OMS one-of values as optional string suggestions", () => {
@@ -869,7 +1087,11 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
             },
             claim: {
                 displayName: "Claim",
-                dataType: { type: "object", objectTypeApiName: "Claim", objectApiName: "claim" },
+                dataType: {
+                    type: "object",
+                    objectTypeApiName: "Claim",
+                    objectApiName: "claim",
+                },
                 required: true,
                 typeClasses: [],
             },
@@ -878,7 +1100,12 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
             {
                 type: "modifyObject",
                 objectToModify: "claim",
-                propertyArguments: { country: { type: "parameterId", parameterId: "country" } },
+                propertyArguments: {
+                    country: {
+                        type: "parameterId",
+                        parameterId: "country",
+                    },
+                },
                 structPropertyArguments: {},
             } as never,
         ];
@@ -896,9 +1123,16 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
                 ),
                 {
                     type: "objectParameterPropertyValue",
-                    objectParameterPropertyValue: { parameterId: "claim", propertyTypeId: "country" },
+                    objectParameterPropertyValue: {
+                        parameterId: "claim",
+                        propertyTypeId: "country",
+                    },
                 },
-                { propertyTypeId: "country", parameterId: "claim", propertyApiName: "country" }
+                {
+                    propertyTypeId: "country",
+                    parameterId: "claim",
+                    propertyApiName: "country",
+                }
             )
         );
 
@@ -909,9 +1143,18 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
                     kind: "string",
                     value: {
                         suggestions: [
-                            { value: "US", label: "United States" },
-                            { value: "MX", label: "Mexico" },
-                            { value: "CA", label: "Canada" },
+                            {
+                                value: "US",
+                                label: "United States",
+                            },
+                            {
+                                value: "MX",
+                                label: "Mexico",
+                            },
+                            {
+                                value: "CA",
+                                label: "Canada",
+                            },
                         ],
                     },
                 },
@@ -922,7 +1165,12 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
             value: {
                 source: {
                     kind: "objectLookup",
-                    value: { reference: { kind: "inputReference", value: { name: "claim" } } },
+                    value: {
+                        reference: {
+                            kind: "inputReference",
+                            value: { name: "claim" },
+                        },
+                    },
                 },
                 path: ["country"],
             },
@@ -950,7 +1198,14 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
                     value: {
                         constraint: {
                             kind: "enum",
-                            value: { options: [{ value: "US", label: "United States" }] },
+                            value: {
+                                options: [
+                                    {
+                                        value: "US",
+                                        label: "United States",
+                                    },
+                                ],
+                            },
                         },
                     },
                 },
@@ -963,7 +1218,10 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
             actionType({
                 countries: {
                     displayName: "Countries",
-                    dataType: { type: "array", subType: { type: "string" } },
+                    dataType: {
+                        type: "array",
+                        subType: { type: "string" },
+                    },
                     required: true,
                     typeClasses: [],
                 },
@@ -973,7 +1231,16 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
 
         expect(result.parameters[0]?.type).toMatchObject({
             kind: "list",
-            value: { elementType: { kind: "string", value: { constraint: { kind: "enum" } } } },
+            value: {
+                elementType: {
+                    kind: "string",
+                    value: {
+                        constraint: {
+                            kind: "enum",
+                        },
+                    },
+                },
+            },
         });
     });
 
@@ -992,7 +1259,12 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
 
         expect(result.parameters[0]?.type).toEqual({
             kind: "string",
-            value: { constraint: { kind: "regex", value: { regex: "^\\d{5}$" } } },
+            value: {
+                constraint: {
+                    kind: "regex",
+                    value: { regex: "^\\d{5}$" },
+                },
+            },
         });
     });
 
@@ -1008,7 +1280,12 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
                         defaultValidation: {
                             allowedValues: {
                                 type: "oneOf",
-                                options: [{ displayName: "Public option", value: "public" }],
+                                options: [
+                                    {
+                                        displayName: "Public option",
+                                        value: "public",
+                                    },
+                                ],
                                 otherValuesAllowed: false,
                             },
                         },
@@ -1023,7 +1300,14 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
             value: {
                 constraint: {
                     kind: "enum",
-                    value: { options: [{ value: "public", label: "Public option" }] },
+                    value: {
+                        options: [
+                            {
+                                value: "public",
+                                label: "Public option",
+                            },
+                        ],
+                    },
                 },
             },
         });
@@ -1094,7 +1378,10 @@ describe("convertFoundryMetaActionType OMS struct field validations", () => {
                 type: {
                     kind: "optional",
                     value: {
-                        type: { kind: "string", value: { constraint: { kind: "enum", value: { options } } } },
+                        type: {
+                            kind: "string",
+                            value: { constraint: { kind: "enum", value: { options } } },
+                        },
                     },
                 },
             },
@@ -1103,7 +1390,12 @@ describe("convertFoundryMetaActionType OMS struct field validations", () => {
                 displayName: "category",
                 type: {
                     kind: "optional",
-                    value: { type: { kind: "string", value: { suggestions: options } } },
+                    value: {
+                        type: {
+                            kind: "string",
+                            value: { suggestions: options },
+                        },
+                    },
                 },
             },
             {
@@ -1114,7 +1406,12 @@ describe("convertFoundryMetaActionType OMS struct field validations", () => {
                     value: {
                         type: {
                             kind: "list",
-                            value: { elementType: { kind: "string", value: { suggestions: options } } },
+                            value: {
+                                elementType: {
+                                    kind: "string",
+                                    value: { suggestions: options },
+                                },
+                            },
                         },
                     },
                 },
@@ -1124,7 +1421,9 @@ describe("convertFoundryMetaActionType OMS struct field validations", () => {
                 displayName: "code",
                 type: {
                     kind: "string",
-                    value: { constraint: { kind: "regex", value: { regex: "^[A-Z]+$" } } },
+                    value: {
+                        constraint: { kind: "regex", value: { regex: "^[A-Z]+$" } },
+                    },
                 },
             },
         ]);
@@ -1170,7 +1469,11 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
         const metadata = actionType({
             assignee: {
                 displayName: "Assignee",
-                dataType: { type: "object", objectTypeApiName: "User", objectApiName: "User" },
+                dataType: {
+                    type: "object",
+                    objectTypeApiName: "User",
+                    objectApiName: "User",
+                },
                 required: true,
                 typeClasses: [],
             },
@@ -1180,7 +1483,12 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                 required: false,
                 typeClasses: [],
             },
-            notes: { displayName: "Notes", dataType: { type: "string" }, required: false, typeClasses: [] },
+            notes: {
+                displayName: "Notes",
+                dataType: { type: "string" },
+                required: false,
+                typeClasses: [],
+            },
         });
         const result = convertFoundryMetaActionType(metadata, {
             actionType: {
@@ -1205,7 +1513,10 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                                     display: {
                                         prefill: {
                                             type: "staticValue",
-                                            staticValue: { type: "string", string: "from-foundry" },
+                                            staticValue: {
+                                                type: "string",
+                                                string: "from-foundry",
+                                            },
                                         },
                                     },
                                 },
@@ -1220,7 +1531,9 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
         } as never);
 
         expect(result.parameters).toMatchObject([
-            { name: "assignee" },
+            {
+                name: "assignee",
+            },
             {
                 name: "assigneeName",
                 defaultValue: {
@@ -1228,20 +1541,36 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                     value: {
                         source: {
                             kind: "objectLookup",
-                            value: { reference: { kind: "inputReference", value: { name: "assignee" } } },
+                            value: {
+                                reference: {
+                                    kind: "inputReference",
+                                    value: { name: "assignee" },
+                                },
+                            },
                         },
                         path: ["displayName"],
                     },
                 },
             },
-            { name: "notes", defaultValue: { kind: "literal", value: { value: "from-foundry" } } },
+            {
+                name: "notes",
+                defaultValue: {
+                    kind: "literal",
+                    value: {
+                        value: "from-foundry",
+                    },
+                },
+            },
         ]);
     });
 
     it("omits object-query prefills", () => {
         const objectSet = {
             objectSet: {
-                startingObjectSet: { type: "base", base: { objectTypeId: "jfubb6is.user" } },
+                startingObjectSet: {
+                    type: "base",
+                    base: { objectTypeId: "jfubb6is.user" },
+                },
                 transforms: [
                     {
                         type: "propertyFilter",
@@ -1249,7 +1578,12 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                             type: "exactMatch",
                             exactMatch: {
                                 propertyId: "email",
-                                terms: [{ type: "string", string: "owner@example.com" }],
+                                terms: [
+                                    {
+                                        type: "string",
+                                        string: "owner@example.com",
+                                    },
+                                ],
                             },
                         },
                     },
@@ -1259,7 +1593,14 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                             type: "parameterizedExactMatch",
                             parameterizedExactMatch: {
                                 propertyId: "department",
-                                terms: [{ type: "unresolved", unresolved: { parameterId: "departments" } }],
+                                terms: [
+                                    {
+                                        type: "unresolved",
+                                        unresolved: {
+                                            parameterId: "departments",
+                                        },
+                                    },
+                                ],
                             },
                         },
                     },
@@ -1270,7 +1611,9 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                     type: "staticValue",
                     staticValue: {
                         type: "stringList",
-                        stringList: { strings: ["Engineering", "Operations"] },
+                        stringList: {
+                            strings: ["Engineering", "Operations"],
+                        },
                     },
                 },
             },
@@ -1279,7 +1622,11 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
             actionType({
                 assignee: {
                     displayName: "Assignee",
-                    dataType: { type: "object", objectTypeApiName: "User", objectApiName: "jfubb6is.user" },
+                    dataType: {
+                        type: "object",
+                        objectTypeApiName: "User",
+                        objectApiName: "jfubb6is.user",
+                    },
                     required: false,
                     typeClasses: [],
                 },
@@ -1294,7 +1641,9 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                                         display: {
                                             prefill: {
                                                 type: "objectQueryPrefill",
-                                                objectQueryPrefill: { objectSet },
+                                                objectQueryPrefill: {
+                                                    objectSet,
+                                                },
                                             },
                                         },
                                     },
@@ -1321,7 +1670,10 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                 },
                 tags: {
                     displayName: "Tags",
-                    dataType: { type: "array", subType: { type: "string" } },
+                    dataType: {
+                        type: "array",
+                        subType: { type: "string" },
+                    },
                     required: false,
                     typeClasses: [],
                 },
@@ -1338,7 +1690,9 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                                                 type: "staticValue",
                                                 staticValue: {
                                                     type: "date",
-                                                    date: { dateValue: "2026-08-31" },
+                                                    date: {
+                                                        dateValue: "2026-08-31",
+                                                    },
                                                 },
                                             },
                                         },
@@ -1351,7 +1705,9 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                                                 type: "staticValue",
                                                 staticValue: {
                                                     type: "stringList",
-                                                    stringList: { strings: ["priority", "customer"] },
+                                                    stringList: {
+                                                        strings: ["priority", "customer"],
+                                                    },
                                                 },
                                             },
                                         },

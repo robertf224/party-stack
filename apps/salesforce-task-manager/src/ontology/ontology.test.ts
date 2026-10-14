@@ -10,7 +10,9 @@ describe("generated Salesforce task-manager ontology", () => {
         expect(task.title).toBe("Subject");
         expect(task.properties.find((property) => property.name === "CreatedById")?.type).toEqual({
             kind: "objectReference",
-            value: { objectType: "User" },
+            value: {
+                objectType: "User",
+            },
         });
         expect(task.properties.find((property) => String(property.name) === "AccountId")).toBeUndefined();
         expect(ontology.actionTypes.map((action) => action.name).sort()).toEqual([
@@ -21,7 +23,11 @@ describe("generated Salesforce task-manager ontology", () => {
             "updateTask",
         ]);
         expect(ontology.actionTypes.find((action) => action.name === "createTask")?.meta).toEqual({
-            salesforce: { kind: "crud", objectType: "Task", operation: "create" },
+            salesforce: {
+                kind: "crud",
+                objectType: "Task",
+                operation: "create",
+            },
         });
         expect(ontology.queryFunctionTypes.map((query) => query.name)).toEqual(["getAvailableMeetingTimes"]);
     });

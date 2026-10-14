@@ -8,7 +8,10 @@ import {
 } from "./securedOntology.js";
 
 function contextEmail() {
-    return o.Expression.getAt({ source: o.Expression.contextReference({ name: "user" }), path: ["email"] });
+    return o.Expression.getAt({
+        source: o.Expression.contextReference({ name: "user" }),
+        path: ["email"],
+    });
 }
 
 const ir: OntologyIR = {
@@ -44,8 +47,14 @@ const ir: OntologyIR = {
                 o.ActionLogicStep.createObject({
                     objectType: "Note",
                     values: [
-                        { property: ["id"], value: o.Expression.inputReference({ name: "id" }) },
-                        { property: ["title"], value: o.Expression.inputReference({ name: "title" }) },
+                        {
+                            property: ["id"],
+                            value: o.Expression.inputReference({ name: "id" }),
+                        },
+                        {
+                            property: ["title"],
+                            value: o.Expression.inputReference({ name: "title" }),
+                        },
                         {
                             property: ["ownerEmail"],
                             value: o.Expression.inputReference({ name: "ownerEmail" }),
@@ -54,16 +63,32 @@ const ir: OntologyIR = {
                             property: ["updatedAt"],
                             value: o.Expression.inputReference({ name: "updatedAt" }),
                         },
-                        { property: ["directContext"], value: contextEmail() },
-                        { property: ["secret"], value: o.Expression.inputReference({ name: "title" }) },
+                        {
+                            property: ["directContext"],
+                            value: contextEmail(),
+                        },
+                        {
+                            property: ["secret"],
+                            value: o.Expression.inputReference({ name: "title" }),
+                        },
                     ],
                 }),
             ],
         },
     ],
     queryFunctionTypes: [
-        { name: "publicSearch", displayName: "Public search", parameters: [], returnType: o.string({}) },
-        { name: "privateSearch", displayName: "Private search", parameters: [], returnType: o.string({}) },
+        {
+            name: "publicSearch",
+            displayName: "Public search",
+            parameters: [],
+            returnType: o.string({}),
+        },
+        {
+            name: "privateSearch",
+            displayName: "Private search",
+            parameters: [],
+            returnType: o.string({}),
+        },
     ],
 };
 
@@ -76,7 +101,10 @@ describe("secured ontology projection", () => {
                 Note: ["id", "title", "ownerEmail", "updatedAt", "directContext"],
             },
             fixedActionParameterValues: {
-                createNote: { ownerEmail: contextEmail(), updatedAt: o.Expression.now({}) },
+                createNote: {
+                    ownerEmail: contextEmail(),
+                    updatedAt: o.Expression.now({}),
+                },
             },
         });
 
@@ -88,22 +116,35 @@ describe("secured ontology projection", () => {
         if (step.kind !== "createObject") return;
 
         expect(step.value.values).toEqual([
-            { property: ["id"], value: o.Expression.inputReference({ name: "id" }) },
-            { property: ["title"], value: o.Expression.inputReference({ name: "title" }) },
-            { property: ["updatedAt"], value: o.Expression.now({}) },
+            {
+                property: ["id"],
+                value: o.Expression.inputReference({ name: "id" }),
+            },
+            {
+                property: ["title"],
+                value: o.Expression.inputReference({ name: "title" }),
+            },
+            {
+                property: ["updatedAt"],
+                value: o.Expression.now({}),
+            },
         ]);
     });
 
     it("projects map expressions over visible parameters", () => {
         const mapping = o.Expression.map({
-            source: o.Expression.inputReference({ name: "entries" }),
+            source: o.Expression.inputReference({
+                name: "entries",
+            }),
             binding: "entry",
             body: o.Expression.struct({
                 fields: [
                     {
                         name: "renamedCode",
                         value: o.Expression.getAt({
-                            source: o.Expression.localReference({ name: "entry" }),
+                            source: o.Expression.localReference({
+                                name: "entry",
+                            }),
                             path: ["code"],
                         }),
                     },
@@ -125,7 +166,9 @@ describe("secured ontology projection", () => {
                         {
                             name: "entries",
                             displayName: "Entries",
-                            type: o.list({ elementType: o.unknown({}) }),
+                            type: o.list({
+                                elementType: o.unknown({}),
+                            }),
                         },
                     ],
                 })),
@@ -137,7 +180,9 @@ describe("secured ontology projection", () => {
                             {
                                 name: "entries",
                                 displayName: "Entries",
-                                type: o.list({ elementType: o.unknown({}) }),
+                                type: o.list({
+                                    elementType: o.unknown({}),
+                                }),
                             },
                         ],
                         logic: [
@@ -145,7 +190,13 @@ describe("secured ontology projection", () => {
                                 ...step,
                                 value: {
                                     ...step.value,
-                                    values: [...step.value.values, { property: ["entries"], value: mapping }],
+                                    values: [
+                                        ...step.value.values,
+                                        {
+                                            property: ["entries"],
+                                            value: mapping,
+                                        },
+                                    ],
                                 },
                             },
                         ],
@@ -163,7 +214,10 @@ describe("secured ontology projection", () => {
             return;
         }
 
-        expect(projectedStep.value.values).toContainEqual({ property: ["entries"], value: mapping });
+        expect(projectedStep.value.values).toContainEqual({
+            property: ["entries"],
+            value: mapping,
+        });
     });
 
     it("projects action defaults through object and property authorization", () => {
@@ -199,7 +253,9 @@ describe("secured ontology projection", () => {
                                 type: o.string({}),
                                 defaultValue: o.Expression.getAt({
                                     source: o.Expression.objectLookup({
-                                        reference: o.Expression.inputReference({ name: "employee" }),
+                                        reference: o.Expression.inputReference({
+                                            name: "employee",
+                                        }),
                                     }),
                                     path: ["name"],
                                 }),
@@ -208,7 +264,9 @@ describe("secured ontology projection", () => {
                                 name: "notes",
                                 displayName: "Notes",
                                 type: o.string({}),
-                                defaultValue: o.Expression.literal({ value: "Default" }),
+                                defaultValue: o.Expression.literal({
+                                    value: "Default",
+                                }),
                             },
                         ],
                         logic: [],
@@ -216,12 +274,16 @@ describe("secured ontology projection", () => {
                 ],
             },
             serverContext: {},
-            allowedObjectTypeProperties: { Employee: ["id"] },
+            allowedObjectTypeProperties: {
+                Employee: ["id"],
+            },
         });
 
         expect(projected.actionTypes[0]?.parameters[1]?.defaultValue).toBeUndefined();
         expect(projected.actionTypes[0]?.parameters[2]?.defaultValue).toEqual(
-            o.Expression.literal({ value: "Default" })
+            o.Expression.literal({
+                value: "Default",
+            })
         );
     });
 
@@ -259,8 +321,16 @@ describe("secured ontology projection", () => {
                 linkTypes: [
                     {
                         id: "note-hidden",
-                        source: { objectType: "Note", name: "notes", displayName: "Notes" },
-                        target: { objectType: "Hidden", name: "hidden", displayName: "Hidden" },
+                        source: {
+                            objectType: "Note",
+                            name: "notes",
+                            displayName: "Notes",
+                        },
+                        target: {
+                            objectType: "Hidden",
+                            name: "hidden",
+                            displayName: "Hidden",
+                        },
                         foreignKey: "id",
                         cardinality: "one",
                     },
@@ -268,7 +338,9 @@ describe("secured ontology projection", () => {
             },
             serverContext: {},
             filterSchemaByAuthorization: true,
-            allowedObjectTypeProperties: { Note: ["id", "title", "ownerEmail"] },
+            allowedObjectTypeProperties: {
+                Note: ["id", "title", "ownerEmail"],
+            },
             visibleQueryFunctionTypes: ["publicSearch"],
         });
 
@@ -307,7 +379,11 @@ describe("secured ontology projection", () => {
             allowedObjectTypeProperties: {
                 Note: ["id", "title", "ownerEmail", "updatedAt", "directContext"],
             },
-            fixedActionParameterValues: { createNote: { ownerEmail: contextEmail() } },
+            fixedActionParameterValues: {
+                createNote: {
+                    ownerEmail: contextEmail(),
+                },
+            },
         });
 
         const action = projected.actionTypes[0]!;
@@ -316,28 +392,47 @@ describe("secured ontology projection", () => {
         expect(step.kind).toBe("createObject");
         if (step.kind !== "createObject") return;
 
-        expect(step.value.values).toContainEqual({ property: ["ownerEmail"], value: contextEmail() });
-        expect(step.value.values).toContainEqual({ property: ["directContext"], value: contextEmail() });
+        expect(step.value.values).toContainEqual({
+            property: ["ownerEmail"],
+            value: contextEmail(),
+        });
+        expect(step.value.values).toContainEqual({
+            property: ["directContext"],
+            value: contextEmail(),
+        });
     });
 
     it("strips context references when context is projected but not forwarded", () => {
         const projected = projectRemoteOntologyIR({
             ir,
-            serverContext: { user: { email: "alice@example.com" }, serviceUser: { token: "secret" } },
+            serverContext: {
+                user: { email: "alice@example.com" },
+                serviceUser: { token: "secret" },
+            },
             clientContext: { user: { email: "alice@example.com" } },
             clientContextMode: "projected",
             allowedObjectTypeProperties: {
                 Note: ["id", "title", "ownerEmail", "updatedAt", "directContext"],
             },
-            fixedActionParameterValues: { createNote: { ownerEmail: contextEmail() } },
+            fixedActionParameterValues: {
+                createNote: {
+                    ownerEmail: contextEmail(),
+                },
+            },
         });
 
         const step = projected.actionTypes[0]!.logic[0]!;
         expect(step.kind).toBe("createObject");
         if (step.kind !== "createObject") return;
 
-        expect(step.value.values).not.toContainEqual({ property: ["ownerEmail"], value: contextEmail() });
-        expect(step.value.values).not.toContainEqual({ property: ["directContext"], value: contextEmail() });
+        expect(step.value.values).not.toContainEqual({
+            property: ["ownerEmail"],
+            value: contextEmail(),
+        });
+        expect(step.value.values).not.toContainEqual({
+            property: ["directContext"],
+            value: contextEmail(),
+        });
     });
 });
 
@@ -346,7 +441,9 @@ describe("visible action parameter helpers", () => {
         const action = ir.actionTypes[0]!;
         expect([
             ...getVisibleActionParameterNames("createNote", action.parameters, {
-                createNote: { ownerEmail: contextEmail() },
+                createNote: {
+                    ownerEmail: contextEmail(),
+                },
             }),
         ]).toEqual(["id", "title", "updatedAt"]);
     });
@@ -362,10 +459,18 @@ describe("visible action parameter helpers", () => {
                     ownerEmail: "alice@example.com",
                     updatedAt: "2026-05-28T22:11:00.000Z",
                 },
-                { createNote: { ownerEmail: contextEmail() } },
+                {
+                    createNote: {
+                        ownerEmail: contextEmail(),
+                    },
+                },
                 action.parameters
             )
-        ).toEqual({ id: "note-1", title: "Hello", updatedAt: "2026-05-28T22:11:00.000Z" });
+        ).toEqual({
+            id: "note-1",
+            title: "Hello",
+            updatedAt: "2026-05-28T22:11:00.000Z",
+        });
     });
 });
 
@@ -374,7 +479,10 @@ describe("fixed action parameter values", () => {
         const parameters = applyFixedActionParameterValues({
             ctx: { user: { email: "alice@example.com" } },
             actionType: "createNote",
-            parameters: { title: "Hello", ownerEmail: "mallory@example.com" },
+            parameters: {
+                title: "Hello",
+                ownerEmail: "mallory@example.com",
+            },
             fixedActionParameterValues: {
                 createNote: {
                     ownerEmail: contextEmail(),

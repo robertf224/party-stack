@@ -27,7 +27,13 @@ describe("createSalesforceClient", () => {
 
     it("supports installation-provided authenticated fetch", async () => {
         const fetchMock = vi.fn(() =>
-            Promise.resolve(Response.json({ encoding: "UTF-8", maxBatchSize: 200, sobjects: [] }))
+            Promise.resolve(
+                Response.json({
+                    encoding: "UTF-8",
+                    maxBatchSize: 200,
+                    sobjects: [],
+                })
+            )
         );
         const client = createSalesforceClient({
             instanceUrl: "https://example.my.salesforce.com",
@@ -36,7 +42,9 @@ describe("createSalesforceClient", () => {
             fetch: fetchMock,
         });
 
-        await expect(client.describeGlobal()).resolves.toMatchObject({ sobjects: [] });
+        await expect(client.describeGlobal()).resolves.toMatchObject({
+            sobjects: [],
+        });
         expect(fetchMock).toHaveBeenCalledOnce();
     });
 
@@ -48,7 +56,11 @@ describe("createSalesforceClient", () => {
             expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer secret-token");
             return Promise.resolve(
                 new Response(
-                    JSON.stringify({ totalSize: 1, done: true, records: [{ Id: "001xx000003DGb2AAG" }] }),
+                    JSON.stringify({
+                        totalSize: 1,
+                        done: true,
+                        records: [{ Id: "001xx000003DGb2AAG" }],
+                    }),
                     { status: 200, headers: { "Content-Type": "application/json" } }
                 )
             );
@@ -75,7 +87,11 @@ describe("createSalesforceClient", () => {
             expect(url).toBe("https://example.my.salesforce.com/services/data/v61.0/query/01gXX-2000");
             return Promise.resolve(
                 new Response(
-                    JSON.stringify({ totalSize: 2, done: true, records: [{ Id: "001xx000003DGb3AAG" }] }),
+                    JSON.stringify({
+                        totalSize: 2,
+                        done: true,
+                        records: [{ Id: "001xx000003DGb3AAG" }],
+                    }),
                     { status: 200, headers: { "Content-Type": "application/json" } }
                 )
             );
@@ -99,7 +115,10 @@ describe("createSalesforceClient", () => {
             Promise.resolve(
                 new Response(
                     JSON.stringify([
-                        { message: "INVALID_FIELD: No such column", errorCode: "INVALID_FIELD" },
+                        {
+                            message: "INVALID_FIELD: No such column",
+                            errorCode: "INVALID_FIELD",
+                        },
                     ]),
                     { status: 400, headers: { "Content-Type": "application/json" } }
                 )
@@ -132,10 +151,14 @@ describe("createSalesforceClient", () => {
             void input;
             if (init?.method === "POST") {
                 return Promise.resolve(
-                    new Response(JSON.stringify({ id: "00TPW0000012345YAA", success: true, errors: [] }), {
-                        status: 201,
-                        headers: { "Content-Type": "application/json" },
-                    })
+                    new Response(
+                        JSON.stringify({
+                            id: "00TPW0000012345YAA",
+                            success: true,
+                            errors: [],
+                        }),
+                        { status: 201, headers: { "Content-Type": "application/json" } }
+                    )
                 );
             }
             if (init?.method === "PATCH") {
@@ -155,10 +178,15 @@ describe("createSalesforceClient", () => {
         });
 
         await expect(
-            client.createRecord("Task", { Subject: "Party Stack demo", Status: "Not Started" })
+            client.createRecord("Task", {
+                Subject: "Party Stack demo",
+                Status: "Not Started",
+            })
         ).resolves.toMatchObject({ id: "00TPW0000012345YAA", success: true });
         await expect(
-            client.updateRecord("Task", "00TPW0000012345YAA", { Subject: "Updated demo" })
+            client.updateRecord("Task", "00TPW0000012345YAA", {
+                Subject: "Updated demo",
+            })
         ).resolves.toMatchObject({ id: "00TPW0000012345YAA", success: true });
         await expect(client.deleteRecord("Task", "00TPW0000012345YAA")).resolves.toMatchObject({
             id: "00TPW0000012345YAA",
@@ -195,13 +223,32 @@ describe("createSalesforceClient", () => {
         const fetchMock = vi
             .fn()
             .mockResolvedValueOnce(
-                Response.json([{ channel: "/meta/handshake", successful: true, clientId: "client-1" }])
+                Response.json([
+                    {
+                        channel: "/meta/handshake",
+                        successful: true,
+                        clientId: "client-1",
+                    },
+                ])
             )
-            .mockResolvedValueOnce(Response.json([{ channel: "/meta/subscribe", successful: true }]))
             .mockResolvedValueOnce(
                 Response.json([
-                    { channel: "/data/TaskChangeEvent", data: event },
-                    { channel: "/meta/connect", successful: true },
+                    {
+                        channel: "/meta/subscribe",
+                        successful: true,
+                    },
+                ])
+            )
+            .mockResolvedValueOnce(
+                Response.json([
+                    {
+                        channel: "/data/TaskChangeEvent",
+                        data: event,
+                    },
+                    {
+                        channel: "/meta/connect",
+                        successful: true,
+                    },
                 ])
             )
             .mockImplementation(
@@ -236,7 +283,14 @@ describe("createSalesforceClient", () => {
         expect(handshakeCall[1]?.credentials).toBe("include");
         const subscribeBody = subscribeCall[1]?.body;
         expect(typeof subscribeBody === "string" ? JSON.parse(subscribeBody) : undefined).toMatchObject([
-            { subscription: "/data/TaskChangeEvent", ext: { replay: { "/data/TaskChangeEvent": 41 } } },
+            {
+                subscription: "/data/TaskChangeEvent",
+                ext: {
+                    replay: {
+                        "/data/TaskChangeEvent": 41,
+                    },
+                },
+            },
         ]);
         expect(subscription.channel).toBe("/data/TaskChangeEvent");
     });
@@ -248,7 +302,9 @@ describe("createSalesforceClient", () => {
             );
             expect(init?.method).toBe("POST");
             const body = typeof init?.body === "string" ? init.body : "";
-            expect(JSON.parse(body)).toEqual({ inputs: [{ Name: "Acme" }] });
+            expect(JSON.parse(body)).toEqual({
+                inputs: [{ Name: "Acme" }],
+            });
             return Promise.resolve(
                 new Response(
                     JSON.stringify([
@@ -283,17 +339,35 @@ describe("createSalesforceClient", () => {
         const fetchMock = vi
             .fn()
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ name: "getAvailableMeetingTimes", inputs: [], outputs: [] }), {
-                    status: 200,
-                    headers: { "Content-Type": "application/json" },
-                })
+                new Response(
+                    JSON.stringify({
+                        name: "getAvailableMeetingTimes",
+                        inputs: [],
+                        outputs: [],
+                    }),
+                    {
+                        status: 200,
+                        headers: {
+                            "Content-Type": "application/json",
+                        },
+                    }
+                )
             )
             .mockResolvedValueOnce(
                 new Response(
                     JSON.stringify([
-                        { actionName: "getAvailableMeetingTimes", isSuccess: true, outputValues: {} },
+                        {
+                            actionName: "getAvailableMeetingTimes",
+                            isSuccess: true,
+                            outputValues: {},
+                        },
                     ]),
-                    { status: 200, headers: { "Content-Type": "application/json" } }
+                    {
+                        status: 200,
+                        headers: {
+                            "Content-Type": "application/json",
+                        },
+                    }
                 )
             );
         const client = createSalesforceClient({
@@ -331,8 +405,20 @@ describe("createSalesforceClient", () => {
                 Response.json({
                     hasErrors: false,
                     results: [
-                        { result: { name: "First_Flow", inputs: [] }, statusCode: 200 },
-                        { result: { name: "Second_Flow", inputs: [] }, statusCode: 200 },
+                        {
+                            result: {
+                                name: "First_Flow",
+                                inputs: [],
+                            },
+                            statusCode: 200,
+                        },
+                        {
+                            result: {
+                                name: "Second_Flow",
+                                inputs: [],
+                            },
+                            statusCode: 200,
+                        },
                     ],
                 })
             );
@@ -346,8 +432,14 @@ describe("createSalesforceClient", () => {
 
         await expect(
             client.describeInvocableActions([
-                { kind: "flow", apiName: "First_Flow" },
-                { kind: "standard", apiName: "Second_Action" },
+                {
+                    kind: "flow",
+                    apiName: "First_Flow",
+                },
+                {
+                    kind: "standard",
+                    apiName: "Second_Action",
+                },
             ])
         ).resolves.toMatchObject([{ name: "First_Flow" }, { name: "Second_Flow" }]);
         expect(fetchMock).toHaveBeenCalledOnce();

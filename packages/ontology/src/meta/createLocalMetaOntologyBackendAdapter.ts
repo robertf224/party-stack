@@ -11,7 +11,10 @@ function collectionOptions<T extends object>(
     rows: T[],
     getKey: (row: T) => string
 ): OntologyCollectionOptions {
-    return localOnlyCollectionOptions({ getKey, initialData: rows }) as unknown as OntologyCollectionOptions;
+    return localOnlyCollectionOptions({
+        getKey,
+        initialData: rows,
+    }) as unknown as OntologyCollectionOptions;
 }
 
 export function createLocalMetaOntologyBackendAdapter(ir: OntologyIR): OntologyBackendAdapter {

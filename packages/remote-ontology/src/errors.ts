@@ -125,7 +125,11 @@ export function parseRemoteOntologyErrorBody(text: string, status: number): Remo
         // Fall through to raw text.
     }
 
-    return new RemoteOntologyError({ code: statusToCode(status), status, message: text });
+    return new RemoteOntologyError({
+        code: statusToCode(status),
+        status,
+        message: text,
+    });
 }
 
 export function statusToCode(status: number): RemoteOntologyErrorCode {
@@ -159,7 +163,9 @@ export function remoteOntologyErrorFromUnknown(error: unknown): RemoteOntologyEr
             status: 400,
             message: error.message,
             retryable: false,
-            details: { validation: "issues" in error ? (error as { issues: unknown }).issues : undefined },
+            details: {
+                validation: "issues" in error ? (error as { issues: unknown }).issues : undefined,
+            },
         });
     }
 

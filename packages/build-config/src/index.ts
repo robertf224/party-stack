@@ -7,7 +7,9 @@ type TaskOptions = Exclude<TaskDefinition, string | string[]>;
 
 /** Override individual task options without repeating their command or prerequisites. */
 export type LibraryConfig = Omit<ViteUserConfig, "run"> & {
-    run?: Omit<RunConfig, "tasks"> & { tasks?: Record<string, string | string[] | Partial<TaskOptions>> };
+    run?: Omit<RunConfig, "tasks"> & {
+        tasks?: Record<string, string | string[] | Partial<TaskOptions>>;
+    };
 };
 
 /**

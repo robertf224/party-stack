@@ -7,7 +7,9 @@ type TestService = {
         double(input: { value: number }): Promise<number>;
         wait(input: { value: number }): Promise<number>;
     };
-    events: { changed: { value: number } };
+    events: {
+        changed: { value: number };
+    };
 };
 
 class LocalBroadcastChannel extends EventTarget implements BroadcastChannel {
@@ -31,7 +33,9 @@ class LocalBroadcastChannel extends EventTarget implements BroadcastChannel {
             if (channel === this || channel.closed) {
                 continue;
             }
-            const event = new MessageEvent("message", { data: structuredClone(message) });
+            const event = new MessageEvent("message", {
+                data: structuredClone(message),
+            });
             queueMicrotask(() => {
                 channel.dispatchEvent(event);
                 channel.onmessage?.call(channel, event);
@@ -71,7 +75,10 @@ class LocalLockManager implements LockManager {
             if (options.signal?.aborted) {
                 throw options.signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
             }
-            return grant({ mode: options.mode ?? "exclusive", name });
+            return grant({
+                mode: options.mode ?? "exclusive",
+                name,
+            });
         });
         this.tails.set(
             name,
@@ -81,7 +88,10 @@ class LocalLockManager implements LockManager {
     }
 
     query(): Promise<LockManagerSnapshot> {
-        return Promise.resolve({ held: [], pending: [] });
+        return Promise.resolve({
+            held: [],
+            pending: [],
+        });
     }
 }
 
@@ -97,7 +107,9 @@ beforeEach(() => {
     });
     Object.defineProperty(globalThis, "navigator", {
         configurable: true,
-        value: { locks: new LocalLockManager() },
+        value: {
+            locks: new LocalLockManager(),
+        },
     });
     restoreWebApis = () => {
         LocalBroadcastChannel.channels.clear();
@@ -257,7 +269,11 @@ describe("LockBroadcastCoordination", () => {
 
         await expect(follower.service<TestService>("test.v1").methods.double({ value: 4 })).resolves.toBe(8);
         server.events.publish("changed", { value: 9 });
-        await vi.waitFor(() => expect(listener).toHaveBeenCalledWith({ value: 9 }));
+        await vi.waitFor(() =>
+            expect(listener).toHaveBeenCalledWith({
+                value: 9,
+            })
+        );
 
         await leader.close();
         await follower.close();
@@ -490,7 +506,9 @@ describe("LockBroadcastCoordination", () => {
             cleaned.resolve();
         });
         // oxlint-disable-next-line vitest/valid-expect -- Register before shutdown; awaited below after shutdown triggers rejection.
-        const operationResult = expect(operation).rejects.toMatchObject({ code: "CLOSED" });
+        const operationResult = expect(operation).rejects.toMatchObject({
+            code: "CLOSED",
+        });
         await started.promise;
 
         const closing = leader.close();
@@ -572,7 +590,9 @@ describe("LockBroadcastCoordination", () => {
 
         controller.abort();
 
-        await expect(request).rejects.toMatchObject({ name: "AbortError" });
+        await expect(request).rejects.toMatchObject({
+            name: "AbortError",
+        });
         await expect(aborted.promise).resolves.toBeUndefined();
         await first.close();
         await second.close();

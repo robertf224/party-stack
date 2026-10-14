@@ -71,7 +71,12 @@ function convertDefaultValue(
 
     if (defaultValue.type === "staticValue") {
         const value = convertFoundryStaticValue(defaultValue.staticValue);
-        return value === undefined ? undefined : { kind: "literal", value: { value } };
+        return value === undefined
+            ? undefined
+            : {
+                  kind: "literal",
+                  value: { value },
+              };
     }
 
     if (defaultValue.type === "objectParameterPropertyValue") {
@@ -87,7 +92,14 @@ function convertDefaultValue(
             value: {
                 source: {
                     kind: "objectLookup",
-                    value: { reference: { kind: "inputReference", value: { name: parameterName } } },
+                    value: {
+                        reference: {
+                            kind: "inputReference",
+                            value: {
+                                name: parameterName,
+                            },
+                        },
+                    },
                 },
                 path: [propertyApiName],
             },
@@ -111,9 +123,12 @@ function getOmsActionParameterAllowedValues(
     return validation?.defaultValidation.validation?.allowedValues;
 }
 
-function getOmsOneOf(
-    allowedValues: AllowedParameterValues | undefined
-): { options: StringSuggestion[]; otherValuesAllowed: boolean } | undefined {
+function getOmsOneOf(allowedValues: AllowedParameterValues | undefined):
+    | {
+          options: StringSuggestion[];
+          otherValuesAllowed: boolean;
+      }
+    | undefined {
     if (allowedValues?.type !== "oneOf") return undefined;
     if (allowedValues.oneOf.type !== "oneOf") {
         return undefined;
@@ -122,9 +137,21 @@ function getOmsOneOf(
 
     const options = oneOf.labelledValues.flatMap((entry) => {
         const value = convertFoundryStaticValue(entry.value);
-        return typeof value === "string" ? [{ value, label: entry.label }] : [];
+        return typeof value === "string"
+            ? [
+                  {
+                      value,
+                      label: entry.label,
+                  },
+              ]
+            : [];
     });
-    return options.length > 0 ? { options, otherValuesAllowed: oneOf.otherValueAllowed.allowed } : undefined;
+    return options.length > 0
+        ? {
+              options,
+              otherValuesAllowed: oneOf.otherValueAllowed.allowed,
+          }
+        : undefined;
 }
 
 export function convertOmsActionParameterStringConstraint(
@@ -137,7 +164,10 @@ export function convertOmsActionParameterStringConstraint(
     if (allowedValues?.type === "oneOf") {
         const oneOf = getOmsOneOf(allowedValues);
         return oneOf && !oneOf.otherValuesAllowed
-            ? { kind: "enum", value: { options: oneOf.options } }
+            ? {
+                  kind: "enum",
+                  value: { options: oneOf.options },
+              }
             : undefined;
     }
 
@@ -146,7 +176,12 @@ export function convertOmsActionParameterStringConstraint(
             return undefined;
         }
         const regex = allowedValues.text.text.regex?.regex;
-        return regex ? { kind: "regex", value: { regex } } : undefined;
+        return regex
+            ? {
+                  kind: "regex",
+                  value: { regex },
+              }
+            : undefined;
     }
 
     return undefined;

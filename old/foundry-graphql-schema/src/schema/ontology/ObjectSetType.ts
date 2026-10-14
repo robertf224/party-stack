@@ -34,4 +34,8 @@ function getReferenceByName(
 ): GraphQLObjectType {
     return getTypeReference(`${apiName}Set`) as GraphQLObjectType;
 }
-export const ObjectSetType = { create, getReference, getReferenceByName };
+export const ObjectSetType = {
+    create,
+    getReference,
+    getReferenceByName,
+};

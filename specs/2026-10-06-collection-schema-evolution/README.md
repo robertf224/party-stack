@@ -59,7 +59,10 @@ type CollectionPersistenceProvider = (options: {
     collectionId: string;
     schemaVersion: number;
     mode: "sync-present" | "sync-absent";
-}) => { adapter: PersistenceAdapter; cleanup(): void | Promise<void> };
+}) => {
+    adapter: PersistenceAdapter;
+    cleanup(): void | Promise<void>;
+};
 ```
 
 Acquisition is synchronous; storage initialization remains asynchronous inside

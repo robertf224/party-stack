@@ -101,7 +101,10 @@ async function evaluateExpressionWithLocals(
             return context[expression.value.name];
         case "getAt": {
             const source = await evaluateExpressionWithLocals(
-                { ...options, expression: expression.value.source },
+                {
+                    ...options,
+                    expression: expression.value.source,
+                },
                 locals
             );
             if (isEvaluatedObjectReference(source)) {
@@ -116,7 +119,10 @@ async function evaluateExpressionWithLocals(
         }
         case "objectLookup": {
             const reference = await evaluateExpressionWithLocals(
-                { ...options, expression: expression.value.reference },
+                {
+                    ...options,
+                    expression: expression.value.reference,
+                },
                 locals
             );
             if (!isEvaluatedObjectReference(reference)) {
@@ -130,7 +136,9 @@ async function evaluateExpressionWithLocals(
             )!;
             const referencedObject = await tx.query<OntologyObject | undefined>((query, objects) =>
                 query
-                    .from({ object: objects[referencedType.name]! })
+                    .from({
+                        object: objects[referencedType.name]!,
+                    })
                     .where(({ object }) => eq(object[referencedType.primaryKey], reference.key))
                     .select(({ object }) => object)
                     .findOne()
@@ -139,12 +147,19 @@ async function evaluateExpressionWithLocals(
                 throw new Error(`Missing loaded "${referencedType.name}" object.`);
             }
             return referencedObject
-                ? { [ontologyObject]: true, objectType: referencedType.name, value: referencedObject }
+                ? {
+                      [ontologyObject]: true,
+                      objectType: referencedType.name,
+                      value: referencedObject,
+                  }
                 : undefined;
         }
         case "linkHop": {
             const source = await evaluateExpressionWithLocals(
-                { ...options, expression: expression.value.source },
+                {
+                    ...options,
+                    expression: expression.value.source,
+                },
                 locals
             );
             if (!isEvaluatedOntologyObject(source)) {
@@ -182,13 +197,19 @@ async function evaluateExpressionWithLocals(
             const targetProperty = foreignKeyOnSource ? targetType.primaryKey : link.foreignKey;
             const linkedObject = await tx.query<OntologyObject | undefined>((query, objects) =>
                 query
-                    .from({ object: objects[targetType.name]! })
+                    .from({
+                        object: objects[targetType.name]!,
+                    })
                     .where(({ object }) => eq(object[targetProperty], sourceKey))
                     .select(({ object }) => object)
                     .findOne()
             );
             return linkedObject
-                ? { [ontologyObject]: true, objectType: targetType.name, value: linkedObject }
+                ? {
+                      [ontologyObject]: true,
+                      objectType: targetType.name,
+                      value: linkedObject,
+                  }
                 : undefined;
         }
         case "struct": {
@@ -198,7 +219,10 @@ async function evaluateExpressionWithLocals(
                         [
                             field.name,
                             await evaluateExpressionWithLocals(
-                                { ...options, expression: field.value },
+                                {
+                                    ...options,
+                                    expression: field.value,
+                                },
                                 locals
                             ),
                         ] as const
@@ -208,7 +232,10 @@ async function evaluateExpressionWithLocals(
         }
         case "map": {
             const source = await evaluateExpressionWithLocals(
-                { ...options, expression: expression.value.source },
+                {
+                    ...options,
+                    expression: expression.value.source,
+                },
                 locals
             );
             if (source === undefined) {
@@ -222,7 +249,10 @@ async function evaluateExpressionWithLocals(
                     const itemLocals = new Map(locals);
                     itemLocals.set(expression.value.binding, item);
                     return evaluateExpressionWithLocals(
-                        { ...options, expression: expression.value.body },
+                        {
+                            ...options,
+                            expression: expression.value.body,
+                        },
                         itemLocals
                     );
                 })
@@ -245,7 +275,9 @@ export async function resolveActionParameters(options: {
     tx: OntologyReadTx;
 }): Promise<Record<string, unknown>> {
     const action = getActionType(options.ir, options.actionTypeName);
-    const resolvedParameters = { ...options.initialParameters };
+    const resolvedParameters = {
+        ...options.initialParameters,
+    };
     const parametersByName = new Map(action.parameters.map((parameter) => [parameter.name, parameter]));
     const resolving = new Set<string>();
 

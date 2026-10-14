@@ -49,7 +49,9 @@ export async function resolveOAuthSecretStore(options: {
         },
         async delete(key) {
             if (!records.get(key)) return;
-            const transaction = records.delete(key, { optimistic: false });
+            const transaction = records.delete(key, {
+                optimistic: false,
+            });
             await transaction.isPersisted.promise;
         },
         cleanup: () => records.cleanup(),

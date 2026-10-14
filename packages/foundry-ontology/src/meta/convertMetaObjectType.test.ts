@@ -46,27 +46,49 @@ describe("convertFoundryMetaObjectType", () => {
             name: "Employee",
             primaryKey: "id",
             title: "fullName",
-            icon: { name: "person", meta: { blueprint: { name: "person" } } },
+            icon: {
+                name: "person",
+                meta: {
+                    blueprint: {
+                        name: "person",
+                    },
+                },
+            },
             color: "#2d72d2",
         });
         expect(result.properties).toEqual([
             expect.objectContaining({
                 id: "ri.ontology.main.property.employee-id",
                 name: "id",
-                type: { kind: "string", value: {} },
+                type: {
+                    kind: "string",
+                    value: {},
+                },
             }),
             expect.objectContaining({
                 id: "ri.ontology.main.property.employee-name",
                 name: "fullName",
                 displayName: "Full name",
-                type: { kind: "optional", value: { type: { kind: "string", value: {} } } },
+                type: {
+                    kind: "optional",
+                    value: {
+                        type: {
+                            kind: "string",
+                            value: {},
+                        },
+                    },
+                },
             }),
         ]);
     });
 
     it("omits unknown Blueprint icons without inventing a semantic match", () => {
         const source = objectType();
-        source.icon = { type: "blueprint", name: "vendor-only-icon", color: "#000000" };
+        source.icon = {
+            type: "blueprint",
+            name: "vendor-only-icon",
+            color: "#000000",
+        };
 
         expect(
             convertFoundryMetaObjectType({
@@ -76,7 +98,10 @@ describe("convertFoundryMetaObjectType", () => {
                 implementsInterfaces2: {},
                 sharedPropertyTypeMapping: {},
             })
-        ).toMatchObject({ icon: undefined, color: "#000000" });
+        ).toMatchObject({
+            icon: undefined,
+            color: "#000000",
+        });
     });
 
     it("treats non-primary attachment and value-type properties as optional", () => {
@@ -105,11 +130,27 @@ describe("convertFoundryMetaObjectType", () => {
 
         expect(result.properties.find((property) => property.name === "profileImage")?.type).toEqual({
             kind: "optional",
-            value: { type: { kind: "attachment", value: { meta: { foundry: { kind: "attachment" } } } } },
+            value: {
+                type: {
+                    kind: "attachment",
+                    value: {
+                        meta: {
+                            foundry: {
+                                kind: "attachment",
+                            },
+                        },
+                    },
+                },
+            },
         });
         expect(result.properties.find((property) => property.name === "departmentCode")?.type).toEqual({
             kind: "optional",
-            value: { type: { kind: "ref", value: { name: "DepartmentCode" } } },
+            value: {
+                type: {
+                    kind: "ref",
+                    value: { name: "DepartmentCode" },
+                },
+            },
         });
     });
 
@@ -164,7 +205,13 @@ describe("convertFoundryMetaObjectType", () => {
                     kind: "struct",
                     value: {
                         fields: [
-                            { name: "city", type: { kind: "optional", value: { type: { kind: "string" } } } },
+                            {
+                                name: "city",
+                                type: {
+                                    kind: "optional",
+                                    value: { type: { kind: "string" } },
+                                },
+                            },
                             {
                                 name: "coordinates",
                                 type: {
@@ -178,7 +225,9 @@ describe("convertFoundryMetaObjectType", () => {
                                                         name: "latitude",
                                                         type: {
                                                             kind: "optional",
-                                                            value: { type: { kind: "double" } },
+                                                            value: {
+                                                                type: { kind: "double" },
+                                                            },
                                                         },
                                                     },
                                                 ],
@@ -209,6 +258,9 @@ describe("convertFoundryMetaObjectType", () => {
 
         const result = convertFoundryMetaObjectType(metadata);
 
-        expect(result.properties[0]?.type).toEqual({ kind: "string", value: {} });
+        expect(result.properties[0]?.type).toEqual({
+            kind: "string",
+            value: {},
+        });
     });
 });

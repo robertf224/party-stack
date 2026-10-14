@@ -53,8 +53,15 @@ function create(
                         $primaryKey,
                         (primaryKey): ObjectSet => ({
                             type: "filter",
-                            objectSet: { type: "base", objectType: linkType.objectTypeApiName },
-                            where: { type: "eq", field: foreignKeyPropertyApiName, value: primaryKey },
+                            objectSet: {
+                                type: "base",
+                                objectType: linkType.objectTypeApiName,
+                            },
+                            where: {
+                                type: "eq",
+                                field: foreignKeyPropertyApiName,
+                                value: primaryKey,
+                            },
                         }),
                         true
                     );
@@ -69,4 +76,6 @@ function create(
     return [linkType.apiName, field];
 }
 
-export const ObjectLinkField = { create };
+export const ObjectLinkField = {
+    create,
+};

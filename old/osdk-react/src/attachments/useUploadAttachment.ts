@@ -15,7 +15,10 @@ export function useUploadAttachment(
         ...mutationOpts,
         mutationFn: async ({ file }) => {
             const attachment = await Attachments.upload(client, file, { filename: file.name });
-            return { ...attachment, sizeBytes: Number(attachment.sizeBytes) };
+            return {
+                ...attachment,
+                sizeBytes: Number(attachment.sizeBytes),
+            };
         },
     });
 }

@@ -25,7 +25,9 @@ function salesforceDevSessionPlugin(env: Record<string, string>): Plugin {
                         `${loginUrl.replace(/\/+$/, "")}/services/oauth2/token`,
                         {
                             method: "POST",
-                            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                            headers: {
+                                "Content-Type": "application/x-www-form-urlencoded",
+                            },
                             body: new URLSearchParams({
                                 grant_type: "client_credentials",
                                 client_id: clientId,
@@ -33,15 +35,24 @@ function salesforceDevSessionPlugin(env: Record<string, string>): Plugin {
                             }),
                         }
                     );
-                    const token = (await tokenResponse.json()) as { access_token?: unknown };
+                    const token = (await tokenResponse.json()) as {
+                        access_token?: unknown;
+                    };
                     if (!tokenResponse.ok || typeof token.access_token !== "string") {
                         throw new Error(`Salesforce token endpoint returned ${tokenResponse.status}.`);
                     }
                     const userResponse = await fetch(
                         `${loginUrl.replace(/\/+$/, "")}/services/oauth2/userinfo`,
-                        { headers: { Authorization: `Bearer ${token.access_token}` } }
+                        {
+                            headers: {
+                                Authorization: `Bearer ${token.access_token}`,
+                            },
+                        }
                     );
-                    const user = (await userResponse.json()) as { user_id?: unknown; sub?: unknown };
+                    const user = (await userResponse.json()) as {
+                        user_id?: unknown;
+                        sub?: unknown;
+                    };
                     const userId =
                         typeof user.user_id === "string"
                             ? user.user_id
@@ -53,12 +64,19 @@ function salesforceDevSessionPlugin(env: Record<string, string>): Plugin {
                     }
                     response.setHeader("Cache-Control", "no-store");
                     response.setHeader("Content-Type", "application/json");
-                    response.end(JSON.stringify({ accessToken: token.access_token, userId }));
+                    response.end(
+                        JSON.stringify({
+                            accessToken: token.access_token,
+                            userId,
+                        })
+                    );
                 } catch (error) {
                     response.statusCode = 502;
                     response.setHeader("Content-Type", "application/json");
                     response.end(
-                        JSON.stringify({ error: error instanceof Error ? error.message : String(error) })
+                        JSON.stringify({
+                            error: error instanceof Error ? error.message : String(error),
+                        })
                     );
                 }
             });

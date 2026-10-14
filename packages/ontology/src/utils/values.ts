@@ -21,5 +21,9 @@ export type Result<T, E> = Union<{ ok: T; err: E }>;
 export type attachment<Type extends string = string> = {
     id: string;
     type?: Type;
-    source?: { objectType: string; primaryKey: string | number; property: string };
+    source?: {
+        objectType: string;
+        primaryKey: string | number;
+        property: string;
+    };
 };

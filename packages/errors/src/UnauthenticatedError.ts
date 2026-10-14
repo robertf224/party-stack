@@ -19,6 +19,9 @@ export function isUnauthenticatedError(error: unknown): error is Unauthenticated
     if (typeof error !== "object" || error === null) {
         return false;
     }
-    const candidate = error as { name?: unknown; code?: unknown };
+    const candidate = error as {
+        name?: unknown;
+        code?: unknown;
+    };
     return candidate.name === UNAUTHENTICATED_ERROR_NAME && candidate.code === UNAUTHENTICATED_ERROR_CODE;
 }

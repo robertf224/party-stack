@@ -12,7 +12,12 @@ export function createNetwork(client: Client): ReturnType<typeof Network.create>
         const executor = await executorPromise;
         const token = await client.__osdkClientContext.tokenProvider();
         // oxlint-disable-next-line typescript/no-unsafe-assignment
-        const result = await executor({ query: request.text, operationName: request.name, variables, token });
+        const result = await executor({
+            query: request.text,
+            operationName: request.name,
+            variables,
+            token,
+        });
         // oxlint-disable-next-line typescript/no-unsafe-return
         return result;
     };

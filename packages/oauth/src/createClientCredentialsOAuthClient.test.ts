@@ -7,7 +7,11 @@ describe("createClientCredentialsOAuthClient", () => {
         const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
             const request = new Request(input, init);
             requestBody = new URLSearchParams(await request.text());
-            return Response.json({ access_token: "access-token", expires_in: 3600, token_type: "Bearer" });
+            return Response.json({
+                access_token: "access-token",
+                expires_in: 3600,
+                token_type: "Bearer",
+            });
         });
         const client = createClientCredentialsOAuthClient({
             clientId: "client",
@@ -22,7 +26,9 @@ describe("createClientCredentialsOAuthClient", () => {
         await expect(client.getAccessToken()).resolves.toBe("access-token");
         await expect(client.getSession()).resolves.toMatchObject({
             userId: "user-1",
-            expiration: { refreshable: true },
+            expiration: {
+                refreshable: true,
+            },
         });
 
         expect(fetch).toHaveBeenCalledOnce();
@@ -39,8 +45,13 @@ describe("createClientCredentialsOAuthClient", () => {
             requests.push(request);
             return Promise.resolve(
                 request.url.endsWith("/revoke")
-                    ? new Response(null, { status: 200 })
-                    : Response.json({ access_token: "access-token", expires_in: 3600 })
+                    ? new Response(null, {
+                          status: 200,
+                      })
+                    : Response.json({
+                          access_token: "access-token",
+                          expires_in: 3600,
+                      })
             );
         });
         const client = createClientCredentialsOAuthClient({

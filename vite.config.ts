@@ -38,7 +38,7 @@ export default defineConfig({
     },
     fmt: {
         printWidth: 110,
-        objectWrap: "collapse",
+        objectWrap: "preserve",
         trailingComma: "es5",
         tabWidth: 4,
         sortTailwindcss: {},
@@ -61,5 +61,7 @@ export default defineConfig({
             newlinesBetween: false,
         },
     },
-    staged: { "*": "vp check --fix" },
+    staged: {
+        "*": "vp check --fix",
+    },
 });

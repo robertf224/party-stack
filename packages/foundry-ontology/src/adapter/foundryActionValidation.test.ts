@@ -7,56 +7,103 @@ import {
 import type { Condition, ConditionValue } from "@osdk/client.unstable";
 import type { OntologyClient } from "@party-stack/foundry-client";
 
-const adminMocks = vi.hoisted(() => ({ listGroupMemberships: vi.fn() }));
+const adminMocks = vi.hoisted(() => ({
+    listGroupMemberships: vi.fn(),
+}));
 
 vi.mock("@osdk/foundry.admin", async (importOriginal) => {
     const original = await importOriginal<typeof import("@osdk/foundry.admin")>();
     return {
         ...original,
-        GroupMemberships: { ...original.GroupMemberships, list: adminMocks.listGroupMemberships },
+        GroupMemberships: {
+            ...original.GroupMemberships,
+            list: adminMocks.listGroupMemberships,
+        },
     };
 });
 
 function staticString(value: string): ConditionValue {
-    return { type: "staticValue", staticValue: { type: "string", string: value } };
+    return {
+        type: "staticValue",
+        staticValue: {
+            type: "string",
+            string: value,
+        },
+    };
 }
 
 function parameter(name: string): ConditionValue {
-    return { type: "parameterId", parameterId: name };
+    return {
+        type: "parameterId",
+        parameterId: name,
+    };
 }
 
 function currentUserGroupIds(): ConditionValue {
     return {
         type: "userProperty",
         userProperty: {
-            userId: { type: "currentUser", currentUser: {} },
-            propertyValue: { type: "groupIds", groupIds: {} },
+            userId: {
+                type: "currentUser",
+                currentUser: {},
+            },
+            propertyValue: {
+                type: "groupIds",
+                groupIds: {},
+            },
         },
     };
 }
 
 function staticStringList(...values: string[]): ConditionValue {
-    return { type: "staticValue", staticValue: { type: "stringList", stringList: { strings: values } } };
+    return {
+        type: "staticValue",
+        staticValue: {
+            type: "stringList",
+            stringList: {
+                strings: values,
+            },
+        },
+    };
 }
 
 function equals(left: ConditionValue, right: ConditionValue): Condition {
-    return { type: "comparison", comparison: { left, operator: "EQUALS", right } };
+    return {
+        type: "comparison",
+        comparison: {
+            left,
+            operator: "EQUALS",
+            right,
+        },
+    };
 }
 
 function and(...conditions: Condition[]): Condition {
-    return { type: "and", and: { conditions } };
+    return {
+        type: "and",
+        and: { conditions },
+    };
 }
 
 function or(...conditions: Condition[]): Condition {
-    return { type: "or", or: { conditions } };
+    return {
+        type: "or",
+        or: { conditions },
+    };
 }
 
 function not(condition: Condition): Condition {
-    return { type: "not", not: { condition } };
+    return {
+        type: "not",
+        not: { condition },
+    };
 }
 
 function alwaysTrue(): Condition {
-    return { type: "true", true: {} };
+    return {
+        type: "true",
+        true: {},
+    };
 }
 
 function knownFalse(): Condition {
@@ -68,7 +115,10 @@ function unknown(): Condition {
 }
 
 function criteria(rules: Record<string, Condition>): FoundrySubmissionCriterion[] {
-    return Object.entries(rules).map(([failureMessage, condition]) => ({ condition, failureMessage }));
+    return Object.entries(rules).map(([failureMessage, condition]) => ({
+        condition,
+        failureMessage,
+    }));
 }
 
 function validate(rules: Record<string, Condition>) {
@@ -86,9 +136,16 @@ describe("validateFoundryActionDraftCriteria", () => {
     });
 
     it("treats an AND as impossible when any branch is known false", async () => {
-        await expect(validate({ "AND cannot pass": and(knownFalse(), unknown()) })).resolves.toEqual({
+        await expect(
+            validate({
+                "AND cannot pass": and(knownFalse(), unknown()),
+            })
+        ).resolves.toEqual({
             certain: true,
-            value: { kind: "err", value: [{ message: "Impossible submission criterion: AND cannot pass" }] },
+            value: {
+                kind: "err",
+                value: [{ message: "Impossible submission criterion: AND cannot pass" }],
+            },
         });
     });
 
@@ -100,21 +157,34 @@ describe("validateFoundryActionDraftCriteria", () => {
             })
         ).resolves.toEqual({
             certain: true,
-            value: { kind: "err", value: [{ message: "Impossible submission criterion: OR cannot pass" }] },
+            value: {
+                kind: "err",
+                value: [{ message: "Impossible submission criterion: OR cannot pass" }],
+            },
         });
     });
 
     it("does not treat NOT of an uncertain condition as impossible", async () => {
         await expect(
-            validate({ "NOT might pass": not(unknown()), "NOT cannot pass": not(alwaysTrue()) })
+            validate({
+                "NOT might pass": not(unknown()),
+                "NOT cannot pass": not(alwaysTrue()),
+            })
         ).resolves.toEqual({
             certain: true,
-            value: { kind: "err", value: [{ message: "Impossible submission criterion: NOT cannot pass" }] },
+            value: {
+                kind: "err",
+                value: [{ message: "Impossible submission criterion: NOT cannot pass" }],
+            },
         });
     });
 
     it("returns uncertain when no criterion is provably impossible", async () => {
-        await expect(validate({ "Only administrators may submit.": unknown() })).resolves.toEqual({
+        await expect(
+            validate({
+                "Only administrators may submit.": unknown(),
+            })
+        ).resolves.toEqual({
             certain: false,
         });
     });
@@ -123,7 +193,9 @@ describe("validateFoundryActionDraftCriteria", () => {
         await expect(
             validateFoundryActionDraftCriteria({
                 client: {} as OntologyClient,
-                criteria: criteria({ "A value is required.": unknown() }),
+                criteria: criteria({
+                    "A value is required.": unknown(),
+                }),
                 userId: "user-1",
                 parameters: {},
                 knownParameters: new Set(["formInput"]),
@@ -139,8 +211,13 @@ describe("validateFoundryActionDraftCriteria", () => {
 
     it("exhausts transitive group-membership pages for the context user", async () => {
         adminMocks.listGroupMemberships
-            .mockResolvedValueOnce({ data: [{ groupId: "regular-users" }], nextPageToken: "next-page" })
-            .mockResolvedValueOnce({ data: [{ groupId: "another-group" }] });
+            .mockResolvedValueOnce({
+                data: [{ groupId: "regular-users" }],
+                nextPageToken: "next-page",
+            })
+            .mockResolvedValueOnce({
+                data: [{ groupId: "another-group" }],
+            });
 
         await expect(
             validate({
@@ -157,7 +234,11 @@ describe("validateFoundryActionDraftCriteria", () => {
             certain: true,
             value: {
                 kind: "err",
-                value: [{ message: "Impossible submission criterion: Only administrators may submit." }],
+                value: [
+                    {
+                        message: "Impossible submission criterion: Only administrators may submit.",
+                    },
+                ],
             },
         });
         expect(adminMocks.listGroupMemberships).toHaveBeenNthCalledWith(1, expect.anything(), "user-1", {
@@ -195,6 +276,11 @@ describe("getFoundryValidationIssues", () => {
                     },
                 },
             })
-        ).toEqual([{ message: "Enter a valid email address.", path: ["email"] }]);
+        ).toEqual([
+            {
+                message: "Enter a valid email address.",
+                path: ["email"],
+            },
+        ]);
     });
 });

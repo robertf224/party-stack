@@ -19,9 +19,20 @@ export type NoteAttachment = {
     createdAt: v.timestamp;
 };
 
-export type CreateNoteParameters = { id?: string; title: string; bodyMarkdown: string; ownerEmail?: string };
-export type UpdateNoteParameters = { note: string; title?: string | null; bodyMarkdown?: string | null };
-export type DeleteNoteParameters = { note: string };
+export type CreateNoteParameters = {
+    id?: string;
+    title: string;
+    bodyMarkdown: string;
+    ownerEmail?: string;
+};
+export type UpdateNoteParameters = {
+    note: string;
+    title?: string | null;
+    bodyMarkdown?: string | null;
+};
+export type DeleteNoteParameters = {
+    note: string;
+};
 export type CreateNoteAttachmentParameters = {
     id?: string;
     note: string;
@@ -29,12 +40,23 @@ export type CreateNoteAttachmentParameters = {
     attachment: v.attachment;
 };
 export type RemoteNotesOntology = {
-    objectTypes: { Note: Note; NoteAttachment: NoteAttachment };
+    objectTypes: {
+        Note: Note;
+        NoteAttachment: NoteAttachment;
+    };
     actionTypes: {
-        createNote: { parameters: CreateNoteParameters };
-        updateNote: { parameters: UpdateNoteParameters };
-        deleteNote: { parameters: DeleteNoteParameters };
-        createNoteAttachment: { parameters: CreateNoteAttachmentParameters };
+        createNote: {
+            parameters: CreateNoteParameters;
+        };
+        updateNote: {
+            parameters: UpdateNoteParameters;
+        };
+        deleteNote: {
+            parameters: DeleteNoteParameters;
+        };
+        createNoteAttachment: {
+            parameters: CreateNoteAttachmentParameters;
+        };
     };
     queryFunctionTypes: Record<never, never>;
 };

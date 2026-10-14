@@ -10,7 +10,12 @@ describe("getTokenDetails", () => {
         const encodedSubject = btoa(String.fromCharCode(...subject));
         const token = [
             base64url.encode(JSON.stringify({ alg: "none" })),
-            base64url.encode(JSON.stringify({ sub: encodedSubject, exp: 1_700_000_000 })),
+            base64url.encode(
+                JSON.stringify({
+                    sub: encodedSubject,
+                    exp: 1_700_000_000,
+                })
+            ),
             "",
         ].join(".");
 

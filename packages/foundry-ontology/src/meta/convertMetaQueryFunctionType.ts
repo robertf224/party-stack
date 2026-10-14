@@ -30,7 +30,10 @@ function timestampType(): TypeDef {
 }
 
 function attachmentType(type: "attachment" | "media"): TypeDef {
-    return { kind: "attachment", value: { meta: { type } } };
+    return {
+        kind: "attachment",
+        value: { meta: { type } },
+    };
 }
 
 function maybeOptional(type: TypeDef, required: boolean): TypeDef {

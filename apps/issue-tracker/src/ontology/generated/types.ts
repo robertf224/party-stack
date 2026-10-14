@@ -51,7 +51,9 @@ export type User = {
     avatar?: v.attachment<"image/png" | "image/jpeg" | "image/gif" | "image/svg+xml">;
 };
 
-export type IssueTrackerOntologyContext = { user: string } & Record<string, unknown>;
+export type IssueTrackerOntologyContext = {
+    user: string;
+} & Record<string, unknown>;
 export type CreateIssueParameters = {
     completedAt?: v.timestamp | null;
     attachments?: Array<v.attachment<"image/png" | "image/jpeg">> | null;
@@ -71,8 +73,12 @@ export type CreateProjectParameters = {
     "__uuid_7af1b7e1-9b8f-470d-bcf1-e02376d353c1"?: string;
     __now?: v.timestamp;
 };
-export type DeleteIssueParameters = { issue: string };
-export type DeleteProjectParameters = { project: string };
+export type DeleteIssueParameters = {
+    issue: string;
+};
+export type DeleteProjectParameters = {
+    project: string;
+};
 export type UpdateIssueParameters = {
     completedAt?: v.timestamp | null;
     attachments?: Array<v.attachment<"image/png" | "image/jpeg">> | null;
@@ -94,14 +100,30 @@ export type UpdateProjectParameters = {
 };
 export type IssueTrackerOntology = {
     context: IssueTrackerOntologyContext;
-    objectTypes: { Issue: Issue; Project: Project; User: User };
+    objectTypes: {
+        Issue: Issue;
+        Project: Project;
+        User: User;
+    };
     actionTypes: {
-        createIssue: { parameters: CreateIssueParameters };
-        createProject: { parameters: CreateProjectParameters };
-        deleteIssue: { parameters: DeleteIssueParameters };
-        deleteProject: { parameters: DeleteProjectParameters };
-        updateIssue: { parameters: UpdateIssueParameters };
-        updateProject: { parameters: UpdateProjectParameters };
+        createIssue: {
+            parameters: CreateIssueParameters;
+        };
+        createProject: {
+            parameters: CreateProjectParameters;
+        };
+        deleteIssue: {
+            parameters: DeleteIssueParameters;
+        };
+        deleteProject: {
+            parameters: DeleteProjectParameters;
+        };
+        updateIssue: {
+            parameters: UpdateIssueParameters;
+        };
+        updateProject: {
+            parameters: UpdateProjectParameters;
+        };
     };
     queryFunctionTypes: Record<never, never>;
 };

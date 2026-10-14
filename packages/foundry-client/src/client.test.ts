@@ -71,7 +71,10 @@ describe("createClient", () => {
 
     it("rejects cross-origin authenticated requests before loading credentials", async () => {
         const tokenProvider = vi.fn(() => Promise.resolve("token"));
-        const client = createClient({ baseUrl: "https://foundry.example.com", tokenProvider });
+        const client = createClient({
+            baseUrl: "https://foundry.example.com",
+            tokenProvider,
+        });
 
         await expect(client.fetch("https://example.com/api")).rejects.toThrow(
             'Egress not allowed for origin "https://example.com".'

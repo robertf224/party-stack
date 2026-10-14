@@ -18,4 +18,6 @@ function create(
     return [...objectQueryFields, ...objectSearchQueryFields];
 }
 
-export const OntologyQueryFields = { create };
+export const OntologyQueryFields = {
+    create,
+};

@@ -36,7 +36,10 @@ function createPageType(
                 description: `A list of ${pluralDisplayName}.`,
                 type: Schemas.list(getTypeReference(getEdgeTypeName(typeName)) as GraphQLObjectType),
             },
-            pageInfo: { description: "Information about pagination for this page.", type: PageInfoType },
+            pageInfo: {
+                description: "Information about pagination for this page.",
+                type: PageInfoType,
+            },
         })),
     });
 }
@@ -72,4 +75,9 @@ function getEdgeTypeName(typeName: string): string {
     return `${typeName}Edge`;
 }
 
-export const ListTypes = { createPageType, getPageTypeReference, createEdgeType, PageInfoType };
+export const ListTypes = {
+    createPageType,
+    getPageTypeReference,
+    createEdgeType,
+    PageInfoType,
+};

@@ -97,4 +97,6 @@ function create(
     });
 }
 
-export const ObjectPropertyField = { create };
+export const ObjectPropertyField = {
+    create,
+};

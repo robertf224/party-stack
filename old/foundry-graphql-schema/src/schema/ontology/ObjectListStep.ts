@@ -25,7 +25,10 @@ export interface ObjectListArgs {
 }
 
 export class LoadedObjectStep extends Step<TypedOntologyObject> {
-    static $$export = { moduleName: "@bobbyfidz/oql-graphql-schema", exportName: "LoadedObjectStep" };
+    static $$export = {
+        moduleName: "@bobbyfidz/oql-graphql-schema",
+        exportName: "LoadedObjectStep",
+    };
 
     isSyncAndSafe = true;
 
@@ -59,7 +62,10 @@ export class LoadedObjectStep extends Step<TypedOntologyObject> {
 }
 
 class ObjectListStep extends Step<ObjectListStepData> {
-    static $$export = { moduleName: "@bobbyfidz/oql-graphql-schema", exportName: "ObjectListStep" };
+    static $$export = {
+        moduleName: "@bobbyfidz/oql-graphql-schema",
+        exportName: "ObjectListStep",
+    };
 
     #properties = new Set<PropertyApiName>();
 
@@ -100,7 +106,10 @@ class ObjectListStep extends Step<ObjectListStepData> {
                 } as LoadObjectSetRequestV2
             );
 
-            return { data: data as TypedOntologyObject[], nextPageToken };
+            return {
+                data: data as TypedOntologyObject[],
+                nextPageToken,
+            };
         });
     }
 
@@ -118,7 +127,9 @@ export function objectListConnection(
     $args: Step<{
         first: Maybe<number>;
         after: Maybe<string>;
-        orderBy: Maybe<{ fields: { field: PropertyApiName; direction: "asc" | "desc" }[] }>;
+        orderBy: Maybe<{
+            fields: { field: PropertyApiName; direction: "asc" | "desc" }[];
+        }>;
     }>
 ) {
     const objectListStep = new ObjectListStep(
@@ -139,7 +150,9 @@ export function objectListConnection(
             endCursor: objectListStep.nextPageToken(),
         }),
         edges: each(objectListStep.items(), (item) =>
-            object({ node: new LoadedObjectStep(item, objectListStep) })
+            object({
+                node: new LoadedObjectStep(item, objectListStep),
+            })
         ),
     });
 }

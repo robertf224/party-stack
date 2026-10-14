@@ -9,7 +9,9 @@ export default defineLibraryConfig();
 ```
 
 ```json
-{ "extends": "@party-stack/build-config/tsconfig.json" }
+{
+    "extends": "@party-stack/build-config/tsconfig.json"
+}
 ```
 
 React and Expo libraries use `@party-stack/build-config/react/tsconfig.json` for

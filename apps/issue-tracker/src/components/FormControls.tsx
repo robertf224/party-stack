@@ -11,7 +11,10 @@ const sizeClassNames: Record<ControlSize, string> = {
     default: "h-9 px-3 text-sm",
 };
 
-type SharedControlProps = { controlSize?: ControlSize; fullWidth?: boolean };
+type SharedControlProps = {
+    controlSize?: ControlSize;
+    fullWidth?: boolean;
+};
 
 export function FormInput({
     className = "",
@@ -36,14 +39,20 @@ export function FormSelect({
     fullWidth = true,
     style,
     ...props
-}: ComponentProps<"select"> & SharedControlProps & { containerClassName?: string }) {
+}: ComponentProps<"select"> &
+    SharedControlProps & {
+        containerClassName?: string;
+    }) {
     return (
         <span className={`relative inline-block ${fullWidth ? "w-full" : ""} ${containerClassName}`}>
             <select
                 className={`${baseClassName} appearance-none ${sizeClassNames[controlSize]} ${
                     fullWidth ? "w-full" : ""
                 } ${className}`}
-                style={{ paddingRight: controlSize === "tiny" ? "1.75rem" : "2rem", ...style }}
+                style={{
+                    paddingRight: controlSize === "tiny" ? "1.75rem" : "2rem",
+                    ...style,
+                }}
                 {...props}
             />
             <svg

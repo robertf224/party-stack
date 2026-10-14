@@ -8,8 +8,16 @@ export interface OutboxErrorDetails {
 }
 
 export type OutboxResultEvent =
-    | { type: "completed"; id: string; result: unknown }
-    | { type: "rejected"; id: string; error: OutboxErrorDetails };
+    | {
+          type: "completed";
+          id: string;
+          result: unknown;
+      }
+    | {
+          type: "rejected";
+          id: string;
+          error: OutboxErrorDetails;
+      };
 
 export interface OutboxCoordinationService {
     methods: {
@@ -30,5 +38,7 @@ export interface OutboxCoordinationService {
         }): Promise<OntologyOutboxEntry>;
         discardAll(input: { id: string; executionId: string; error: OutboxErrorDetails }): Promise<void>;
     };
-    events: { result: OutboxResultEvent };
+    events: {
+        result: OutboxResultEvent;
+    };
 }

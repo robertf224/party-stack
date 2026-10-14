@@ -45,16 +45,34 @@ describe("createBetterAuthConnectionAdapter", () => {
                 },
             },
         ];
-        const listDeviceSessions = vi.fn(() => Promise.resolve({ data: sessions, error: null }));
-        const revoke = vi.fn(() => Promise.resolve({ data: { status: true }, error: null }));
+        const listDeviceSessions = vi.fn(() =>
+            Promise.resolve({
+                data: sessions,
+                error: null,
+            })
+        );
+        const revoke = vi.fn(() =>
+            Promise.resolve({
+                data: { status: true },
+                error: null,
+            })
+        );
         const email = vi.fn((_input: { email: string; password: string }) => {
             void _input;
-            return Promise.resolve({ data: { user: sessions[0]!.user }, error: null });
+            return Promise.resolve({
+                data: {
+                    user: sessions[0]!.user,
+                },
+                error: null,
+            });
         });
         const signIn = Object.assign(() => undefined, { email });
         let notifySessionChanged = () => Promise.resolve();
         const client = {
-            multiSession: { listDeviceSessions, revoke },
+            multiSession: {
+                listDeviceSessions,
+                revoke,
+            },
             signIn,
             partyStack: {
                 subscribe(listener) {
@@ -65,7 +83,9 @@ describe("createBetterAuthConnectionAdapter", () => {
                 },
             },
         } satisfies BetterAuthConnectionClient;
-        const adapter = await createBetterAuthConnectionAdapter({ client })({
+        const adapter = await createBetterAuthConnectionAdapter({
+            client,
+        })({
             installationId: "better-auth",
             runtime: {} as never,
         });
@@ -82,7 +102,10 @@ describe("createBetterAuthConnectionAdapter", () => {
         if (!first?.session.egress) {
             throw new Error("Expected Better Auth egress.");
         }
-        const egress = first.session.egress({ fetch, createWebSocket });
+        const egress = first.session.egress({
+            fetch,
+            createWebSocket,
+        });
         await egress.fetch(new Request("https://app.example/ontology"));
         const request = fetch.mock.calls[0]?.[0];
         expect(request).toBeInstanceOf(Request);
@@ -103,13 +126,18 @@ describe("createBetterAuthConnectionAdapter", () => {
             connect,
             disconnect: () => Promise.resolve(),
         });
-        const result = await authentication.signIn.email({ email: "ada@example.com", password: "ada" });
+        const result = await authentication.signIn.email({
+            email: "ada@example.com",
+            password: "ada",
+        });
         await notifySessionChanged();
 
         expect(result.data?.user.id).toBe("user-1");
         expect(connect).toHaveBeenCalledTimes(2);
         expect(connected.map(({ connection }) => connection.userId)).toEqual(["user-1", "user-2"]);
         await restored[1]!.session.disconnect();
-        expect(revoke).toHaveBeenCalledWith({ sessionToken: "selector-2" });
+        expect(revoke).toHaveBeenCalledWith({
+            sessionToken: "selector-2",
+        });
     });
 });

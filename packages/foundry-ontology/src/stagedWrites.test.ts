@@ -12,7 +12,13 @@ const ir: OntologyIR = {
             displayName: "Task",
             pluralDisplayName: "Tasks",
             primaryKey: "id",
-            properties: [{ name: "id", displayName: "ID", type: o.string({}) }],
+            properties: [
+                {
+                    name: "id",
+                    displayName: "ID",
+                    type: o.string({}),
+                },
+            ],
         },
     ],
     linkTypes: [],
@@ -42,16 +48,29 @@ describe("runFoundryOntologyMutator", () => {
             ir,
             client,
             mutator: async ({ tx }) => {
-                await tx.mutate.Task!.create({ id: "task-1" });
-                await tx.mutate.Task!.update("task-1", { title: "Updated" });
+                await tx.mutate.Task!.create({
+                    id: "task-1",
+                });
+                await tx.mutate.Task!.update("task-1", {
+                    title: "Updated",
+                });
             },
             args: {},
-            objectTypes: { Task: "TaskToken" },
+            objectTypes: {
+                Task: "TaskToken",
+            },
         });
 
         expect(calls).toEqual([
             ["create", "TaskToken", { id: "task-1" }],
-            ["update", { $apiName: "Task", $primaryKey: "task-1" }, { title: "Updated" }],
+            [
+                "update",
+                {
+                    $apiName: "Task",
+                    $primaryKey: "task-1",
+                },
+                { title: "Updated" },
+            ],
         ]);
     });
 });

@@ -5,24 +5,39 @@ import { createSalesforceMetaOntologyBackendAdapter } from "./createSalesforceMe
 
 describe("Salesforce QueryFunctionType metadata queries", () => {
     it("loads whitelisted reads and excludes mutating standard actions", async () => {
-        const describeStandardAction = vi
-            .fn()
-            .mockResolvedValue({
-                name: "getConversationTranscript",
-                label: "Get Conversation Transcript",
-                inputs: [{ name: "recordId", type: "STRING", required: true }],
-                outputs: [{ name: "unformattedTextTranscript", type: "STRING" }],
-            });
+        const describeStandardAction = vi.fn().mockResolvedValue({
+            name: "getConversationTranscript",
+            label: "Get Conversation Transcript",
+            inputs: [
+                {
+                    name: "recordId",
+                    type: "STRING",
+                    required: true,
+                },
+            ],
+            outputs: [
+                {
+                    name: "unformattedTextTranscript",
+                    type: "STRING",
+                },
+            ],
+        });
         const meta = await createMetaLiveOntology({
             backend: () =>
-                createSalesforceMetaOntologyBackendAdapter({ client: { describeStandardAction } as never }),
+                createSalesforceMetaOntologyBackendAdapter({
+                    client: {
+                        describeStandardAction,
+                    } as never,
+                }),
             persistObjects: false,
         });
 
         try {
             const reads = await queryOnce((q) =>
                 q
-                    .from({ QueryFunctionType: meta.objects.QueryFunctionType })
+                    .from({
+                        QueryFunctionType: meta.objects.QueryFunctionType,
+                    })
                     .where(({ QueryFunctionType }) => eq(QueryFunctionType.name, "getConversationTranscript"))
             );
 
@@ -30,13 +45,24 @@ describe("Salesforce QueryFunctionType metadata queries", () => {
             expect(reads[0]).toMatchObject({
                 name: "getConversationTranscript",
                 parameters: [{ name: "recordId" }],
-                returnType: { kind: "struct", value: { fields: [{ name: "unformattedTextTranscript" }] } },
+                returnType: {
+                    kind: "struct",
+                    value: {
+                        fields: [
+                            {
+                                name: "unformattedTextTranscript",
+                            },
+                        ],
+                    },
+                },
             });
 
             describeStandardAction.mockClear();
             const mutations = await queryOnce((q) =>
                 q
-                    .from({ QueryFunctionType: meta.objects.QueryFunctionType })
+                    .from({
+                        QueryFunctionType: meta.objects.QueryFunctionType,
+                    })
                     .where(({ QueryFunctionType }) => eq(QueryFunctionType.name, "confirmSalesMeeting"))
             );
 

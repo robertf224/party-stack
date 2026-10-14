@@ -81,8 +81,12 @@ type ObjectTypePropertyName<
 
 export type RemoteOntologyLoadSubsetQuery<TObject extends Record<string, unknown>> = QueryBuilder<
     QueryBuilderContext & {
-        baseSchema: { object: TObject };
-        schema: { object: TObject };
+        baseSchema: {
+            object: TObject;
+        };
+        schema: {
+            object: TObject;
+        };
         fromSourceName: "object";
     }
 >;
@@ -196,7 +200,10 @@ export interface RemoteOntologyCanRunQueryOptions<Ontology extends OntologyDefin
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
     const headers = new Headers(init?.headers);
     headers.set("content-type", "application/json");
-    return new Response(serializeRemoteOntologyJson(body), { ...init, headers });
+    return new Response(serializeRemoteOntologyJson(body), {
+        ...init,
+        headers,
+    });
 }
 
 function errorResponse(error: unknown, status?: number): Response {
@@ -300,7 +307,10 @@ async function parseRequestBody(
         const uploads: OntologyAttachmentUpload[] = [];
         for (const [key, value] of formData.entries()) {
             if (!key.startsWith("attachment:") || typeof value === "string") continue;
-            uploads.push({ attachment: { id: key.slice("attachment:".length) }, blob: value });
+            uploads.push({
+                attachment: { id: key.slice("attachment:".length) },
+                blob: value,
+            });
         }
         return {
             input: parseRemoteOntologyRequest(endpoint, parseRemoteOntologyJson(payload)).input,
@@ -420,7 +430,9 @@ function resolveAllowedObjectTypeProperties<Context, Ontology extends OntologyDe
         return allowedProperties({
             ctx,
             objectType: request.objectType as ObjectTypeName<Ontology>,
-            request: request as RemoteLoadSubsetRequest & { objectType: ObjectTypeName<Ontology> },
+            request: request as RemoteLoadSubsetRequest & {
+                objectType: ObjectTypeName<Ontology>;
+            },
         });
     }
     return allowedProperties;
@@ -448,12 +460,21 @@ function resolveProjectedAllowedObjectTypeProperties<Context, Ontology extends O
 async function resolveClientContext<Context, Ontology extends OntologyDefinition>(
     ctx: Context,
     policy: RemoteOntologyPolicy<Context, Ontology> | undefined
-): Promise<{ context?: Record<string, unknown>; mode: ClientContextProjectionMode }> {
+): Promise<{
+    context?: Record<string, unknown>;
+    mode: ClientContextProjectionMode;
+}> {
     if (!policy?.clientContext) return { mode: "none" };
     if (policy.clientContext === "forward") {
-        return { context: ctx as Record<string, unknown>, mode: "forward" };
+        return {
+            context: ctx as Record<string, unknown>,
+            mode: "forward",
+        };
     }
-    return { context: await policy.clientContext(ctx), mode: "projected" };
+    return {
+        context: await policy.clientContext(ctx),
+        mode: "projected",
+    };
 }
 
 async function handleLoadSubset<Context, Ontology extends OntologyDefinition = OntologyDefinition>(
@@ -496,7 +517,13 @@ async function handleLoadSubset<Context, Ontology extends OntologyDefinition = O
             | undefined;
         const selectedProperties = resolveAllowedObjectTypeProperties(ctx, request, allowedProperties);
         const objects = await queryCollectionSubset(collection, request.options, ({ q, collection }) =>
-            baseObjectTypeQuery({ ctx, objectType: request.objectType, request, q, collection })
+            baseObjectTypeQuery({
+                ctx,
+                objectType: request.objectType,
+                request,
+                q,
+                collection,
+            })
         );
 
         return {
@@ -542,7 +569,9 @@ async function handleDescribe<Context, Ontology extends OntologyDefinition = Ont
     ctx: Context,
     opts: CreateRemoteOntologyServerOptions<Context, Ontology>,
     _request: RemoteDescribeRequest,
-    internal?: { projectFixedActionParameterValuesInDefaults?: boolean }
+    internal?: {
+        projectFixedActionParameterValuesInDefaults?: boolean;
+    }
 ): Promise<RemoteOntologyDescription> {
     const ir = await resolveValue(opts.ir, ctx);
     const clientContext = await resolveClientContext(ctx, opts.policy);
@@ -571,7 +600,10 @@ async function handleDescribe<Context, Ontology extends OntologyDefinition = Ont
             visibleActionTypes,
             visibleQueryFunctionTypes,
         }),
-        capabilities: { actionValidation: true, actionParameterResolution: true },
+        capabilities: {
+            actionValidation: true,
+            actionParameterResolution: true,
+        },
         ...(clientContext.context ? { context: clientContext.context } : {}),
     };
 }
@@ -596,7 +628,9 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
         fixedActionParameterValues: opts.policy?.fixedActionParameterValues,
     });
     const executionId = request.idempotencyKey ?? globalThis.crypto.randomUUID();
-    const coordination = new SingleProcessCoordination({ scope: `remote-ontology:${executionId}` });
+    const coordination = new SingleProcessCoordination({
+        scope: `remote-ontology:${executionId}`,
+    });
     const ontology = await createLiveOntology<Ontology>({
         ir,
         backend: () => backendAdapter,
@@ -614,7 +648,11 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
     try {
         await ontology.ready;
         await Promise.all(
-            uploads.map((upload) => ontology.attachments.create(upload.blob, { id: upload.attachment.id }))
+            uploads.map((upload) =>
+                ontology.attachments.create(upload.blob, {
+                    id: upload.attachment.id,
+                })
+            )
         );
         await waitForLiveOntologyReady(ontology);
         const canApply = await opts.policy?.canApplyAction?.(
@@ -624,7 +662,9 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
                 parameters,
                 idempotencyKey: executionId,
             } as unknown as RemoteOntologyApplyActionRequest<Ontology>,
-            { objects: ontology.objects }
+            {
+                objects: ontology.objects,
+            }
         );
         if (canApply !== true) {
             throw new RemoteOntologyForbiddenError(`Action "${request.actionType}" is not allowed.`);
@@ -634,7 +674,9 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
         if (!action) {
             throw new Error(`Unknown action "${request.actionType}".`);
         }
-        actionResult = await action(parameters, { idempotencyKey: executionId });
+        actionResult = await action(parameters, {
+            idempotencyKey: executionId,
+        });
     } finally {
         void coordination.close();
         await ontology.cleanup();
@@ -644,7 +686,10 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
         getInvalidatedObjectTypesFromActionLogic(ir, request.actionType) ??
         ir.objectTypes.map((objectType) => objectType.name);
 
-    return { invalidatedObjectTypes, attachmentIdMappings: actionResult?.attachmentIdMappings };
+    return {
+        invalidatedObjectTypes,
+        attachmentIdMappings: actionResult?.attachmentIdMappings,
+    };
 }
 
 function toRemoteActionValidation(
@@ -654,9 +699,21 @@ function toRemoteActionValidation(
         return validation;
     }
     if (validation.value.kind === "err") {
-        return { certain: true, value: { kind: "err", value: validation.value.value } };
+        return {
+            certain: true,
+            value: {
+                kind: "err",
+                value: validation.value.value,
+            },
+        };
     }
-    return { certain: true, value: { kind: "ok", value: null } };
+    return {
+        certain: true,
+        value: {
+            kind: "ok",
+            value: null,
+        },
+    };
 }
 
 async function handleValidateAction<Context, Ontology extends OntologyDefinition = OntologyDefinition>(
@@ -687,15 +744,24 @@ async function handleValidateAction<Context, Ontology extends OntologyDefinition
         await waitForLiveOntologyReady(ontology);
         const canApply = await opts.policy?.canApplyAction?.(
             ctx,
-            { actionType: request.actionType, parameters } as RemoteOntologyApplyActionRequest<Ontology>,
-            { objects: ontology.objects }
+            {
+                actionType: request.actionType,
+                parameters,
+            } as RemoteOntologyApplyActionRequest<Ontology>,
+            {
+                objects: ontology.objects,
+            }
         );
         if (canApply !== true) {
             return {
                 certain: true,
                 value: {
                     kind: "err",
-                    value: [{ message: `Action "${request.actionType}" is not allowed.` }],
+                    value: [
+                        {
+                            message: `Action "${request.actionType}" is not allowed.`,
+                        },
+                    ],
                 },
             };
         }
@@ -729,7 +795,9 @@ async function handleResolveActionParameters<
         ctx,
         opts,
         {},
-        { projectFixedActionParameterValuesInDefaults: true }
+        {
+            projectFixedActionParameterValuesInDefaults: true,
+        }
     );
     const resolutionProjectedAction = resolutionDescription.ir.actionTypes.find(
         (candidate) => candidate.name === request.actionType
@@ -751,7 +819,10 @@ async function handleResolveActionParameters<
         parameters: sourceAction.parameters.map((parameter) =>
             projectedParametersByName.get(parameter.name)?.defaultValue
                 ? parameter
-                : { ...parameter, defaultValue: undefined }
+                : {
+                      ...parameter,
+                      defaultValue: undefined,
+                  }
         ),
     };
     const resolutionIr: OntologyIR = {
@@ -835,7 +906,9 @@ async function handleRunQueryFunction<Context, Ontology extends OntologyDefiniti
                 queryFunctionType: request.queryFunctionType,
                 parameters,
             } as RemoteOntologyRunQueryFunctionRequest<Ontology>,
-            { objects: ontology.objects }
+            {
+                objects: ontology.objects,
+            }
         );
         if (canRun !== true) {
             throw new RemoteOntologyForbiddenError(

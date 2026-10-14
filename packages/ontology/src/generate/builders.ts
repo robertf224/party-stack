@@ -24,14 +24,19 @@ export function generateBuilders(schema: Pick<OntologyIR, "types">, opts: Genera
     const sourceFile = project.createSourceFile("builders.ts", "");
 
     const unionTypes = schema.types.filter((type) => type.type.kind === "union") as Array<
-        NamedTypeDef & { type: { kind: "union"; value: UnionTypeDef } }
+        NamedTypeDef & {
+            type: { kind: "union"; value: UnionTypeDef };
+        }
     >;
 
     if (unionTypes.length === 0) {
         return "";
     }
 
-    sourceFile.addImportDeclaration({ moduleSpecifier: "./types.js", namespaceImport: "t" });
+    sourceFile.addImportDeclaration({
+        moduleSpecifier: "./types.js",
+        namespaceImport: "t",
+    });
 
     const promotedType = unionTypes.find((type) => type.name === opts.promoted);
     const promotedBuilders = promotedType ? unionTypeToBuilders(opts.promoted!, promotedType.type.value) : [];

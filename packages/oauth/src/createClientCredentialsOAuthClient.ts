@@ -51,14 +51,20 @@ export function createClientCredentialsOAuthClient(
             parameters.set("client_id", options.clientId);
             parameters.set("client_secret", options.clientSecret);
         }
-        return new Request(endpoint, { method: "POST", headers, body: parameters });
+        return new Request(endpoint, {
+            method: "POST",
+            headers,
+            body: parameters,
+        });
     };
 
     const requestToken = async (): Promise<ClientCredentialsToken> => {
         if (cleaned) {
             throw new Error("OAuth client has been cleaned up.");
         }
-        const body = new URLSearchParams({ grant_type: "client_credentials" });
+        const body = new URLSearchParams({
+            grant_type: "client_credentials",
+        });
         if (options.scopes?.length) {
             body.set("scope", options.scopes.join(" "));
         }
@@ -99,7 +105,13 @@ export function createClientCredentialsOAuthClient(
         token = await tokenRequest;
         return token.expiresAt === undefined
             ? { userId: token.userId }
-            : { userId: token.userId, expiration: { expiresAt: token.expiresAt, refreshable: true } };
+            : {
+                  userId: token.userId,
+                  expiration: {
+                      expiresAt: token.expiresAt,
+                      refreshable: true,
+                  },
+              };
     };
 
     return {
@@ -115,7 +127,13 @@ export function createClientCredentialsOAuthClient(
             }
             return token.expiresAt === undefined
                 ? { userId: token.userId }
-                : { userId: token.userId, expiration: { expiresAt: token.expiresAt, refreshable: true } };
+                : {
+                      userId: token.userId,
+                      expiration: {
+                          expiresAt: token.expiresAt,
+                          refreshable: true,
+                      },
+                  };
         },
         refresh,
         async revoke() {
@@ -127,7 +145,10 @@ export function createClientCredentialsOAuthClient(
             const response = await fetchImpl(
                 authenticatedRequest(
                     options.revocationEndpoint,
-                    new URLSearchParams({ token: accessToken, token_type_hint: "access_token" })
+                    new URLSearchParams({
+                        token: accessToken,
+                        token_type_hint: "access_token",
+                    })
                 )
             );
             if (!response.ok) {

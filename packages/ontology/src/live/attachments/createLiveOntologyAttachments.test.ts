@@ -32,7 +32,13 @@ const actionIr: OntologyIR = {
         {
             name: "uploadDocument",
             displayName: "Upload Document",
-            parameters: [{ name: "file", displayName: "File", type: o.attachment({}) }],
+            parameters: [
+                {
+                    name: "file",
+                    displayName: "File",
+                    type: o.attachment({}),
+                },
+            ],
             logic: [],
         },
     ],
@@ -46,10 +52,19 @@ describe("createLiveOntologyAttachments", () => {
             attachmentsAdapter: {} as OntologyAttachmentsAdapter,
             blobManager: { stage } as unknown as BlobManager,
         });
-        const file = new File(["hello"], "evidence.txt", { type: "text/plain" });
+        const file = new File(["hello"], "evidence.txt", {
+            type: "text/plain",
+        });
 
-        await expect(attachments.create(file, { id: "opaque-local-id" })).resolves.toEqual({
-            attachment: { id: "opaque-local-id", type: "text/plain" },
+        await expect(
+            attachments.create(file, {
+                id: "opaque-local-id",
+            })
+        ).resolves.toEqual({
+            attachment: {
+                id: "opaque-local-id",
+                type: "text/plain",
+            },
         });
 
         expect(stage).toHaveBeenCalledWith("opaque-local-id", file);
@@ -87,7 +102,11 @@ describe("createLiveOntologyAttachments", () => {
 
         await expect(
             attachments.create(new Blob(["pdf"], { type: "application/pdf" }), {
-                target: { kind: "objectProperty", objectType: "Document", property: "file" },
+                target: {
+                    kind: "objectProperty",
+                    objectType: "Document",
+                    property: "file",
+                },
             })
         ).rejects.toThrow('Attachment media type "application/pdf" is not allowed by the target.');
         expect(stage).not.toHaveBeenCalled();
@@ -108,7 +127,9 @@ describe("createLiveOntologyAttachments", () => {
                                 constraint: {
                                     size: { max: 10 },
                                     content: o.AttachmentContentConstraint.image({
-                                        dimensions: { width: { max: 100 } },
+                                        dimensions: {
+                                            width: { max: 100 },
+                                        },
                                     }),
                                 },
                             }),
@@ -129,19 +150,33 @@ describe("createLiveOntologyAttachments", () => {
 
         await expect(
             attachments.create(new Blob(["avif"], { type: "image/avif" }), {
-                target: { kind: "objectProperty", objectType: "Document", property: "file" },
+                target: {
+                    kind: "objectProperty",
+                    objectType: "Document",
+                    property: "file",
+                },
             })
         ).rejects.toThrow('Attachment media type "image/avif" is not allowed by the target.');
         await expect(
             attachments.create(new Blob(["12345678901"], { type: "image/png" }), {
-                target: { kind: "objectProperty", objectType: "Document", property: "file" },
+                target: {
+                    kind: "objectProperty",
+                    objectType: "Document",
+                    property: "file",
+                },
             })
         ).rejects.toThrow("Attachment size 11 is outside the allowed range.");
         await expect(
             attachments.create(new Blob(["image"], { type: "image/png" }), {
-                target: { kind: "objectProperty", objectType: "Document", property: "file" },
+                target: {
+                    kind: "objectProperty",
+                    objectType: "Document",
+                    property: "file",
+                },
             })
-        ).resolves.toMatchObject({ attachment: { id: "image-1" } });
+        ).resolves.toMatchObject({
+            attachment: { id: "image-1" },
+        });
         expect(stage).toHaveBeenCalledOnce();
     });
 
@@ -150,7 +185,9 @@ describe("createLiveOntologyAttachments", () => {
             owner: "test-user",
             namespace: "eager-attachment",
             blobBytes: new MemoryBlobBytesStore(),
-            coordination: new SingleProcessCoordination({ scope: "eager-attachment" }),
+            coordination: new SingleProcessCoordination({
+                scope: "eager-attachment",
+            }),
         };
         const materialized: string[] = [];
         let finishMaterialization: (() => void) | undefined;
@@ -191,7 +228,11 @@ describe("createLiveOntologyAttachments", () => {
         });
 
         const creation = await ontology.attachments.create(new Blob(["hello"]), {
-            target: { kind: "objectProperty", objectType: "Document", property: "file" },
+            target: {
+                kind: "objectProperty",
+                objectType: "Document",
+                property: "file",
+            },
             eager: true,
         });
 
@@ -215,7 +256,9 @@ describe("createLiveOntologyAttachments", () => {
             owner: "test-user",
             namespace: "targetless-attachment",
             blobBytes: new MemoryBlobBytesStore(),
-            coordination: new SingleProcessCoordination({ scope: "targetless-attachment" }),
+            coordination: new SingleProcessCoordination({
+                scope: "targetless-attachment",
+            }),
         };
         const backendAdapter: OntologyBackendAdapter = {
             name: "test",
@@ -255,7 +298,9 @@ describe("createLiveOntologyAttachments", () => {
             owner: "test-user",
             namespace: "unsupported-attachment",
             blobBytes: new MemoryBlobBytesStore(),
-            coordination: new SingleProcessCoordination({ scope: "unsupported-attachment" }),
+            coordination: new SingleProcessCoordination({
+                scope: "unsupported-attachment",
+            }),
         };
         const backendAdapter: OntologyBackendAdapter = {
             name: "test",
@@ -282,7 +327,11 @@ describe("createLiveOntologyAttachments", () => {
         });
 
         const creation = await ontology.attachments.create(new Blob(["hello"]), {
-            target: { kind: "objectProperty", objectType: "Document", property: "file" },
+            target: {
+                kind: "objectProperty",
+                objectType: "Document",
+                property: "file",
+            },
             eager: true,
         });
 
@@ -297,7 +346,9 @@ describe("createLiveOntologyAttachments", () => {
             owner: "test-user",
             namespace: "attachment-mapping",
             blobBytes: new MemoryBlobBytesStore(),
-            coordination: new SingleProcessCoordination({ scope: "attachment-mapping" }),
+            coordination: new SingleProcessCoordination({
+                scope: "attachment-mapping",
+            }),
         };
         const backendAdapter: OntologyBackendAdapter = {
             name: "test",
@@ -310,7 +361,14 @@ describe("createLiveOntologyAttachments", () => {
                 },
             }),
             applyAction: () =>
-                Promise.resolve({ attachmentIdMappings: [{ localId: "local-id", remoteId: "remote-id" }] }),
+                Promise.resolve({
+                    attachmentIdMappings: [
+                        {
+                            localId: "local-id",
+                            remoteId: "remote-id",
+                        },
+                    ],
+                }),
             runQueryFunction: () => Promise.reject(new Error("unexpected query run")),
             attachments: {
                 generateAttachmentId: () => "local-id",
@@ -324,16 +382,27 @@ describe("createLiveOntologyAttachments", () => {
             runtime: () => runtime,
         });
         const { attachment } = await ontology.attachments.create(new Blob(["hello"]), {
-            target: { kind: "objectProperty", objectType: "Document", property: "file" },
+            target: {
+                kind: "objectProperty",
+                objectType: "Document",
+                property: "file",
+            },
         });
 
         const uploadDocument = ontology.actions.uploadDocument;
         expect(uploadDocument).toBeDefined();
 
-        await uploadDocument!({ file: attachment });
+        await uploadDocument!({
+            file: attachment,
+        });
 
         await expect(
-            ontology.attachments.blob({ ...attachment, id: "remote-id" }).then((blob) => blob.text())
+            ontology.attachments
+                .blob({
+                    ...attachment,
+                    id: "remote-id",
+                })
+                .then((blob) => blob.text())
         ).resolves.toBe("hello");
     });
 });

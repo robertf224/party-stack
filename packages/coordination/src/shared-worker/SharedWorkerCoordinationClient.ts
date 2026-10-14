@@ -161,11 +161,16 @@ export class SharedWorkerCoordinationClient extends BaseCoordination {
         const timeout = this.requestTimeoutMs;
         const result = yield* race([
             (function* () {
-                return { type: "response" as const, value: yield* until(response) };
+                return {
+                    type: "response" as const,
+                    value: yield* until(response),
+                };
             })(),
             (function* () {
                 yield* sleep(timeout);
-                return { type: "timeout" as const };
+                return {
+                    type: "timeout" as const,
+                };
             })(),
         ]);
         if (result.type === "timeout") {

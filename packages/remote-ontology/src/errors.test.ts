@@ -125,17 +125,27 @@ describe("remote ontology error protocol", () => {
     it("parses legacy { error } bodies and serializes forbidden responses from the server", async () => {
         const legacy = parseRemoteOntologyErrorBody(JSON.stringify({ error: "nope" }), 403);
         expect(legacy).toBeInstanceOf(RemoteOntologyError);
-        expect(legacy).toMatchObject({ code: "FORBIDDEN", status: 403, message: "nope", retryable: false });
+        expect(legacy).toMatchObject({
+            code: "FORBIDDEN",
+            status: 403,
+            message: "nope",
+            retryable: false,
+        });
 
         const server = createRemoteOntologyServer({
             ir,
             backendAdapter,
-            policy: { canApplyAction: () => false },
+            policy: {
+                canApplyAction: () => false,
+            },
         });
         const response = await server.handleRequest(
             new Request("http://example.test/apply-action", {
                 method: "POST",
-                body: serializeRemoteOntologyJson({ actionType: "createNote", parameters: { title: "x" } }),
+                body: serializeRemoteOntologyJson({
+                    actionType: "createNote",
+                    parameters: { title: "x" },
+                }),
             })
         );
         expect(response.status).toBe(403);
@@ -152,13 +162,19 @@ describe("remote ontology error protocol", () => {
         const validationResponse = await server.handleRequest(
             new Request("http://example.test/validate-action", {
                 method: "POST",
-                body: serializeRemoteOntologyJson({ actionType: "createNote", parameters: { title: "x" } }),
+                body: serializeRemoteOntologyJson({
+                    actionType: "createNote",
+                    parameters: { title: "x" },
+                }),
             })
         );
         expect(validationResponse.status).toBe(200);
         await expect(validationResponse.json()).resolves.toEqual({
             certain: true,
-            value: { kind: "err", value: [{ message: 'Action "createNote" is not allowed.' }] },
+            value: {
+                kind: "err",
+                value: [{ message: 'Action "createNote" is not allowed.' }],
+            },
         });
 
         const methodResponse = await server.handleRequest(new Request("http://example.test/describe"));

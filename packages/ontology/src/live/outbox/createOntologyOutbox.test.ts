@@ -72,7 +72,13 @@ function memoryPersistenceAdapter(): PersistenceAdapter {
                 latestRowVersion: 0,
                 resetEpoch: 0,
             }),
-        loadSubset: () => Promise.resolve([...rows].map(([key, value]) => ({ key, value }))),
+        loadSubset: () =>
+            Promise.resolve(
+                [...rows].map(([key, value]) => ({
+                    key,
+                    value,
+                }))
+            ),
         applyCommittedTx: (
             _collectionId: string,
             transaction: Parameters<PersistenceAdapter["applyCommittedTx"]>[1]
@@ -95,7 +101,10 @@ function coordinatedOutboxRuntime(options: {
     adapter: PersistenceAdapter;
     connectivity: NetworkConnectivity;
     coordination: CoordinationHost | CoordinationClient;
-}): { runtime: RuntimeAdapter; coordination: CoordinationHost | CoordinationClient } {
+}): {
+    runtime: RuntimeAdapter;
+    coordination: CoordinationHost | CoordinationClient;
+} {
     const runtime: RuntimeAdapter = {
         owner: "test-user",
         namespace: "outbox-test",
@@ -104,15 +113,23 @@ function coordinatedOutboxRuntime(options: {
         persistence: { adapter: options.adapter },
         coordination: options.coordination,
     };
-    return { runtime, coordination: options.coordination };
+    return {
+        runtime,
+        coordination: options.coordination,
+    };
 }
 
 function createSingleProcessRuntime(
     options: Omit<RuntimeAdapter, "coordination" | "owner" | "namespace"> &
         Partial<Pick<RuntimeAdapter, "owner" | "namespace">>,
     scope: string
-): { runtime: RuntimeAdapter; coordination: SingleProcessCoordination } {
-    const coordination = new SingleProcessCoordination({ scope });
+): {
+    runtime: RuntimeAdapter;
+    coordination: SingleProcessCoordination;
+} {
+    const coordination = new SingleProcessCoordination({
+        scope,
+    });
     return {
         runtime: {
             ...options,
@@ -142,7 +159,9 @@ class TestLeadershipCoordination implements CoordinationHost {
     private readonly waiters = new Set<() => void>();
 
     constructor(scope: string) {
-        this.delegate = new SingleProcessCoordination({ scope });
+        this.delegate = new SingleProcessCoordination({
+            scope,
+        });
     }
 
     get isLeader(): boolean {
@@ -171,10 +190,14 @@ class TestLeadershipCoordination implements CoordinationHost {
         await this.waitForLeadership(options?.signal);
         const controller = new AbortController();
         const abort = () => controller.abort(options?.signal?.reason);
-        options?.signal?.addEventListener("abort", abort, { once: true });
+        options?.signal?.addEventListener("abort", abort, {
+            once: true,
+        });
         this.active = controller;
         try {
-            return await callback({ signal: controller.signal });
+            return await callback({
+                signal: controller.signal,
+            });
         } finally {
             options?.signal?.removeEventListener("abort", abort);
             if (this.active === controller) {
@@ -213,7 +236,9 @@ class TestLeadershipCoordination implements CoordinationHost {
                 );
             };
             this.waiters.add(wake);
-            signal?.addEventListener("abort", abort, { once: true });
+            signal?.addEventListener("abort", abort, {
+                once: true,
+            });
             if (signal?.aborted) abort();
         });
     }
@@ -223,11 +248,22 @@ function setup(isConnected = true) {
     const connectivity = new TestNetworkConnectivity(isConnected);
     const execute = vi.fn(() => Promise.resolve("done"));
     const { runtime, coordination } = createSingleProcessRuntime(
-        { blobBytes: new MemoryBlobBytesStore(), connectivity },
+        {
+            blobBytes: new MemoryBlobBytesStore(),
+            connectivity,
+        },
         `setup-${crypto.randomUUID()}`
     );
-    const outbox = createOntologyOutbox({ runtime, execute });
-    return { connectivity, coordination, execute, outbox };
+    const outbox = createOntologyOutbox({
+        runtime,
+        execute,
+    });
+    return {
+        connectivity,
+        coordination,
+        execute,
+        outbox,
+    };
 }
 
 describe("createOntologyOutbox", () => {
@@ -268,7 +304,10 @@ describe("createOntologyOutbox", () => {
         const { execute, outbox } = setup();
         await outbox.ready;
 
-        const action = await outbox.enqueue({ actionTypeName: "createTask", parameters: { title: "Test" } });
+        const action = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: { title: "Test" },
+        });
 
         await expect(action.completed).resolves.toBe("done");
         expect(execute).toHaveBeenCalledOnce();
@@ -281,7 +320,10 @@ describe("createOntologyOutbox", () => {
     it("waits until connectivity is restored", async () => {
         const { connectivity, execute, outbox } = setup(false);
         await outbox.ready;
-        const action = await outbox.enqueue({ actionTypeName: "createTask", parameters: {} });
+        const action = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: {},
+        });
 
         await Promise.resolve();
         expect(execute).not.toHaveBeenCalled();
@@ -297,12 +339,20 @@ describe("createOntologyOutbox", () => {
             fetch: () => Promise.resolve(new Response()),
             createWebSocket: () => Promise.reject(new Error("unexpected websocket")),
         };
-        const createConnection = () => ({ userId: "user-1", state: { status: "active" as const } });
+        const createConnection = () => ({
+            userId: "user-1",
+            state: { status: "active" as const },
+        });
         const createEstablishedConnection = () => ({
             connection: createConnection(),
-            session: { disconnect: () => Promise.resolve(), egress: () => handlers },
+            session: {
+                disconnect: () => Promise.resolve(),
+                egress: () => handlers,
+            },
         });
-        const adapter: BackendConnectionAdapter<{ signIn(): Promise<void> }> = {
+        const adapter: BackendConnectionAdapter<{
+            signIn(): Promise<void>;
+        }> = {
             name: "test",
             createAuthenticationClient: (controller) => ({
                 signIn: () => controller.connect(createEstablishedConnection()),
@@ -319,7 +369,9 @@ describe("createOntologyOutbox", () => {
         const connectionEgress = connections.egress("user-1");
         await connections.disconnect("user-1");
         const { runtime, coordination } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore() },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+            },
             `auth-gate-${crypto.randomUUID()}`
         );
         const execute = vi.fn(() => Promise.resolve("done"));
@@ -329,7 +381,10 @@ describe("createOntologyOutbox", () => {
             connection: createConnectionMonitor(connections, connection.userId),
         });
         await outbox.ready;
-        const action = await outbox.enqueue({ actionTypeName: "createTask", parameters: {} });
+        const action = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: {},
+        });
 
         await Promise.resolve();
         expect(execute).not.toHaveBeenCalled();
@@ -378,15 +433,27 @@ describe("createOntologyOutbox", () => {
     it("installs one projection when enqueue and collection change race", async () => {
         const project = vi.fn(async () => {
             await Promise.resolve();
-            return { settle: vi.fn() };
+            return {
+                settle: vi.fn(),
+            };
         });
         const { runtime } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity: new TestNetworkConnectivity(false) },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(false),
+            },
             "projection-race"
         );
-        const outbox = createOntologyOutbox({ runtime, execute: () => Promise.resolve(), project });
+        const outbox = createOntologyOutbox({
+            runtime,
+            execute: () => Promise.resolve(),
+            project,
+        });
         await outbox.ready;
-        const action = await outbox.enqueue({ actionTypeName: "createTask", parameters: { id: "one" } });
+        const action = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: { id: "one" },
+        });
         void action.completed.catch(() => undefined);
 
         expect(project).toHaveBeenCalledOnce();
@@ -399,13 +466,19 @@ describe("createOntologyOutbox", () => {
             finishSettlement = resolve;
         });
         const { runtime } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity: new TestNetworkConnectivity(true) },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(true),
+            },
             "projection-settlement"
         );
         const outbox = createOntologyOutbox({
             runtime,
             execute: () => Promise.resolve("confirmed"),
-            project: () => Promise.resolve({ settle: () => settlement }),
+            project: () =>
+                Promise.resolve({
+                    settle: () => settlement,
+                }),
         });
         await outbox.ready;
         const action = await outbox.enqueue<string>({
@@ -429,7 +502,10 @@ describe("createOntologyOutbox", () => {
 
     it("keeps durable intent when local projection fails", async () => {
         const { runtime } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity: new TestNetworkConnectivity(false) },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(false),
+            },
             "projection-discard"
         );
         const outbox = createOntologyOutbox({
@@ -439,7 +515,10 @@ describe("createOntologyOutbox", () => {
         });
         await outbox.ready;
 
-        const action = await outbox.enqueue({ actionTypeName: "createTask", parameters: {} });
+        const action = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: {},
+        });
         void action.completed.catch(() => undefined);
         const entry = outbox.collection.get(action.entry.id);
         expect(entry?.status).toBe("queued");
@@ -450,7 +529,10 @@ describe("createOntologyOutbox", () => {
     it("requires manual retry after execution failure", async () => {
         let attempts = 0;
         const { runtime } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity: new TestNetworkConnectivity() },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(),
+            },
             "manual-retry"
         );
         const outbox = createOntologyOutbox({
@@ -463,7 +545,10 @@ describe("createOntologyOutbox", () => {
             },
         });
         await outbox.ready;
-        const action = await outbox.enqueue({ actionTypeName: "createTask", parameters: {} });
+        const action = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: {},
+        });
         await vi.waitFor(() => {
             expect(outbox.collection.get(action.entry.id)?.status).toBe("failed");
         });
@@ -478,7 +563,10 @@ describe("createOntologyOutbox", () => {
     it("automatically retries ordinary execution failures with backoff", async () => {
         let attempts = 0;
         const { runtime } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity: new TestNetworkConnectivity() },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(),
+            },
             "automatic-retry"
         );
         const outbox = createOntologyOutbox({
@@ -490,7 +578,10 @@ describe("createOntologyOutbox", () => {
             },
         });
         await outbox.ready;
-        const action = await outbox.enqueue<string>({ actionTypeName: "createTask", parameters: {} });
+        const action = await outbox.enqueue<string>({
+            actionTypeName: "createTask",
+            parameters: {},
+        });
 
         await expect(action.completed).resolves.toBe("done");
         expect(attempts).toBe(3);
@@ -501,7 +592,10 @@ describe("createOntologyOutbox", () => {
     it("applies the failure strategy after automatic retries are exhausted", async () => {
         let attempts = 0;
         const { runtime } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity: new TestNetworkConnectivity() },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(),
+            },
             "automatic-retry-exhausted"
         );
         const outbox = createOntologyOutbox({
@@ -513,7 +607,10 @@ describe("createOntologyOutbox", () => {
             },
         });
         await outbox.ready;
-        const action = await outbox.enqueue({ actionTypeName: "createTask", parameters: {} });
+        const action = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: {},
+        });
 
         await expect(action.completed).rejects.toThrow("still failing");
         expect(attempts).toBe(3);
@@ -525,7 +622,10 @@ describe("createOntologyOutbox", () => {
         const executed: string[] = [];
         let firstAttempts = 0;
         const { runtime } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity: new TestNetworkConnectivity() },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(),
+            },
             "strict-fifo"
         );
         const outbox = createOntologyOutbox({
@@ -567,7 +667,10 @@ describe("createOntologyOutbox", () => {
 
     it("releases a failed FIFO head when it is removed", async () => {
         const { runtime } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity: new TestNetworkConnectivity() },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(),
+            },
             "remove-failed-head"
         );
         const outbox = createOntologyOutbox({
@@ -580,7 +683,10 @@ describe("createOntologyOutbox", () => {
             },
         });
         await outbox.ready;
-        const first = await outbox.enqueue({ actionTypeName: "createTask", parameters: { name: "first" } });
+        const first = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: { name: "first" },
+        });
         await vi.waitFor(() => {
             expect(outbox.collection.get(first.entry.id)?.status).toBe("failed");
         });
@@ -599,7 +705,10 @@ describe("createOntologyOutbox", () => {
 
     it("rolls back and pauses on non-retryable failures when configured", async () => {
         const { runtime } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity: new TestNetworkConnectivity() },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(),
+            },
             "non-retriable"
         );
         const outbox = createOntologyOutbox({
@@ -608,7 +717,10 @@ describe("createOntologyOutbox", () => {
             failureStrategy: "pause",
         });
         await outbox.ready;
-        const action = await outbox.enqueue({ actionTypeName: "createTask", parameters: {} });
+        const action = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: {},
+        });
 
         await expect(action.completed).rejects.toThrow("rejected");
         await vi.waitFor(() => {
@@ -621,7 +733,10 @@ describe("createOntologyOutbox", () => {
     it("discards the remaining queue on non-retryable failures by default", async () => {
         const connectivity = new TestNetworkConnectivity(false);
         const { runtime } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity,
+            },
             "non-retryable-discard"
         );
         const settled = new Set<string>();
@@ -637,8 +752,14 @@ describe("createOntologyOutbox", () => {
                 }),
         });
         await outbox.ready;
-        const first = await outbox.enqueue({ actionTypeName: "createTask", parameters: { order: 1 } });
-        const second = await outbox.enqueue({ actionTypeName: "createTask", parameters: { order: 2 } });
+        const first = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: { order: 1 },
+        });
+        const second = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: { order: 2 },
+        });
         const deleteEntries = vi.spyOn(outbox.collection, "delete");
 
         connectivity.setConnected(true);
@@ -665,9 +786,15 @@ describe("createOntologyOutbox", () => {
             },
             "interrupted-recovery-discard"
         );
-        const first = createOntologyOutbox({ runtime, execute: () => Promise.resolve() });
+        const first = createOntologyOutbox({
+            runtime,
+            execute: () => Promise.resolve(),
+        });
         await first.ready;
-        const action = await first.enqueue({ actionTypeName: "createTask", parameters: {} });
+        const action = await first.enqueue({
+            actionTypeName: "createTask",
+            parameters: {},
+        });
         void action.completed.catch(() => undefined);
         await first.collection.update(action.entry.id, { optimistic: false }, (draft) => {
             draft.status = "failed";
@@ -679,7 +806,10 @@ describe("createOntologyOutbox", () => {
         }).isPersisted.promise;
         await first.cleanup();
 
-        const restored = createOntologyOutbox({ runtime, execute: () => Promise.resolve() });
+        const restored = createOntologyOutbox({
+            runtime,
+            execute: () => Promise.resolve(),
+        });
         await restored.ready;
         await vi.waitFor(() => {
             expect(restored.collection.get(action.entry.id)).toBeUndefined();
@@ -693,24 +823,40 @@ describe("createOntologyOutbox", () => {
         const adapter = memoryPersistenceAdapter();
         const connectivity = new TestNetworkConnectivity(false);
         const { runtime, coordination } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity: connectivity, persistence: { adapter } },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: connectivity,
+                persistence: { adapter },
+            },
             "failed-recovery-retry"
         );
-        const first = createOntologyOutbox({ runtime, execute: () => Promise.resolve() });
+        const first = createOntologyOutbox({
+            runtime,
+            execute: () => Promise.resolve(),
+        });
         await first.ready;
-        const action = await first.enqueue({ actionTypeName: "createTask", parameters: {} });
+        const action = await first.enqueue({
+            actionTypeName: "createTask",
+            parameters: {},
+        });
         void action.completed.catch(() => undefined);
         await first.collection.update(action.entry.id, { optimistic: false }, (draft) => {
             draft.status = "failed";
             draft.retryable = true;
             draft.attempts = 1;
-            draft.lastError = { name: "Error", message: "temporary" };
+            draft.lastError = {
+                name: "Error",
+                message: "temporary",
+            };
         }).isPersisted.promise;
         await first.cleanup();
 
         const execute = vi.fn(() => Promise.resolve("done"));
         connectivity.setConnected(true);
-        const restored = createOntologyOutbox({ runtime, execute });
+        const restored = createOntologyOutbox({
+            runtime,
+            execute,
+        });
         await restored.ready;
         await vi.waitFor(() => {
             expect(execute).toHaveBeenCalledOnce();
@@ -725,12 +871,22 @@ describe("createOntologyOutbox", () => {
         const adapter = memoryPersistenceAdapter();
         const connectivity = new TestNetworkConnectivity(false);
         const { runtime } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity, persistence: { adapter } },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity,
+                persistence: { adapter },
+            },
             "projection-restart"
         );
-        const first = createOntologyOutbox({ runtime, execute: () => Promise.resolve() });
+        const first = createOntologyOutbox({
+            runtime,
+            execute: () => Promise.resolve(),
+        });
         await first.ready;
-        const action = await first.enqueue({ actionTypeName: "deleteTask", parameters: { task: "missing" } });
+        const action = await first.enqueue({
+            actionTypeName: "deleteTask",
+            parameters: { task: "missing" },
+        });
         void action.completed.catch(() => undefined);
         await first.cleanup();
 
@@ -758,7 +914,9 @@ describe("createOntologyOutbox", () => {
 
     it("uses a client-only coordination value without serving", async () => {
         const adapter = memoryPersistenceAdapter();
-        const hostCoordination = new SingleProcessCoordination({ scope: "client-only" });
+        const hostCoordination = new SingleProcessCoordination({
+            scope: "client-only",
+        });
         const clientCoordination = clientView(hostCoordination);
         const hostRuntime: RuntimeAdapter = {
             owner: "test-user",
@@ -776,7 +934,10 @@ describe("createOntologyOutbox", () => {
             persistence: { adapter },
             coordination: clientCoordination,
         };
-        const host = createOntologyOutbox({ runtime: hostRuntime, execute: () => Promise.resolve("done") });
+        const host = createOntologyOutbox({
+            runtime: hostRuntime,
+            execute: () => Promise.resolve("done"),
+        });
         await host.ready;
         const client = createOntologyOutbox({
             runtime: clientRuntime,
@@ -784,7 +945,10 @@ describe("createOntologyOutbox", () => {
         });
         await client.ready;
 
-        const action = await client.enqueue({ actionTypeName: "createTask", parameters: { id: "client" } });
+        const action = await client.enqueue({
+            actionTypeName: "createTask",
+            parameters: { id: "client" },
+        });
         await vi.waitFor(() => {
             expect(host.collection.has(action.entry.id)).toBe(true);
         });
@@ -807,9 +971,15 @@ describe("createOntologyOutbox", () => {
         };
         const never = new Promise<unknown>(() => undefined);
         const execute = vi.fn(() => never);
-        const outbox = createOntologyOutbox({ runtime, execute });
+        const outbox = createOntologyOutbox({
+            runtime,
+            execute,
+        });
         await outbox.ready;
-        const action = await outbox.enqueue({ actionTypeName: "createTask", parameters: {} });
+        const action = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: {},
+        });
         void action.completed.catch(() => undefined);
         await vi.waitFor(() => {
             expect(outbox.collection.get(action.entry.id)?.status).toBe("executing");
@@ -830,18 +1000,32 @@ describe("createOntologyOutbox", () => {
 
     it("rejects a completion from a stale execution claim", async () => {
         const { runtime, coordination } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity: new TestNetworkConnectivity(false) },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(false),
+            },
             "stale-claim"
         );
-        const outbox = createOntologyOutbox({ runtime, execute: () => Promise.resolve() });
+        const outbox = createOntologyOutbox({
+            runtime,
+            execute: () => Promise.resolve(),
+        });
         await outbox.ready;
         const service = coordination.service<OutboxCoordinationService>(OUTBOX_COORDINATION_SERVICE);
-        const action = await outbox.enqueue<string>({ actionTypeName: "createTask", parameters: {} });
+        const action = await outbox.enqueue<string>({
+            actionTypeName: "createTask",
+            parameters: {},
+        });
         const stale = await service.methods.claim({});
         expect(stale?.executionId).toBeDefined();
 
-        await service.methods.recover({ failureStrategy: "pause", maxRetries: 3 });
-        await service.methods.retry({ id: action.entry.id });
+        await service.methods.recover({
+            failureStrategy: "pause",
+            maxRetries: 3,
+        });
+        await service.methods.retry({
+            id: action.entry.id,
+        });
         const current = await service.methods.claim({});
         expect(current?.executionId).not.toBe(stale?.executionId);
 
@@ -851,7 +1035,9 @@ describe("createOntologyOutbox", () => {
                 executionId: stale!.executionId!,
                 result: "stale",
             })
-        ).rejects.toMatchObject({ code: "STALE_EXECUTION" });
+        ).rejects.toMatchObject({
+            code: "STALE_EXECUTION",
+        });
         await service.methods.complete({
             id: action.entry.id,
             executionId: current!.executionId!,
@@ -864,23 +1050,38 @@ describe("createOntologyOutbox", () => {
     });
 
     it("rolls back and replays later projections after edits and removals", async () => {
-        const projections: Array<{ name: string; settle: ReturnType<typeof vi.fn> }> = [];
+        const projections: Array<{
+            name: string;
+            settle: ReturnType<typeof vi.fn>;
+        }> = [];
         const { runtime, coordination } = createSingleProcessRuntime(
-            { blobBytes: new MemoryBlobBytesStore(), connectivity: new TestNetworkConnectivity(false) },
+            {
+                blobBytes: new MemoryBlobBytesStore(),
+                connectivity: new TestNetworkConnectivity(false),
+            },
             "projection-replay"
         );
         const outbox = createOntologyOutbox({
             runtime,
             execute: () => Promise.resolve(),
             project: (entry) => {
-                const projection = { name: String(entry.request.parameters.name), settle: vi.fn() };
+                const projection = {
+                    name: String(entry.request.parameters.name),
+                    settle: vi.fn(),
+                };
                 projections.push(projection);
                 return Promise.resolve(projection);
             },
         });
         await outbox.ready;
-        const first = await outbox.enqueue({ actionTypeName: "createTask", parameters: { name: "first" } });
-        const second = await outbox.enqueue({ actionTypeName: "createTask", parameters: { name: "second" } });
+        const first = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: { name: "first" },
+        });
+        const second = await outbox.enqueue({
+            actionTypeName: "createTask",
+            parameters: { name: "second" },
+        });
         void first.completed.catch(() => undefined);
         void second.completed.catch(() => undefined);
 
@@ -916,7 +1117,9 @@ describe("createOntologyOutbox", () => {
 
     it("preserves Temporal parameters across coordinated contexts", async () => {
         const adapter = memoryPersistenceAdapter();
-        const hostCoordination = new SharedWorkerCoordinationHost({ scope: "temporal" });
+        const hostCoordination = new SharedWorkerCoordinationHost({
+            scope: "temporal",
+        });
         const channel = new MessageChannel();
         hostCoordination.connect(channel.port1);
         const clientCoordination = new SharedWorkerCoordinationClient({
@@ -941,7 +1144,10 @@ describe("createOntologyOutbox", () => {
             return Promise.resolve("done");
         };
         const create = ({ runtime }: ReturnType<typeof coordinatedOutboxRuntime>) =>
-            createOntologyOutbox({ runtime, execute });
+            createOntologyOutbox({
+                runtime,
+                execute,
+            });
         const first = create(firstRuntime);
         const second = create(secondRuntime);
         await Promise.all([first.ready, second.ready]);
@@ -977,7 +1183,9 @@ describe("createOntologyOutbox", () => {
 
     it("serializes cross-context removal through the coordination leader", async () => {
         const adapter = memoryPersistenceAdapter();
-        const hostCoordination = new SingleProcessCoordination({ scope: "coordinated" });
+        const hostCoordination = new SingleProcessCoordination({
+            scope: "coordinated",
+        });
         const firstRuntime = coordinatedOutboxRuntime({
             adapter,
             coordination: hostCoordination,
@@ -989,13 +1197,19 @@ describe("createOntologyOutbox", () => {
             connectivity: new TestNetworkConnectivity(false),
         });
         const create = ({ runtime }: ReturnType<typeof coordinatedOutboxRuntime>) =>
-            createOntologyOutbox({ runtime, execute: () => Promise.resolve("done") });
+            createOntologyOutbox({
+                runtime,
+                execute: () => Promise.resolve("done"),
+            });
         const first = create(firstRuntime);
         const second = create(secondRuntime);
         await Promise.all([first.ready, second.ready]);
         const origin = second;
         const other = first;
-        const action = await origin.enqueue({ actionTypeName: "deleteTask", parameters: { task: "one" } });
+        const action = await origin.enqueue({
+            actionTypeName: "deleteTask",
+            parameters: { task: "one" },
+        });
         await vi.waitFor(() => {
             expect(first.collection.has(action.entry.id)).toBe(true);
             expect(second.collection.has(action.entry.id)).toBe(true);
@@ -1015,7 +1229,9 @@ describe("createOntologyOutbox", () => {
 
     it("rejects removal after the leader has claimed an entry", async () => {
         const adapter = memoryPersistenceAdapter();
-        const hostCoordination = new SingleProcessCoordination({ scope: "claimed" });
+        const hostCoordination = new SingleProcessCoordination({
+            scope: "claimed",
+        });
         const firstRuntime = coordinatedOutboxRuntime({
             adapter,
             coordination: hostCoordination,
@@ -1032,13 +1248,19 @@ describe("createOntologyOutbox", () => {
         });
         const execute = vi.fn(() => execution);
         const create = ({ runtime }: ReturnType<typeof coordinatedOutboxRuntime>) =>
-            createOntologyOutbox({ runtime, execute });
+            createOntologyOutbox({
+                runtime,
+                execute,
+            });
         const first = create(firstRuntime);
         const second = create(secondRuntime);
         await Promise.all([first.ready, second.ready]);
         const origin = second;
         const other = first;
-        const action = await origin.enqueue({ actionTypeName: "deleteTask", parameters: { task: "one" } });
+        const action = await origin.enqueue({
+            actionTypeName: "deleteTask",
+            parameters: { task: "one" },
+        });
         await vi.waitFor(() => {
             expect(first.collection.get(action.entry.id)?.status).toBe("executing");
             expect(second.collection.get(action.entry.id)?.status).toBe("executing");

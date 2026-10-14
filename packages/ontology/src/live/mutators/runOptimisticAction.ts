@@ -36,5 +36,9 @@ export async function runOptimisticAction(options: {
     const mutator = options.mutators?.[options.actionTypeName];
     if (!mutator) return;
 
-    await mutator({ tx, args: options.parameters, context: options.context });
+    await mutator({
+        tx,
+        args: options.parameters,
+        context: options.context,
+    });
 }

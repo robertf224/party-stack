@@ -19,7 +19,11 @@ function create(
             plan: ($objectSet) => {
                 return lambda(
                     $objectSet,
-                    (objectSet): ObjectSet => ({ type: "searchAround", link: linkType.apiName, objectSet }),
+                    (objectSet): ObjectSet => ({
+                        type: "searchAround",
+                        link: linkType.apiName,
+                        objectSet,
+                    }),
                     true
                 );
             },
@@ -30,4 +34,6 @@ function create(
     return [fieldName, field];
 }
 
-export const ObjectSetLinkField = { create };
+export const ObjectSetLinkField = {
+    create,
+};

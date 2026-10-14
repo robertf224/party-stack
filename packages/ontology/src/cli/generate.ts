@@ -102,7 +102,10 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
         const typesOutput = generateTypeDefinitions(ontology, {
             valuesImportPath: resolveValuesImportPath(outDir),
         });
-        const buildersOutput = generateBuilders(ontology, { exportName: "o", promoted: "TypeDef" });
+        const buildersOutput = generateBuilders(ontology, {
+            exportName: "o",
+            promoted: "TypeDef",
+        });
         const constantsOutput = generateConstants(ontology);
 
         await Promise.all([
@@ -130,7 +133,9 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
     );
 
     const ontologyImportPath = formatImportSpecifier(relative(outDir, ontologyPath), jsExtensions);
-    const typesOutput = generateTypes(ontology, { outputTypeName: generatedOntologyTypeName });
+    const typesOutput = generateTypes(ontology, {
+        outputTypeName: generatedOntologyTypeName,
+    });
     const constantsOutput = generateConstants(ontology);
     const liveOutput = generateLive(ontology, {
         ontologyImportPath,

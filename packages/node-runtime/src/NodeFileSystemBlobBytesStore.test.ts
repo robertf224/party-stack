@@ -9,7 +9,9 @@ const directories: string[] = [];
 afterEach(async () => {
     await Promise.all(
         directories.splice(0).map(async (directory) => {
-            const store = new NodeFileSystemBlobBytesStore({ directory });
+            const store = new NodeFileSystemBlobBytesStore({
+                directory,
+            });
             await store.clear();
         })
     );
@@ -19,7 +21,9 @@ describe("NodeFileSystemBlobBytesStore", () => {
     it("round-trips bytes and treats ids as opaque values", async () => {
         const directory = await mkdtemp(join(tmpdir(), "party-stack-blobs-"));
         directories.push(directory);
-        const store = new NodeFileSystemBlobBytesStore({ directory });
+        const store = new NodeFileSystemBlobBytesStore({
+            directory,
+        });
 
         await store.write("../../outside", new Blob(["hello"]));
 
@@ -30,7 +34,9 @@ describe("NodeFileSystemBlobBytesStore", () => {
     it("deletes missing and existing blobs idempotently", async () => {
         const directory = await mkdtemp(join(tmpdir(), "party-stack-blobs-"));
         directories.push(directory);
-        const store = new NodeFileSystemBlobBytesStore({ directory });
+        const store = new NodeFileSystemBlobBytesStore({
+            directory,
+        });
 
         await store.write("one", new Blob(["one"]));
         await store.delete("one");

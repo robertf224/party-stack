@@ -14,14 +14,28 @@ describe("generateOntology", () => {
                     pluralDisplayName: "Employees",
                     primaryKey: "id",
                     title: "name",
-                    icon: { name: "person", meta: { blueprint: { name: "person" } } },
+                    icon: {
+                        name: "person",
+                        meta: {
+                            blueprint: {
+                                name: "person",
+                            },
+                        },
+                    },
                     color: "#2d72d2",
                     properties: [
                         { name: "id", displayName: "ID", type: o.string({}) },
                         {
                             name: "name",
                             displayName: "Name",
-                            type: o.string({ suggestions: [{ value: "Ada", label: "Ada Lovelace" }] }),
+                            type: o.string({
+                                suggestions: [
+                                    {
+                                        value: "Ada",
+                                        label: "Ada Lovelace",
+                                    },
+                                ],
+                            }),
                         },
                     ],
                 },
@@ -70,7 +84,11 @@ describe("generateOntology", () => {
                     {
                         name: "user",
                         displayName: "User",
-                        type: o.optional({ type: o.objectReference({ objectType: "Membership" }) }),
+                        type: o.optional({
+                            type: o.objectReference({
+                                objectType: "Membership",
+                            }),
+                        }),
                     },
                 ],
             }),
@@ -99,7 +117,11 @@ describe("generateOntology", () => {
             linkTypes: [],
             actionTypes: [
                 {
-                    meta: { provider: { kind: "remote" } },
+                    meta: {
+                        provider: {
+                            kind: "remote",
+                        },
+                    },
                     name: "updateEmployee",
                     displayName: "Update employee",
                     parameters: [
@@ -114,7 +136,9 @@ describe("generateOntology", () => {
                             type: o.string({}),
                             defaultValue: o.Expression.getAt({
                                 source: o.Expression.objectLookup({
-                                    reference: o.Expression.inputReference({ name: "employee" }),
+                                    reference: o.Expression.inputReference({
+                                        name: "employee",
+                                    }),
                                 }),
                                 path: ["name"],
                             }),

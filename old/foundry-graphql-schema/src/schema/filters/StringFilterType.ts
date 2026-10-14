@@ -10,9 +10,17 @@ export interface StringFilter {
 }
 function toObjectSetFilter(field: PropertyApiName, filter: StringFilter): SearchJsonQueryV2 | undefined {
     if (filter.eq) {
-        return { type: "eq", field, value: filter.eq };
+        return {
+            type: "eq",
+            field,
+            value: filter.eq,
+        };
     } else if (filter.contains) {
-        return { type: "containsAllTermsInOrderPrefixLastTerm", field, value: filter.contains };
+        return {
+            type: "containsAllTermsInOrderPrefixLastTerm",
+            field,
+            value: filter.contains,
+        };
     } else {
         return undefined;
     }
@@ -24,8 +32,14 @@ function create(): GraphQLInputObjectType {
         description: "A filter for a String field.",
         isOneOf: true,
         fields: {
-            eq: { description: "The field must be equal to the provided value.", type: GraphQLString },
-            contains: { description: "The field must contain the provided substring.", type: GraphQLString },
+            eq: {
+                description: "The field must be equal to the provided value.",
+                type: GraphQLString,
+            },
+            contains: {
+                description: "The field must contain the provided substring.",
+                type: GraphQLString,
+            },
         },
     });
 }
@@ -34,4 +48,8 @@ function getReference(getTypeReference: GetTypeReference): GraphQLInputObjectTyp
     return getTypeReference(TYPE_NAME) as GraphQLInputObjectType;
 }
 
-export const StringFilterType = { create, getReference, toObjectSetFilter };
+export const StringFilterType = {
+    create,
+    getReference,
+    toObjectSetFilter,
+};

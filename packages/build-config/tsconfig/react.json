@@ -1,5 +1,9 @@
 {
     "extends": "./library.json",
-    "compilerOptions": { "module": "ESNext", "moduleResolution": "bundler", "jsx": "react-jsx" },
+    "compilerOptions": {
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "jsx": "react-jsx"
+    },
     "include": ["${configDir}/src/**/*.ts", "${configDir}/src/**/*.tsx"]
 }

@@ -230,7 +230,11 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
         yield* useWebLock(`party-stack.coordination:${this.scope}:leader`);
         const scope = yield* useScope();
         const signal = yield* useAbortSignal();
-        const term: LeadershipTerm = { id: randomId(), scope, signal };
+        const term: LeadershipTerm = {
+            id: randomId(),
+            scope,
+            signal,
+        };
         this.term = term;
         for (const waiter of this.leadershipWaiters) {
             waiter.resolve(term);
@@ -418,11 +422,16 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
         const timeout = this.requestTimeoutMs;
         const result = yield* race([
             (function* () {
-                return { type: "response" as const, value: yield* until(response) };
+                return {
+                    type: "response" as const,
+                    value: yield* until(response),
+                };
             })(),
             (function* () {
                 yield* sleep(timeout);
-                return { type: "timeout" as const };
+                return {
+                    type: "timeout" as const,
+                };
             })(),
         ]);
         if (result.type === "timeout") {
@@ -549,12 +558,23 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
                 path: [],
             })
             .then(
-                (result) => this.completeIncoming(key, request, term, { ok: true, result }),
+                (result) =>
+                    this.completeIncoming(key, request, term, {
+                        ok: true,
+                        result,
+                    }),
                 (error: unknown) =>
-                    this.completeIncoming(key, request, term, { ok: false, error: serializeError(error) })
+                    this.completeIncoming(key, request, term, {
+                        ok: false,
+                        error: serializeError(error),
+                    })
             )
             .finally(removeTermAbort);
-        this.incoming.set(key, { controller, term, completion });
+        this.incoming.set(key, {
+            controller,
+            term,
+            completion,
+        });
         void completion;
     }
 
@@ -564,7 +584,10 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
         term: LeadershipTerm,
         outcome:
             | { readonly ok: true; readonly result: unknown }
-            | { readonly ok: false; readonly error: ReturnType<typeof serializeError> }
+            | {
+                  readonly ok: false;
+                  readonly error: ReturnType<typeof serializeError>;
+              }
     ): void {
         this.incoming.delete(key);
         if (this.closed || this.term !== term || term.signal.aborted) {
@@ -673,7 +696,9 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
         if (signal.aborted) {
             abort();
         } else {
-            signal.addEventListener("abort", abort, { once: true });
+            signal.addEventListener("abort", abort, {
+                once: true,
+            });
             void waiter.promise.then(
                 () => signal.removeEventListener("abort", abort),
                 () => signal.removeEventListener("abort", abort)

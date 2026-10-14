@@ -25,8 +25,13 @@ const source: ObjectTypeDef = {
 
 const lens: Lens = {
     operations: [
-        o.LensOp.move({ from: ["profilePicture"], to: ["avatar"] }),
-        o.LensOp.select({ properties: ["id", "givenName", "familyName", "email", "avatar"] }),
+        o.LensOp.move({
+            from: ["profilePicture"],
+            to: ["avatar"],
+        }),
+        o.LensOp.select({
+            properties: ["id", "givenName", "familyName", "email", "avatar"],
+        }),
     ],
 };
 
@@ -59,7 +64,12 @@ describe("ontology lenses", () => {
                 },
                 lens
             )
-        ).toEqual({ id: "user-1", givenName: "Ada", familyName: "Lovelace", avatar: { id: "picture-1" } });
+        ).toEqual({
+            id: "user-1",
+            givenName: "Ada",
+            familyName: "Lovelace",
+            avatar: { id: "picture-1" },
+        });
         expect(mapTargetPathToSourceWithLens(["avatar", "id"], lens)).toEqual(["profilePicture", "id"]);
         expect(mapTargetPathToSourceWithLens(["familyName"], lens)).toEqual(["familyName"]);
     });
@@ -67,8 +77,20 @@ describe("ontology lenses", () => {
     it("preserves Temporal values while projecting plain object fields", () => {
         const updatedAt = Temporal.Instant.from("2026-08-28T00:00:00Z");
         const projected = applyLensToObject(
-            { id: "user-1", givenName: "Ada", updatedAt, profilePicture: undefined, admin: false },
-            { operations: [o.LensOp.select({ properties: ["id", "updatedAt"] })] }
+            {
+                id: "user-1",
+                givenName: "Ada",
+                updatedAt,
+                profilePicture: undefined,
+                admin: false,
+            },
+            {
+                operations: [
+                    o.LensOp.select({
+                        properties: ["id", "updatedAt"],
+                    }),
+                ],
+            }
         );
         expect(projected.updatedAt).toBe(updatedAt);
     });

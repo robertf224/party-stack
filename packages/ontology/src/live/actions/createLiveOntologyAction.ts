@@ -60,7 +60,11 @@ export function createLiveOntologyAction(options: {
     const apply: LiveOntologyAction = async (providedParameters, executionOptions) => {
         const idempotencyKey = executionOptions?.idempotencyKey ?? crypto.randomUUID();
         return options.submit(
-            { actionTypeName: options.action.name, parameters: providedParameters, idempotencyKey },
+            {
+                actionTypeName: options.action.name,
+                parameters: providedParameters,
+                idempotencyKey,
+            },
             executionOptions
         );
     };

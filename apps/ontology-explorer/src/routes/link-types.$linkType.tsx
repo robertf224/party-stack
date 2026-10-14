@@ -3,7 +3,9 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useOntology } from "../ontology/OntologyProvider";
 import type { MetaLinkType } from "@party-stack/ontology";
 
-export const Route = createFileRoute("/link-types/$linkType")({ component: LinkTypeDetail });
+export const Route = createFileRoute("/link-types/$linkType")({
+    component: LinkTypeDetail,
+});
 
 function LinkTypeDetail() {
     const { meta: metaOntology } = useOntology();

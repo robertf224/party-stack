@@ -46,7 +46,10 @@ export async function loadFoundrySubmissionCriteria(options: {
         toFoundryActionTypeName(options.actionTypeName)
     );
     const response = await bulkLoadOntologyEntities(
-        { ...options.client, servicePath: "ontology-metadata/api" },
+        {
+            ...options.client,
+            servicePath: "ontology-metadata/api",
+        },
         options.userId,
         {
             actionTypes: [{ rid: actionType.rid }],
@@ -61,7 +64,10 @@ export async function loadFoundrySubmissionCriteria(options: {
     const loaded = response.actionTypes[0];
     invariant(loaded, `Foundry action type "${options.actionTypeName}" was not returned by metadata.`);
     return Object.values(loaded.actionType.actionTypeLogic.validation.actionTypeLevelValidation.rules).map(
-        (rule) => ({ condition: rule.condition, failureMessage: rule.displayMetadata.failureMessage })
+        (rule) => ({
+            condition: rule.condition,
+            failureMessage: rule.displayMetadata.failureMessage,
+        })
     );
 }
 
@@ -107,7 +113,11 @@ async function loadGroupIds(client: OntologyClient, userId: string): Promise<str
     return AsyncIterable.toArray(
         AsyncIterable.fromPagination(
             (pageSize, pageToken: string | undefined) =>
-                GroupMemberships.list(client, userId, { pageSize, pageToken, transitive: true }),
+                GroupMemberships.list(client, userId, {
+                    pageSize,
+                    pageToken,
+                    transitive: true,
+                }),
             (page) => page.nextPageToken,
             (page) => page.data.map((membership) => membership.groupId),
             1_000
@@ -342,7 +352,12 @@ export async function validateFoundryActionDraftCriteria(options: {
         .map(({ criterion }) => ({
             message: `Impossible submission criterion: ${criterion.failureMessage}`,
         }));
-    return errors.length > 0 ? certain({ kind: "err", value: errors }) : uncertain();
+    return errors.length > 0
+        ? certain({
+              kind: "err",
+              value: errors,
+          })
+        : uncertain();
 }
 
 function collectRegexIssue(
@@ -351,7 +366,10 @@ function collectRegexIssue(
     path: readonly (string | number)[]
 ): void {
     if (constraint.configuredFailureMessage) {
-        issues.push({ message: constraint.configuredFailureMessage, path });
+        issues.push({
+            message: constraint.configuredFailureMessage,
+            path,
+        });
     }
 }
 

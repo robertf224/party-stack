@@ -25,7 +25,11 @@ async function create(
     const context = async (token: string): Promise<FoundryContext> => {
         const requestClient = createRequestClient?.(token) ?? client;
         const userId = getUserIdFromToken(await requestClient.__osdkClientContext.tokenProvider());
-        return { client: requestClient, ontologyRid, userId };
+        return {
+            client: requestClient,
+            ontologyRid,
+            userId,
+        };
     };
     return { schema, context };
 }
@@ -76,4 +80,7 @@ function createExecutor(executableFoundrySchema: ExecutableFoundrySchema): Found
     };
 }
 
-export const ExecutableFoundrySchema = { create, createExecutor };
+export const ExecutableFoundrySchema = {
+    create,
+    createExecutor,
+};

@@ -30,12 +30,18 @@ describe("createFoundryConnectionAdapter", () => {
             baseUrl: "https://foundry.example.com",
             token,
         });
-        const adapter = await adapterProvider({ installationId: "foundry", runtime: {} as never });
+        const adapter = await adapterProvider({
+            installationId: "foundry",
+            runtime: {} as never,
+        });
         const [established] = await adapter.restoreConnections();
         if (!established?.session.egress) {
             throw new Error("Expected Foundry egress wrapper.");
         }
-        const egress = established.session.egress({ fetch, createWebSocket });
+        const egress = established.session.egress({
+            fetch,
+            createWebSocket,
+        });
 
         await egress.fetch(new Request("https://foundry.example.com/api/data"));
         const request = fetch.mock.calls[0]![0] as Request;
@@ -49,7 +55,9 @@ describe("createFoundryConnectionAdapter", () => {
 
     it("exposes API-token authentication through the connection controller", async () => {
         const token = foundryToken();
-        const adapter = await createFoundryConnectionAdapter({ baseUrl: "https://foundry.example.com" })({
+        const adapter = await createFoundryConnectionAdapter({
+            baseUrl: "https://foundry.example.com",
+        })({
             installationId: "foundry",
             runtime: {} as never,
         });
@@ -62,7 +70,11 @@ describe("createFoundryConnectionAdapter", () => {
         const connection = await authentication.signIn.apiToken({ token });
 
         expect(connection.state.status).toBe("active");
-        expect(connect).toHaveBeenCalledWith(expect.objectContaining({ connection }));
+        expect(connect).toHaveBeenCalledWith(
+            expect.objectContaining({
+                connection,
+            })
+        );
     });
 
     it("composes server-only client credentials authentication", async () => {
@@ -71,13 +83,24 @@ describe("createFoundryConnectionAdapter", () => {
         const fetch = vi.fn<typeof globalThis.fetch>((input, init) => {
             tokenRequest = new Request(input, init);
             return Promise.resolve(
-                Response.json({ access_token: token, token_type: "Bearer", expires_in: 3600 })
+                Response.json({
+                    access_token: token,
+                    token_type: "Bearer",
+                    expires_in: 3600,
+                })
             );
         });
         const adapter = await createFoundryConnectionAdapter({
             baseUrl: "https://foundry.example.com",
-            clientCredentials: { clientId: "client", clientSecret: "secret", fetch },
-        })({ installationId: "foundry", runtime: {} as never });
+            clientCredentials: {
+                clientId: "client",
+                clientSecret: "secret",
+                fetch,
+            },
+        })({
+            installationId: "foundry",
+            runtime: {} as never,
+        });
         const connect = vi.fn(() => Promise.resolve());
         const authentication = adapter.createAuthenticationClient({
             connect,
@@ -87,7 +110,11 @@ describe("createFoundryConnectionAdapter", () => {
         const connection = await authentication.signIn.clientCredentials();
 
         expect(connection.state.status).toBe("active");
-        expect(connect).toHaveBeenCalledWith(expect.objectContaining({ connection }));
+        expect(connect).toHaveBeenCalledWith(
+            expect.objectContaining({
+                connection,
+            })
+        );
         expect(fetch).toHaveBeenCalledOnce();
         expect(tokenRequest?.url).toBe("https://foundry.example.com/multipass/api/oauth2/token");
         expect(tokenRequest?.headers.get("authorization")).toBe("Basic Y2xpZW50OnNlY3JldA==");
@@ -138,7 +165,10 @@ describe("createFoundryConnectionAdapter", () => {
                         })
                     ),
             },
-        })({ installationId: "foundry", runtime });
+        })({
+            installationId: "foundry",
+            runtime,
+        });
         const connect = vi.fn(() => Promise.resolve());
         const authentication = adapter.createAuthenticationClient({
             connect,
@@ -148,7 +178,11 @@ describe("createFoundryConnectionAdapter", () => {
         const connection = await authentication.signIn.oauth();
 
         expect(connection.state.status).toBe("active");
-        expect(connect).toHaveBeenCalledWith(expect.objectContaining({ connection }));
+        expect(connect).toHaveBeenCalledWith(
+            expect.objectContaining({
+                connection,
+            })
+        );
         expect([...values.values()].some((value) => value.includes("refresh"))).toBe(true);
 
         await adapter.cleanup?.();

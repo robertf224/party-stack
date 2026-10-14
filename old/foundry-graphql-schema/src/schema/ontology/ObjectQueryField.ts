@@ -17,7 +17,11 @@ function create(getTypeReference: GetTypeReference, objectType: ObjectTypeV2): N
         {
             description: `Get a single ${objectType.displayName}.`,
             // TODO: deprecation
-            args: { [objectType.primaryKey]: { type: Schemas.required(ObjectArgumentType.get(objectType)) } },
+            args: {
+                [objectType.primaryKey]: {
+                    type: Schemas.required(ObjectArgumentType.get(objectType)),
+                },
+            },
             type: ObjectType.getReference(getTypeReference, objectType),
             plan: (_$query, $args) => {
                 return loadOne($args.getRaw(objectType.primaryKey), context(), getObjectLoader(objectType));
@@ -29,4 +33,6 @@ function create(getTypeReference: GetTypeReference, objectType: ObjectTypeV2): N
     return [fieldName, field];
 }
 
-export const ObjectQueryField = { create };
+export const ObjectQueryField = {
+    create,
+};

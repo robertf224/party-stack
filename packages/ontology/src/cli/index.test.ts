@@ -11,7 +11,12 @@ const directories: string[] = [];
 
 afterEach(async () => {
     await Promise.all(
-        directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))
+        directories.splice(0).map((directory) =>
+            rm(directory, {
+                recursive: true,
+                force: true,
+            })
+        )
     );
 });
 
@@ -48,7 +53,9 @@ describe("ontology CLI", () => {
         const cwd = await mkdtemp(resolve(tmpdir(), "ontology-cli-"));
         directories.push(cwd);
         const configPath = resolve(cwd, "src/ontology/config.ts");
-        await mkdir(dirname(configPath), { recursive: true });
+        await mkdir(dirname(configPath), {
+            recursive: true,
+        });
         await writeFile(configPath, `throw new Error("pull config evaluated");`);
         const cliPath = fileURLToPath(new URL("../../lib/cli/index.js", import.meta.url));
 

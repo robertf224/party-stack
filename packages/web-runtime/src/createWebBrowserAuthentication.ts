@@ -23,7 +23,10 @@ function createRedirectSession(): BrowserAuthenticationSession {
 }
 
 export function createWebBrowserAuthentication(
-    options: { popupTarget?: string; popupFeatures?: string } = {}
+    options: {
+        popupTarget?: string;
+        popupFeatures?: string;
+    } = {}
 ): BrowserAuthentication {
     return {
         start({ redirectUrl, presentation }) {
@@ -42,7 +45,9 @@ export function createWebBrowserAuthentication(
             return {
                 open(authorizationUrl) {
                     popup.location.assign(authorizationUrl);
-                    return new Promise<{ callbackUrl: string }>((resolve, reject) => {
+                    return new Promise<{
+                        callbackUrl: string;
+                    }>((resolve, reject) => {
                         cancel = () => {
                             stopWaiting?.();
                             cancel = undefined;
@@ -61,7 +66,9 @@ export function createWebBrowserAuthentication(
                                 stopWaiting?.();
                                 cancel = undefined;
                                 popup.close();
-                                resolve({ callbackUrl: current });
+                                resolve({
+                                    callbackUrl: current,
+                                });
                             } catch {
                                 // Cross-origin access is expected until the provider returns.
                             }

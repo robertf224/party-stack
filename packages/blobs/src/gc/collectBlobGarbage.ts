@@ -72,12 +72,16 @@ export async function collectBlobGarbage(store: BlobStore, opts: CollectBlobGarb
                         ),
                     "desc"
                 )
-                .select(({ blob }) => ({ id: blob.id }))
+                .select(({ blob }) => ({
+                    id: blob.id,
+                }))
                 .limit(BLOB_GC_BATCH_SIZE)
         );
         for (const { id } of refs) {
             throwIfAborted(opts.signal);
-            await store.purge(id, { signal: opts.signal });
+            await store.purge(id, {
+                signal: opts.signal,
+            });
         }
         if (refs.length < BLOB_GC_BATCH_SIZE) return;
     }

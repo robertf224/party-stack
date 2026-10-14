@@ -126,22 +126,37 @@ export type IconDescriptor = {
     meta?: Record<string, unknown>;
 };
 
-export type Deprecation = { message: string };
+export type Deprecation = {
+    message: string;
+};
 
 /** A suggested value for a string. */
-export type StringSuggestion = { value: string; label?: string };
+export type StringSuggestion = {
+    value: string;
+    label?: string;
+};
 
 /** Constrains a string to a set of allowed values. */
-export type StringEnumConstraint = { options: Array<StringSuggestion> };
+export type StringEnumConstraint = {
+    options: Array<StringSuggestion>;
+};
 
 /** Constrains a string to a regex. */
-export type StringRegexConstraint = { regex: string };
+export type StringRegexConstraint = {
+    regex: string;
+};
 
 /** A constraint that can be applied to a string type. */
-export type StringConstraint = v.Union<{ enum: StringEnumConstraint; regex: StringRegexConstraint }>;
+export type StringConstraint = v.Union<{
+    enum: StringEnumConstraint;
+    regex: StringRegexConstraint;
+}>;
 
 /** A string type with optional constraints. */
-export type StringTypeDef = { constraint?: StringConstraint; suggestions?: Array<StringSuggestion> };
+export type StringTypeDef = {
+    constraint?: StringConstraint;
+    suggestions?: Array<StringSuggestion>;
+};
 
 /** A boolean type. */
 export type BooleanTypeDef = Record<never, never>;
@@ -195,7 +210,9 @@ export type FieldDef = {
 };
 
 /** A struct type with named fields. */
-export type StructTypeDef = { fields: Array<FieldDef> };
+export type StructTypeDef = {
+    fields: Array<FieldDef>;
+};
 
 /** Definition of a variant in a discriminated union. */
 export type VariantDef = {
@@ -206,7 +223,9 @@ export type VariantDef = {
 };
 
 /** A discriminated union type. */
-export type UnionTypeDef = { variants: Array<VariantDef> };
+export type UnionTypeDef = {
+    variants: Array<VariantDef>;
+};
 
 /** Wraps a type to make it optional. */
 export type OptionalTypeDef = {
@@ -264,8 +283,14 @@ export type ImageMediaType =
 
 /** Constrains intrinsic pixel dimensions. */
 export type DimensionsConstraint = {
-    width?: { min?: v.integer; max?: v.integer };
-    height?: { min?: v.integer; max?: v.integer };
+    width?: {
+        min?: v.integer;
+        max?: v.integer;
+    };
+    height?: {
+        min?: v.integer;
+        max?: v.integer;
+    };
 };
 
 /** Constraints specific to image attachments. */
@@ -275,16 +300,24 @@ export type ImageAttachmentConstraint = {
 };
 
 /** Content-specific attachment constraints. */
-export type AttachmentContentConstraint = v.Union<{ image: ImageAttachmentConstraint }>;
+export type AttachmentContentConstraint = v.Union<{
+    image: ImageAttachmentConstraint;
+}>;
 
 /** Constraints applied to an attachment. */
 export type AttachmentConstraint = {
-    size?: { min?: v.double; max?: v.double };
+    size?: {
+        min?: v.double;
+        max?: v.double;
+    };
     content?: AttachmentContentConstraint;
 };
 
 /** A file handle with optional constraints. */
-export type AttachmentTypeDef = { constraint?: AttachmentConstraint; meta?: Record<string, unknown> };
+export type AttachmentTypeDef = {
+    constraint?: AttachmentConstraint;
+    meta?: Record<string, unknown>;
+};
 
 /** A reference to an ontology object type. */
 export type ObjectReferenceTypeDef = {
@@ -307,7 +340,11 @@ export type PropertyDef = {
     deprecated?: Deprecation;
 };
 
-export type LinkTypeSideDef = { objectType: string; name: string; displayName: string };
+export type LinkTypeSideDef = {
+    objectType: string;
+    name: string;
+    displayName: string;
+};
 
 /** The cardinality of a link from the source's perspective. */
 export type LinkCardinality = "one" | "many";
@@ -328,31 +365,54 @@ export type ActionParameterDef = {
 };
 
 /** Reads a named input from the root expression scope. */
-export type InputReferenceExpression = { name: string };
+export type InputReferenceExpression = {
+    name: string;
+};
 
 /** Reads a named lexically scoped expression binding. */
-export type LocalReferenceExpression = { name: string };
+export type LocalReferenceExpression = {
+    name: string;
+};
 
 /** Reads a named value from the expression context. */
-export type ContextReferenceExpression = { name: string };
+export type ContextReferenceExpression = {
+    name: string;
+};
 
 /** Reads a structural path from a source expression. */
-export type GetAtExpression = { source: Expression; path: Array<string> };
+export type GetAtExpression = {
+    source: Expression;
+    path: Array<string>;
+};
 
 /** Resolves an object reference to its ontology object. */
-export type ObjectLookupExpression = { reference: Expression };
+export type ObjectLookupExpression = {
+    reference: Expression;
+};
 
 /** Follows one named to-one ontology link from a source object. */
-export type LinkHopExpression = { source: Expression; link: string };
+export type LinkHopExpression = {
+    source: Expression;
+    link: string;
+};
 
 /** A named field constructed by a struct expression. */
-export type StructExpressionField = { name: string; value: Expression };
+export type StructExpressionField = {
+    name: string;
+    value: Expression;
+};
 
 /** Constructs a struct value from field expressions. */
-export type StructExpression = { fields: Array<StructExpressionField> };
+export type StructExpression = {
+    fields: Array<StructExpressionField>;
+};
 
 /** Maps each element of a list to a new value. */
-export type MapExpression = { source: Expression; binding: string; body: Expression };
+export type MapExpression = {
+    source: Expression;
+    binding: string;
+    body: Expression;
+};
 
 /** Generates a UUID value. */
 export type UuidExpression = Record<never, never>;
@@ -382,10 +442,16 @@ export type Expression = v.Union<{
 }>;
 
 /** Assigns an expression to a property path on an object written by an action. */
-export type PropertyAssignment = { property: Array<string>; value: Expression };
+export type PropertyAssignment = {
+    property: Array<string>;
+    value: Expression;
+};
 
 /** Creates an object and assigns property values. */
-export type CreateObjectActionLogicStep = { objectType: string; values: Array<PropertyAssignment> };
+export type CreateObjectActionLogicStep = {
+    objectType: string;
+    values: Array<PropertyAssignment>;
+};
 
 /** Updates a referenced object and assigns property values. */
 export type UpdateObjectActionLogicStep = {
@@ -394,7 +460,9 @@ export type UpdateObjectActionLogicStep = {
 };
 
 /** Deletes a referenced object. */
-export type DeleteObjectActionLogicStep = { object: InputReferenceExpression };
+export type DeleteObjectActionLogicStep = {
+    object: InputReferenceExpression;
+};
 
 /** A logic step performed by an action. */
 export type ActionLogicStep = v.Union<{
@@ -416,16 +484,26 @@ export type QueryFunctionParameterDef = {
 };
 
 /** Moves a property from one path to another. */
-export type MoveLensOp = { from: Array<string>; to: Array<string> };
+export type MoveLensOp = {
+    from: Array<string>;
+    to: Array<string>;
+};
 
 /** Retains only the selected top-level properties. */
-export type SelectLensOp = { properties: Array<string> };
+export type SelectLensOp = {
+    properties: Array<string>;
+};
 
 /** One schema and value transformation operation. */
-export type LensOp = v.Union<{ move: MoveLensOp; select: SelectLensOp }>;
+export type LensOp = v.Union<{
+    move: MoveLensOp;
+    select: SelectLensOp;
+}>;
 
 /** An ordered sequence of source-to-target transformation operations. */
-export type Lens = { operations: Array<LensOp> };
+export type Lens = {
+    operations: Array<LensOp>;
+};
 
 /** A named type definition that can be referenced by other types. */
 export type ValueType = {

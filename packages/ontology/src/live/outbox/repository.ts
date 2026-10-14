@@ -44,8 +44,13 @@ export class OntologyOutboxRepository {
         const existing = this.get(proposed.id);
         if (existing) return existing;
 
-        const entry = { ...proposed, sequence: await this.nextSequence() };
-        await this.collection.insert(entry, { optimistic: false }).isPersisted.promise;
+        const entry = {
+            ...proposed,
+            sequence: await this.nextSequence(),
+        };
+        await this.collection.insert(entry, {
+            optimistic: false,
+        }).isPersisted.promise;
         return entry;
     }
 
@@ -228,7 +233,9 @@ export class OntologyOutboxRepository {
             query
                 .from({ entry: this.collection })
                 .orderBy(({ entry }) => entry.sequence, "desc")
-                .select(({ entry }) => ({ sequence: entry.sequence }))
+                .select(({ entry }) => ({
+                    sequence: entry.sequence,
+                }))
                 .findOne()
         )) as { sequence: number } | undefined;
         return (latest?.sequence ?? 0) + 1;
@@ -260,7 +267,9 @@ export class OntologyOutboxRepository {
 
     private async delete(id: string): Promise<void> {
         if (!this.collection.has(id)) return;
-        await this.collection.delete(id, { optimistic: false }).isPersisted.promise;
+        await this.collection.delete(id, {
+            optimistic: false,
+        }).isPersisted.promise;
     }
 
     private async deleteEntries(entries: readonly OntologyOutboxEntry[]): Promise<void> {

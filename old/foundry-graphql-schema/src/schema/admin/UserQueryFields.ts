@@ -28,7 +28,11 @@ function create(getTypeReference: GetTypeReference): NamedGraphQLFieldConfig[] {
         objectFieldSpec<Step, Step<User>>(
             {
                 description: "Get a single User.",
-                args: { id: { type: Schemas.required(GraphQLString) } },
+                args: {
+                    id: {
+                        type: Schemas.required(GraphQLString),
+                    },
+                },
                 type: UserType.getReference(getTypeReference),
                 plan: (_$parent, $args) => {
                     return loadOne($args.getRaw("id"), context(), UserLoader);
@@ -41,4 +45,6 @@ function create(getTypeReference: GetTypeReference): NamedGraphQLFieldConfig[] {
     return [viewer, user];
 }
 
-export const UserQueryFields = { create };
+export const UserQueryFields = {
+    create,
+};

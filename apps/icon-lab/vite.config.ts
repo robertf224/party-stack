@@ -54,7 +54,10 @@ function generatedDataPlugin(): Plugin {
                 });
                 request.on("end", async () => {
                     try {
-                        const parsed = JSON.parse(body) as { version?: unknown; feedback?: unknown };
+                        const parsed = JSON.parse(body) as {
+                            version?: unknown;
+                            feedback?: unknown;
+                        };
                         if (parsed.version !== 1 || !Array.isArray(parsed.feedback)) {
                             throw new Error("Invalid mapping feedback file");
                         }
@@ -90,7 +93,11 @@ function generatedDataPlugin(): Plugin {
                     missingData = true;
                     continue;
                 }
-                this.emitFile({ type: "asset", fileName: `generated-data/${fileName}`, source });
+                this.emitFile({
+                    type: "asset",
+                    fileName: `generated-data/${fileName}`,
+                    source,
+                });
             }
             if (missingData) {
                 this.warn(
@@ -145,8 +152,14 @@ export default defineAppConfig({
         },
     },
 
-    server: { host: true },
+    server: {
+        host: true,
+    },
     test: { environment: "node" },
     plugins: lazyPlugins(() => [react(), tailwindcss(), generatedDataPlugin()]),
-    resolve: { alias: { "@": path.resolve(rootDir, "src") } },
+    resolve: {
+        alias: {
+            "@": path.resolve(rootDir, "src"),
+        },
+    },
 });

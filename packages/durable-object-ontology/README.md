@@ -25,7 +25,11 @@ const backend = createDurableObjectOntologyBackend({
     ontologyId: "primary",
 });
 
-const ontology = await createLiveOntology({ ir, context: { user: authenticatedUserId }, backend });
+const ontology = await createLiveOntology({
+    ir,
+    context: { user: authenticatedUserId },
+    backend,
+});
 ```
 
 Each Durable Object SQLite database must host exactly one ontology. The factory

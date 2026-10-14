@@ -35,12 +35,26 @@ const authOptions = {
         process.env.BETTER_AUTH_URL ??
         "http://localhost:3000",
     secret: process.env.BETTER_AUTH_SECRET ?? "party-stack-issue-tracker-development-secret-change-me",
-    emailAndPassword: { enabled: true, minPasswordLength: 3 },
+    emailAndPassword: {
+        enabled: true,
+        minPasswordLength: 3,
+    },
     socialProviders:
         googleClientId && googleClientSecret
-            ? { google: { clientId: googleClientId, clientSecret: googleClientSecret } }
+            ? {
+                  google: {
+                      clientId: googleClientId,
+                      clientSecret: googleClientSecret,
+                  },
+              }
             : {},
-    plugins: [partyStack({ maximumSessions: 10 }), oauthPopup(), tanstackStartCookies()],
+    plugins: [
+        partyStack({
+            maximumSessions: 10,
+        }),
+        oauthPopup(),
+        tanstackStartCookies(),
+    ],
 } satisfies BetterAuthOptions;
 
 await (await getMigrations(authOptions)).runMigrations();
@@ -50,5 +64,11 @@ export const auth = betterAuth(authOptions);
 const findUser = database.prepare(`SELECT "id" FROM "user" WHERE "email" = ?`);
 for (const user of issueTrackerUsers) {
     if (findUser.get(user.email)) continue;
-    await auth.api.signUpEmail({ body: { email: user.email, password: user.password, name: user.name } });
+    await auth.api.signUpEmail({
+        body: {
+            email: user.email,
+            password: user.password,
+            name: user.name,
+        },
+    });
 }

@@ -77,4 +77,6 @@ function create(ontology: OntologyFullMetadata): GraphQLSchema {
     });
 }
 
-export const FoundrySchema = { create };
+export const FoundrySchema = {
+    create,
+};

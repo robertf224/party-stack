@@ -22,7 +22,11 @@ describe("createWebBrowserAuthentication", () => {
                 this.closed = true;
             },
         };
-        vi.stubGlobal("window", { open: vi.fn(() => popup), setInterval, clearInterval });
+        vi.stubGlobal("window", {
+            open: vi.fn(() => popup),
+            setInterval,
+            clearInterval,
+        });
         const authentication = createWebBrowserAuthentication();
 
         const session = authentication.start({
@@ -33,7 +37,9 @@ describe("createWebBrowserAuthentication", () => {
         popup.location.href = "https://app.example/auth/callback?code=code";
         await vi.advanceTimersByTimeAsync(250);
 
-        await expect(result).resolves.toEqual({ callbackUrl: "https://app.example/auth/callback?code=code" });
+        await expect(result).resolves.toEqual({
+            callbackUrl: "https://app.example/auth/callback?code=code",
+        });
         expect(popup.closed).toBe(true);
     });
 
@@ -51,7 +57,11 @@ describe("createWebBrowserAuthentication", () => {
                 this.closed = true;
             },
         };
-        vi.stubGlobal("window", { open: vi.fn(() => popup), setInterval, clearInterval });
+        vi.stubGlobal("window", {
+            open: vi.fn(() => popup),
+            setInterval,
+            clearInterval,
+        });
         const authentication = createWebBrowserAuthentication();
         const session = authentication.start({
             redirectUrl: "https://app.example/auth/callback",

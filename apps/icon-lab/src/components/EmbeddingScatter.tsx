@@ -32,7 +32,12 @@ export function EmbeddingScatter({
         }
         const xs = filtered.map((p) => p.x);
         const ys = filtered.map((p) => p.y);
-        return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+        return {
+            minX: Math.min(...xs),
+            maxX: Math.max(...xs),
+            minY: Math.min(...ys),
+            maxY: Math.max(...ys),
+        };
     }, [filtered]);
 
     const width = 960;

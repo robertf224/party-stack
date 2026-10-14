@@ -42,7 +42,11 @@ export function useAction<T extends ActionDefinition<any>>(
                 createdObjectsPromise,
                 modifiedObjectsPromise,
             ]);
-            return { createdObjects, modifiedObjects, deletedObjects: result.deletedObjects ?? [] };
+            return {
+                createdObjects,
+                modifiedObjects,
+                deletedObjects: result.deletedObjects ?? [],
+            };
         },
         onSuccess: (data, variables, onMutateResult, context) => {
             const observation: OntologyObservation = {
