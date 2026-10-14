@@ -5,7 +5,8 @@ export default defineConfig({
         tasks: {
             test: { command: "vp run -r test" },
             "check-versions": { command: "syncpack lint" },
-            "check-format": { command: "vp fmt --check" },
+            // Package check tasks already run formatting through vp check.
+            "check-format": { command: "vp fmt --check . '!{packages,apps,old}/**'" },
             ci: { command: [], dependsOn: ["test", "check-versions", "check-format"] },
         },
     },
