@@ -1,5 +1,5 @@
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
-import { defineLibraryConfig } from "@party-stack/build-config";
+import { defineLibraryConfig, type LibraryConfig } from "@party-stack/build-config";
 
 export default defineLibraryConfig({
     run: {
@@ -16,11 +16,13 @@ export default defineLibraryConfig({
         // https://github.com/cloudflare/workers-sdk/pull/16163
         fsModuleCache: false,
     },
+    // Keep the Cloudflare/Vitest plugin type at the shared Vite config boundary;
+    // comparing both recursive config types can exceed TypeScript's depth limit.
     plugins: [
         cloudflareTest({
             wrangler: {
                 configPath: "./wrangler.jsonc",
             },
         }),
-    ],
+    ] as LibraryConfig["plugins"],
 });
