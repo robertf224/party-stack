@@ -1,6 +1,7 @@
 {
     "name": "@bobbyfidz/foundry-graphql-schema",
     "version": "0.2.6",
+    "private": true,
     "files": [
         "lib"
     ],

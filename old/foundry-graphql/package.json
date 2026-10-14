@@ -1,6 +1,7 @@
 {
     "name": "@bobbyfidz/foundry-graphql",
     "version": "0.1.6",
+    "private": true,
     "bin": {
         "foundry-graphql": "./bin/run.js"
     },
