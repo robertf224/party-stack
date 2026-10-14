@@ -1,6 +1,6 @@
 {
     "name": "@party-stack/build-config",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "files": [
         "lib",
         "tsconfig"
