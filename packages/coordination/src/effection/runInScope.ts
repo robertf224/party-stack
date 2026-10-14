@@ -13,15 +13,9 @@ export function runInScope<Result>(
             .map(waitForAbort);
         try {
             const value = aborts.length === 0 ? yield* operation() : yield* race([operation(), ...aborts]);
-            return {
-                ok: true as const,
-                value,
-            };
+            return { ok: true as const, value };
         } catch (error) {
-            return {
-                ok: false as const,
-                error: normalizeError(error),
-            };
+            return { ok: false as const, error: normalizeError(error) };
         }
     });
     return task.then((result) => {

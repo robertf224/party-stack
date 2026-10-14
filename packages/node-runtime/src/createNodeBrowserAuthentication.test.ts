@@ -30,12 +30,8 @@ describe("createNodeBrowserAuthentication", () => {
             const response = await fetch(`${redirectUrl}?code=code&state=state`);
             responseText = await response.text();
         });
-        const authentication = createNodeBrowserAuthentication({
-            openUrl,
-        });
-        const session = authentication.start({
-            redirectUrl,
-        });
+        const authentication = createNodeBrowserAuthentication({ openUrl });
+        const session = authentication.start({ redirectUrl });
 
         await expect(session.open("https://auth.example/authorize")).resolves.toEqual({
             callbackUrl: `${redirectUrl}?code=code&state=state`,
@@ -58,9 +54,7 @@ describe("createNodeBrowserAuthentication", () => {
                 return Promise.resolve();
             },
         });
-        const session = authentication.start({
-            redirectUrl: `http://127.0.0.1:${port}/callback`,
-        });
+        const session = authentication.start({ redirectUrl: `http://127.0.0.1:${port}/callback` });
         const result = session.open("https://auth.example/authorize");
         await didOpen;
 
@@ -72,10 +66,8 @@ describe("createNodeBrowserAuthentication", () => {
     it("rejects non-loopback redirects", () => {
         const authentication = createNodeBrowserAuthentication();
 
-        expect(() =>
-            authentication.start({
-                redirectUrl: "https://app.example/callback",
-            })
-        ).toThrow("requires an http:// loopback redirect URL");
+        expect(() => authentication.start({ redirectUrl: "https://app.example/callback" })).toThrow(
+            "requires an http:// loopback redirect URL"
+        );
     });
 });

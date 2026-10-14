@@ -80,10 +80,7 @@ function Sidebar() {
         (q) =>
             q
                 .from({ ot: meta.objects.ObjectType })
-                .select(({ ot }) => ({
-                    name: ot.name,
-                    displayName: ot.displayName,
-                }))
+                .select(({ ot }) => ({ name: ot.name, displayName: ot.displayName }))
                 .orderBy(({ ot }) => ot.displayName, "asc"),
         []
     );
@@ -92,9 +89,7 @@ function Sidebar() {
         (q) =>
             q
                 .from({ lt: meta.objects.LinkType })
-                .select(({ lt }) => ({
-                    id: lt.id,
-                }))
+                .select(({ lt }) => ({ id: lt.id }))
                 .orderBy(({ lt }) => lt.id, "asc"),
         []
     );

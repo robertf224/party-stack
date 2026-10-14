@@ -34,17 +34,7 @@ function convertFoundryObjectProperty(
         name,
         displayName: property.displayName ?? name,
         description: property.description,
-        deprecated:
-            property.status?.type === "deprecated"
-                ? {
-                      message: property.status.message,
-                  }
-                : undefined,
-        type: required
-            ? type
-            : {
-                  kind: "optional",
-                  value: { type },
-              },
+        deprecated: property.status?.type === "deprecated" ? { message: property.status.message } : undefined,
+        type: required ? type : { kind: "optional", value: { type } },
     };
 }

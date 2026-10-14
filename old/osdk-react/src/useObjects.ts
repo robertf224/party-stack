@@ -18,11 +18,7 @@ const QUERY_KEY_PREFIX = ["osdk", "objects"];
 
 export function useObjects<T extends ObjectOrInterfaceDefinition>(
     type: T,
-    opts: {
-        $where?: WhereClause<T>;
-        $orderBy: ObjectSetOrderBy<T>;
-        $pageSize?: number;
-    },
+    opts: { $where?: WhereClause<T>; $orderBy: ObjectSetOrderBy<T>; $pageSize?: number },
     queryOpts?: Omit<
         UseSuspenseInfiniteQueryOptions,
         | "queryKey"
@@ -37,15 +33,10 @@ export function useObjects<T extends ObjectOrInterfaceDefinition>(
 ): Omit<
     UseSuspenseInfiniteQueryResult,
     "data" | "fetchPreviousPage" | "isFetchingPreviousPage" | "hasPreviousPage" | "isFetchPreviousPageError"
-> & {
-    data: Osdk<T>[];
-} {
+> & { data: Osdk<T>[] } {
     const { client } = useOsdkContext();
     const queryClient = useQueryClient();
-    const objectList: ObjectList<T> = {
-        objectSet: { type, filter: opts.$where },
-        orderBy: opts.$orderBy,
-    };
+    const objectList: ObjectList<T> = { objectSet: { type, filter: opts.$where }, orderBy: opts.$orderBy };
     const { data, ...rest } = useSuspenseInfiniteQuery({
         ...queryOpts,
         queryFn: ({ pageParam: $nextPageToken }) => {
@@ -56,10 +47,7 @@ export function useObjects<T extends ObjectOrInterfaceDefinition>(
                 $nextPageToken,
             });
             void result.then((page) => {
-                const observation: OntologyObservation = {
-                    knownObjects: page.data,
-                    deletedObjects: [],
-                };
+                const observation: OntologyObservation = { knownObjects: page.data, deletedObjects: [] };
                 updateObjectQueries(queryClient, observation);
             });
             return result;

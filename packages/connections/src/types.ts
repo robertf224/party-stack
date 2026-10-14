@@ -4,13 +4,7 @@ import type { Collection } from "@tanstack/db";
 
 export type ConnectionState =
     | { status: "pending" }
-    | {
-          status: "active";
-          expiration?: {
-              expiresAt: number;
-              refreshable: boolean;
-          };
-      }
+    | { status: "active"; expiration?: { expiresAt: number; refreshable: boolean } }
     | { status: "inactive" }
     | { status: "needs-auth"; error?: string }
     | { status: "error"; error: string };

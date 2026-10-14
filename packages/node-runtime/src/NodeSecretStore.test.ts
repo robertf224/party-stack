@@ -2,9 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { NodeSecretStore } from "./NodeSecretStore.js";
 import type { SecretStorageBackend } from "cross-keychain";
 
-const keychain = vi.hoisted(() => ({
-    getAllBackends: vi.fn(),
-}));
+const keychain = vi.hoisted(() => ({ getAllBackends: vi.fn() }));
 
 vi.mock("cross-keychain", () => keychain);
 
@@ -46,9 +44,7 @@ describe("NodeSecretStore", () => {
         const backend = memoryBackend();
         keychain.getAllBackends.mockResolvedValue([backend]);
         const setPassword = vi.spyOn(backend, "setPassword");
-        const store = new NodeSecretStore({
-            service: "party-stack:test:secrets",
-        });
+        const store = new NodeSecretStore({ service: "party-stack:test:secrets" });
 
         await store.set("tokens/client:id", "secret");
 
@@ -64,18 +60,14 @@ describe("NodeSecretStore", () => {
 
     it("rejects file-only keychain availability", async () => {
         keychain.getAllBackends.mockResolvedValue([memoryBackend("file")]);
-        const store = new NodeSecretStore({
-            service: "party-stack:test:secrets",
-        });
+        const store = new NodeSecretStore({ service: "party-stack:test:secrets" });
 
         await expect(store.get("token")).rejects.toThrow("No OS keychain is available");
     });
 
     it("selects the Linux Secret Service lazily", async () => {
         keychain.getAllBackends.mockResolvedValue([memoryBackend("secret-service")]);
-        const store = new NodeSecretStore({
-            service: "party-stack:test:secrets",
-        });
+        const store = new NodeSecretStore({ service: "party-stack:test:secrets" });
 
         expect(keychain.getAllBackends).not.toHaveBeenCalled();
         await expect(store.get("token")).resolves.toBeUndefined();

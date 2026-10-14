@@ -24,106 +24,52 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         linkTypes: [],
         actionTypes: [
             {
-                meta: {
-                    salesforce: {
-                        kind: "flow",
-                        apiName: "Create_Account",
-                    },
-                },
+                meta: { salesforce: { kind: "flow", apiName: "Create_Account" } },
                 name: "Create_Account",
                 displayName: "Create Account",
-                parameters: [
-                    {
-                        name: "accountName",
-                        displayName: "Account Name",
-                        type: o.string({}),
-                    },
-                ],
+                parameters: [{ name: "accountName", displayName: "Account Name", type: o.string({}) }],
                 logic: [],
             },
             {
-                meta: {
-                    salesforce: {
-                        kind: "crud",
-                        objectType: "Account",
-                        operation: "create",
-                    },
-                },
+                meta: { salesforce: { kind: "crud", objectType: "Account", operation: "create" } },
                 name: "createAccount",
                 displayName: "Create Account",
-                parameters: [
-                    {
-                        name: "Name",
-                        displayName: "Name",
-                        type: o.string({}),
-                    },
-                ],
+                parameters: [{ name: "Name", displayName: "Name", type: o.string({}) }],
                 logic: [],
             },
             {
-                meta: {
-                    salesforce: {
-                        kind: "crud",
-                        objectType: "Account",
-                        operation: "update",
-                    },
-                },
+                meta: { salesforce: { kind: "crud", objectType: "Account", operation: "update" } },
                 name: "updateAccount",
                 displayName: "Update Account",
                 parameters: [
                     {
                         name: "recordId",
                         displayName: "Account ID",
-                        type: o.objectReference({
-                            objectType: "Account",
-                        }),
+                        type: o.objectReference({ objectType: "Account" }),
                     },
-                    {
-                        name: "Name",
-                        displayName: "Name",
-                        type: o.optional({
-                            type: o.string({}),
-                        }),
-                    },
+                    { name: "Name", displayName: "Name", type: o.optional({ type: o.string({}) }) },
                 ],
                 logic: [],
             },
             {
-                meta: {
-                    salesforce: {
-                        kind: "crud",
-                        objectType: "Account",
-                        operation: "delete",
-                    },
-                },
+                meta: { salesforce: { kind: "crud", objectType: "Account", operation: "delete" } },
                 name: "deleteAccount",
                 displayName: "Delete Account",
                 parameters: [
                     {
                         name: "recordId",
                         displayName: "Account ID",
-                        type: o.objectReference({
-                            objectType: "Account",
-                        }),
+                        type: o.objectReference({ objectType: "Account" }),
                     },
                 ],
                 logic: [],
             },
             {
-                meta: {
-                    salesforce: {
-                        kind: "standard",
-                        apiName: "confirmSalesMeeting",
-                    },
-                },
+                meta: { salesforce: { kind: "standard", apiName: "confirmSalesMeeting" } },
                 name: "confirmSalesMeeting",
                 displayName: "Confirm Sales Meeting",
                 parameters: [
-                    {
-                        name: "meetingRequestId",
-                        displayName: "Meeting Request ID",
-                        type: o.string({}),
-                    },
+                    { name: "meetingRequestId", displayName: "Meeting Request ID", type: o.string({}) },
                 ],
                 logic: [],
             },
@@ -136,9 +82,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
                     {
                         name: "attendeeEmailAddresses",
                         displayName: "Attendee Email Addresses",
-                        type: o.list({
-                            elementType: o.string({}),
-                        }),
+                        type: o.list({ elementType: o.string({}) }),
                     },
                 ],
                 returnType: o.struct({
@@ -146,9 +90,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
                         {
                             name: "timeSlots",
                             displayName: "Time Slots",
-                            type: o.optional({
-                                type: o.string({}),
-                            }),
+                            type: o.optional({ type: o.string({}) }),
                         },
                     ],
                 }),
@@ -210,23 +152,14 @@ describe("createSalesforceOntologyBackendAdapter", () => {
 
     it("invokes Flows by API name and invalidates collections on success", async () => {
         invokeFlowAction.mockResolvedValue([
-            {
-                isSuccess: true,
-                outputValues: { Flow__InterviewStatus: "Finished" },
-            },
+            { isSuccess: true, outputValues: { Flow__InterviewStatus: "Finished" } },
         ]);
         const adapter = createAdapter();
 
         await adapter.applyAction(
             "Create_Account",
             { accountName: "Acme" },
-            {
-                objects: {
-                    Account: {
-                        utils: { invalidate },
-                    } as never,
-                },
-            }
+            { objects: { Account: { utils: { invalidate } } as never } }
         );
 
         expect(invokeFlowAction).toHaveBeenCalledWith("Create_Account", [{ accountName: "Acme" }]);
@@ -236,21 +169,12 @@ describe("createSalesforceOntologyBackendAdapter", () => {
     it("does not subscribe or reconcile actions when live is false", async () => {
         const subscribeToChangeEvents = vi.fn();
         invokeFlowAction.mockResolvedValue([
-            {
-                isSuccess: true,
-                outputValues: { Flow__InterviewStatus: "Finished" },
-            },
+            { isSuccess: true, outputValues: { Flow__InterviewStatus: "Finished" } },
         ]);
-        const adapter = createAdapter({
-            live: false,
-            subscribeToChangeEvents,
-        });
+        const adapter = createAdapter({ live: false, subscribeToChangeEvents });
         const collectionOptions = adapter.getCollectionOptions("Account");
         collectionOptions.sync.sync({
-            collection: {
-                has: vi.fn(() => false),
-                get: vi.fn(),
-            },
+            collection: { has: vi.fn(() => false), get: vi.fn() },
             begin: vi.fn(),
             write: vi.fn(),
             commit: vi.fn(() => true),
@@ -261,13 +185,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         await adapter.applyAction(
             "Create_Account",
             { accountName: "Acme" },
-            {
-                objects: {
-                    Account: {
-                        utils: { invalidate },
-                    } as never,
-                },
-            }
+            { objects: { Account: { utils: { invalidate } } as never } }
         );
 
         expect(adapter.live).toBe(false);
@@ -290,45 +208,16 @@ describe("createSalesforceOntologyBackendAdapter", () => {
     });
 
     it("routes generated CRUD actions through sObject record APIs", async () => {
-        createRecord.mockResolvedValue({
-            success: true,
-            id: "001000000000001",
-            errors: [],
-        });
-        updateRecord.mockResolvedValue({
-            success: true,
-            id: "001000000000001",
-            errors: [],
-        });
-        deleteRecord.mockResolvedValue({
-            success: true,
-            id: "001000000000001",
-            errors: [],
-        });
+        createRecord.mockResolvedValue({ success: true, id: "001000000000001", errors: [] });
+        updateRecord.mockResolvedValue({ success: true, id: "001000000000001", errors: [] });
+        deleteRecord.mockResolvedValue({ success: true, id: "001000000000001", errors: [] });
         const deleteByKey = vi.fn(() => Promise.resolve());
         const refreshByKey = vi.fn().mockResolvedValue(undefined);
         const adapter = createAdapter();
-        const live = {
-            objects: {
-                Account: {
-                    utils: {
-                        invalidate,
-                        refreshByKey,
-                        deleteByKey,
-                    },
-                } as never,
-            },
-        };
+        const live = { objects: { Account: { utils: { invalidate, refreshByKey, deleteByKey } } as never } };
 
         await adapter.applyAction("createAccount", { Name: "Acme" }, live);
-        await adapter.applyAction(
-            "updateAccount",
-            {
-                recordId: "001000000000001",
-                Name: "Acme 2",
-            },
-            live
-        );
+        await adapter.applyAction("updateAccount", { recordId: "001000000000001", Name: "Acme 2" }, live);
         await adapter.applyAction("deleteAccount", { recordId: "001000000000001" }, live);
 
         expect(createRecord).toHaveBeenCalledWith("Account", { Name: "Acme" });
@@ -343,30 +232,14 @@ describe("createSalesforceOntologyBackendAdapter", () => {
 
     it("invokes standard actions and standard query functions", async () => {
         invokeStandardAction
-            .mockResolvedValueOnce([
-                {
-                    isSuccess: true,
-                    outputValues: {
-                        meetingStatus: "Confirmed",
-                    },
-                },
-            ])
-            .mockResolvedValueOnce([
-                {
-                    isSuccess: true,
-                    outputValues: {
-                        timeSlots: "10:00 AM",
-                    },
-                },
-            ]);
+            .mockResolvedValueOnce([{ isSuccess: true, outputValues: { meetingStatus: "Confirmed" } }])
+            .mockResolvedValueOnce([{ isSuccess: true, outputValues: { timeSlots: "10:00 AM" } }]);
         const adapter = createAdapter();
 
         await adapter.applyAction("confirmSalesMeeting", { meetingRequestId: "request-1" }, { objects: {} });
         const result = await adapter.runQueryFunction(
             "getAvailableMeetingTimes",
-            {
-                attendeeEmailAddresses: ["a@example.com", "b@example.com"],
-            },
+            { attendeeEmailAddresses: ["a@example.com", "b@example.com"] },
             { objects: {} }
         );
 
@@ -374,31 +247,21 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             { meetingRequestId: "request-1" },
         ]);
         expect(invokeStandardAction).toHaveBeenNthCalledWith(2, "getAvailableMeetingTimes", [
-            {
-                attendeeEmailAddresses: ["a@example.com", "b@example.com"],
-            },
+            { attendeeEmailAddresses: ["a@example.com", "b@example.com"] },
         ]);
-        expect(result).toEqual({
-            timeSlots: "10:00 AM",
-        });
+        expect(result).toEqual({ timeSlots: "10:00 AM" });
     });
 
     it("maps unsuccessful Flow results to NonRetryableError", async () => {
         invokeFlowAction.mockResolvedValue([
-            {
-                isSuccess: false,
-                errors: [{ message: "Flow failed validation" }],
-            },
+            { isSuccess: false, errors: [{ message: "Flow failed validation" }] },
         ]);
         const adapter = createAdapter();
 
         await expect(
             adapter.applyAction("Create_Account", { accountName: "Acme" }, { objects: {} })
         ).rejects.toEqual(
-            expect.objectContaining({
-                name: "NonRetryableError",
-                message: "Flow failed validation",
-            })
+            expect.objectContaining({ name: "NonRetryableError", message: "Flow failed validation" })
         );
     });
 

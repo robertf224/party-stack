@@ -7,8 +7,5 @@ import type { IssueTrackerOntology, IssueTrackerOntologyContext } from "./types"
 export async function createIssueTrackerLiveOntology(
     opts: Omit<CreateLiveOntologyOpts<IssueTrackerOntologyContext>, "ir">
 ): Promise<LiveOntology<IssueTrackerOntology>> {
-    return createLiveOntology<IssueTrackerOntology, IssueTrackerOntologyContext>({
-        ...opts,
-        ir: ontology,
-    });
+    return createLiveOntology<IssueTrackerOntology, IssueTrackerOntologyContext>({ ...opts, ir: ontology });
 }

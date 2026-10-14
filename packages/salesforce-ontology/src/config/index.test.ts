@@ -9,30 +9,18 @@ function createSource() {
         apiVersion: "65.0",
         ontologyId: "salesforce:tasks",
         objectTypeNames: ["Task", "User"],
-        connection: {
-            oauth: {
-                clientId: "client",
-                redirectUrl: "http://localhost:1717/oauth/callback",
-            },
-        },
+        connection: { oauth: { clientId: "client", redirectUrl: "http://localhost:1717/oauth/callback" } },
     });
 }
 
 describe("createSalesforceOntologyPullSource", () => {
     it("reuses the only restored active connection", async () => {
-        const connection: Connection<"active"> = {
-            userId: "005000000000001",
-            state: { status: "active" },
-        };
+        const connection: Connection<"active"> = { userId: "005000000000001", state: { status: "active" } };
         const oauth = vi.fn();
 
         const resolved = await createSource().resolveConnection({
             connections: new Map([[connection.userId, connection]]),
-            authentication: {
-                signIn: {
-                    oauth,
-                },
-            },
+            authentication: { signIn: { oauth } },
         } as never);
 
         expect(resolved).toEqual(connection);
@@ -40,19 +28,12 @@ describe("createSalesforceOntologyPullSource", () => {
     });
 
     it("starts OAuth when no connection is restored", async () => {
-        const connection: Connection<"active"> = {
-            userId: "005000000000001",
-            state: { status: "active" },
-        };
+        const connection: Connection<"active"> = { userId: "005000000000001", state: { status: "active" } };
         const oauth = vi.fn(() => Promise.resolve(connection));
 
         const resolved = await createSource().resolveConnection({
             connections: new Map(),
-            authentication: {
-                signIn: {
-                    oauth,
-                },
-            },
+            authentication: { signIn: { oauth } },
         } as never);
 
         expect(resolved).toEqual(connection);
@@ -68,16 +49,8 @@ describe("createSalesforceOntologyPullSource", () => {
             flowActionTypeNames: ["Create_Task"],
             standardActionTypeNames: ["confirmSalesMeeting"],
             standardQueryFunctionTypeNames: ["getAvailableMeetingTimes"],
-            crudActionTypes: [
-                {
-                    objectType: "Task",
-                    operations: ["create", "update", "delete"],
-                },
-            ],
-            connection: {
-                token: "token",
-                userId: "005000000000001",
-            },
+            crudActionTypes: [{ objectType: "Task", operations: ["create", "update", "delete"] }],
+            connection: { token: "token", userId: "005000000000001" },
         });
 
         expect(config.source.ontologyId).toBe("salesforce:tasks");
@@ -100,12 +73,7 @@ describe("createSalesforceOntologyPullSource", () => {
                 ontologyId: "salesforce:tasks",
                 objectTypeNames: ["User"],
                 flowActionTypeNames: [],
-                crudActionTypes: [
-                    {
-                        objectType: "Task",
-                        operations: ["create"],
-                    },
-                ],
+                crudActionTypes: [{ objectType: "Task", operations: ["create"] }],
                 connection: { token: "token" },
             })
         ).toThrow(/must also appear in objectTypeNames/);
@@ -121,26 +89,16 @@ describe("createSalesforceOntologyPullSource", () => {
                     pluralDisplayName: "Tasks",
                     primaryKey: "Id",
                     properties: [
-                        {
-                            name: "Id",
-                            displayName: "ID",
-                            type: o.string({}),
-                        },
+                        { name: "Id", displayName: "ID", type: o.string({}) },
                         {
                             name: "CreatedById",
                             displayName: "Created By",
-                            type: o.objectReference({
-                                objectType: "User",
-                            }),
+                            type: o.objectReference({ objectType: "User" }),
                         },
                         {
                             name: "AccountId",
                             displayName: "Account",
-                            type: o.optional({
-                                type: o.objectReference({
-                                    objectType: "Account",
-                                }),
-                            }),
+                            type: o.optional({ type: o.objectReference({ objectType: "Account" }) }),
                         },
                     ],
                 },
@@ -149,13 +107,7 @@ describe("createSalesforceOntologyPullSource", () => {
                     displayName: "User",
                     pluralDisplayName: "Users",
                     primaryKey: "Id",
-                    properties: [
-                        {
-                            name: "Id",
-                            displayName: "ID",
-                            type: o.string({}),
-                        },
-                    ],
+                    properties: [{ name: "Id", displayName: "ID", type: o.string({}) }],
                 },
             ],
             linkTypes: [],
@@ -167,14 +119,10 @@ describe("createSalesforceOntologyPullSource", () => {
         const task = transformed.objectTypes.find((objectType) => objectType.name === "Task")!;
 
         expect(task.properties.find((property) => property.name === "CreatedById")?.type).toEqual(
-            o.objectReference({
-                objectType: "User",
-            })
+            o.objectReference({ objectType: "User" })
         );
         expect(task.properties.find((property) => property.name === "AccountId")?.type).toEqual(
-            o.optional({
-                type: o.string({}),
-            })
+            o.optional({ type: o.string({}) })
         );
     });
 });

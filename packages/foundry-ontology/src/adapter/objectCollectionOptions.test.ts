@@ -14,13 +14,8 @@ const mockState = vi.hoisted(() => ({
 }));
 
 vi.mock("@osdk/foundry.ontologies", () => ({
-    OntologyObjectsV2: {
-        get: mockState.getObject,
-        search: mockState.search,
-    },
-    ObjectTypesV2: {
-        getEditsHistory: mockState.getEditsHistory,
-    },
+    OntologyObjectsV2: { get: mockState.getObject, search: mockState.search },
+    ObjectTypesV2: { getEditsHistory: mockState.getEditsHistory },
 }));
 
 vi.mock("@party-stack/foundry-object-set-watcher", () => ({
@@ -58,10 +53,7 @@ function createSyncHarness(
         | undefined;
     const begin = vi.fn(() => {
         if (pendingTransaction) throw new Error("A sync transaction is already active.");
-        pendingTransaction = {
-            writes: [],
-            collectionMetadata: new Map(),
-        };
+        pendingTransaction = { writes: [], collectionMetadata: new Map() };
     });
     const commit = vi.fn(() => {
         if (!pendingTransaction) throw new Error("No sync transaction is active.");
@@ -119,11 +111,7 @@ function createSyncHarness(
                 delete: vi.fn(),
                 list: () => [...collectionMetadata].map(([key, value]) => ({ key, value })),
             },
-            row: {
-                get: vi.fn(),
-                set: vi.fn(),
-                delete: vi.fn(),
-            },
+            row: { get: vi.fn(), set: vi.fn(), delete: vi.fn() },
         },
         truncate,
         write: (mutation: Record<string, unknown>) => {
@@ -201,10 +189,7 @@ describe("objectCollectionOptions", () => {
 
         expect(mockState.getObjectSetWatcherManager).not.toHaveBeenCalled();
         await harness.loadSubset({});
-        expect(harness.syncedData.get(1)).toEqual({
-            employeeId: 1,
-            name: "Ada",
-        });
+        expect(harness.syncedData.get(1)).toEqual({ employeeId: 1, name: "Ada" });
 
         harness.cleanup();
         expect(mockState.unsubscribe).not.toHaveBeenCalled();
@@ -219,13 +204,7 @@ describe("objectCollectionOptions", () => {
                     actionTypeRid: "action-1",
                     userId: "user-1",
                     timestamp: "2099-03-12T12:00:00.000Z",
-                    edit: {
-                        type: "createEdit",
-                        properties: {
-                            employeeId: 2,
-                            name: "Grace",
-                        },
-                    },
+                    edit: { type: "createEdit", properties: { employeeId: 2, name: "Grace" } },
                 },
             ],
             nextPageToken: undefined,
@@ -234,19 +213,13 @@ describe("objectCollectionOptions", () => {
 
         await expect(harness.utils.awaitOperationId("op-non-live")).resolves.toBeUndefined();
         expect(mockState.getObjectSetWatcherManager).not.toHaveBeenCalled();
-        expect(harness.syncedData.get(2)).toEqual({
-            employeeId: 2,
-            name: "Grace",
-        });
+        expect(harness.syncedData.get(2)).toEqual({ employeeId: 2, name: "Grace" });
 
         harness.cleanup();
     });
 
     it("keeps identical abortable subset loads independent", async () => {
-        const requests: Array<{
-            resolve: (value: unknown) => void;
-            reject: (reason: unknown) => void;
-        }> = [];
+        const requests: Array<{ resolve: (value: unknown) => void; reject: (reason: unknown) => void }> = [];
         const fetchImpl = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
             return new Promise((resolve, reject) => {
                 const request = { resolve, reject };
@@ -271,14 +244,8 @@ describe("objectCollectionOptions", () => {
         const controllerA = new AbortController();
         const controllerB = new AbortController();
 
-        const requestA = harness.loadSubset({
-            limit: 1,
-            signal: controllerA.signal,
-        });
-        const requestB = harness.loadSubset({
-            limit: 1,
-            signal: controllerB.signal,
-        });
+        const requestA = harness.loadSubset({ limit: 1, signal: controllerA.signal });
+        const requestB = harness.loadSubset({ limit: 1, signal: controllerB.signal });
 
         expect(requestA).not.toBe(requestB);
         expect(mockState.search).toHaveBeenCalledTimes(2);
@@ -291,9 +258,7 @@ describe("objectCollectionOptions", () => {
 
         await expect(requestA).rejects.toMatchObject({ name: "AbortError" });
         await expect(requestB).resolves.toBeUndefined();
-        expect(harness.syncedData.get("employee-b")).toMatchObject({
-            name: "Request B",
-        });
+        expect(harness.syncedData.get("employee-b")).toMatchObject({ name: "Request B" });
         harness.cleanup();
     });
 
@@ -309,23 +274,14 @@ describe("objectCollectionOptions", () => {
                     edit: {
                         type: "modifyEdit",
                         previousProperties: {},
-                        properties: {
-                            employeeId: 1,
-                            name: "Updated Employee",
-                        },
+                        properties: { employeeId: 1, name: "Updated Employee" },
                     },
                 },
             ],
             nextPageToken: undefined,
         });
 
-        const harness = createSyncHarness([
-            {
-                employeeId: 1,
-                name: "Before",
-                department: "Engineering",
-            },
-        ]);
+        const harness = createSyncHarness([{ employeeId: 1, name: "Before", department: "Engineering" }]);
 
         mockState.subscribeCallback?.({ type: "state", status: "open" });
 
@@ -353,10 +309,7 @@ describe("objectCollectionOptions", () => {
                     actionTypeRid: "action-1",
                     userId: "user-1",
                     timestamp: "2099-03-12T12:01:00.000Z",
-                    edit: {
-                        type: "deleteEdit",
-                        previousProperties: {},
-                    },
+                    edit: { type: "deleteEdit", previousProperties: {} },
                 },
             ],
             nextPageToken: undefined,
@@ -380,17 +333,12 @@ describe("objectCollectionOptions", () => {
         mockState.getEditsHistory.mockResolvedValue({
             data: [
                 {
-                    objectPrimaryKey: {
-                        employeeId: 2,
-                    },
+                    objectPrimaryKey: { employeeId: 2 },
                     operationId: "op-hydrated-delete",
                     actionTypeRid: "action-1",
                     userId: "user-1",
                     timestamp: "2099-03-12T12:01:00.000Z",
-                    edit: {
-                        type: "deleteEdit",
-                        previousProperties: {},
-                    },
+                    edit: { type: "deleteEdit", previousProperties: {} },
                 },
             ],
             nextPageToken: undefined,
@@ -399,22 +347,13 @@ describe("objectCollectionOptions", () => {
 
         // Persisted on-demand hydration happens after the source sync closure
         // captures its initial state.
-        harness.syncedData.set(2, {
-            employeeId: 2,
-            name: "Persisted stale object",
-        });
-        mockState.subscribeCallback?.({
-            type: "state",
-            status: "open",
-        });
+        harness.syncedData.set(2, { employeeId: 2, name: "Persisted stale object" });
+        mockState.subscribeCallback?.({ type: "state", status: "open" });
 
         await vi.waitFor(() => {
             expect(harness.syncedData.has(2)).toBe(false);
         });
-        expect(harness.writes).toContainEqual({
-            type: "delete",
-            primaryKey: 2,
-        });
+        expect(harness.writes).toContainEqual({ type: "delete", primaryKey: 2 });
         harness.cleanup();
     });
 
@@ -427,13 +366,7 @@ describe("objectCollectionOptions", () => {
                     actionTypeRid: "action-1",
                     userId: "user-1",
                     timestamp: "2099-03-12T12:00:00.000Z",
-                    edit: {
-                        type: "createEdit",
-                        properties: {
-                            employeeId: 5,
-                            name: "Employee Five",
-                        },
-                    },
+                    edit: { type: "createEdit", properties: { employeeId: 5, name: "Employee Five" } },
                 },
             ],
             nextPageToken: undefined,
@@ -446,13 +379,7 @@ describe("objectCollectionOptions", () => {
                     actionTypeRid: "action-1",
                     userId: "user-1",
                     timestamp: "2099-03-12T12:00:00.000Z",
-                    edit: {
-                        type: "createEdit",
-                        properties: {
-                            employeeId: 5,
-                            name: "Employee Five",
-                        },
-                    },
+                    edit: { type: "createEdit", properties: { employeeId: 5, name: "Employee Five" } },
                 },
             ],
             nextPageToken: undefined,
@@ -465,10 +392,7 @@ describe("objectCollectionOptions", () => {
                     actionTypeRid: "action-1",
                     userId: "user-1",
                     timestamp: "2099-03-12T12:01:00.000Z",
-                    edit: {
-                        type: "deleteEdit",
-                        previousProperties: {},
-                    },
+                    edit: { type: "deleteEdit", previousProperties: {} },
                 },
             ],
             nextPageToken: undefined,
@@ -484,13 +408,7 @@ describe("objectCollectionOptions", () => {
 
         mockState.subscribeCallback?.({
             type: "change",
-            updates: [
-                {
-                    type: "object",
-                    state: "REMOVED",
-                    object: { employeeId: 5 },
-                },
-            ],
+            updates: [{ type: "object", state: "REMOVED", object: { employeeId: 5 } }],
         });
 
         await vi.waitFor(() => {
@@ -515,10 +433,7 @@ describe("objectCollectionOptions", () => {
                         edit: {
                             type: "modifyEdit",
                             previousProperties: {},
-                            properties: {
-                                employeeId: 1,
-                                name: "Employee One",
-                            },
+                            properties: { employeeId: 1, name: "Employee One" },
                         },
                     },
                 ],
@@ -535,10 +450,7 @@ describe("objectCollectionOptions", () => {
                         edit: {
                             type: "modifyEdit",
                             previousProperties: {},
-                            properties: {
-                                employeeId: 1,
-                                name: "Employee One",
-                            },
+                            properties: { employeeId: 1, name: "Employee One" },
                         },
                     },
                     {
@@ -550,10 +462,7 @@ describe("objectCollectionOptions", () => {
                         edit: {
                             type: "modifyEdit",
                             previousProperties: {},
-                            properties: {
-                                employeeId: 2,
-                                name: "Employee Two",
-                            },
+                            properties: { employeeId: 2, name: "Employee Two" },
                         },
                     },
                 ],
@@ -576,14 +485,8 @@ describe("objectCollectionOptions", () => {
 
         await vi.waitFor(() => {
             expect(mockState.getEditsHistory).toHaveBeenCalledTimes(2);
-            expect(harness.syncedData.get(1)).toEqual({
-                employeeId: 1,
-                name: "Employee One",
-            });
-            expect(harness.syncedData.get(2)).toEqual({
-                employeeId: 2,
-                name: "Employee Two",
-            });
+            expect(harness.syncedData.get(1)).toEqual({ employeeId: 1, name: "Employee One" });
+            expect(harness.syncedData.get(2)).toEqual({ employeeId: 2, name: "Employee Two" });
         });
 
         expect(mockState.getObject).not.toHaveBeenCalled();
@@ -602,10 +505,7 @@ describe("objectCollectionOptions", () => {
             edit: {
                 type: "modifyEdit",
                 previousProperties: {},
-                properties: {
-                    employeeId: 1,
-                    name: "Employee One",
-                },
+                properties: { employeeId: 1, name: "Employee One" },
             },
         };
         const downtimeEntry = {
@@ -617,17 +517,11 @@ describe("objectCollectionOptions", () => {
             edit: {
                 type: "modifyEdit",
                 previousProperties: {},
-                properties: {
-                    employeeId: 2,
-                    name: "Employee Two",
-                },
+                properties: { employeeId: 2, name: "Employee Two" },
             },
         };
         const collectionMetadata = new Map<string, unknown>();
-        mockState.getEditsHistory.mockResolvedValue({
-            data: [firstEntry],
-            nextPageToken: undefined,
-        });
+        mockState.getEditsHistory.mockResolvedValue({ data: [firstEntry], nextPageToken: undefined });
 
         const first = createSyncHarness([], { collectionMetadata });
         mockState.subscribeCallback?.({ type: "state", status: "open" });
@@ -640,14 +534,9 @@ describe("objectCollectionOptions", () => {
             timestamp: string;
             seenEntryKeysAtTimestamp: string[];
         };
-        expect(persistedCursor).toMatchObject({
-            version: 1,
-            timestamp,
-        });
+        expect(persistedCursor).toMatchObject({ version: 1, timestamp });
         expect(persistedCursor.seenEntryKeysAtTimestamp).toHaveLength(1);
-        expect(first.transactions.at(-1)).toMatchObject({
-            writes: [{ type: "insert", primaryKey: 1 }],
-        });
+        expect(first.transactions.at(-1)).toMatchObject({ writes: [{ type: "insert", primaryKey: 1 }] });
         expect(first.transactions.at(-1)?.collectionMetadata.size).toBe(1);
 
         const reloadedObjects = [...first.syncedData.values()];
@@ -666,17 +555,11 @@ describe("objectCollectionOptions", () => {
         });
         expect(second.writes).toEqual([{ type: "insert", primaryKey: 2 }]);
         expect(mockState.getEditsHistory.mock.calls[0]?.[3]).toMatchObject({
-            filters: {
-                type: "timestampFilter",
-                startTime: timestamp,
-            },
+            filters: { type: "timestampFilter", startTime: timestamp },
         });
         expect(
-            (
-                [...collectionMetadata.values()][0] as {
-                    seenEntryKeysAtTimestamp: string[];
-                }
-            ).seenEntryKeysAtTimestamp
+            ([...collectionMetadata.values()][0] as { seenEntryKeysAtTimestamp: string[] })
+                .seenEntryKeysAtTimestamp
         ).toHaveLength(2);
 
         second.cleanup();
@@ -692,10 +575,7 @@ describe("objectCollectionOptions", () => {
                     actionTypeRid: "action-1",
                     userId: "user-1",
                     timestamp,
-                    edit: {
-                        type: "deleteEdit",
-                        previousProperties: {},
-                    },
+                    edit: { type: "deleteEdit", previousProperties: {} },
                 },
             ],
             nextPageToken: undefined,
@@ -707,23 +587,10 @@ describe("objectCollectionOptions", () => {
         await vi.waitFor(() => {
             expect(harness.transactions).toHaveLength(2);
         });
-        expect(harness.writes).toEqual([
-            {
-                type: "delete",
-                primaryKey: 404,
-            },
-        ]);
-        expect(harness.transactions.at(-1)?.writes).toEqual([
-            {
-                type: "delete",
-                primaryKey: 404,
-            },
-        ]);
+        expect(harness.writes).toEqual([{ type: "delete", primaryKey: 404 }]);
+        expect(harness.transactions.at(-1)?.writes).toEqual([{ type: "delete", primaryKey: 404 }]);
         expect(harness.transactions.at(-1)?.collectionMetadata.size).toBe(1);
-        expect([...harness.collectionMetadata.values()][0]).toMatchObject({
-            version: 1,
-            timestamp,
-        });
+        expect([...harness.collectionMetadata.values()][0]).toMatchObject({ version: 1, timestamp });
 
         harness.cleanup();
     });
@@ -808,10 +675,7 @@ describe("objectCollectionOptions", () => {
                         properties: {
                             employeeId: 7,
                             attachments: [
-                                {
-                                    type: "attachment",
-                                    attachment: "ri.attachments.main.attachment.7",
-                                },
+                                { type: "attachment", attachment: "ri.attachments.main.attachment.7" },
                             ],
                             name: "Employee Seven",
                         },
@@ -835,13 +699,7 @@ describe("objectCollectionOptions", () => {
                             name: "attachments",
                             displayName: "Attachments",
                             type: o.list({
-                                elementType: o.attachment({
-                                    meta: {
-                                        foundry: {
-                                            kind: "attachment",
-                                        },
-                                    },
-                                }),
+                                elementType: o.attachment({ meta: { foundry: { kind: "attachment" } } }),
                             }),
                         },
                     ],
@@ -892,13 +750,7 @@ describe("objectCollectionOptions", () => {
                     timestamp: "2099-03-12T12:00:00.000Z",
                     edit: {
                         type: "createEdit",
-                        properties: {
-                            employeeId: 8,
-                            logoMedia: {
-                                type: "mediaReference",
-                                mediaReference,
-                            },
-                        },
+                        properties: { employeeId: 8, logoMedia: { type: "mediaReference", mediaReference } },
                     },
                 },
             ],
@@ -918,13 +770,7 @@ describe("objectCollectionOptions", () => {
                             name: "logoMedia",
                             displayName: "Logo media",
                             type: o.optional({
-                                type: o.attachment({
-                                    meta: {
-                                        foundry: {
-                                            kind: "media",
-                                        },
-                                    },
-                                }),
+                                type: o.attachment({ meta: { foundry: { kind: "media" } } }),
                             }),
                         },
                     ],
@@ -1019,12 +865,7 @@ describe("objectCollectionOptions", () => {
         mockState.getEditsHistory.mockResolvedValue({
             data: [
                 {
-                    objectPrimaryKey: {
-                        employeeId: {
-                            type: "stringValue",
-                            value: "employee-4",
-                        },
-                    },
+                    objectPrimaryKey: { employeeId: { type: "stringValue", value: "employee-4" } },
                     operationId: "op-1",
                     actionTypeRid: "action-1",
                     userId: "user-1",
@@ -1032,10 +873,7 @@ describe("objectCollectionOptions", () => {
                     edit: {
                         type: "createEdit",
                         properties: {
-                            employeeId: {
-                                type: "stringValue",
-                                value: "employee-4",
-                            },
+                            employeeId: { type: "stringValue", value: "employee-4" },
                             name: "Employee Four",
                         },
                     },
@@ -1082,10 +920,7 @@ describe("objectCollectionOptions", () => {
 
     it("triggers history catch-up on ADDED_OR_UPDATED watcher events", async () => {
         mockState.getEditsHistory
-            .mockResolvedValueOnce({
-                data: [],
-                nextPageToken: undefined,
-            })
+            .mockResolvedValueOnce({ data: [], nextPageToken: undefined })
             .mockResolvedValueOnce({
                 data: [
                     {
@@ -1094,13 +929,7 @@ describe("objectCollectionOptions", () => {
                         actionTypeRid: "action-1",
                         userId: "user-1",
                         timestamp: "2099-03-12T12:05:00.000Z",
-                        edit: {
-                            type: "createEdit",
-                            properties: {
-                                employeeId: 10,
-                                name: "New Employee",
-                            },
-                        },
+                        edit: { type: "createEdit", properties: { employeeId: 10, name: "New Employee" } },
                     },
                 ],
                 nextPageToken: undefined,
@@ -1127,10 +956,7 @@ describe("objectCollectionOptions", () => {
 
         await vi.waitFor(() => {
             expect(mockState.getEditsHistory).toHaveBeenCalledTimes(2);
-            expect(harness.syncedData.get(10)).toEqual({
-                employeeId: 10,
-                name: "New Employee",
-            });
+            expect(harness.syncedData.get(10)).toEqual({ employeeId: 10, name: "New Employee" });
         });
 
         harness.cleanup();
@@ -1158,21 +984,12 @@ describe("objectCollectionOptions", () => {
 
         await vi.waitFor(() => {
             expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
-            expect(harness.syncedData.get(12)).toEqual({
-                employeeId: 12,
-                name: "Direct Employee",
-            });
+            expect(harness.syncedData.get(12)).toEqual({ employeeId: 12, name: "Direct Employee" });
         });
 
         mockState.subscribeCallback?.({
             type: "change",
-            updates: [
-                {
-                    type: "object",
-                    state: "REMOVED",
-                    object: { employeeId: 12 },
-                },
-            ],
+            updates: [{ type: "object", state: "REMOVED", object: { employeeId: 12 } }],
         });
 
         await vi.waitFor(() => {
@@ -1191,30 +1008,18 @@ describe("objectCollectionOptions", () => {
     it("fully reconciles after websocket reconnect when edit history is unavailable", async () => {
         const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         mockState.getEditsHistory.mockRejectedValue(new Error("Edit history is not enabled"));
-        mockState.search.mockResolvedValue({
-            data: [],
-            nextPageToken: undefined,
-        });
+        mockState.search.mockResolvedValue({ data: [], nextPageToken: undefined });
         const harness = createSyncHarness();
 
-        mockState.subscribeCallback?.({
-            type: "state",
-            status: "open",
-        });
+        mockState.subscribeCallback?.({ type: "state", status: "open" });
         await vi.waitFor(() => {
             expect(mockState.search).toHaveBeenCalledOnce();
         });
 
         // Simulate stale persisted state becoming visible while the watcher is
         // disconnected and therefore unable to report its deletion.
-        harness.syncedData.set(30, {
-            employeeId: 30,
-            name: "Stale Employee",
-        });
-        mockState.subscribeCallback?.({
-            type: "state",
-            status: "open",
-        });
+        harness.syncedData.set(30, { employeeId: 30, name: "Stale Employee" });
+        mockState.subscribeCallback?.({ type: "state", status: "open" });
 
         await vi.waitFor(() => {
             expect(mockState.search).toHaveBeenCalledTimes(2);
@@ -1239,10 +1044,7 @@ describe("objectCollectionOptions", () => {
                         timestamp: "2099-03-12T12:10:00.000Z",
                         edit: {
                             type: "createEdit",
-                            properties: {
-                                employeeId: 20,
-                                name: "Uncommitted History Employee",
-                            },
+                            properties: { employeeId: 20, name: "Uncommitted History Employee" },
                         },
                     },
                 ],
@@ -1302,9 +1104,7 @@ describe("objectCollectionOptions", () => {
         const commitApplied = new Promise<void>((resolve) => {
             resolveCommit = resolve;
         });
-        const harness = createSyncHarness([], {
-            commitReceipt: () => commitApplied,
-        });
+        const harness = createSyncHarness([], { commitReceipt: () => commitApplied });
         const operationPromise = harness.utils.awaitOperationId("op-12");
 
         await vi.waitFor(() => {
@@ -1323,10 +1123,7 @@ describe("objectCollectionOptions", () => {
         });
 
         await expect(operationPromise).resolves.toBeUndefined();
-        expect(harness.syncedData.get(13)).toEqual({
-            employeeId: 13,
-            name: "Direct Operation Employee",
-        });
+        expect(harness.syncedData.get(13)).toEqual({ employeeId: 13, name: "Direct Operation Employee" });
         expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
 
         resolveCommit();
@@ -1344,13 +1141,7 @@ describe("objectCollectionOptions", () => {
                     actionTypeRid: "action-1",
                     userId: "user-1",
                     timestamp: "2099-03-12T12:06:00.000Z",
-                    edit: {
-                        type: "createEdit",
-                        properties: {
-                            employeeId: 11,
-                            name: "Operation Eleven",
-                        },
-                    },
+                    edit: { type: "createEdit", properties: { employeeId: 11, name: "Operation Eleven" } },
                 },
             ],
             nextPageToken: undefined,
@@ -1360,17 +1151,12 @@ describe("objectCollectionOptions", () => {
         const commitApplied = new Promise<void>((resolve) => {
             resolveCommit = resolve;
         });
-        const harness = createSyncHarness([], {
-            commitReceipt: () => commitApplied,
-        });
+        const harness = createSyncHarness([], { commitReceipt: () => commitApplied });
 
         await expect(harness.utils.awaitOperationId("op-11")).resolves.toBeUndefined();
 
         expect(mockState.getEditsHistory).toHaveBeenCalledTimes(1);
-        expect(harness.syncedData.get(11)).toEqual({
-            employeeId: 11,
-            name: "Operation Eleven",
-        });
+        expect(harness.syncedData.get(11)).toEqual({ employeeId: 11, name: "Operation Eleven" });
 
         resolveCommit();
         await commitApplied;
@@ -1393,11 +1179,7 @@ describe("objectCollectionOptions", () => {
         });
 
         const searchOptions = mockState.search.mock.calls[0]?.[3] as
-            | {
-                  where?: unknown;
-                  select?: string[];
-                  selectV2?: unknown[];
-              }
+            | { where?: unknown; select?: string[]; selectV2?: unknown[] }
             | undefined;
         expect(searchOptions).toMatchObject({
             where: {
@@ -1408,17 +1190,11 @@ describe("objectCollectionOptions", () => {
                         propertyIdentifier: { type: "property", apiName: "status" },
                         value: "open",
                     },
-                    {
-                        type: "gt",
-                        propertyIdentifier: { type: "property", apiName: "priority" },
-                        value: 5,
-                    },
+                    { type: "gt", propertyIdentifier: { type: "property", apiName: "priority" }, value: 5 },
                 ],
             },
         });
-        expect(searchOptions).toMatchObject({
-            select: ["employeeId", "name", "status", "priority"],
-        });
+        expect(searchOptions).toMatchObject({ select: ["employeeId", "name", "status", "priority"] });
         expect(searchOptions?.selectV2).toEqual([]);
         expect(harness.syncedData.has(2)).toBe(true);
 
@@ -1441,10 +1217,7 @@ describe("objectCollectionOptions", () => {
             orderBy: [
                 {
                     expression: new IR.PropRef(["priority"]),
-                    compareOptions: {
-                        direction: "asc",
-                        nulls: "last",
-                    },
+                    compareOptions: { direction: "asc", nulls: "last" },
                 },
             ],
             offset: 2,
@@ -1453,9 +1226,7 @@ describe("objectCollectionOptions", () => {
 
         expect(mockState.search.mock.calls[0]?.[3]).toMatchObject({
             pageSize: 4,
-            orderBy: {
-                fields: [{ field: "priority", direction: "asc" }],
-            },
+            orderBy: { fields: [{ field: "priority", direction: "asc" }] },
         });
         expect([...harness.syncedData.keys()]).toEqual([3, 4]);
 

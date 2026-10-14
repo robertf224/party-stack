@@ -43,30 +43,10 @@ export function runPersistenceContract(
             const collectionId = `todos`;
 
             const rows: Array<Todo> = [
-                {
-                    id: `1`,
-                    title: `Task Alpha`,
-                    createdAt: `2026-01-01T00:00:00.000Z`,
-                    score: 10,
-                },
-                {
-                    id: `2`,
-                    title: `Task Beta`,
-                    createdAt: `2026-01-02T00:00:00.000Z`,
-                    score: 20,
-                },
-                {
-                    id: `3`,
-                    title: `Other`,
-                    createdAt: `2026-01-03T00:00:00.000Z`,
-                    score: 15,
-                },
-                {
-                    id: `4`,
-                    title: `Task Gamma`,
-                    createdAt: `2026-01-04T00:00:00.000Z`,
-                    score: 25,
-                },
+                { id: `1`, title: `Task Alpha`, createdAt: `2026-01-01T00:00:00.000Z`, score: 10 },
+                { id: `2`, title: `Task Beta`, createdAt: `2026-01-02T00:00:00.000Z`, score: 20 },
+                { id: `3`, title: `Other`, createdAt: `2026-01-03T00:00:00.000Z`, score: 15 },
+                { id: `4`, title: `Task Gamma`, createdAt: `2026-01-04T00:00:00.000Z`, score: 25 },
             ];
 
             await adapter.applyCommittedTx(collectionId, {
@@ -74,11 +54,7 @@ export function runPersistenceContract(
                 term: 1,
                 seq: 1,
                 rowVersion: 1,
-                mutations: rows.map((row) => ({
-                    type: `insert` as const,
-                    key: row.id,
-                    value: row,
-                })),
+                mutations: rows.map((row) => ({ type: `insert` as const, key: row.id, value: row })),
             });
 
             const filtered = await adapter.loadSubset(collectionId, {
@@ -95,10 +71,7 @@ export function runPersistenceContract(
                 orderBy: [
                     {
                         expression: new IR.PropRef([`score`]),
-                        compareOptions: {
-                            direction: `desc`,
-                            nulls: `last`,
-                        },
+                        compareOptions: { direction: `desc`, nulls: `last` },
                     },
                 ],
             });
@@ -106,12 +79,7 @@ export function runPersistenceContract(
             expect(filtered).toEqual([
                 {
                     key: `2`,
-                    value: {
-                        id: `2`,
-                        title: `Task Beta`,
-                        createdAt: `2026-01-02T00:00:00.000Z`,
-                        score: 20,
-                    },
+                    value: { id: `2`, title: `Task Beta`, createdAt: `2026-01-02T00:00:00.000Z`, score: 20 },
                 },
             ]);
 
@@ -264,12 +232,7 @@ export function runPersistenceContract(
             expect(updated).toEqual([
                 {
                     key: `1`,
-                    value: {
-                        id: `1`,
-                        title: `Updated`,
-                        createdAt: `2026-01-01T00:00:00.000Z`,
-                        score: 11,
-                    },
+                    value: { id: `1`, title: `Updated`, createdAt: `2026-01-01T00:00:00.000Z`, score: 11 },
                 },
             ]);
 
@@ -363,19 +326,8 @@ export function runPersistenceContract(
                     {
                         type: `insert`,
                         key: `1`,
-                        value: {
-                            id: `1`,
-                            title: `Tracked`,
-                            createdAt: `2026-01-01T00:00:00.000Z`,
-                            score: 1,
-                        },
-                        metadata: {
-                            queryCollection: {
-                                owners: {
-                                    q1: true,
-                                },
-                            },
-                        },
+                        value: { id: `1`, title: `Tracked`, createdAt: `2026-01-01T00:00:00.000Z`, score: 1 },
+                        metadata: { queryCollection: { owners: { q1: true } } },
                         metadataChanged: true,
                     },
                 ],
@@ -398,19 +350,8 @@ export function runPersistenceContract(
             expect(rows).toEqual([
                 {
                     key: `1`,
-                    value: {
-                        id: `1`,
-                        title: `Tracked`,
-                        createdAt: `2026-01-01T00:00:00.000Z`,
-                        score: 1,
-                    },
-                    metadata: {
-                        queryCollection: {
-                            owners: {
-                                q1: true,
-                            },
-                        },
-                    },
+                    value: { id: `1`, title: `Tracked`, createdAt: `2026-01-01T00:00:00.000Z`, score: 1 },
+                    metadata: { queryCollection: { owners: { q1: true } } },
                 },
             ]);
 
@@ -438,22 +379,11 @@ export function runPersistenceContract(
                         {
                             type: `insert`,
                             key: `2`,
-                            value: {
-                                id: `2`,
-                                title: `Bad`,
-                                createdAt: `2026-01-01T00:00:00.000Z`,
-                                score: 2,
-                            },
+                            value: { id: `2`, title: `Bad`, createdAt: `2026-01-01T00:00:00.000Z`, score: 2 },
                         },
                     ],
                     collectionMetadataMutations: [
-                        {
-                            type: `set`,
-                            key: `broken`,
-                            value: {
-                                invalid: unserializable,
-                            },
-                        },
+                        { type: `set`, key: `broken`, value: { invalid: unserializable } },
                     ],
                 })
             ).rejects.toThrow(Error);
@@ -487,9 +417,7 @@ export function runPersistenceContract(
                             createdAt: `2026-01-01T00:00:00.000Z`,
                             score: 1,
                         },
-                        metadata: {
-                            owner: `before`,
-                        },
+                        metadata: { owner: `before` },
                         metadataChanged: true,
                     },
                 ],
@@ -524,21 +452,12 @@ export function runPersistenceContract(
                             createdAt: `2026-01-02T00:00:00.000Z`,
                             score: 2,
                         },
-                        metadata: {
-                            owner: `after`,
-                        },
+                        metadata: { owner: `after` },
                         metadataChanged: true,
                     },
                 ],
                 collectionMetadataMutations: [
-                    {
-                        type: `set`,
-                        key: `electric:resume`,
-                        value: {
-                            kind: `reset`,
-                            updatedAt: 2,
-                        },
-                    },
+                    { type: `set`, key: `electric:resume`, value: { kind: `reset`, updatedAt: 2 } },
                 ],
             });
 
@@ -551,27 +470,17 @@ export function runPersistenceContract(
                         createdAt: `2026-01-02T00:00:00.000Z`,
                         score: 2,
                     },
-                    metadata: {
-                        owner: `after`,
-                    },
+                    metadata: { owner: `after` },
                 },
             ]);
 
             expect(await adapter.loadCollectionMetadata?.(collectionId)).toEqual([
-                {
-                    key: `electric:resume`,
-                    value: {
-                        kind: `reset`,
-                        updatedAt: 2,
-                    },
-                },
+                { key: `electric:resume`, value: { kind: `reset`, updatedAt: 2 } },
             ]);
         });
 
         it(`returns pullSince deltas and requiresFullReload when threshold is exceeded`, async () => {
-            const { adapter } = registerContractHarness({
-                pullSinceReloadThreshold: 1,
-            });
+            const { adapter } = registerContractHarness({ pullSinceReloadThreshold: 1 });
             const collectionId = `todos`;
 
             await adapter.applyCommittedTx(collectionId, {
@@ -583,22 +492,12 @@ export function runPersistenceContract(
                     {
                         type: `insert`,
                         key: `1`,
-                        value: {
-                            id: `1`,
-                            title: `One`,
-                            createdAt: `2026-01-01T00:00:00.000Z`,
-                            score: 1,
-                        },
+                        value: { id: `1`, title: `One`, createdAt: `2026-01-01T00:00:00.000Z`, score: 1 },
                     },
                     {
                         type: `insert`,
                         key: `2`,
-                        value: {
-                            id: `2`,
-                            title: `Two`,
-                            createdAt: `2026-01-02T00:00:00.000Z`,
-                            score: 2,
-                        },
+                        value: { id: `2`, title: `Two`, createdAt: `2026-01-02T00:00:00.000Z`, score: 2 },
                     },
                 ],
             });
@@ -611,12 +510,7 @@ export function runPersistenceContract(
                     {
                         type: `delete`,
                         key: `1`,
-                        value: {
-                            id: `1`,
-                            title: `One`,
-                            createdAt: `2026-01-01T00:00:00.000Z`,
-                            score: 1,
-                        },
+                        value: { id: `1`, title: `One`, createdAt: `2026-01-01T00:00:00.000Z`, score: 1 },
                     },
                 ],
             });
@@ -655,43 +549,19 @@ export function runPersistenceContract(
                     {
                         type: `insert`,
                         key: `1`,
-                        value: {
-                            id: `1`,
-                            title: `Tracked`,
-                            createdAt: `2026-01-01T00:00:00.000Z`,
-                            score: 1,
-                        },
-                        metadata: {
-                            queryCollection: {
-                                owners: {
-                                    q1: true,
-                                },
-                            },
-                        },
+                        value: { id: `1`, title: `Tracked`, createdAt: `2026-01-01T00:00:00.000Z`, score: 1 },
+                        metadata: { queryCollection: { owners: { q1: true } } },
                         metadataChanged: true,
                     },
                 ],
             });
 
-            const scannedRows = await adapter.scanRows?.(collectionId, {
-                metadataOnly: true,
-            });
+            const scannedRows = await adapter.scanRows?.(collectionId, { metadataOnly: true });
             expect(scannedRows).toEqual([
                 {
                     key: `1`,
-                    value: {
-                        id: `1`,
-                        title: `Tracked`,
-                        createdAt: `2026-01-01T00:00:00.000Z`,
-                        score: 1,
-                    },
-                    metadata: {
-                        queryCollection: {
-                            owners: {
-                                q1: true,
-                            },
-                        },
-                    },
+                    value: { id: `1`, title: `Tracked`, createdAt: `2026-01-01T00:00:00.000Z`, score: 1 },
+                    metadata: { queryCollection: { owners: { q1: true } } },
                 },
             ]);
 
@@ -702,27 +572,10 @@ export function runPersistenceContract(
                 rowVersion: 2,
                 mutations: [],
                 rowMetadataMutations: [
-                    {
-                        type: `set`,
-                        key: `1`,
-                        value: {
-                            queryCollection: {
-                                owners: {
-                                    q2: true,
-                                },
-                            },
-                        },
-                    },
+                    { type: `set`, key: `1`, value: { queryCollection: { owners: { q2: true } } } },
                 ],
                 collectionMetadataMutations: [
-                    {
-                        type: `set`,
-                        key: `electric:resume`,
-                        value: {
-                            kind: `reset`,
-                            updatedAt: 2,
-                        },
-                    },
+                    { type: `set`, key: `electric:resume`, value: { kind: `reset`, updatedAt: 2 } },
                 ],
             });
 
@@ -738,27 +591,10 @@ export function runPersistenceContract(
                     changedRows: [],
                     deletedKeys: [],
                     rowMetadataMutations: [
-                        {
-                            type: `set`,
-                            key: `1`,
-                            value: {
-                                queryCollection: {
-                                    owners: {
-                                        q2: true,
-                                    },
-                                },
-                            },
-                        },
+                        { type: `set`, key: `1`, value: { queryCollection: { owners: { q2: true } } } },
                     ],
                     collectionMetadataMutations: [
-                        {
-                            type: `set`,
-                            key: `electric:resume`,
-                            value: {
-                                kind: `reset`,
-                                updatedAt: 2,
-                            },
-                        },
+                        { type: `set`, key: `electric:resume`, value: { kind: `reset`, updatedAt: 2 } },
                     ],
                 },
             ]);
@@ -777,42 +613,22 @@ export function runPersistenceContract(
                     {
                         type: `insert`,
                         key: `a`,
-                        value: {
-                            id: `a`,
-                            title: `A`,
-                            createdAt: `2026-01-01T00:00:00.000Z`,
-                            score: 10,
-                        },
+                        value: { id: `a`, title: `A`, createdAt: `2026-01-01T00:00:00.000Z`, score: 10 },
                     },
                     {
                         type: `insert`,
                         key: `b`,
-                        value: {
-                            id: `b`,
-                            title: `B`,
-                            createdAt: `2026-01-02T00:00:00.000Z`,
-                            score: 10,
-                        },
+                        value: { id: `b`, title: `B`, createdAt: `2026-01-02T00:00:00.000Z`, score: 10 },
                     },
                     {
                         type: `insert`,
                         key: `c`,
-                        value: {
-                            id: `c`,
-                            title: `C`,
-                            createdAt: `2026-01-03T00:00:00.000Z`,
-                            score: 12,
-                        },
+                        value: { id: `c`, title: `C`, createdAt: `2026-01-03T00:00:00.000Z`, score: 12 },
                     },
                     {
                         type: `insert`,
                         key: `d`,
-                        value: {
-                            id: `d`,
-                            title: `D`,
-                            createdAt: `2026-01-04T00:00:00.000Z`,
-                            score: 13,
-                        },
+                        value: { id: `d`, title: `D`, createdAt: `2026-01-04T00:00:00.000Z`, score: 13 },
                     },
                 ],
             });
@@ -821,10 +637,7 @@ export function runPersistenceContract(
                 orderBy: [
                     {
                         expression: new IR.PropRef([`score`]),
-                        compareOptions: {
-                            direction: `asc`,
-                            nulls: `last`,
-                        },
+                        compareOptions: { direction: `asc`, nulls: `last` },
                     },
                 ],
                 limit: 1,
@@ -878,12 +691,7 @@ export function runPersistenceContract(
                     orderBy: [
                         {
                             expression: new IR.PropRef([`title`]),
-                            compareOptions: {
-                                direction,
-                                nulls: `last`,
-                                stringSort: `custom`,
-                                compare,
-                            },
+                            compareOptions: { direction, nulls: `last`, stringSort: `custom`, compare },
                         },
                     ],
                 });
@@ -905,22 +713,12 @@ export function runPersistenceContract(
                     {
                         type: `insert`,
                         key: 1,
-                        value: {
-                            id: 1,
-                            title: `Numeric`,
-                            createdAt: `2026-01-01T00:00:00.000Z`,
-                            score: 1,
-                        },
+                        value: { id: 1, title: `Numeric`, createdAt: `2026-01-01T00:00:00.000Z`, score: 1 },
                     },
                     {
                         type: `insert`,
                         key: `1`,
-                        value: {
-                            id: `1`,
-                            title: `String`,
-                            createdAt: `2026-01-01T00:00:00.000Z`,
-                            score: 2,
-                        },
+                        value: { id: `1`, title: `String`, createdAt: `2026-01-01T00:00:00.000Z`, score: 2 },
                     },
                 ],
             });

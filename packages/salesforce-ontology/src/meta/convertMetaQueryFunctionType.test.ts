@@ -15,24 +15,12 @@ describe("convertSalesforceMetaStandardQueryFunctionType", () => {
                     maxOccurs: 100,
                 },
             ],
-            outputs: [
-                {
-                    name: "timeSlots",
-                    label: "Time Slots",
-                    type: "STRING",
-                    maxOccurs: 1,
-                },
-            ],
+            outputs: [{ name: "timeSlots", label: "Time Slots", type: "STRING", maxOccurs: 1 }],
         });
 
         expect(query.parameters[0]?.type).toEqual({
             kind: "list",
-            value: {
-                elementType: {
-                    kind: "string",
-                    value: {},
-                },
-            },
+            value: { elementType: { kind: "string", value: {} } },
         });
         expect(query.returnType).toEqual({
             kind: "struct",
@@ -42,15 +30,7 @@ describe("convertSalesforceMetaStandardQueryFunctionType", () => {
                         name: "timeSlots",
                         displayName: "Time Slots",
                         description: undefined,
-                        type: {
-                            kind: "optional",
-                            value: {
-                                type: {
-                                    kind: "string",
-                                    value: {},
-                                },
-                            },
-                        },
+                        type: { kind: "optional", value: { type: { kind: "string", value: {} } } },
                     },
                 ],
             },

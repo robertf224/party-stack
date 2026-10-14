@@ -33,10 +33,7 @@ export interface CreateConnectionManagerOptions<AuthenticationClient extends obj
 export async function createConnectionManager<AuthenticationClient extends object = object>(
     options: CreateConnectionManagerOptions<AuthenticationClient>
 ): Promise<ConnectionManager<AuthenticationClient>> {
-    const context = {
-        installationId: options.installationId,
-        runtime: options.runtime,
-    };
+    const context = { installationId: options.installationId, runtime: options.runtime };
     const adapter: BackendConnectionAdapter<AuthenticationClient> = await options.adapter(context);
     const baseEgressHandlers = options.egressHandlers ?? createDefaultConnectionEgressHandlers();
     const connections = createLocalCollection<Connection, string>({
@@ -68,19 +65,13 @@ export async function createConnectionManager<AuthenticationClient extends objec
     const reportUnauthenticated = async (userId: string, error: UnauthenticatedError) => {
         await releaseSession(userId);
         await updateConnection(userId, (connection) => {
-            connection.state = {
-                status: "needs-auth",
-                error: error.message,
-            };
+            connection.state = { status: "needs-auth", error: error.message };
         });
     };
     const applyConnection = async <Status extends Connection["state"]["status"]>(
         connection: Connection<Status>
     ): Promise<Connection<Status>> => {
-        const record: Connection = {
-            ...connection,
-            state: connection.state,
-        };
+        const record: Connection = { ...connection, state: connection.state };
         const current = connections.get(connection.userId);
         const transaction = current
             ? connections.update(connection.userId, { optimistic: false }, (draft) => {
@@ -212,9 +203,7 @@ export async function createConnectionManager<AuthenticationClient extends objec
             if (!connections.get(userId)) {
                 return;
             }
-            const transaction = connections.delete(userId, {
-                optimistic: false,
-            });
+            const transaction = connections.delete(userId, { optimistic: false });
             await transaction.isPersisted.promise;
         },
         reportUnauthenticated,

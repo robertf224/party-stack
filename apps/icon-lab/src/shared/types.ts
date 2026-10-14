@@ -9,11 +9,7 @@ export interface CatalogIcon {
     /** All existing concepts using this asset (providers may intentionally reuse glyphs). */
     concepts?: string[];
     /** Asset stored inside a compact provider archive. */
-    asset?: {
-        archive: string;
-        path: string;
-        format: "svg" | "png";
-    };
+    asset?: { archive: string; path: string; format: "svg" | "png" };
     /** True when we only have a name (no redistributable glyph). */
     textOnly?: boolean;
     /** Synonyms / alternate labels used for text embedding. */
@@ -60,28 +56,14 @@ export interface MappingPairScore {
 export interface MappingAuditFile {
     generatedAt: string;
     pairs: MappingPairScore[];
-    conceptScores: Array<{
-        concept: string;
-        meanScore: number;
-        minScore: number;
-        pairCount: number;
-    }>;
+    conceptScores: Array<{ concept: string; meanScore: number; minScore: number; pairCount: number }>;
 }
 
 export interface DraftMapping {
     concept: string;
     blueprintId: string;
     status: "existing" | "generated";
-    providers: Partial<
-        Record<
-            IconProvider,
-            {
-                id: string;
-                name: string;
-                score: number;
-            }
-        >
-    >;
+    providers: Partial<Record<IconProvider, { id: string; name: string; score: number }>>;
     meanScore: number;
     minScore: number;
 }

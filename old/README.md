@@ -25,10 +25,7 @@ function App() {
         hasNextPage,
         isFetchingNextPage,
         fetchNextPage,
-    } = useObjects(Task, {
-        $orderBy: { completedAt: "asc", createdAt: "desc" },
-        $pageSize: 10,
-    });
+    } = useObjects(Task, { $orderBy: { completedAt: "asc", createdAt: "desc" }, $pageSize: 10 });
     // Subscribe to real-time updates.
     useLiveObjectSet(Task);
 
@@ -41,10 +38,7 @@ function App() {
         // Submit Actions.
         addTask(
             { title: newTaskTitle },
-            {
-                onSuccess: () => setNewTaskTitle(""),
-                onError: (error) => console.error(error),
-            }
+            { onSuccess: () => setNewTaskTitle(""), onError: (error) => console.error(error) }
         );
     };
 

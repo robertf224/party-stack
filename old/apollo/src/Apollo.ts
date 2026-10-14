@@ -14,15 +14,8 @@ const VERSION = "0.538.0";
 const DEFAULT_GRAPHQL_PATH = "/graphql-gateway/api/graphql";
 
 export type ApolloAuth =
-    | {
-          type: "static";
-          token: string;
-      }
-    | {
-          type: "service-user";
-          clientId: string;
-          clientSecret: string;
-      };
+    | { type: "static"; token: string }
+    | { type: "service-user"; clientId: string; clientSecret: string };
 
 export type RolloutStrategy = "manageRollout" | "applyChangesNoWait";
 
@@ -63,9 +56,7 @@ export interface HelmChartProductManifest {
         }>;
         "rollout-strategy"?: RolloutStrategy;
         "resource-readiness-timeout"?: string;
-        "image-pre-pull-config"?: {
-            timeout: string;
-        };
+        "image-pre-pull-config"?: { timeout: string };
     } & Record<string, unknown>;
 }
 
@@ -84,9 +75,7 @@ export interface CreateHelmChartProductManifestOptions {
 
 interface GraphqlResponse<TData> {
     data?: TData;
-    errors?: Array<{
-        message: string;
-    }>;
+    errors?: Array<{ message: string }>;
 }
 
 interface ApolloProductReleaseCreated {
@@ -103,13 +92,7 @@ interface ApolloProductReleaseFailedToDeserializeManifest {
 interface ApolloProductReleaseRejected {
     __typename: "ApolloProductReleaseRejected";
     mavenCoordinate: string;
-    rejectionReasons: Array<{
-        message: string;
-        metadata: Array<{
-            key: string;
-            value: string;
-        }>;
-    }>;
+    rejectionReasons: Array<{ message: string; metadata: Array<{ key: string; value: string }> }>;
 }
 
 type ApolloCreateProductReleaseResult =
@@ -122,22 +105,15 @@ export async function getAccessToken(opts: { apolloUrl: string; auth: ApolloAuth
         return opts.auth.token;
     }
 
-    const response = await fetch(
-        Urls.extend(opts.apolloUrl, {
-            pathname: "/multipass/api/oauth2/token",
+    const response = await fetch(Urls.extend(opts.apolloUrl, { pathname: "/multipass/api/oauth2/token" }), {
+        method: "POST",
+        body: new URLSearchParams({
+            grant_type: "client_credentials",
+            client_id: opts.auth.clientId,
+            client_secret: opts.auth.clientSecret,
         }),
-        {
-            method: "POST",
-            body: new URLSearchParams({
-                grant_type: "client_credentials",
-                client_id: opts.auth.clientId,
-                client_secret: opts.auth.clientSecret,
-            }),
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-        }
-    );
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    });
 
     if (!response.ok) {
         throw new Error(`Failed to get Apollo token: ${response.status} ${response.statusText}`);
@@ -149,11 +125,7 @@ export async function getAccessToken(opts: { apolloUrl: string; auth: ApolloAuth
 }
 
 function getAuthFromLegacyOpts(opts: { clientId: string; clientSecret: string }): ApolloAuth {
-    return {
-        type: "service-user",
-        clientId: opts.clientId,
-        clientSecret: opts.clientSecret,
-    };
+    return { type: "service-user", clientId: opts.clientId, clientSecret: opts.clientSecret };
 }
 
 export async function ensureBinary(opts: {
@@ -166,15 +138,8 @@ export async function ensureBinary(opts: { apolloUrl: string; auth: ApolloAuth }
 
 export async function ensureBinary(
     opts:
-        | {
-              apolloUrl: string;
-              clientId: string;
-              clientSecret: string;
-          }
-        | {
-              apolloUrl: string;
-              auth: ApolloAuth;
-          }
+        | { apolloUrl: string; clientId: string; clientSecret: string }
+        | { apolloUrl: string; auth: ApolloAuth }
 ): Promise<string> {
     const auth = "auth" in opts ? opts.auth : getAuthFromLegacyOpts(opts);
     const token = await getAccessToken({ apolloUrl: opts.apolloUrl, auth });
@@ -202,9 +167,7 @@ export async function ensureBinary(
                     // TODO: figure out how to pin version.
                     pathname: Pathnames.join("assets/dyn/apollo-cli/bin", distribution, "apollo-cli"),
                 }).toString(),
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
+                headers: { Authorization: `Bearer ${token}` },
             };
         },
         path.join(import.meta.dirname, "..", "node_modules", ".cache", "apollo")
@@ -243,10 +206,7 @@ async function executeApolloCli(opts: {
     cwd?: string;
     secrets?: string[];
 }): Promise<{ stdout: string; stderr: string }> {
-    const cliPath = await ensureBinary({
-        apolloUrl: opts.apolloUrl,
-        auth: opts.auth,
-    });
+    const cliPath = await ensureBinary({ apolloUrl: opts.apolloUrl, auth: opts.auth });
 
     try {
         return await execFileAsync(cliPath, opts.args, { cwd: opts.cwd, encoding: "utf8" });
@@ -288,14 +248,8 @@ async function executeGraphql<TData>(opts: {
         }),
         {
             method: "POST",
-            body: JSON.stringify({
-                query: opts.query,
-                variables: opts.variables,
-            }),
-            headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-            },
+            body: JSON.stringify({ query: opts.query, variables: opts.variables }),
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         }
     );
 
@@ -362,9 +316,7 @@ export function createHelmChartProductManifest(
             "maximum-version": dependency.maximumVersion,
             ...(dependency.recommendedVersion === undefined
                 ? {}
-                : {
-                      "recommended-version": dependency.recommendedVersion,
-                  }),
+                : { "recommended-version": dependency.recommendedVersion }),
             ...(dependency.optional === undefined ? {} : { optional: dependency.optional }),
         }));
     }
@@ -378,9 +330,7 @@ export function createHelmChartProductManifest(
     }
 
     if (opts.imagePrePullConfigTimeout !== undefined) {
-        extensions["image-pre-pull-config"] = {
-            timeout: opts.imagePrePullConfigTimeout,
-        };
+        extensions["image-pre-pull-config"] = { timeout: opts.imagePrePullConfigTimeout };
     }
 
     return {
@@ -464,9 +414,7 @@ export async function createHelmChartProductRelease(
 
     await writeHelmChartProductManifest(manifest, manifestPath);
     const data = await executeGraphql<{
-        apollo: {
-            createProductReleaseFromManifestV2: ApolloCreateProductReleaseResult;
-        };
+        apollo: { createProductReleaseFromManifestV2: ApolloCreateProductReleaseResult };
     }>({
         apolloUrl: opts.apolloUrl,
         auth: opts.auth,
@@ -543,10 +491,7 @@ export async function searchProductReleases(opts: {
                 exclusionCriteria: opts.exclusionCriteria ?? [],
                 pageSize: opts.pageSize ?? 50,
             }),
-            headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-            },
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         }
     );
 

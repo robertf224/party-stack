@@ -44,10 +44,7 @@ describe("Ontology Validation", () => {
     });
 
     it("should validate a simple ontology with object types", () => {
-        const ontology: OntologyIR = {
-            ...emptyOntology,
-            objectTypes: [minimalObjectType()],
-        };
+        const ontology: OntologyIR = { ...emptyOntology, objectTypes: [minimalObjectType()] };
         expectOk(validate(ontology));
     });
 
@@ -212,11 +209,7 @@ describe("Ontology Validation", () => {
                             name: "missingSource",
                             displayName: "Missing Source",
                         },
-                        target: {
-                            objectType: "Employee",
-                            name: "employee",
-                            displayName: "Employee",
-                        },
+                        target: { objectType: "Employee", name: "employee", displayName: "Employee" },
                         foreignKey: "employeeId",
                         cardinality: "one" as const,
                     },
@@ -240,11 +233,7 @@ describe("Ontology Validation", () => {
                             name: "missingTarget",
                             displayName: "Missing Target",
                         },
-                        target: {
-                            objectType: "NonExistent",
-                            name: "unknown",
-                            displayName: "Unknown",
-                        },
+                        target: { objectType: "NonExistent", name: "unknown", displayName: "Unknown" },
                         foreignKey: "employeeId",
                         cardinality: "many" as const,
                     },
@@ -260,38 +249,20 @@ describe("Ontology Validation", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
                 objectTypes: [
-                    minimalObjectType({
-                        name: "Project",
-                    }),
+                    minimalObjectType({ name: "Project" }),
                     minimalObjectType({
                         name: "Issue",
                         properties: [
-                            {
-                                name: "employeeId",
-                                displayName: "Employee ID",
-                                type: o.string({}),
-                            },
-                            {
-                                name: "projectId",
-                                displayName: "Project ID",
-                                type: o.string({}),
-                            },
+                            { name: "employeeId", displayName: "Employee ID", type: o.string({}) },
+                            { name: "projectId", displayName: "Project ID", type: o.string({}) },
                         ],
                     }),
                 ],
                 linkTypes: [
                     {
                         id: "projectIssues",
-                        source: {
-                            objectType: "Project",
-                            name: "project",
-                            displayName: "Project",
-                        },
-                        target: {
-                            objectType: "Issue",
-                            name: "issues",
-                            displayName: "Issues",
-                        },
+                        source: { objectType: "Project", name: "project", displayName: "Project" },
+                        target: { objectType: "Issue", name: "issues", displayName: "Issues" },
                         foreignKey: "projectId",
                         cardinality: "many",
                     },
@@ -312,16 +283,8 @@ describe("Ontology Validation", () => {
                 linkTypes: [
                     {
                         id: "authorPosts",
-                        source: {
-                            objectType: "Author",
-                            name: "posts",
-                            displayName: "Posts",
-                        },
-                        target: {
-                            objectType: "Post",
-                            name: "author",
-                            displayName: "Author",
-                        },
+                        source: { objectType: "Author", name: "posts", displayName: "Posts" },
+                        target: { objectType: "Post", name: "author", displayName: "Author" },
                         foreignKey: "employeeId",
                         cardinality: "many" as const,
                     },
@@ -344,11 +307,7 @@ describe("Ontology Validation", () => {
                         primaryKey: "id",
                         properties: [
                             { name: "id", displayName: "ID", type: o.string({}) },
-                            {
-                                name: "address",
-                                displayName: "Address",
-                                type: o.ref({ name: "UnknownType" }),
-                            },
+                            { name: "address", displayName: "Address", type: o.ref({ name: "UnknownType" }) },
                         ],
                     },
                 ],
@@ -367,11 +326,7 @@ describe("Ontology Validation", () => {
                         name: "lookup",
                         displayName: "Lookup",
                         parameters: [
-                            {
-                                name: "filter",
-                                displayName: "Filter",
-                                type: o.ref({ name: "MissingFilter" }),
-                            },
+                            { name: "filter", displayName: "Filter", type: o.ref({ name: "MissingFilter" }) },
                         ],
                         returnType: o.ref({ name: "MissingResult" }),
                     },
@@ -403,11 +358,7 @@ describe("Ontology Validation", () => {
                         primaryKey: "id",
                         properties: [
                             { name: "id", displayName: "ID", type: o.string({}) },
-                            {
-                                name: "address",
-                                displayName: "Address",
-                                type: o.ref({ name: "Address" }),
-                            },
+                            { name: "address", displayName: "Address", type: o.ref({ name: "Address" }) },
                         ],
                     },
                 ],
@@ -533,9 +484,7 @@ describe("Ontology Validation", () => {
                                 size: { min: 10, max: 1 },
                                 content: o.AttachmentContentConstraint.image({
                                     mediaTypes: ["image/avif" as never],
-                                    dimensions: {
-                                        width: { min: -1 },
-                                    },
+                                    dimensions: { width: { min: -1 } },
                                 }),
                             },
                         }),
@@ -571,11 +520,7 @@ describe("Ontology Validation", () => {
                         name: "createTask",
                         displayName: "Create Task",
                         parameters: [
-                            {
-                                name: "title",
-                                displayName: "Title",
-                                type: o.string({}),
-                            },
+                            { name: "title", displayName: "Title", type: o.string({}) },
                             {
                                 name: "__taskId",
                                 displayName: "Task ID",
@@ -595,21 +540,15 @@ describe("Ontology Validation", () => {
                                 values: [
                                     {
                                         property: ["taskId"],
-                                        value: o.Expression.inputReference({
-                                            name: "__taskId",
-                                        }),
+                                        value: o.Expression.inputReference({ name: "__taskId" }),
                                     },
                                     {
                                         property: ["title"],
-                                        value: o.Expression.inputReference({
-                                            name: "title",
-                                        }),
+                                        value: o.Expression.inputReference({ name: "title" }),
                                     },
                                     {
                                         property: ["updatedAt"],
-                                        value: o.Expression.inputReference({
-                                            name: "__now",
-                                        }),
+                                        value: o.Expression.inputReference({ name: "__now" }),
                                     },
                                 ],
                             }),
@@ -641,9 +580,7 @@ describe("Ontology Validation", () => {
                                 type: o.string({}),
                                 defaultValue: o.Expression.getAt({
                                     source: o.Expression.objectLookup({
-                                        reference: o.Expression.inputReference({
-                                            name: "employee",
-                                        }),
+                                        reference: o.Expression.inputReference({ name: "employee" }),
                                     }),
                                     path: ["name"],
                                 }),
@@ -677,9 +614,7 @@ describe("Ontology Validation", () => {
                                 type: o.integer({}),
                                 defaultValue: o.Expression.getAt({
                                     source: o.Expression.objectLookup({
-                                        reference: o.Expression.inputReference({
-                                            name: "employee",
-                                        }),
+                                        reference: o.Expression.inputReference({ name: "employee" }),
                                     }),
                                     path: ["name"],
                                 }),
@@ -710,14 +645,7 @@ describe("Ontology Validation", () => {
                                 type: o.objectReference({ objectType: "Employee" }),
                             },
                         ],
-                        logic: [
-                            o.ActionLogicStep.updateObject({
-                                object: {
-                                    name: "missing",
-                                },
-                                values: [],
-                            }),
-                        ],
+                        logic: [o.ActionLogicStep.updateObject({ object: { name: "missing" }, values: [] })],
                     },
                 ],
             };
@@ -729,13 +657,7 @@ describe("Ontology Validation", () => {
 
         it("validates map expressions with scoped element references", () => {
             const entryType = o.struct({
-                fields: [
-                    {
-                        name: "code",
-                        displayName: "Code",
-                        type: o.string({}),
-                    },
-                ],
+                fields: [{ name: "code", displayName: "Code", type: o.string({}) }],
             });
             const ontology: OntologyIR = {
                 ...emptyOntology,
@@ -746,11 +668,7 @@ describe("Ontology Validation", () => {
                         pluralDisplayName: "Records",
                         primaryKey: "id",
                         properties: [
-                            {
-                                name: "id",
-                                displayName: "ID",
-                                type: o.string({}),
-                            },
+                            { name: "id", displayName: "ID", type: o.string({}) },
                             {
                                 name: "entries",
                                 displayName: "Entries",
@@ -777,9 +695,7 @@ describe("Ontology Validation", () => {
                             {
                                 name: "entries",
                                 displayName: "Entries",
-                                type: o.list({
-                                    elementType: entryType,
-                                }),
+                                type: o.list({ elementType: entryType }),
                             },
                         ],
                         logic: [
@@ -789,9 +705,7 @@ describe("Ontology Validation", () => {
                                     {
                                         property: ["entries"],
                                         value: o.Expression.map({
-                                            source: o.Expression.inputReference({
-                                                name: "entries",
-                                            }),
+                                            source: o.Expression.inputReference({ name: "entries" }),
                                             binding: "entry",
                                             body: o.Expression.struct({
                                                 fields: [
@@ -827,26 +741,14 @@ describe("Ontology Validation", () => {
                         displayName: "Record",
                         pluralDisplayName: "Records",
                         primaryKey: "id",
-                        properties: [
-                            {
-                                name: "id",
-                                displayName: "ID",
-                                type: o.string({}),
-                            },
-                        ],
+                        properties: [{ name: "id", displayName: "ID", type: o.string({}) }],
                     },
                 ],
                 actionTypes: [
                     {
                         name: "createRecord",
                         displayName: "Create record",
-                        parameters: [
-                            {
-                                name: "title",
-                                displayName: "Title",
-                                type: o.string({}),
-                            },
-                        ],
+                        parameters: [{ name: "title", displayName: "Title", type: o.string({}) }],
                         logic: [
                             o.ActionLogicStep.createObject({
                                 objectType: "Record",
@@ -854,13 +756,9 @@ describe("Ontology Validation", () => {
                                     {
                                         property: ["id"],
                                         value: o.Expression.map({
-                                            source: o.Expression.inputReference({
-                                                name: "title",
-                                            }),
+                                            source: o.Expression.inputReference({ name: "title" }),
                                             binding: "entry",
-                                            body: o.Expression.localReference({
-                                                name: "missing",
-                                            }),
+                                            body: o.Expression.localReference({ name: "missing" }),
                                         }),
                                     },
                                 ],
@@ -951,13 +849,7 @@ describe("Ontology Validation", () => {
                     {
                         name: "createTask",
                         displayName: "Create Task",
-                        parameters: [
-                            {
-                                name: "taskId",
-                                displayName: "Task ID",
-                                type: o.string({}),
-                            },
-                        ],
+                        parameters: [{ name: "taskId", displayName: "Task ID", type: o.string({}) }],
                         logic: [
                             o.ActionLogicStep.createObject({
                                 objectType: "Task",
@@ -966,10 +858,7 @@ describe("Ontology Validation", () => {
                                         property: ["taskId"],
                                         value: o.Expression.inputReference({ name: "taskId" }),
                                     },
-                                    {
-                                        property: ["status"],
-                                        value: o.Expression.literal({ value: "open" }),
-                                    },
+                                    { property: ["status"], value: o.Expression.literal({ value: "open" }) },
                                 ],
                             }),
                         ],
@@ -1028,17 +917,10 @@ describe("Ontology Validation", () => {
                             o.ActionLogicStep.createObject({
                                 objectType: "Task",
                                 values: [
-                                    {
-                                        property: ["id"],
-                                        value: o.Expression.literal({
-                                            value: "task-1",
-                                        }),
-                                    },
+                                    { property: ["id"], value: o.Expression.literal({ value: "task-1" }) },
                                     {
                                         property: ["createdBy"],
-                                        value: o.Expression.contextReference({
-                                            name: "user",
-                                        }),
+                                        value: o.Expression.contextReference({ name: "user" }),
                                     },
                                 ],
                             }),
@@ -1060,13 +942,7 @@ describe("Ontology Validation", () => {
                             displayName: "Membership",
                             pluralDisplayName: "Memberships",
                             primaryKey: "id",
-                            properties: [
-                                {
-                                    name: "id",
-                                    displayName: "ID",
-                                    type: o.string({}),
-                                },
-                            ],
+                            properties: [{ name: "id", displayName: "ID", type: o.string({}) }],
                         },
                     ],
                     contextType: o.struct({
@@ -1074,11 +950,7 @@ describe("Ontology Validation", () => {
                             {
                                 name: "user",
                                 displayName: "User",
-                                type: o.optional({
-                                    type: o.objectReference({
-                                        objectType: "Membership",
-                                    }),
-                                }),
+                                type: o.optional({ type: o.objectReference({ objectType: "Membership" }) }),
                             },
                         ],
                     }),
@@ -1090,13 +962,7 @@ describe("Ontology Validation", () => {
             const result = validate({
                 ...emptyOntology,
                 contextType: o.struct({
-                    fields: [
-                        {
-                            name: "user",
-                            displayName: "User",
-                            type: o.string({}),
-                        },
-                    ],
+                    fields: [{ name: "user", displayName: "User", type: o.string({}) }],
                 }),
             });
 

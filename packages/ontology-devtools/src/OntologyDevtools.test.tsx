@@ -48,10 +48,7 @@ describe("createOntologyDevtoolsPlugin", () => {
         if (typeof plugin.name !== "function") {
             throw new Error("Expected the plugin name property to be a function");
         }
-        const title = plugin.name({} as HTMLElement, {
-            devtoolsOpen: true,
-            theme: "light",
-        });
+        const title = plugin.name({} as HTMLElement, { devtoolsOpen: true, theme: "light" });
         expect(title.type).toBe(OntologyDevtoolsPluginName);
         expect(title.props).toMatchObject({ theme: "light" });
     });
@@ -65,22 +62,14 @@ describe("createOntologyDevtoolsPlugin", () => {
             defaultOpen: true,
         });
 
-        expect(plugin).toMatchObject({
-            id: "custom-ontology",
-            defaultOpen: true,
-        });
+        expect(plugin).toMatchObject({ id: "custom-ontology", defaultOpen: true });
         if (typeof plugin.render !== "function") {
             throw new Error("Expected a plugin renderer.");
         }
-        const panel = plugin.render({} as HTMLElement, {
-            devtoolsOpen: true,
-            theme: "light",
-        });
+        const panel = plugin.render({} as HTMLElement, { devtoolsOpen: true, theme: "light" });
         const Component = panel.type as (props: typeof panel.props) => ReactElement;
         const ontologyPanel = Component(panel.props);
-        expect(ontologyPanel.props).toMatchObject({
-            metaOntology,
-        });
+        expect(ontologyPanel.props).toMatchObject({ metaOntology });
     });
 
     it("exports the branded shell trigger separately", () => {
@@ -98,11 +87,7 @@ describe("OntologyIcon", () => {
         expect(isValidElement(icon)).toBe(true);
         expect(icon).toMatchObject({
             type: LucideIcon,
-            props: {
-                className: "object-icon",
-                name: "ticket",
-                style: undefined,
-            },
+            props: { className: "object-icon", name: "ticket", style: undefined },
         });
     });
 
@@ -127,16 +112,8 @@ describe("layoutSchema", () => {
             linkTypes: [
                 {
                     id: "project-tasks",
-                    source: {
-                        objectType: "Project",
-                        name: "tasks",
-                        displayName: "Tasks",
-                    },
-                    target: {
-                        objectType: "Task",
-                        name: "project",
-                        displayName: "Project",
-                    },
+                    source: { objectType: "Project", name: "tasks", displayName: "Tasks" },
+                    target: { objectType: "Task", name: "project", displayName: "Project" },
                     foreignKey: "projectId",
                     cardinality: "many",
                 },
@@ -207,10 +184,7 @@ describe("layoutSchema", () => {
         expect(target).toBeDefined();
         expect(touchesBoundary(points[0]!, source!)).toBe(true);
         expect(touchesBoundary(points.at(-1)!, target!)).toBe(true);
-        expect(points.at(-1)).not.toEqual({
-            x: target!.x + 115,
-            y: target!.y + 88,
-        });
+        expect(points.at(-1)).not.toEqual({ x: target!.x + 115, y: target!.y + 88 });
     });
 
     it("turns routed points into a rounded SVG path", () => {
@@ -229,14 +203,7 @@ describe("property presentation", () => {
         expect(
             typeDisplayName({
                 kind: "optional",
-                value: {
-                    type: {
-                        kind: "list",
-                        value: {
-                            elementType: { kind: "attachment", value: {} },
-                        },
-                    },
-                },
+                value: { type: { kind: "list", value: { elementType: { kind: "attachment", value: {} } } } },
             })
         ).toBe("List of Attachment (optional)");
         expect(typeDisplayName({ kind: "ref", value: { name: "EventTime" } })).toBe("EventTime");
@@ -255,11 +222,7 @@ describe("getOutboxActivity", () => {
         return {
             id: "entry",
             sequence: 1,
-            request: {
-                actionTypeName: "save",
-                idempotencyKey: "key",
-                parameters: {},
-            },
+            request: { actionTypeName: "save", idempotencyKey: "key", parameters: {} },
             status: "queued",
             createdAt: 0,
             updatedAt: 0,

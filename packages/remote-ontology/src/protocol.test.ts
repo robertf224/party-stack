@@ -81,21 +81,11 @@ describe("createHttpRemoteOntologyTransport", () => {
             const request = new Request(input, init);
             const endpoint = new URL(request.url).pathname.split("/").pop();
             if (endpoint === "describe") {
-                return new Response(
-                    JSON.stringify({
-                        ir,
-                        capabilities: {
-                            actionValidation: true,
-                        },
-                    })
-                );
+                return new Response(JSON.stringify({ ir, capabilities: { actionValidation: true } }));
             }
             if (endpoint === "load-subset") {
                 return new Response(
-                    JSON.stringify({
-                        objectType: "Task",
-                        objects: [{ id: "task-1", dueDate: "2026-05-29" }],
-                    })
+                    JSON.stringify({ objectType: "Task", objects: [{ id: "task-1", dueDate: "2026-05-29" }] })
                 );
             }
             if (endpoint === "apply-action") {
@@ -104,15 +94,7 @@ describe("createHttpRemoteOntologyTransport", () => {
             }
             if (endpoint === "validate-action") {
                 validateActionBody = await request.json();
-                return new Response(
-                    JSON.stringify({
-                        certain: true,
-                        value: {
-                            kind: "ok",
-                            value: null,
-                        },
-                    })
-                );
+                return new Response(JSON.stringify({ certain: true, value: { kind: "ok", value: null } }));
             }
             return new Response("Not found", { status: 404 });
         };
@@ -125,42 +107,24 @@ describe("createHttpRemoteOntologyTransport", () => {
         const response = await transport.loadSubset({ objectType: "Task" });
         await transport.applyAction({
             actionType: "createTask",
-            parameters: {
-                id: "task-2",
-                dueDate: Temporal.PlainDate.from("2026-05-30"),
-            },
+            parameters: { id: "task-2", dueDate: Temporal.PlainDate.from("2026-05-30") },
         });
         await expect(
             transport.validateAction!({
                 actionType: "createTask",
-                parameters: {
-                    id: "task-3",
-                    dueDate: Temporal.PlainDate.from("2026-05-31"),
-                },
+                parameters: { id: "task-3", dueDate: Temporal.PlainDate.from("2026-05-31") },
             })
-        ).resolves.toEqual({
-            certain: true,
-            value: {
-                kind: "ok",
-                value: null,
-            },
-        });
+        ).resolves.toEqual({ certain: true, value: { kind: "ok", value: null } });
 
         expect(response.objects[0]!.dueDate).toBeInstanceOf(Temporal.PlainDate);
         expect((response.objects[0]!.dueDate as Temporal.PlainDate).equals("2026-05-29")).toBe(true);
         expect(applyActionBody).toEqual({
             actionType: "createTask",
-            parameters: {
-                id: "task-2",
-                dueDate: "2026-05-30",
-            },
+            parameters: { id: "task-2", dueDate: "2026-05-30" },
         });
         expect(validateActionBody).toEqual({
             actionType: "createTask",
-            parameters: {
-                id: "task-3",
-                dueDate: "2026-05-31",
-            },
+            parameters: { id: "task-3", dueDate: "2026-05-31" },
         });
 
         let requestedLegacyValidation = false;
@@ -176,13 +140,8 @@ describe("createHttpRemoteOntologyTransport", () => {
         });
         await legacyTransport.describe();
         await expect(
-            legacyTransport.validateAction({
-                actionType: "createTask",
-                parameters: {},
-            })
-        ).resolves.toEqual({
-            certain: false,
-        });
+            legacyTransport.validateAction({ actionType: "createTask", parameters: {} })
+        ).resolves.toEqual({ certain: false });
         expect(requestedLegacyValidation).toBe(false);
     });
 
@@ -200,21 +159,13 @@ describe("createHttpRemoteOntologyTransport", () => {
                 {
                     name: "uploadDocument",
                     displayName: "Upload document",
-                    parameters: [
-                        {
-                            name: "file",
-                            displayName: "File",
-                            type: o.attachment({}),
-                        },
-                    ],
+                    parameters: [{ name: "file", displayName: "File", type: o.attachment({}) }],
                     logic: [],
                 },
             ],
             queryFunctionTypes: [],
         };
-        const originalFile = new File(["attachment contents"], "evidence.txt", {
-            type: "text/plain",
-        });
+        const originalFile = new File(["attachment contents"], "evidence.txt", { type: "text/plain" });
         const arrayBuffer = vi.spyOn(originalFile, "arrayBuffer");
         const fetchImpl: typeof fetch = async (_input, init) => {
             if (!(init?.body instanceof FormData)) throw new Error("Expected a multipart request");
@@ -236,20 +187,8 @@ describe("createHttpRemoteOntologyTransport", () => {
         });
 
         await transport.applyAction(
-            {
-                actionType: "uploadDocument",
-                parameters: {
-                    file: { id: "local-id" },
-                },
-            },
-            {
-                attachments: [
-                    {
-                        attachment: { id: "local-id" },
-                        blob: originalFile,
-                    },
-                ],
-            }
+            { actionType: "uploadDocument", parameters: { file: { id: "local-id" } } },
+            { attachments: [{ attachment: { id: "local-id" }, blob: originalFile }] }
         );
 
         expect(arrayBuffer).toHaveBeenCalledOnce();
@@ -259,26 +198,12 @@ describe("createHttpRemoteOntologyTransport", () => {
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
         });
-        const chromiumFile = new File(["attachment contents"], "evidence.txt", {
-            type: "text/plain",
-        });
+        const chromiumFile = new File(["attachment contents"], "evidence.txt", { type: "text/plain" });
         const chromiumArrayBuffer = vi.spyOn(chromiumFile, "arrayBuffer");
 
         await transport.applyAction(
-            {
-                actionType: "uploadDocument",
-                parameters: {
-                    file: { id: "local-id" },
-                },
-            },
-            {
-                attachments: [
-                    {
-                        attachment: { id: "local-id" },
-                        blob: chromiumFile,
-                    },
-                ],
-            }
+            { actionType: "uploadDocument", parameters: { file: { id: "local-id" } } },
+            { attachments: [{ attachment: { id: "local-id" }, blob: chromiumFile }] }
         );
 
         expect(chromiumArrayBuffer).not.toHaveBeenCalled();
@@ -291,35 +216,19 @@ describe("createHttpRemoteOntologyTransport", () => {
         const signal = new AbortController().signal;
         const options = serializeLoadSubsetOptions({
             where,
-            cursor: {
-                whereFrom,
-                whereCurrent,
-                lastKey: "task-5",
-            },
+            cursor: { whereFrom, whereCurrent, lastKey: "task-5" },
             offset: 2,
             limit: 3,
             signal,
             subscription: {} as never,
         });
-        const request = parseRemoteOntologyRequest("load-subset", {
-            objectType: "Task",
-            options,
-        });
+        const request = parseRemoteOntologyRequest("load-subset", { objectType: "Task", options });
 
         expect(options).not.toHaveProperty("signal");
         expect(options).not.toHaveProperty("subscription");
         expect(request.input).toEqual({
             objectType: "Task",
-            options: {
-                where,
-                cursor: {
-                    whereFrom,
-                    whereCurrent,
-                    lastKey: "task-5",
-                },
-                offset: 2,
-                limit: 3,
-            },
+            options: { where, cursor: { whereFrom, whereCurrent, lastKey: "task-5" }, offset: 2, limit: 3 },
         });
     });
 });
@@ -335,16 +244,8 @@ describe("createInProcessHttpRemoteOntologyTransport", () => {
                     name: "createNote",
                     displayName: "Create note",
                     parameters: [
-                        {
-                            name: "title",
-                            displayName: "Title",
-                            type: o.string({}),
-                        },
-                        {
-                            name: "ownerEmail",
-                            displayName: "Owner",
-                            type: o.string({}),
-                        },
+                        { name: "title", displayName: "Title", type: o.string({}) },
+                        { name: "ownerEmail", displayName: "Owner", type: o.string({}) },
                     ],
                     logic: [],
                 },
@@ -366,18 +267,12 @@ describe("createInProcessHttpRemoteOntologyTransport", () => {
                 applyAction: async () => {},
                 runQueryFunction: async () => undefined,
             },
-            getContext: () => ({
-                user: {
-                    email: "alice@example.com",
-                },
-            }),
+            getContext: () => ({ user: { email: "alice@example.com" } }),
             policy: {
                 fixedActionParameterValues: {
                     createNote: {
                         ownerEmail: o.Expression.getAt({
-                            source: o.Expression.contextReference({
-                                name: "user",
-                            }),
+                            source: o.Expression.contextReference({ name: "user" }),
                             path: ["email"],
                         }),
                     },
@@ -390,15 +285,8 @@ describe("createInProcessHttpRemoteOntologyTransport", () => {
         await expect(
             transport.resolveActionParameters({
                 actionType: "createNote",
-                parameters: {
-                    title: "Hello",
-                    ownerEmail: "mallory@example.com",
-                },
+                parameters: { title: "Hello", ownerEmail: "mallory@example.com" },
             })
-        ).resolves.toEqual({
-            parameters: {
-                title: "Hello",
-            },
-        });
+        ).resolves.toEqual({ parameters: { title: "Hello" } });
     });
 });

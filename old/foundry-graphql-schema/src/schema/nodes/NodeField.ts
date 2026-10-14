@@ -27,6 +27,4 @@ function create(getTypeReference: GetTypeReference, handlers: NodeIdHandler[]): 
     return ["node", field];
 }
 
-export const NodeField = {
-    create,
-};
+export const NodeField = { create };

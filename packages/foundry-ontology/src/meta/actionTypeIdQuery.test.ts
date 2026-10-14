@@ -10,18 +10,13 @@ const mocks = vi.hoisted(() => ({
     searchActionTypes: vi.fn(),
 }));
 
-vi.mock("@osdk/client.unstable", () => ({
-    bulkLoadOntologyEntities: mocks.bulkLoadOntologyEntities,
-}));
+vi.mock("@osdk/client.unstable", () => ({ bulkLoadOntologyEntities: mocks.bulkLoadOntologyEntities }));
 
 vi.mock("@osdk/foundry.ontologies", async (importOriginal) => {
     const original = await importOriginal<typeof import("@osdk/foundry.ontologies")>();
     return {
         ...original,
-        ActionTypesV2: {
-            ...original.ActionTypesV2,
-            search: mocks.searchActionTypes,
-        },
+        ActionTypesV2: { ...original.ActionTypesV2, search: mocks.searchActionTypes },
         ActionTypesFullMetadata: {
             ...original.ActionTypesFullMetadata,
             getFullMetadataBatch: mocks.getFullMetadataBatch,
@@ -40,9 +35,7 @@ beforeEach(() => {
     mocks.bulkLoadOntologyEntities.mockReset();
     mocks.getFullMetadataBatch.mockReset();
     mocks.searchActionTypes.mockReset();
-    mocks.bulkLoadOntologyEntities.mockResolvedValue({
-        actionTypes: [],
-    });
+    mocks.bulkLoadOntologyEntities.mockResolvedValue({ actionTypes: [] });
 });
 
 describe("Foundry ActionType metadata ID queries", () => {
@@ -76,10 +69,7 @@ describe("Foundry ActionType metadata ID queries", () => {
                 expect.anything(),
                 "ri.ontology.main.ontology.example",
                 expect.objectContaining({
-                    where: {
-                        type: "actionTypeRid",
-                        value: "ri.actions.main.action-type.create-task",
-                    },
+                    where: { type: "actionTypeRid", value: "ri.actions.main.action-type.create-task" },
                 }),
                 { preview: true }
             );
@@ -102,50 +92,22 @@ describe("Foundry ActionType metadata ID queries", () => {
             status: "ACTIVE",
             parameters: {},
             rid: "ri.actions.main.action-type.create-task",
-            operations: [
-                {
-                    type: "createObject",
-                    objectTypeApiName: "Task",
-                },
-            ],
+            operations: [{ type: "createObject", objectTypeApiName: "Task" }],
         };
-        mocks.searchActionTypes.mockResolvedValue({
-            data: [actionType],
-            nextPageToken: undefined,
-        });
-        mocks.getFullMetadataBatch.mockResolvedValue({
-            data: [
-                {
-                    actionType,
-                    fullLogicRules: [],
-                },
-            ],
-        });
+        mocks.searchActionTypes.mockResolvedValue({ data: [actionType], nextPageToken: undefined });
+        mocks.getFullMetadataBatch.mockResolvedValue({ data: [{ actionType, fullLogicRules: [] }] });
         const meta = await createMetaLiveOntology({
-            backend: () =>
-                createFoundryMetaOntologyBackendAdapter({
-                    client,
-                }),
+            backend: () => createFoundryMetaOntologyBackendAdapter({ client }),
             persistObjects: false,
         });
 
         try {
-            await queryOnce((q) =>
-                q.from({
-                    ActionType: meta.objects.ActionType,
-                })
-            );
+            await queryOnce((q) => q.from({ ActionType: meta.objects.ActionType }));
 
             expect(mocks.getFullMetadataBatch).toHaveBeenCalledWith(
                 expect.anything(),
                 "ri.ontology.main.ontology.example",
-                {
-                    requests: [
-                        {
-                            actionType: "create-task",
-                        },
-                    ],
-                },
+                { requests: [{ actionType: "create-task" }] },
                 { preview: true }
             );
         } finally {

@@ -24,41 +24,23 @@ describe("attachment metadata", () => {
                     title: string;
                 };
             };
-            actionTypes: {
-                upload: {
-                    parameters: {
-                        image: v.attachment<"image/jpeg"> | null;
-                    };
-                };
-            };
+            actionTypes: { upload: { parameters: { image: v.attachment<"image/jpeg"> | null } } };
         };
         const attachments = undefined as unknown as LiveOntologyAttachments<TestOntology>;
 
         const check = async () => {
             const image = await attachments.create(new Blob(), {
-                target: {
-                    kind: "objectProperty",
-                    objectType: "Document",
-                    property: "image",
-                },
+                target: { kind: "objectProperty", objectType: "Document", property: "image" },
             });
             expectTypeOf(image.attachment).toEqualTypeOf<v.attachment<"image/png" | "image/jpeg">>();
 
             const images = await attachments.create(new Blob(), {
-                target: {
-                    kind: "objectProperty",
-                    objectType: "Document",
-                    property: "images",
-                },
+                target: { kind: "objectProperty", objectType: "Document", property: "images" },
             });
             expectTypeOf(images.attachment).toEqualTypeOf<v.attachment<"image/png">>();
 
             const parameter = await attachments.create(new Blob(), {
-                target: {
-                    kind: "actionParameter",
-                    actionType: "upload",
-                    parameter: "image",
-                },
+                target: { kind: "actionParameter", actionType: "upload", parameter: "image" },
             });
             expectTypeOf(parameter.attachment).toEqualTypeOf<v.attachment<"image/jpeg">>();
 
@@ -70,11 +52,7 @@ describe("attachment metadata", () => {
 
     it("delegates missing selected fields to the blob manager", async () => {
         const metadata = vi.fn(() =>
-            Promise.resolve({
-                id: "image-1",
-                size: 10,
-                dimensions: { width: 800, height: 600 },
-            })
+            Promise.resolve({ id: "image-1", size: 10, dimensions: { width: 800, height: 600 } })
         );
         const attachments = createLiveOntologyAttachments({
             ir: {
@@ -87,19 +65,11 @@ describe("attachment metadata", () => {
             attachmentsAdapter: {} as OntologyAttachmentsAdapter,
             blobManager: { metadata } as unknown as BlobManager,
         });
-        const attachment = {
-            id: "image-1",
-            type: "image/png" as const,
-        };
+        const attachment = { id: "image-1", type: "image/png" as const };
 
         await expect(
-            attachments.metadata(attachment, {
-                select: ["type", "dimensions"],
-            })
-        ).resolves.toMatchObject({
-            type: "image/png",
-            dimensions: { width: 800, height: 600 },
-        });
+            attachments.metadata(attachment, { select: ["type", "dimensions"] })
+        ).resolves.toMatchObject({ type: "image/png", dimensions: { width: 800, height: 600 } });
         expect(metadata).toHaveBeenCalledWith("image-1", {
             meta: { attachment },
             select: ["type", "dimensions"],

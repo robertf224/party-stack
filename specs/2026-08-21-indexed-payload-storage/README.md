@@ -95,17 +95,8 @@ interface PayloadStore<Value> {
 }
 
 type IndexedPayloadOperation =
-    | {
-          id: string;
-          kind: "write" | "delete";
-          status: "pending";
-      }
-    | {
-          id: string;
-          kind: "write" | "delete";
-          status: "failed";
-          error: string;
-      };
+    | { id: string; kind: "write" | "delete"; status: "pending" }
+    | { id: string; kind: "write" | "delete"; status: "failed"; error: string };
 
 interface IndexedPayloadRecord<Metadata> {
     id: string;
@@ -118,13 +109,7 @@ interface IndexedPayloadStore<Metadata, Payload> {
 
     write(id: string, metadata: Metadata, payload: Payload): Promise<void>;
 
-    read(id: string): Promise<
-        | {
-              metadata: Metadata;
-              payload: Payload;
-          }
-        | undefined
-    >;
+    read(id: string): Promise<{ metadata: Metadata; payload: Payload } | undefined>;
 
     delete(id: string): Promise<void>;
     recover(signal?: AbortSignal): Promise<void>;

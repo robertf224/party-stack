@@ -12,23 +12,13 @@ describe("createConnectionManager", () => {
             createWebSocket: () => Promise.reject(new Error("unexpected websocket")),
         };
         const disconnect = vi.fn(() => Promise.resolve());
-        const adapter: BackendConnectionAdapter<{
-            signIn(userId: string): Promise<void>;
-        }> = {
+        const adapter: BackendConnectionAdapter<{ signIn(userId: string): Promise<void> }> = {
             name: "test",
             createAuthenticationClient: (controller) => ({
                 signIn: (userId) =>
                     controller.connect({
-                        connection: {
-                            userId,
-                            state: {
-                                status: "active",
-                            },
-                        },
-                        session: {
-                            disconnect,
-                            egress: () => handlers,
-                        },
+                        connection: { userId, state: { status: "active" } },
+                        session: { disconnect, egress: () => handlers },
                     }),
             }),
             restoreConnections: () => Promise.resolve([]),
@@ -43,9 +33,7 @@ describe("createConnectionManager", () => {
         await manager.authentication.signIn("user-1");
         const connection = manager.connections.get("user-1")!;
 
-        expect(connection).toMatchObject({
-            userId: "user-1",
-        });
+        expect(connection).toMatchObject({ userId: "user-1" });
         expect(connection.state.status).toBe("active");
         expect(manager.connections.get("user-1")).toEqual(connection);
 
@@ -60,21 +48,14 @@ describe("createConnectionManager", () => {
         await Promise.resolve();
         expect(disconnect).toHaveBeenCalledOnce();
         expect(manager.connections.get("user-1")?.state.status).toBe("inactive");
-        expect(listener).toHaveBeenLastCalledWith({
-            status: "inactive",
-        });
+        expect(listener).toHaveBeenLastCalledWith({ status: "inactive" });
         unsubscribe();
 
         await monitor.reportUnauthenticated(unauthenticated("Session expired."));
-        expect(monitor.state).toEqual({
-            status: "needs-auth",
-            error: "Session expired.",
-        });
+        expect(monitor.state).toEqual({ status: "needs-auth", error: "Session expired." });
         await manager.forget("user-1");
         expect(manager.connections.get("user-1")).toBeUndefined();
-        expect(monitor.state).toEqual({
-            status: "inactive",
-        });
+        expect(monitor.state).toEqual({ status: "inactive" });
 
         await manager.cleanup();
         await runtime.cleanup?.();
@@ -127,9 +108,7 @@ describe("createConnectionManager", () => {
     });
 
     it("marks expired non-refreshable connections as needing authentication", async () => {
-        const adapter: BackendConnectionAdapter<{
-            signIn(): Promise<void>;
-        }> = {
+        const adapter: BackendConnectionAdapter<{ signIn(): Promise<void> }> = {
             name: "expiring",
             createAuthenticationClient: (controller) => ({
                 signIn: () =>
@@ -138,15 +117,10 @@ describe("createConnectionManager", () => {
                             userId: "user-1",
                             state: {
                                 status: "active",
-                                expiration: {
-                                    expiresAt: Date.now() - 1,
-                                    refreshable: false,
-                                },
+                                expiration: { expiresAt: Date.now() - 1, refreshable: false },
                             },
                         },
-                        session: {
-                            disconnect: () => Promise.resolve(),
-                        },
+                        session: { disconnect: () => Promise.resolve() },
                     }),
             }),
             restoreConnections: () => Promise.resolve([]),
@@ -174,15 +148,10 @@ describe("createConnectionManager", () => {
                     userId: "user-1",
                     state: {
                         status: "active" as const,
-                        expiration: {
-                            expiresAt: Date.now() + 60 * 60 * 1_000,
-                            refreshable: true,
-                        },
+                        expiration: { expiresAt: Date.now() + 60 * 60 * 1_000, refreshable: true },
                     },
                 },
-                session: {
-                    disconnect: () => Promise.resolve(),
-                },
+                session: { disconnect: () => Promise.resolve() },
             })
         );
         const adapter: BackendConnectionAdapter = {
@@ -195,16 +164,10 @@ describe("createConnectionManager", () => {
                             userId: "user-1",
                             state: {
                                 status: "active",
-                                expiration: {
-                                    expiresAt: Date.now() - 1,
-                                    refreshable: true,
-                                },
+                                expiration: { expiresAt: Date.now() - 1, refreshable: true },
                             },
                         },
-                        session: {
-                            refresh,
-                            disconnect: () => Promise.resolve(),
-                        },
+                        session: { refresh, disconnect: () => Promise.resolve() },
                     },
                 ]),
         };
@@ -220,9 +183,7 @@ describe("createConnectionManager", () => {
         });
         expect(manager.connections.get("user-1")?.state).toMatchObject({
             status: "active",
-            expiration: {
-                refreshable: true,
-            },
+            expiration: { refreshable: true },
         });
         await manager.cleanup();
         await runtime.cleanup?.();

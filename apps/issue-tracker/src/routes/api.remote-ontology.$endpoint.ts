@@ -73,15 +73,11 @@ const remoteServer = createRemoteOntologyServer<{ user: string }, IssueTrackerOn
 });
 
 async function handleRequest(request: Request): Promise<Response> {
-    const selected = await auth.api.getSession({
-        headers: request.headers,
-    });
+    const selected = await auth.api.getSession({ headers: request.headers });
     if (!selected) {
         return new Response("Authentication required.", {
             status: 401,
-            headers: {
-                "www-authenticate": 'Session realm="Party Stack Issue Tracker"',
-            },
+            headers: { "www-authenticate": 'Session realm="Party Stack Issue Tracker"' },
         });
     }
     const seeded = issueTrackerUsers.find((user) => user.email === selected.user.email);
@@ -95,9 +91,7 @@ async function handleRequest(request: Request): Promise<Response> {
             email: selected.user.email,
         })
     );
-    contexts.set(request, {
-        user: selected.user.id,
-    });
+    contexts.set(request, { user: selected.user.id });
     return remoteServer.handleRequest(request);
 }
 

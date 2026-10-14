@@ -174,10 +174,7 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
             }
 
             const method = (init?.method ?? (init?.body === undefined ? "GET" : "POST")).toUpperCase();
-            const headers: Record<string, string> = {
-                Accept: "application/json",
-                ...init?.headers,
-            };
+            const headers: Record<string, string> = { Accept: "application/json", ...init?.headers };
             if (init?.body !== undefined && !("Content-Type" in headers) && !("content-type" in headers)) {
                 headers["Content-Type"] = "application/json";
             }
@@ -228,10 +225,7 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
             const batch = actions.slice(offset, offset + COMPOSITE_REQUEST_LIMIT);
             const response = await request<{
                 hasErrors: boolean;
-                results: Array<{
-                    result: SalesforceInvocableActionDescribe;
-                    statusCode: number;
-                }>;
+                results: Array<{ result: SalesforceInvocableActionDescribe; statusCode: number }>;
             }>(dataApiPath(apiVersion, "/composite/batch"), {
                 method: "POST",
                 body: {
@@ -267,10 +261,7 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
         let messageId = 0;
         let replayId = subscriptionOptions?.replayId ?? -1;
         type CometdMessage = {
-            advice?: {
-                interval?: number;
-                reconnect?: string;
-            };
+            advice?: { interval?: number; reconnect?: string };
             channel: string;
             clientId?: string;
             data?: SalesforceChangeEvent;
@@ -323,11 +314,7 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
                         channel: "/meta/subscribe",
                         clientId: handshake.clientId,
                         subscription: channel,
-                        ext: {
-                            replay: {
-                                [channel]: replayId,
-                            },
-                        },
+                        ext: { replay: { [channel]: replayId } },
                     },
                 ])
             )[0];
@@ -341,12 +328,7 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
             while (!controller.signal.aborted) {
                 try {
                     const messages = await send([
-                        {
-                            id: nextId(),
-                            channel: "/meta/connect",
-                            clientId,
-                            connectionType: "long-polling",
-                        },
+                        { id: nextId(), channel: "/meta/connect", clientId, connectionType: "long-polling" },
                     ]);
                     for (const message of messages) {
                         if (message.channel !== channel || !message.data) {
@@ -379,10 +361,7 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
             }
         };
         void connect().catch(() => undefined);
-        return {
-            channel,
-            unsubscribe: () => controller.abort(),
-        };
+        return { channel, unsubscribe: () => controller.abort() };
     };
 
     return {
@@ -413,11 +392,7 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
                 ),
                 { method: "PATCH", body: record }
             );
-            return {
-                id,
-                success: true,
-                errors: [],
-            };
+            return { id, success: true, errors: [] };
         },
         deleteRecord: async (sObjectName, id) => {
             await request<void>(
@@ -427,11 +402,7 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
                 ),
                 { method: "DELETE" }
             );
-            return {
-                id,
-                success: true,
-                errors: [],
-            };
+            return { id, success: true, errors: [] };
         },
         subscribeToChangeEvents,
         listFlowActions: () =>
@@ -442,19 +413,11 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
                 dataApiPath(apiVersion, `/actions/custom/flow/${encodePathSegment(apiName)}`)
             ),
         describeFlowActions: (apiNames) =>
-            describeInvocableActions(
-                apiNames.map((apiName) => ({
-                    kind: "flow",
-                    apiName,
-                }))
-            ),
+            describeInvocableActions(apiNames.map((apiName) => ({ kind: "flow", apiName }))),
         invokeFlowAction: (apiName, inputs) =>
             request<SalesforceInvocableActionResult[]>(
                 dataApiPath(apiVersion, `/actions/custom/flow/${encodePathSegment(apiName)}`),
-                {
-                    method: "POST",
-                    body: { inputs },
-                }
+                { method: "POST", body: { inputs } }
             ),
         listStandardActions: () =>
             request<SalesforceInvocableActionListResponse>(dataApiPath(apiVersion, "/actions/standard")),
@@ -463,19 +426,11 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
                 dataApiPath(apiVersion, `/actions/standard/${encodePathSegment(apiName)}`)
             ),
         describeStandardActions: (apiNames) =>
-            describeInvocableActions(
-                apiNames.map((apiName) => ({
-                    kind: "standard",
-                    apiName,
-                }))
-            ),
+            describeInvocableActions(apiNames.map((apiName) => ({ kind: "standard", apiName }))),
         invokeStandardAction: (apiName, inputs) =>
             request<SalesforceInvocableActionResult[]>(
                 dataApiPath(apiVersion, `/actions/standard/${encodePathSegment(apiName)}`),
-                {
-                    method: "POST",
-                    body: { inputs },
-                }
+                { method: "POST", body: { inputs } }
             ),
     };
 }

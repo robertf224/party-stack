@@ -29,9 +29,7 @@ export function useObject<T extends ObjectTypeDefinition, R = Osdk<T> | null>(
             }
             const objectType = await client.fetchMetadata(type);
             const result = await (client(type) as ObjectSet<T>)
-                .where({
-                    [objectType.primaryKeyApiName]: primaryKey,
-                } as WhereClause<T>)
+                .where({ [objectType.primaryKeyApiName]: primaryKey } as WhereClause<T>)
                 .fetchPage({ $pageSize: 1 });
             return result.data[0] ?? null;
         },

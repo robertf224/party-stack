@@ -30,10 +30,7 @@ export interface CreateSalesforceMetaOntologyBackendAdapterOpts {
 export function createSalesforceMetaOntologyBackendAdapter(
     opts: CreateSalesforceMetaOntologyBackendAdapterOpts
 ): OntologyBackendAdapter {
-    const entityOptions = {
-        client: opts.client,
-        objectTypeNames: opts.objectTypeNames,
-    };
+    const entityOptions = { client: opts.client, objectTypeNames: opts.objectTypeNames };
 
     return {
         name: "salesforce-metadata",

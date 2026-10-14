@@ -14,9 +14,7 @@ export function createConnectionMonitor(manager: ConnectionManager, userId: stri
                 () => {
                     listener(getState());
                 },
-                {
-                    where: (connection) => eq(connection.userId, userId),
-                }
+                { where: (connection) => eq(connection.userId, userId) }
             );
             return () => subscription.unsubscribe();
         },

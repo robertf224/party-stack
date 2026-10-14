@@ -17,12 +17,7 @@ import type { LoadSubsetOptions } from "@tanstack/db";
 import type { PersistedIndexSpec, PersistedTx } from "@tanstack/db-sqlite-persistence-core";
 
 const ROW_COUNT = 10_000;
-const BENCH_OPTIONS = {
-    iterations: 5,
-    time: 1_000,
-    warmupTime: 100,
-    warmupIterations: 5,
-};
+const BENCH_OPTIONS = { iterations: 5, time: 1_000, warmupTime: 100, warmupIterations: 5 };
 
 interface BenchItem {
     [key: string]: unknown;
@@ -70,9 +65,7 @@ function queryOptions(build: (query: ReturnType<typeof createBaseQuery>) => unkn
 }
 
 function indexSpec(field: string): PersistedIndexSpec {
-    return {
-        expressionSql: [JSON.stringify(new IR.PropRef([field]))],
-    };
+    return { expressionSql: [JSON.stringify(new IR.PropRef([field]))] };
 }
 
 function buildRows(): BenchItem[] {
@@ -91,11 +84,7 @@ function seedTransaction(rows: BenchItem[]): PersistedTx {
         term: 1,
         seq: 1,
         rowVersion: 1,
-        mutations: rows.map((value) => ({
-            type: "insert",
-            key: value.id,
-            value,
-        })),
+        mutations: rows.map((value) => ({ type: "insert", key: value.id, value })),
     };
 }
 

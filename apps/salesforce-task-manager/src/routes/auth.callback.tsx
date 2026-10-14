@@ -2,10 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { completeSalesforceOAuthRedirect } from "../app/salesforce";
 
-export const Route = createFileRoute("/auth/callback")({
-    ssr: false,
-    component: OAuthCallback,
-});
+export const Route = createFileRoute("/auth/callback")({ ssr: false, component: OAuthCallback });
 
 function OAuthCallback() {
     const navigate = useNavigate();

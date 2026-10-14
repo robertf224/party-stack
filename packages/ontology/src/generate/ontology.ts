@@ -269,18 +269,9 @@ function renderObjectType(objectType: ObjectTypeDef): string {
         { name: "displayName", value: renderPlainValue(objectType.displayName) },
         { name: "pluralDisplayName", value: renderPlainValue(objectType.pluralDisplayName) },
         { name: "primaryKey", value: renderPlainValue(objectType.primaryKey) },
-        {
-            name: "title",
-            value: objectType.title ? renderPlainValue(objectType.title) : undefined,
-        },
-        {
-            name: "icon",
-            value: objectType.icon ? renderPlainValue(objectType.icon) : undefined,
-        },
-        {
-            name: "color",
-            value: objectType.color ? renderPlainValue(objectType.color) : undefined,
-        },
+        { name: "title", value: objectType.title ? renderPlainValue(objectType.title) : undefined },
+        { name: "icon", value: objectType.icon ? renderPlainValue(objectType.icon) : undefined },
+        { name: "color", value: objectType.color ? renderPlainValue(objectType.color) : undefined },
         {
             name: "properties",
             value: withWriter((writer) =>
@@ -333,10 +324,7 @@ function renderActionType(actionType: ActionTypeDef, ctx?: RenderContext): strin
         { name: "name", value: renderPlainValue(actionType.name) },
         { name: "displayName", value: renderPlainValue(actionType.displayName) },
         { name: "icon", value: actionType.icon ? renderPlainValue(actionType.icon) : undefined },
-        {
-            name: "color",
-            value: actionType.color ? renderPlainValue(actionType.color) : undefined,
-        },
+        { name: "color", value: actionType.color ? renderPlainValue(actionType.color) : undefined },
         {
             name: "parameters",
             value: withWriter((writer) =>
@@ -471,10 +459,7 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
         namedImports: ["defineOntology", "o"],
     });
     if (usesTemporalTypes) {
-        sourceFile.addImportDeclaration({
-            moduleSpecifier: "temporal-polyfill",
-            namedImports: ["Temporal"],
-        });
+        sourceFile.addImportDeclaration({ moduleSpecifier: "temporal-polyfill", namedImports: ["Temporal"] });
     }
 
     sourceFile.addStatements((writer) => {
@@ -522,14 +507,7 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
                     )
                 ),
             },
-            ...(ir.contextType
-                ? [
-                      {
-                          name: "contextType",
-                          value: renderType(ir.contextType),
-                      },
-                  ]
-                : []),
+            ...(ir.contextType ? [{ name: "contextType", value: renderType(ir.contextType) }] : []),
         ]);
         writer.write(");");
         writer.newLine();

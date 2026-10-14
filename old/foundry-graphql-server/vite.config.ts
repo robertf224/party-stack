@@ -5,12 +5,7 @@ export default defineLibraryConfig({
         tasks: {
             dev: {
                 command: "tsx watch src/index.ts",
-                dependsOn: [
-                    {
-                        task: "build",
-                        from: ["dependencies", "devDependencies"],
-                    },
-                ],
+                dependsOn: [{ task: "build", from: ["dependencies", "devDependencies"] }],
                 cache: false,
             },
         },

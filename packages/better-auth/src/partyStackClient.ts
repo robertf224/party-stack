@@ -45,9 +45,7 @@ export function partyStackClient() {
                 },
             },
         ],
-        getActions: () => ({
-            partyStack: partyStackActions,
-        }),
+        getActions: () => ({ partyStack: partyStackActions }),
     } satisfies BetterAuthClientPlugin;
 }
 

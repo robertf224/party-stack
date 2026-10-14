@@ -60,12 +60,7 @@ const installation = await createSalesforceBackendInstallation({
                 // defaultMode: "outbox",
                 defaultVisibility: "optimistic",
             },
-            crudActionTypes: [
-                {
-                    objectType: "Task",
-                    operations: ["create", "update", "delete"],
-                },
-            ],
+            crudActionTypes: [{ objectType: "Task", operations: ["create", "update", "delete"] }],
         }),
     ],
 });
@@ -82,25 +77,17 @@ async function openOntologies(userId: string): Promise<SalesforceOntologies> {
             userId,
             ontologyId: SALESFORCE_TASK_MANAGER_ONTOLOGY_ID,
         }),
-        installation.openMetaOntology({
-            userId,
-            ontologyId: SALESFORCE_TASK_MANAGER_ONTOLOGY_ID,
-        }),
+        installation.openMetaOntology({ userId, ontologyId: SALESFORCE_TASK_MANAGER_ONTOLOGY_ID }),
     ]);
     return { data, meta, userId };
 }
 
 async function connectWithDevelopmentCredentials() {
-    const response = await fetch("/__salesforce/dev-session", {
-        method: "POST",
-    });
+    const response = await fetch("/__salesforce/dev-session", { method: "POST" });
     if (!response.ok) {
         throw new Error(`Development Salesforce session failed (${response.status}).`);
     }
-    const result = (await response.json()) as {
-        accessToken?: unknown;
-        userId?: unknown;
-    };
+    const result = (await response.json()) as { accessToken?: unknown; userId?: unknown };
     if (typeof result.accessToken !== "string" || typeof result.userId !== "string") {
         throw new Error("Development Salesforce session returned an invalid response.");
     }
@@ -127,9 +114,7 @@ export async function restoreSalesforceOntologies(): Promise<SalesforceOntologie
 export async function connectSalesforce(): Promise<SalesforceOntologies> {
     const connection = useDevelopmentCredentials
         ? await connectWithDevelopmentCredentials()
-        : await installation.authentication.signIn.oauth({
-              browserPresentation: "popup",
-          });
+        : await installation.authentication.signIn.oauth({ browserPresentation: "popup" });
     return openOntologies(connection.userId);
 }
 

@@ -8,9 +8,7 @@ export function createExpoBrowserAuthentication(): BrowserAuthentication {
                 async open(authorizationUrl) {
                     const result = await openAuthSessionAsync(authorizationUrl, redirectUrl);
                     if (result.type === "success") {
-                        return {
-                            callbackUrl: result.url,
-                        };
+                        return { callbackUrl: result.url };
                     }
                     throw new BrowserAuthenticationCancelledError();
                 },

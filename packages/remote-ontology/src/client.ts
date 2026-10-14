@@ -32,18 +32,14 @@ export interface CreateRemoteOntologyBackendAdapterOptions {
 export type CreateRemoteOntologyBackendOptions<
     Context extends Record<string, unknown> = Record<string, unknown>,
 > = (
-    | {
-          transport: RemoteOntologyTransport;
-      }
+    | { transport: RemoteOntologyTransport }
     | {
           createTransport: (
               ir: OntologyIR,
               context: Context
           ) => RemoteOntologyTransport | Promise<RemoteOntologyTransport>;
       }
-) & {
-    live?: boolean;
-};
+) & { live?: boolean };
 
 export interface CreateRemoteLiveOntologyOptions<
     Context extends Record<string, unknown> = Record<string, unknown>,
@@ -96,21 +92,9 @@ function fromRemoteActionValidation(
         return validation;
     }
     if (validation.value.kind === "err") {
-        return {
-            certain: true,
-            value: {
-                kind: "err",
-                value: validation.value.value,
-            },
-        };
+        return { certain: true, value: { kind: "err", value: validation.value.value } };
     }
-    return {
-        certain: true,
-        value: {
-            kind: "ok",
-            value: undefined,
-        },
-    };
+    return { certain: true, value: { kind: "ok", value: undefined } };
 }
 
 export function createRemoteOntologyBackendAdapter(
@@ -151,10 +135,7 @@ export function createRemoteOntologyBackendAdapter(
                 queryFn: async (ctx) => {
                     const loadSubsetOptions = ctx.meta?.loadSubsetOptions;
                     const response = await transport.loadSubset(
-                        {
-                            objectType,
-                            options: serializeLoadSubsetOptions(loadSubsetOptions),
-                        },
+                        { objectType, options: serializeLoadSubsetOptions(loadSubsetOptions) },
                         { signal: loadSubsetOptions?.signal ?? ctx.signal }
                     );
                     return response.objects;
@@ -163,14 +144,8 @@ export function createRemoteOntologyBackendAdapter(
         },
         applyAction: async (actionType, parameters, live) => {
             const response = await transport.applyAction(
-                {
-                    actionType,
-                    parameters,
-                    idempotencyKey: live.idempotencyKey,
-                },
-                {
-                    attachments: live.attachmentUploads,
-                }
+                { actionType, parameters, idempotencyKey: live.idempotencyKey },
+                { attachments: live.attachmentUploads }
             );
 
             const invalidatedObjectTypes =
@@ -194,18 +169,10 @@ export function createRemoteOntologyBackendAdapter(
             return result;
         },
         validateAction: async (actionType, parameters) => {
-            return fromRemoteActionValidation(
-                await transport.validateAction({
-                    actionType,
-                    parameters,
-                })
-            );
+            return fromRemoteActionValidation(await transport.validateAction({ actionType, parameters }));
         },
         runQueryFunction: async (queryFunctionType, parameters) => {
-            const response = await transport.runQueryFunction({
-                queryFunctionType,
-                parameters,
-            });
+            const response = await transport.runQueryFunction({ queryFunctionType, parameters });
             return response.value;
         },
         attachments: {
@@ -234,9 +201,7 @@ export async function createRemoteLiveOntology<
     Context extends Record<string, unknown> = Record<string, unknown>,
 >(opts: CreateRemoteLiveOntologyOptions<Context>): Promise<LiveOntology<Ontology>> {
     const description = await opts.transport.describe();
-    const backend = createRemoteOntologyBackend<Context>({
-        transport: opts.transport,
-    });
+    const backend = createRemoteOntologyBackend<Context>({ transport: opts.transport });
     const resolveActionParameters = opts.transport.resolveActionParameters;
     const ontology = await createLiveOntology<Ontology, Context>({
         ir: description.ir,
@@ -252,12 +217,7 @@ export async function createRemoteLiveOntology<
             const action = (ontology.actions as Record<string, LiveOntologyAction>)[actionType.name];
             if (!action) continue;
             action.resolveParameters = async (parameters) =>
-                (
-                    await resolveActionParameters({
-                        actionType: actionType.name,
-                        parameters,
-                    })
-                ).parameters;
+                (await resolveActionParameters({ actionType: actionType.name, parameters })).parameters;
         }
     }
     return ontology;

@@ -149,15 +149,8 @@ type InferImageAttachment<Value> = Value extends { readonly mediaTypes: infer Me
     ? attachment<Extract<ArrayElement<MediaTypes>, string>>
     : attachment<ImageMediaType>;
 
-type InferAttachment<Value> = Value extends {
-    readonly constraint: {
-        readonly content: infer Content;
-    };
-}
-    ? Content extends {
-          readonly kind: "image";
-          readonly value: infer ImageConstraint;
-      }
+type InferAttachment<Value> = Value extends { readonly constraint: { readonly content: infer Content } }
+    ? Content extends { readonly kind: "image"; readonly value: infer ImageConstraint }
         ? InferImageAttachment<ImageConstraint>
         : attachment
     : attachment;

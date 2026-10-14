@@ -17,15 +17,9 @@ export const createExpoRuntime: (owner: string, namespace: string) => Promise<Ru
             openDatabaseAsync(`${name}.db`),
             ExpoNetworkConnectivity.create(),
         ]);
-        const persistence = createExpoSQLitePersistence({
-            database: database,
-        });
-        const coordination = new SingleProcessCoordination({
-            scope: name,
-        });
-        const blobBytes = new ExpoFileSystemBlobBytesStore({
-            directoryName: `${name}:blobs`,
-        });
+        const persistence = createExpoSQLitePersistence({ database: database });
+        const coordination = new SingleProcessCoordination({ scope: name });
+        const blobBytes = new ExpoFileSystemBlobBytesStore({ directoryName: `${name}:blobs` });
         return {
             owner,
             namespace,

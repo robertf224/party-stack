@@ -319,16 +319,10 @@ export class SharedWorkerCoordinationHost extends BaseCoordination implements Co
                     path: [],
                 })
             );
-            this.respond(connection, request, {
-                ok: true,
-                result,
-            });
+            this.respond(connection, request, { ok: true, result });
         } catch (error) {
             if (signal.aborted) return;
-            this.respond(connection, request, {
-                ok: false,
-                error: serializeError(error),
-            });
+            this.respond(connection, request, { ok: false, error: serializeError(error) });
         }
     }
 
@@ -337,10 +331,7 @@ export class SharedWorkerCoordinationHost extends BaseCoordination implements Co
         request: WorkerRequest,
         outcome:
             | { readonly ok: true; readonly result: unknown }
-            | {
-                  readonly ok: false;
-                  readonly error: ReturnType<typeof serializeError>;
-              }
+            | { readonly ok: false; readonly error: ReturnType<typeof serializeError> }
     ): void {
         if (connection.disconnected || this.closed || connection.connectionId !== request.connectionId) {
             return;

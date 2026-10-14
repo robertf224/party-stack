@@ -162,9 +162,7 @@ export function getSalesforceActionIconName(apiName: string): SalesforceLightnin
 }
 
 export interface SalesforceLightningIconMeta extends Record<string, unknown> {
-    salesforce: {
-        name: string;
-    };
+    salesforce: { name: string };
 }
 
 export function fromSalesforceLightningIconName(name: string): IconDescriptor | undefined {
@@ -177,12 +175,7 @@ export function fromSalesforceLightningIconName(name: string): IconDescriptor | 
     if (!canonicalName) {
         return undefined;
     }
-    return {
-        name: canonicalName,
-        meta: {
-            salesforce: { name },
-        } satisfies SalesforceLightningIconMeta,
-    };
+    return { name: canonicalName, meta: { salesforce: { name } } satisfies SalesforceLightningIconMeta };
 }
 
 export function toSalesforceLightningIconName(icon: IconDescriptor): string | undefined {

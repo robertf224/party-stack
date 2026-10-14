@@ -5,9 +5,7 @@ import { getPartyStackSessionId } from "./sessionSelection.js";
 import type { BetterAuthPlugin } from "better-auth";
 
 export type PartyStackOptions = MultiSessionConfig;
-export type PartyStackPlugin = Omit<ReturnType<typeof multiSession>, "id"> & {
-    id: "party-stack";
-};
+export type PartyStackPlugin = Omit<ReturnType<typeof multiSession>, "id"> & { id: "party-stack" };
 
 export function partyStack(options?: PartyStackOptions): PartyStackPlugin {
     const plugin = multiSession(options);
@@ -57,11 +55,7 @@ export function partyStack(options?: PartyStackOptions): PartyStackPlugin {
                             setRequestCookie(selectedHeaders, sessionToken.name, signedToken);
                             break;
                         }
-                        return {
-                            context: {
-                                headers: selectedHeaders,
-                            },
-                        };
+                        return { context: { headers: selectedHeaders } };
                     }),
                 },
             ],

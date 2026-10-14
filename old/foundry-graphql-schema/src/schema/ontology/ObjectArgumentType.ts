@@ -31,6 +31,4 @@ function get(objectType: ObjectTypeV2): GraphQLInputType {
     return getScalarType(objectType);
 }
 
-export const ObjectArgumentType = {
-    get,
-};
+export const ObjectArgumentType = { get };

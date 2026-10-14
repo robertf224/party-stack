@@ -38,12 +38,7 @@ export const notesOntology = {
             name: "createNote",
             displayName: "Create Note",
             parameters: [
-                {
-                    name: "id",
-                    displayName: "ID",
-                    type: o.string({}),
-                    defaultValue: o.Expression.uuid({}),
-                },
+                { name: "id", displayName: "ID", type: o.string({}), defaultValue: o.Expression.uuid({}) },
                 { name: "title", displayName: "Title", type: o.string({}) },
                 { name: "bodyMarkdown", displayName: "Body", type: o.string({}) },
                 {
@@ -67,14 +62,8 @@ export const notesOntology = {
                             property: ["bodyMarkdown"],
                             value: o.Expression.inputReference({ name: "bodyMarkdown" }),
                         },
-                        {
-                            property: ["createdAt"],
-                            value: o.Expression.now({}),
-                        },
-                        {
-                            property: ["updatedAt"],
-                            value: o.Expression.now({}),
-                        },
+                        { property: ["createdAt"], value: o.Expression.now({}) },
+                        { property: ["updatedAt"], value: o.Expression.now({}) },
                     ],
                 }),
             ],
@@ -96,10 +85,7 @@ export const notesOntology = {
                             property: ["bodyMarkdown"],
                             value: o.Expression.inputReference({ name: "bodyMarkdown" }),
                         },
-                        {
-                            property: ["updatedAt"],
-                            value: o.Expression.now({}),
-                        },
+                        { property: ["updatedAt"], value: o.Expression.now({}) },
                     ],
                 }),
             ],
@@ -148,20 +134,12 @@ export const notesOntology = {
                             property: ["attachment"],
                             value: o.Expression.inputReference({ name: "attachment" }),
                         },
-                        {
-                            property: ["createdAt"],
-                            value: o.Expression.now({}),
-                        },
+                        { property: ["createdAt"], value: o.Expression.now({}) },
                     ],
                 }),
                 o.ActionLogicStep.updateObject({
                     object: { name: "note" },
-                    values: [
-                        {
-                            property: ["updatedAt"],
-                            value: o.Expression.now({}),
-                        },
-                    ],
+                    values: [{ property: ["updatedAt"], value: o.Expression.now({}) }],
                 }),
             ],
         },

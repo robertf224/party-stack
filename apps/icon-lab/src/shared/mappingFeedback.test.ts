@@ -27,11 +27,7 @@ describe("mapping feedback", () => {
             },
         });
 
-        expect(
-            loadMappingFeedback({
-                getItem: (key) => values.get(key) ?? null,
-            })
-        ).toEqual([feedback]);
+        expect(loadMappingFeedback({ getItem: (key) => values.get(key) ?? null })).toEqual([feedback]);
         expect(values.has(MappingFeedbackStorageKey)).toBe(true);
     });
 
@@ -50,14 +46,7 @@ describe("mapping feedback", () => {
     it("drops abandoned replacement feedback without a selected icon", () => {
         expect(
             loadMappingFeedback({
-                getItem: () =>
-                    JSON.stringify([
-                        {
-                            ...feedback,
-                            decision: "replace",
-                            replacementName: "",
-                        },
-                    ]),
+                getItem: () => JSON.stringify([{ ...feedback, decision: "replace", replacementName: "" }]),
             })
         ).toEqual([]);
     });
@@ -68,11 +57,10 @@ describe("mapping feedback", () => {
             setItem: (key, value) => values.set(key, value),
         });
 
-        expect(
-            loadMappingConfirmations({
-                getItem: (key) => values.get(key) ?? null,
-            })
-        ).toEqual(["airplane", "warning"]);
+        expect(loadMappingConfirmations({ getItem: (key) => values.get(key) ?? null })).toEqual([
+            "airplane",
+            "warning",
+        ]);
         expect(values.has(MappingConfirmationsStorageKey)).toBe(true);
     });
 

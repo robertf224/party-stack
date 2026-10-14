@@ -61,33 +61,18 @@ const ISSUE_SECTIONS = [
     { status: "In Progress", label: "In progress" },
     { status: "Open", label: "Open" },
     { status: "Completed", label: "Done" },
-] as const satisfies ReadonlyArray<{
-    status: IssueStatus;
-    label: string;
-}>;
+] as const satisfies ReadonlyArray<{ status: IssueStatus; label: string }>;
 
 const kanbanKeyboardCoordinates: KeyboardCoordinateGetter = (event, { currentCoordinates }) => {
     switch (event.code) {
         case "ArrowLeft":
-            return {
-                ...currentCoordinates,
-                x: currentCoordinates.x - 300,
-            };
+            return { ...currentCoordinates, x: currentCoordinates.x - 300 };
         case "ArrowRight":
-            return {
-                ...currentCoordinates,
-                x: currentCoordinates.x + 300,
-            };
+            return { ...currentCoordinates, x: currentCoordinates.x + 300 };
         case "ArrowUp":
-            return {
-                ...currentCoordinates,
-                y: currentCoordinates.y - 80,
-            };
+            return { ...currentCoordinates, y: currentCoordinates.y - 80 };
         case "ArrowDown":
-            return {
-                ...currentCoordinates,
-                y: currentCoordinates.y + 80,
-            };
+            return { ...currentCoordinates, y: currentCoordinates.y + 80 };
         default:
             return undefined;
     }
@@ -342,10 +327,7 @@ function formatDate(value: unknown) {
     if (!(input instanceof Date) && typeof input !== "string" && typeof input !== "number") return "";
     const date = input instanceof Date ? input : new Date(input);
     if (Number.isNaN(date.getTime())) return "";
-    return new Intl.DateTimeFormat("en", {
-        month: "short",
-        day: "numeric",
-    }).format(date);
+    return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(date);
 }
 
 function formatIssueIdentifier(issueId: string) {
@@ -533,11 +515,7 @@ function ProjectForm({
     function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!title.trim()) return;
-        onSave({
-            title: title.trim(),
-            description: description.trim(),
-            color,
-        });
+        onSave({ title: title.trim(), description: description.trim(), color });
     }
 
     return (
@@ -597,10 +575,7 @@ function ProjectForm({
 
 type IssueAttachment = NonNullable<CreateIssueParameters["attachments"]>[number];
 
-type PendingAttachment = {
-    attachment: IssueAttachment;
-    name: string;
-};
+type PendingAttachment = { attachment: IssueAttachment; name: string };
 
 function TagInput({
     id,
@@ -691,20 +666,13 @@ function AttachmentPicker({
             const additions = await Promise.all(
                 Array.from(files).map(async (file) => {
                     const result = await ontology.attachments.create(file, {
-                        target: {
-                            kind: "actionParameter",
-                            actionType,
-                            parameter: "attachments",
-                        },
+                        target: { kind: "actionParameter", actionType, parameter: "attachments" },
                         eager: true,
                     });
                     if (result.isMaterialized) {
                         await result.isMaterialized;
                     }
-                    return {
-                        attachment: result.attachment,
-                        name: file.name,
-                    };
+                    return { attachment: result.attachment, name: file.name };
                 })
             );
             onChange([...attachments, ...additions]);
@@ -917,10 +885,7 @@ function AttachmentCard({
     attachment: IssueAttachment;
     ontology: TrackerOntology;
 }) {
-    const [preview, setPreview] = useState<{
-        url: string;
-        metadata: AttachmentMetadata;
-    }>();
+    const [preview, setPreview] = useState<{ url: string; metadata: AttachmentMetadata }>();
     const [failed, setFailed] = useState(false);
 
     useEffect(() => {
@@ -1072,9 +1037,7 @@ function IssueDetails({
                         <>
                             <span
                                 className="size-2 rounded-sm"
-                                style={{
-                                    backgroundColor: project.projectColor || "#94a3b8",
-                                }}
+                                style={{ backgroundColor: project.projectColor || "#94a3b8" }}
                             />
                             <span>{project.projectTitle}</span>
                             <Icon className="size-3" name="chevron" />
@@ -1099,9 +1062,7 @@ function IssueDetails({
                                     <Menu.Item
                                         className={`${menuItemClass} text-red-600`}
                                         onClick={() => {
-                                            void deleteIssue({
-                                                issue: issue.issueId,
-                                            });
+                                            void deleteIssue({ issue: issue.issueId });
                                             onClose();
                                         }}
                                     >
@@ -1203,16 +1164,9 @@ function IssueDetails({
     );
 }
 
-type IssueRow = Issue & {
-    projectTitle?: string;
-    projectColor?: string;
-};
+type IssueRow = Issue & { projectTitle?: string; projectColor?: string };
 
-type CommandIssue = {
-    issueId: string;
-    issueTitle?: string;
-    issueStatus?: string;
-};
+type CommandIssue = { issueId: string; issueTitle?: string; issueStatus?: string };
 
 function KanbanCard({
     issue,
@@ -1225,9 +1179,7 @@ function KanbanCard({
 }) {
     const { attributes, isDragging, listeners, setNodeRef, transform } = useDraggable({
         id: issue.issueId,
-        data: {
-            status: issue.issueStatus,
-        },
+        data: { status: issue.issueStatus },
     });
 
     return (
@@ -1283,9 +1235,7 @@ function KanbanCard({
                         <span className="flex min-w-0 items-center gap-1.5 rounded bg-slate-100 px-2 py-1 text-[10px] text-slate-500">
                             <span
                                 className="size-1.5 shrink-0 rounded-sm"
-                                style={{
-                                    backgroundColor: issue.projectColor || "#94a3b8",
-                                }}
+                                style={{ backgroundColor: issue.projectColor || "#94a3b8" }}
                             />
                             <span className="truncate">{issue.projectTitle}</span>
                         </span>
@@ -1375,12 +1325,8 @@ function KanbanBoard({
     onStatusChange: (issue: IssueRow, status: IssueStatus) => void;
 }) {
     const sensors = useSensors(
-        useSensor(PointerSensor, {
-            activationConstraint: { distance: 6 },
-        }),
-        useSensor(KeyboardSensor, {
-            coordinateGetter: kanbanKeyboardCoordinates,
-        })
+        useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+        useSensor(KeyboardSensor, { coordinateGetter: kanbanKeyboardCoordinates })
     );
 
     function handleDragEnd(event: DragEndEvent) {
@@ -1476,9 +1422,7 @@ function CommandPalette({
                 icon: (
                     <span
                         className="size-2.5 rounded-sm"
-                        style={{
-                            backgroundColor: project.projectColor || "#94a3b8",
-                        }}
+                        style={{ backgroundColor: project.projectColor || "#94a3b8" }}
                     />
                 ),
                 run: () => onOpenProject(project.projectId),
@@ -1726,10 +1670,7 @@ function InitialProfileConnection({ onConnected }: { onConnected: (profile: Conn
             }
             onConnected(
                 kind === "sqlite"
-                    ? await connectSqliteProfile({
-                          username: values.username!,
-                          password: values.password!,
-                      })
+                    ? await connectSqliteProfile({ username: values.username!, password: values.password! })
                     : await connectFoundryProfile()
             );
         } catch (cause) {
@@ -1847,10 +1788,7 @@ function ConnectedIssueTracker({
             }
             const profile =
                 kind === "sqlite"
-                    ? await connectSqliteProfile({
-                          username: values.username!,
-                          password: values.password!,
-                      })
+                    ? await connectSqliteProfile({ username: values.username!, password: values.password! })
                     : await connectFoundryProfile();
             setProfiles((current) => (signedOut ? [profile] : [...current, profile]));
             setActiveProfileId(profile.id);
@@ -1891,9 +1829,7 @@ function ConnectedIssueTracker({
 
     const { data: allIssueIds } = useLiveQuery({
         query: (q) =>
-            q.from({ Issue: ontology.objects.Issue }).select(({ Issue }) => ({
-                issueId: Issue.issueId,
-            })),
+            q.from({ Issue: ontology.objects.Issue }).select(({ Issue }) => ({ issueId: Issue.issueId })),
     });
 
     const { data: issues, isLoading: issuesLoading } = useLiveQuery({
@@ -1952,10 +1888,7 @@ function ConnectedIssueTracker({
 
     function openProject(projectId: string) {
         setSelectedProjectId(projectId);
-        void navigate({
-            to: "/project/$projectId",
-            params: { projectId },
-        });
+        void navigate({ to: "/project/$projectId", params: { projectId } });
     }
 
     function showAllIssues() {
@@ -2109,9 +2042,7 @@ function ConnectedIssueTracker({
                                     key={project.projectId}
                                     label="project"
                                     onDelete={() => {
-                                        void deleteProject({
-                                            project: project.projectId,
-                                        });
+                                        void deleteProject({ project: project.projectId });
                                         if (selectedProjectId === project.projectId) {
                                             showAllIssues();
                                         }
@@ -2360,9 +2291,7 @@ function ConnectedIssueTracker({
                                 issues={issues}
                                 onCreateIssue={openCreateIssue}
                                 onDeleteIssue={(issueId) => {
-                                    void deleteIssue({
-                                        issue: issueId,
-                                    });
+                                    void deleteIssue({ issue: issueId });
                                     if (selectedIssueId === issueId) {
                                         setSelectedIssueId(null);
                                     }
@@ -2441,9 +2370,7 @@ function ConnectedIssueTracker({
                                                         className="contents"
                                                         label="issue"
                                                         onDelete={() => {
-                                                            void deleteIssue({
-                                                                issue: issue.issueId,
-                                                            });
+                                                            void deleteIssue({ issue: issue.issueId });
                                                             if (selectedIssueId === issue.issueId) {
                                                                 setSelectedIssueId(null);
                                                             }

@@ -51,20 +51,8 @@ describe("synthesizeSalesforceCrudActionTypes", () => {
         expect(actions.map((action) => action.name)).toEqual(["createTask", "updateTask", "deleteTask"]);
         expect(actions[0]).toMatchObject({
             id: "salesforce:crud:create:Task",
-            meta: {
-                salesforce: {
-                    kind: "crud",
-                    objectType: "Task",
-                    operation: "create",
-                },
-            },
-            parameters: [
-                { name: "Subject" },
-                {
-                    name: "Status",
-                    type: { kind: "optional" },
-                },
-            ],
+            meta: { salesforce: { kind: "crud", objectType: "Task", operation: "create" } },
+            parameters: [{ name: "Subject" }, { name: "Status", type: { kind: "optional" } }],
             logic: [
                 {
                     kind: "createObject",
@@ -73,21 +61,11 @@ describe("synthesizeSalesforceCrudActionTypes", () => {
                         values: [
                             {
                                 property: ["Subject"],
-                                value: {
-                                    kind: "inputReference",
-                                    value: {
-                                        name: "Subject",
-                                    },
-                                },
+                                value: { kind: "inputReference", value: { name: "Subject" } },
                             },
                             {
                                 property: ["Status"],
-                                value: {
-                                    kind: "inputReference",
-                                    value: {
-                                        name: "Status",
-                                    },
-                                },
+                                value: { kind: "inputReference", value: { name: "Status" } },
                             },
                         ],
                     },
@@ -96,55 +74,19 @@ describe("synthesizeSalesforceCrudActionTypes", () => {
         });
         expect(actions[1]).toMatchObject({
             id: "salesforce:crud:update:Task",
-            meta: {
-                salesforce: {
-                    kind: "crud",
-                    objectType: "Task",
-                    operation: "update",
-                },
-            },
+            meta: { salesforce: { kind: "crud", objectType: "Task", operation: "update" } },
             parameters: [
                 { name: "recordId" },
-                {
-                    name: "Subject",
-                    type: { kind: "optional" },
-                },
-                {
-                    name: "Status",
-                    type: { kind: "optional" },
-                },
+                { name: "Subject", type: { kind: "optional" } },
+                { name: "Status", type: { kind: "optional" } },
             ],
-            logic: [
-                {
-                    kind: "updateObject",
-                    value: {
-                        object: {
-                            name: "recordId",
-                        },
-                    },
-                },
-            ],
+            logic: [{ kind: "updateObject", value: { object: { name: "recordId" } } }],
         });
         expect(actions[2]).toMatchObject({
             id: "salesforce:crud:delete:Task",
-            meta: {
-                salesforce: {
-                    kind: "crud",
-                    objectType: "Task",
-                    operation: "delete",
-                },
-            },
+            meta: { salesforce: { kind: "crud", objectType: "Task", operation: "delete" } },
             parameters: [{ name: "recordId" }],
-            logic: [
-                {
-                    kind: "deleteObject",
-                    value: {
-                        object: {
-                            name: "recordId",
-                        },
-                    },
-                },
-            ],
+            logic: [{ kind: "deleteObject", value: { object: { name: "recordId" } } }],
         });
     });
 });

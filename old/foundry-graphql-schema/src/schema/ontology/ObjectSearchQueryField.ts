@@ -25,10 +25,7 @@ function create(getTypeReference: GetTypeReference, objectType: ObjectTypeV2): N
                 return lambda(
                     $args.getRaw(),
                     (args: { where: ObjectSetFilter }) => {
-                        let objectSet: ObjectSet = {
-                            type: "base",
-                            objectType: objectType.apiName,
-                        };
+                        let objectSet: ObjectSet = { type: "base", objectType: objectType.apiName };
                         if (args.where) {
                             const filter = ObjectSetFilterType.toObjectSetFilter(objectType, args.where);
                             if (filter) {
@@ -47,6 +44,4 @@ function create(getTypeReference: GetTypeReference, objectType: ObjectTypeV2): N
     return [fieldName, field];
 }
 
-export const ObjectSearchQueryField = {
-    create,
-};
+export const ObjectSearchQueryField = { create };

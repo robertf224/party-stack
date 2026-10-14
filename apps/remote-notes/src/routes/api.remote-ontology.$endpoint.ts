@@ -42,9 +42,7 @@ const remoteServer = createRemoteOntologyServer<NotesContext, RemoteNotesOntolog
         database: new Database("temp/remote-notes.sqlite"),
         name: "remote-notes-sqlite",
     }),
-    getContext: (request) => ({
-        user: getDemoEmail(request),
-    }),
+    getContext: (request) => ({ user: getDemoEmail(request) }),
     policy: {
         clientContext: "forward",
         baseObjectTypeQueries: {
@@ -65,11 +63,7 @@ const remoteServer = createRemoteOntologyServer<NotesContext, RemoteNotesOntolog
                 case "deleteNote":
                 case "createNoteAttachment": {
                     const noteId = request.parameters.note;
-                    return userOwnsNote({
-                        email: ctx.user,
-                        noteId,
-                        notes: objects.Note,
-                    });
+                    return userOwnsNote({ email: ctx.user, noteId, notes: objects.Note });
                 }
                 default:
                     return false;

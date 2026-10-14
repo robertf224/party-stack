@@ -4,22 +4,13 @@ import type { ArrayElement, ObjectTypeName } from "./typeNames.js";
 type LinkTypes<IR extends Pick<OntologyIR, "linkTypes">> = ArrayElement<IR["linkTypes"]>;
 
 type LinkHopNameForLink<Link, SourceObjectType extends string> = Link extends {
-    source: {
-        objectType: infer LinkSourceObjectType extends string;
-    };
-    target: {
-        objectType: infer LinkTargetObjectType extends string;
-        name: infer TargetName extends string;
-    };
+    source: { objectType: infer LinkSourceObjectType extends string };
+    target: { objectType: infer LinkTargetObjectType extends string; name: infer TargetName extends string };
 }
     ? SourceObjectType extends LinkSourceObjectType
         ? TargetName
         : SourceObjectType extends LinkTargetObjectType
-          ? Link extends {
-                source: {
-                    name: infer SourceName extends string;
-                };
-            }
+          ? Link extends { source: { name: infer SourceName extends string } }
               ? SourceName
               : never
           : never
@@ -31,24 +22,14 @@ export type LinkHopName<
 > = LinkHopNameForLink<LinkTypes<IR>, SourceObjectType>;
 
 type LinkHopTargetForLink<Link, SourceObjectType extends string, Name extends string> = Link extends {
-    source: {
-        objectType: infer LinkSourceObjectType extends string;
-        name: infer SourceName extends string;
-    };
-    target: {
-        objectType: infer TargetObjectType extends string;
-        name: infer TargetName extends string;
-    };
+    source: { objectType: infer LinkSourceObjectType extends string; name: infer SourceName extends string };
+    target: { objectType: infer TargetObjectType extends string; name: infer TargetName extends string };
 }
     ? SourceObjectType extends LinkSourceObjectType
         ? Name extends TargetName
             ? TargetObjectType
             : never
-        : Link extends {
-                target: {
-                    objectType: infer LinkTargetObjectType extends string;
-                };
-            }
+        : Link extends { target: { objectType: infer LinkTargetObjectType extends string } }
           ? SourceObjectType extends LinkTargetObjectType
               ? Name extends SourceName
                   ? LinkSourceObjectType
@@ -64,14 +45,8 @@ export type LinkHopTargetObjectType<
 > = LinkHopTargetForLink<LinkTypes<IR>, SourceObjectType, Name>;
 
 type LinkHopLinkForLink<Link, SourceObjectType extends string, Name extends string> = Link extends {
-    source: {
-        objectType: infer LinkSourceObjectType extends string;
-        name: infer SourceName extends string;
-    };
-    target: {
-        objectType: infer LinkTargetObjectType extends string;
-        name: infer TargetName extends string;
-    };
+    source: { objectType: infer LinkSourceObjectType extends string; name: infer SourceName extends string };
+    target: { objectType: infer LinkTargetObjectType extends string; name: infer TargetName extends string };
 }
     ? SourceObjectType extends LinkSourceObjectType
         ? Name extends TargetName

@@ -17,9 +17,7 @@ export class OPFSBlobBytesStore implements BlobBytesStore {
 
     async write(id: string, blob: Blob): Promise<void> {
         const directory = await this.#directory();
-        const fileHandle = await directory.getFileHandle(encodeFileName(id), {
-            create: true,
-        });
+        const fileHandle = await directory.getFileHandle(encodeFileName(id), { create: true });
         const writable = await fileHandle.createWritable();
         try {
             await writable.write(blob);
@@ -49,9 +47,7 @@ export class OPFSBlobBytesStore implements BlobBytesStore {
     async clear(): Promise<void> {
         const root = await navigator.storage.getDirectory();
         try {
-            await root.removeEntry(this.#directoryName, {
-                recursive: true,
-            });
+            await root.removeEntry(this.#directoryName, { recursive: true });
         } catch (error) {
             if (error instanceof DOMException && error.name === "NotFoundError") {
                 return;

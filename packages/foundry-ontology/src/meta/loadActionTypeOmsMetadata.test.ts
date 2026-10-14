@@ -1,13 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { OntologyClient } from "@party-stack/foundry-client";
 
-const { bulkLoadOntologyEntities } = vi.hoisted(() => ({
-    bulkLoadOntologyEntities: vi.fn(),
-}));
+const { bulkLoadOntologyEntities } = vi.hoisted(() => ({ bulkLoadOntologyEntities: vi.fn() }));
 
-vi.mock("@osdk/client.unstable", () => ({
-    bulkLoadOntologyEntities,
-}));
+vi.mock("@osdk/client.unstable", () => ({ bulkLoadOntologyEntities }));
 
 import {
     convertOmsActionParameterStringConstraint,
@@ -32,9 +28,7 @@ describe("loadActionTypeOmsMetadata", () => {
             actionTypeLogic: { validation: { parameterValidations: {} } },
             metadata: { parameters: {} },
         };
-        bulkLoadOntologyEntities.mockResolvedValue({
-            actionTypes: [{ actionType }, null],
-        });
+        bulkLoadOntologyEntities.mockResolvedValue({ actionTypes: [{ actionType }, null] });
 
         const result = await loadActionTypeOmsMetadata(client, ["ri.action.one", "ri.action.two"]);
 
@@ -56,10 +50,7 @@ describe("loadActionTypeOmsMetadata", () => {
                 typeGroups: [],
             }
         );
-        expect(result.get("ri.action.one")).toEqual({
-            actionType,
-            propertyApiNamesByParameter: new Map(),
-        });
+        expect(result.get("ri.action.one")).toEqual({ actionType, propertyApiNamesByParameter: new Map() });
         expect(result.has("ri.action.two")).toBe(false);
     });
 
@@ -79,22 +70,14 @@ describe("loadActionTypeOmsMetadata", () => {
                                                 labelledValues: [
                                                     {
                                                         label: "United States",
-                                                        value: {
-                                                            type: "string",
-                                                            string: "US",
-                                                        },
+                                                        value: { type: "string", string: "US" },
                                                     },
                                                     {
                                                         label: "Canada",
-                                                        value: {
-                                                            type: "string",
-                                                            string: "CA",
-                                                        },
+                                                        value: { type: "string", string: "CA" },
                                                     },
                                                 ],
-                                                otherValueAllowed: {
-                                                    allowed: true,
-                                                },
+                                                otherValueAllowed: { allowed: true },
                                             },
                                         },
                                     },
@@ -132,14 +115,8 @@ describe("loadActionTypeOmsMetadata", () => {
         ).toBeDefined();
         expect(convertOmsActionParameterStringConstraint(loaded, "country")).toBeUndefined();
         expect(convertOmsActionParameterStringSuggestions(loaded, "country")).toEqual([
-            {
-                value: "US",
-                label: "United States",
-            },
-            {
-                value: "CA",
-                label: "Canada",
-            },
+            { value: "US", label: "United States" },
+            { value: "CA", label: "Canada" },
         ]);
     });
 
@@ -167,34 +144,19 @@ describe("loadActionTypeOmsMetadata", () => {
             metadata: {
                 parameters: {
                     project: {
-                        type: {
-                            type: "objectReference",
-                            objectReference: {
-                                objectTypeId: "project",
-                            },
-                        },
+                        type: { type: "objectReference", objectReference: { objectTypeId: "project" } },
                     },
                 },
             },
         };
         bulkLoadOntologyEntities
-            .mockResolvedValueOnce({
-                actionTypes: [
-                    {
-                        actionType,
-                        ontologyVersion: "42",
-                    },
-                ],
-            })
+            .mockResolvedValueOnce({ actionTypes: [{ actionType, ontologyVersion: "42" }] })
             .mockResolvedValueOnce({
                 objectTypes: [
                     {
                         objectType: {
                             propertyTypes: {
-                                "ri.property.project-color": {
-                                    id: "project-color",
-                                    apiName: "projectColor",
-                                },
+                                "ri.property.project-color": { id: "project-color", apiName: "projectColor" },
                             },
                         },
                     },
@@ -210,14 +172,8 @@ describe("loadActionTypeOmsMetadata", () => {
             expect.objectContaining({
                 objectTypes: [
                     {
-                        identifier: {
-                            type: "objectTypeId",
-                            objectTypeId: "project",
-                        },
-                        versionReference: {
-                            type: "ontologyVersion",
-                            ontologyVersion: "42",
-                        },
+                        identifier: { type: "objectTypeId", objectTypeId: "project" },
+                        versionReference: { type: "ontologyVersion", ontologyVersion: "42" },
                     },
                 ],
             })

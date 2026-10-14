@@ -40,8 +40,4 @@ function toOSDK<T extends ObjectOrInterfaceDefinition>(
     return objectSet.filter ? objectSetClient.where(objectSet.filter) : objectSetClient;
 }
 
-export const ObjectSet = {
-    normalize,
-    contains,
-    toOSDK,
-};
+export const ObjectSet = { normalize, contains, toOSDK };

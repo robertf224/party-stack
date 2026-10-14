@@ -58,10 +58,7 @@ export interface SalesforceGlobalDescribeResponse {
 export type DescribeGlobalResult = SalesforceGlobalDescribeResponse;
 
 export interface SalesforceRecord {
-    attributes?: {
-        type?: string;
-        url?: string;
-    };
+    attributes?: { type?: string; url?: string };
     [key: string]: unknown;
 }
 
@@ -75,11 +72,7 @@ export interface SalesforceQueryResponse<T extends SalesforceRecord = Salesforce
 export type QueryResult<T extends SalesforceRecord = SalesforceRecord> = SalesforceQueryResponse<T>;
 
 export interface SalesforceSaveResult {
-    errors: Array<{
-        fields?: string[];
-        message: string;
-        statusCode?: string;
-    }>;
+    errors: Array<{ fields?: string[]; message: string; statusCode?: string }>;
     id?: string;
     success: boolean;
 }
@@ -126,19 +119,13 @@ export interface SalesforceInvocableActionDescribeRequest {
 
 export type SalesforceInvocableActionListResponse =
     | SalesforceInvocableActionSummary[]
-    | {
-          actions?: SalesforceInvocableActionSummary[];
-      }
+    | { actions?: SalesforceInvocableActionSummary[] }
     | Record<string, string>;
 
 export interface SalesforceInvocableActionResult {
     actionName?: string;
     isSuccess: boolean;
-    errors?: Array<{
-        statusCode?: string;
-        message?: string;
-        fields?: string[];
-    }>;
+    errors?: Array<{ statusCode?: string; message?: string; fields?: string[] }>;
     outputValues?: Record<string, unknown> | null;
 }
 
@@ -154,13 +141,9 @@ export interface SalesforceChangeEventHeader {
 }
 
 export interface SalesforceChangeEvent<Payload extends Record<string, unknown> = Record<string, unknown>> {
-    event?: {
-        replayId?: number;
-    };
+    event?: { replayId?: number };
     schema?: string;
-    payload: Payload & {
-        ChangeEventHeader: SalesforceChangeEventHeader;
-    };
+    payload: Payload & { ChangeEventHeader: SalesforceChangeEventHeader };
 }
 
 export interface SalesforceChangeEventSubscription {

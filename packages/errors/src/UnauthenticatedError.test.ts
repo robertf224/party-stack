@@ -21,11 +21,6 @@ describe("UnauthenticatedError", () => {
                 message: "Session expired.",
             })
         ).toBe(true);
-        expect(
-            isUnauthenticatedError({
-                name: "UnauthenticatedError",
-                code: "forbidden",
-            })
-        ).toBe(false);
+        expect(isUnauthenticatedError({ name: "UnauthenticatedError", code: "forbidden" })).toBe(false);
     });
 });

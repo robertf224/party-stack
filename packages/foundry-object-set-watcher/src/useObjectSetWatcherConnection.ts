@@ -77,28 +77,17 @@ export function convertSubscriptionMessage(
         case "objectSetChanged": {
             const subscriptionId = externalSubscriptionIdsToInternal?.get(message.id);
             if (!subscriptionId) return undefined;
-            return {
-                type: "change",
-                subscriptionId,
-                updates: filterChangeMessages(message.updates),
-            };
+            return { type: "change", subscriptionId, updates: filterChangeMessages(message.updates) };
         }
         case "refreshObjectSet": {
             const subscriptionId = externalSubscriptionIdsToInternal?.get(message.id);
             if (!subscriptionId) return undefined;
-            return {
-                type: "refresh",
-                subscriptionId,
-                objectType: message.objectType,
-            };
+            return { type: "refresh", subscriptionId, objectType: message.objectType };
         }
         case "subscriptionClosed": {
             const subscriptionId = externalSubscriptionIdsToInternal?.get(message.id);
             if (!subscriptionId) return undefined;
-            return {
-                type: "state",
-                updates: [{ subscriptionId, status: "closed" }],
-            };
+            return { type: "state", updates: [{ subscriptionId, status: "closed" }] };
         }
         default:
             return undefined;

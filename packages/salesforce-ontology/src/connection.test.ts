@@ -16,10 +16,7 @@ describe("createSalesforceConnectionAdapter", () => {
             instanceUrl: "https://example.my.salesforce.com",
             token: "access-token",
             userId: "005000000000001",
-        })({
-            installationId: "salesforce",
-            runtime: {} as never,
-        });
+        })({ installationId: "salesforce", runtime: {} as never });
         const [established] = await adapter.restoreConnections();
         if (!established?.session.egress) {
             throw new Error("Expected Salesforce egress wrapper.");
@@ -41,10 +38,7 @@ describe("createSalesforceConnectionAdapter", () => {
     it("exposes access-token authentication through the connection controller", async () => {
         const adapter = await createSalesforceConnectionAdapter({
             instanceUrl: "https://example.my.salesforce.com",
-        })({
-            installationId: "salesforce",
-            runtime: {} as never,
-        });
+        })({ installationId: "salesforce", runtime: {} as never });
         const connect = vi.fn(() => Promise.resolve());
         const authentication = adapter.createAuthenticationClient({
             connect,
@@ -56,15 +50,8 @@ describe("createSalesforceConnectionAdapter", () => {
             userId: "005000000000001",
         });
 
-        expect(connection).toEqual({
-            userId: "005000000000001",
-            state: { status: "active" },
-        });
-        expect(connect).toHaveBeenCalledWith(
-            expect.objectContaining({
-                connection,
-            })
-        );
+        expect(connection).toEqual({ userId: "005000000000001", state: { status: "active" } });
+        expect(connect).toHaveBeenCalledWith(expect.objectContaining({ connection }));
     });
 
     it("establishes server-side client credentials connections", async () => {
@@ -72,36 +59,21 @@ describe("createSalesforceConnectionAdapter", () => {
         const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
             const request = new Request(input, init);
             if (request.url.endsWith("/services/oauth2/userinfo")) {
-                return Response.json({
-                    user_id: "005000000000001",
-                });
+                return Response.json({ user_id: "005000000000001" });
             }
             tokenBody = new URLSearchParams(await request.text());
-            return Response.json({
-                access_token: "access-token",
-                expires_in: 3600,
-                token_type: "Bearer",
-            });
+            return Response.json({ access_token: "access-token", expires_in: 3600, token_type: "Bearer" });
         });
         const adapter = await createSalesforceConnectionAdapter({
             instanceUrl: "https://example.my.salesforce.com",
-            clientCredentials: {
-                clientId: "client",
-                clientSecret: "secret",
-                fetch,
-            },
-        })({
-            installationId: "salesforce",
-            runtime: {} as never,
-        });
+            clientCredentials: { clientId: "client", clientSecret: "secret", fetch },
+        })({ installationId: "salesforce", runtime: {} as never });
 
         const [established] = await adapter.restoreConnections();
 
         expect(established?.connection).toMatchObject({
             userId: "005000000000001",
-            state: {
-                status: "active",
-            },
+            state: { status: "active" },
         });
         expect(tokenBody?.get("grant_type")).toBe("client_credentials");
         expect(tokenBody?.get("client_secret")).toBe("secret");
@@ -153,15 +125,8 @@ describe("createSalesforceConnectionAdapter", () => {
         });
         const adapter = await createSalesforceConnectionAdapter({
             instanceUrl: "https://example.my.salesforce.com",
-            oauth: {
-                clientId: "client",
-                redirectUrl: "http://localhost:1717/oauth/callback",
-                fetch,
-            },
-        })({
-            installationId: "salesforce",
-            runtime,
-        });
+            oauth: { clientId: "client", redirectUrl: "http://localhost:1717/oauth/callback", fetch },
+        })({ installationId: "salesforce", runtime });
         let established: EstablishedConnection | undefined;
         const connect = vi.fn((candidate: EstablishedConnection) => {
             established = candidate;
@@ -176,27 +141,15 @@ describe("createSalesforceConnectionAdapter", () => {
 
         expect(connection.userId).toBe("005000000000001");
         expect(connection.state.status).toBe("active");
-        expect(connect).toHaveBeenCalledWith(
-            expect.objectContaining({
-                connection,
-            })
-        );
+        expect(connect).toHaveBeenCalledWith(expect.objectContaining({ connection }));
         expect([...values.values()].some((value) => value.includes("refresh-token"))).toBe(true);
         if (!established?.session.egress) {
             throw new Error("Expected OAuth egress wrapper.");
         }
         const backendFetch = vi
             .fn<typeof globalThis.fetch>()
-            .mockResolvedValueOnce(
-                new Response(null, {
-                    status: 401,
-                })
-            )
-            .mockResolvedValueOnce(
-                new Response(null, {
-                    status: 204,
-                })
-            );
+            .mockResolvedValueOnce(new Response(null, { status: 401 }))
+            .mockResolvedValueOnce(new Response(null, { status: 204 }));
         const egress = established.session.egress({
             fetch: backendFetch,
             createWebSocket: () => Promise.resolve({} as WebSocket),
@@ -204,9 +157,7 @@ describe("createSalesforceConnectionAdapter", () => {
 
         await expect(
             egress.fetch(new Request("https://example.my.salesforce.com/services/data/v65.0/sobjects"))
-        ).resolves.toMatchObject({
-            status: 204,
-        });
+        ).resolves.toMatchObject({ status: 204 });
         expect(backendFetch).toHaveBeenCalledTimes(2);
 
         await adapter.cleanup?.();

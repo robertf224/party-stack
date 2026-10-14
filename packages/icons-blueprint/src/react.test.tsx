@@ -7,19 +7,12 @@ describe("BlueprintIcon", () => {
         const element = BlueprintIcon({ name: "add", size: 20, title: "Add" });
 
         expect(element.type).toBe(Icon);
-        expect(element.props).toMatchObject({
-            icon: "plus",
-            size: 20,
-            title: "Add",
-        });
+        expect(element.props).toMatchObject({ icon: "plus", size: 20, title: "Add" });
     });
 
     it("passes unsupported mappings to Blueprint as empty icons", () => {
         const element = BlueprintIcon({ name: "ticket" });
 
-        expect(element).toMatchObject({
-            type: Icon,
-            props: { icon: undefined },
-        });
+        expect(element).toMatchObject({ type: Icon, props: { icon: undefined } });
     });
 });

@@ -44,13 +44,7 @@ async function searchActionTypes(
                 ActionTypesV2.search(
                     client,
                     client.ontologyRid,
-                    {
-                        where,
-                        orderBy,
-                        pageSize,
-                        pageToken,
-                        fuzziness: { type: "off" },
-                    },
+                    { where, orderBy, pageSize, pageToken, fuzziness: { type: "off" } },
                     { preview: true }
                 ),
             (page) => page.nextPageToken,
@@ -79,11 +73,7 @@ async function loadActionTypesFullMetadata(
                     await ActionTypesFullMetadata.getFullMetadataBatch(
                         client,
                         client.ontologyRid,
-                        {
-                            requests: batch.map((actionType) => ({
-                                actionType: actionType.apiName,
-                            })),
-                        },
+                        { requests: batch.map((actionType) => ({ actionType: actionType.apiName })) },
                         { preview: true }
                     )
                 ).data,
@@ -95,11 +85,7 @@ async function loadActionTypesFullMetadata(
     }
 
     return actionTypes.map(
-        (actionType) =>
-            fullMetadataByApiName.get(actionType.apiName) ?? {
-                actionType,
-                fullLogicRules: [],
-            }
+        (actionType) => fullMetadataByApiName.get(actionType.apiName) ?? { actionType, fullLogicRules: [] }
     );
 }
 

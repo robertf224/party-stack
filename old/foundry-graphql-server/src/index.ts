@@ -10,15 +10,7 @@ export async function start() {
 
     const serv = grafserv({
         schema,
-        preset: {
-            grafast: {
-                context,
-                explain: true,
-            },
-            grafserv: {
-                graphiql: true,
-            },
-        },
+        preset: { grafast: { context, explain: true }, grafserv: { graphiql: true } },
     });
 
     const server = createServer();

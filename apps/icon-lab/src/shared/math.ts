@@ -60,10 +60,7 @@ export function projectTo2d(vectors: number[][]): Array<{ x: number; y: number }
     const axisA = powerIteration(centered, dims, 24);
     const axisB = powerIteration(deflate(centered, axisA), dims, 24);
 
-    return centered.map((vector) => ({
-        x: dot(vector, axisA),
-        y: dot(vector, axisB),
-    }));
+    return centered.map((vector) => ({ x: dot(vector, axisA), y: dot(vector, axisB) }));
 }
 
 function dot(a: number[], b: number[]): number {

@@ -32,6 +32,4 @@ function getComparator<T extends ObjectOrInterfaceDefinition>(
     };
 }
 
-export const ObjectList = {
-    getComparator,
-};
+export const ObjectList = { getComparator };

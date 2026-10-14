@@ -13,10 +13,7 @@ export type IndexedDBSchemaMismatchPolicy =
 export type IndexedDBPersistenceOptions = Omit<
     IndexedDBPersistenceAdapterOptions,
     "schemaVersion" | "schemaMismatchPolicy"
-> & {
-    coordinator?: PersistedCollectionCoordinator;
-    schemaMismatchPolicy?: IndexedDBSchemaMismatchPolicy;
-};
+> & { coordinator?: PersistedCollectionCoordinator; schemaMismatchPolicy?: IndexedDBSchemaMismatchPolicy };
 
 /** Create shared persistence with the same collection resolver as TanStack's SQLite factories. */
 export function createIndexedDBPersistence(
@@ -36,11 +33,7 @@ export function createIndexedDBPersistence(
                 : (schemaMismatchPolicy ??
                   (mode === "sync-present" ? "sync-present-reset" : "sync-absent-error"));
         const adapter = new IndexedDBPersistenceAdapter(
-            {
-                ...baseOptions,
-                schemaVersion,
-                schemaMismatchPolicy: policy,
-            },
+            { ...baseOptions, schemaVersion, schemaMismatchPolicy: policy },
             connection
         );
         // Without a supplied coordinator, TanStack creates a collection-local default.

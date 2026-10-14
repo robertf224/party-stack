@@ -252,17 +252,12 @@ export function createSalesforceOntologyBackendAdapter(opts: {
 export type CreateSalesforceOntologyBackendOptions<
     Context extends Record<string, unknown> = Record<string, unknown>,
 > = (
-    | {
-          client: SalesforceClient;
-          subscribeToChangeEvents?: SubscribeToSalesforceChangeEvents;
-      }
+    | { client: SalesforceClient; subscribeToChangeEvents?: SubscribeToSalesforceChangeEvents }
     | {
           createClient: (ir: OntologyIR, context: Context) => SalesforceClient | Promise<SalesforceClient>;
           subscribeToChangeEvents?: SubscribeToSalesforceChangeEvents;
       }
-) & {
-    live?: boolean;
-};
+) & { live?: boolean };
 
 export function createSalesforceOntologyBackend<
     Context extends Record<string, unknown> = Record<string, unknown>,

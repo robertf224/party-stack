@@ -134,14 +134,7 @@ describe("convertSalesforceMetaObjectType", () => {
             name: "Account",
             primaryKey: "Id",
             title: "Name",
-            icon: {
-                name: "building",
-                meta: {
-                    salesforce: {
-                        name: "standard/account",
-                    },
-                },
-            },
+            icon: { name: "building", meta: { salesforce: { name: "standard/account" } } },
         });
         expect(objectType.properties.find((property) => property.name === "BillingAddress")).toBeUndefined();
         expect(objectType.properties.find((property) => property.name === "Industry")?.type).toEqual({
@@ -152,9 +145,7 @@ describe("convertSalesforceMetaObjectType", () => {
                     value: {
                         constraint: {
                             kind: "enum",
-                            value: {
-                                options: [{ value: "Agriculture", label: "Agriculture" }],
-                            },
+                            value: { options: [{ value: "Agriculture", label: "Agriculture" }] },
                         },
                     },
                 },
@@ -180,13 +171,8 @@ describe("convertSalesforceMetaLinkTypes", () => {
             id: "salesforce:link:Account.OwnerId",
             foreignKey: "OwnerId",
             cardinality: "many",
-            target: {
-                objectType: "User",
-                name: "Owner",
-            },
-            source: {
-                objectType: "Account",
-            },
+            target: { objectType: "User", name: "Owner" },
+            source: { objectType: "Account" },
         });
     });
 });

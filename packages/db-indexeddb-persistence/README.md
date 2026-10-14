@@ -53,10 +53,7 @@ const tasks = createCollection(
         }),
         persistence,
         schemaVersion: 1,
-        initialRender: {
-            strategy: "network-first",
-            networkTimeoutMs: 3_000,
-        },
+        initialRender: { strategy: "network-first", networkTimeoutMs: 3_000 },
     })
 );
 

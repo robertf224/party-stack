@@ -14,9 +14,7 @@ export type LiveObjectSetState = { status: "connecting" | "connected" | "error";
 export function useLiveObjectSet<T extends ObjectOrInterfaceDefinition>(type: T): LiveObjectSetState {
     const { client } = useOsdkContext();
     const queryClient = useQueryClient();
-    const [state, setState] = React.useState<LiveObjectSetState>({
-        status: "connecting",
-    });
+    const [state, setState] = React.useState<LiveObjectSetState>({ status: "connecting" });
     React.useEffect(() => {
         // oxlint-disable-next-line typescript/no-explicit-any
         const objectSet = client(type as any) as ObjectSet<T>;

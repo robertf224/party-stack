@@ -91,9 +91,7 @@ async function postMultipart<TResponse>(
         // an empty multipart body. Remove after https://bugs.webkit.org/show_bug.cgi?id=319985
         // and https://bugs.webkit.org/show_bug.cgi?id=319396 are fixed in supported Safari versions.
         const safeBlob = isWebKitRuntime()
-            ? new Blob([await upload.blob.arrayBuffer()], {
-                  type: upload.blob.type,
-              })
+            ? new Blob([await upload.blob.arrayBuffer()], { type: upload.blob.type })
             : upload.blob;
         formData.append(
             `attachment:${upload.attachment.id}`,
@@ -215,9 +213,7 @@ export function createHttpRemoteOntologyTransport(
         },
         validateAction: (request, options) => {
             if (actionValidationSupported === false) {
-                return Promise.resolve({
-                    certain: false,
-                });
+                return Promise.resolve({ certain: false });
             }
             const ontology = getIr();
             return postJson<Uncertain<Result<null, readonly ValidationIssue[]>>>(

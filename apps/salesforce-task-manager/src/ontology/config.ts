@@ -19,12 +19,7 @@ export default createSalesforceOntologyPullConfig({
     flowActionTypeNames: ["sales_sfa_flows__CreateSalesLead"],
     standardActionTypeNames: ["confirmSalesMeeting"],
     standardQueryFunctionTypeNames: ["getAvailableMeetingTimes"],
-    crudActionTypes: [
-        {
-            objectType: "Task",
-            operations: ["create", "update", "delete"],
-        },
-    ],
+    crudActionTypes: [{ objectType: "Task", operations: ["create", "update", "delete"] }],
     transformPulledOntology: projectTaskManagerOntology,
     connection: {
         userId: settings.userId,

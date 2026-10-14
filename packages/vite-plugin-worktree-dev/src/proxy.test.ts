@@ -58,11 +58,7 @@ it("starts the installed Portless daemon and reuses it without a global CLI", as
                      console.log(JSON.stringify({ status }));
                  } finally { await dev.close(); }`,
             ],
-            {
-                cwd: dir,
-                env: process.env,
-                timeout: 20_000,
-            }
+            { cwd: dir, env: process.env, timeout: 20_000 }
         );
         expect(stdout).toContain('"status":200');
         const proxy = await ensureProxy();

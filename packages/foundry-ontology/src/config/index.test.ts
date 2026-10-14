@@ -6,9 +6,7 @@ function createSource(options: Partial<CreateFoundryOntologyPullSourceOptions>) 
     return createFoundryOntologyPullSource({
         baseUrl: "https://foundry.example",
         ontologyRid: "ri.ontology.main",
-        connection: {
-            token: "token",
-        },
+        connection: { token: "token" },
         ...options,
     });
 }
@@ -28,13 +26,7 @@ describe("createFoundryOntologyPullSource", () => {
                         {
                             name: "media",
                             displayName: "Media",
-                            type: o.attachment({
-                                meta: {
-                                    foundry: {
-                                        kind: "media",
-                                    },
-                                },
-                            }),
+                            type: o.attachment({ meta: { foundry: { kind: "media" } } }),
                         },
                     ],
                 },
@@ -49,13 +41,7 @@ describe("createFoundryOntologyPullSource", () => {
                             name: "media",
                             displayName: "Media",
                             type: o.optional({
-                                type: o.attachment({
-                                    meta: {
-                                        foundry: {
-                                            kind: "media",
-                                        },
-                                    },
-                                }),
+                                type: o.attachment({ meta: { foundry: { kind: "media" } } }),
                             }),
                         },
                     ],
@@ -65,53 +51,24 @@ describe("createFoundryOntologyPullSource", () => {
             queryFunctionTypes: [],
         };
         const constraint = {
-            content: o.AttachmentContentConstraint.image({
-                mediaTypes: ["image/png", "image/jpeg"],
-            }),
+            content: o.AttachmentContentConstraint.image({ mediaTypes: ["image/png", "image/jpeg"] }),
         };
 
         const transformed = await createSource({
             attachmentConstraints: [
+                { target: { kind: "objectProperty", objectType: "Task", property: "media" }, constraint },
                 {
-                    target: {
-                        kind: "objectProperty",
-                        objectType: "Task",
-                        property: "media",
-                    },
-                    constraint,
-                },
-                {
-                    target: {
-                        kind: "actionParameter",
-                        actionType: "createTask",
-                        parameter: "media",
-                    },
+                    target: { kind: "actionParameter", actionType: "createTask", parameter: "media" },
                     constraint,
                 },
             ],
         }).transformPulledOntology!(ir);
 
         expect(transformed.objectTypes[0]?.properties[1]?.type).toEqual(
-            o.attachment({
-                constraint,
-                meta: {
-                    foundry: {
-                        kind: "media",
-                    },
-                },
-            })
+            o.attachment({ constraint, meta: { foundry: { kind: "media" } } })
         );
         expect(transformed.actionTypes[0]?.parameters[0]?.type).toEqual(
-            o.optional({
-                type: o.attachment({
-                    constraint,
-                    meta: {
-                        foundry: {
-                            kind: "media",
-                        },
-                    },
-                }),
-            })
+            o.optional({ type: o.attachment({ constraint, meta: { foundry: { kind: "media" } } }) })
         );
     });
 
@@ -146,9 +103,7 @@ describe("createFoundryOntologyPullSource", () => {
                             values: [
                                 {
                                     property: ["createdBy"],
-                                    value: o.Expression.contextReference({
-                                        name: "user",
-                                    }),
+                                    value: o.Expression.contextReference({ name: "user" }),
                                 },
                             ],
                         }),
@@ -163,13 +118,8 @@ describe("createFoundryOntologyPullSource", () => {
                 objectType: "User",
                 lens: {
                     operations: [
-                        o.LensOp.move({
-                            from: ["profilePicture"],
-                            to: ["avatar"],
-                        }),
-                        o.LensOp.select({
-                            properties: ["id", "avatar"],
-                        }),
+                        o.LensOp.move({ from: ["profilePicture"], to: ["avatar"] }),
+                        o.LensOp.select({ properties: ["id", "avatar"] }),
                     ],
                 },
             },
@@ -179,11 +129,7 @@ describe("createFoundryOntologyPullSource", () => {
         expect(transformed.contextType).toEqual(
             o.struct({
                 fields: [
-                    {
-                        name: "user",
-                        displayName: "User",
-                        type: o.objectReference({ objectType: "User" }),
-                    },
+                    { name: "user", displayName: "User", type: o.objectReference({ objectType: "User" }) },
                 ],
             })
         );

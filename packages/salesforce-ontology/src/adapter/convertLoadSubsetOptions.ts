@@ -3,10 +3,7 @@ import { Temporal } from "temporal-polyfill";
 
 const ALWAYS_FALSE = "__ALWAYS_FALSE__";
 
-export type CompiledSoqlFilter = {
-    clause?: string;
-    alwaysFalse: boolean;
-};
+export type CompiledSoqlFilter = { clause?: string; alwaysFalse: boolean };
 
 function quoteIdentifier(identifier: string): string {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {

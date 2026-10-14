@@ -41,10 +41,7 @@ A React-oriented draft layer could look like this:
 ```tsx
 function NewTaskForm() {
     const draft = useDraftAction(ontology.actions.createTask, {
-        initialParameters: {
-            title: "",
-            attachments: [],
-        },
+        initialParameters: { title: "", attachments: [] },
     });
 
     async function addImage(file: File) {
@@ -100,14 +97,8 @@ interface ActionDraft<Parameters> {
 interface DraftAttachments {
     create(
         blob: Blob | File,
-        opts?: {
-            parameter?: string;
-            eager?: boolean;
-        }
-    ): Promise<{
-        attachment: attachment;
-        isMaterialized?: Promise<void>;
-    }>;
+        opts?: { parameter?: string; eager?: boolean }
+    ): Promise<{ attachment: attachment; isMaterialized?: Promise<void> }>;
 }
 ```
 

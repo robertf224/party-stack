@@ -166,12 +166,7 @@ function collectTypeDefinitions(ir: OntologyIR): Pick<OntologyIR, "types"> {
                 name: objectType.name,
                 description: objectType.description,
                 deprecated: objectType.deprecated,
-                type: {
-                    kind: "struct" as const,
-                    value: {
-                        fields: objectType.properties,
-                    },
-                },
+                type: { kind: "struct" as const, value: { fields: objectType.properties } },
             })),
         ],
     };
@@ -216,10 +211,7 @@ function addOntologyAggregateType(
     outputTypeName: string
 ): void {
     const properties = [
-        {
-            name: "context",
-            type: `${outputTypeName}Context`,
-        },
+        { name: "context", type: `${outputTypeName}Context` },
         {
             name: "objectTypes",
             type:
@@ -244,10 +236,7 @@ function addOntologyAggregateType(
                           name: renderPropertyName(action.name),
                           type: Writers.objectType({
                               properties: [
-                                  {
-                                      name: "parameters",
-                                      type: `${pascalCase(action.name)}Parameters`,
-                                  },
+                                  { name: "parameters", type: `${pascalCase(action.name)}Parameters` },
                               ],
                           }),
                       })),
@@ -268,10 +257,7 @@ function addOntologyAggregateType(
                                       name: "parameters",
                                       type: `${pascalCase(queryFunctionType.name)}Parameters`,
                                   },
-                                  {
-                                      name: "returnType",
-                                      type: `${pascalCase(queryFunctionType.name)}Return`,
-                                  },
+                                  { name: "returnType", type: `${pascalCase(queryFunctionType.name)}Return` },
                               ],
                           }),
                       })),
@@ -295,9 +281,7 @@ function addOntologyContextType(
         name: `${outputTypeName}Context`,
         isExported: true,
         type: ir.contextType
-            ? `${generateForTypeDef(ir.contextType, {
-                  objectTypes,
-              })} & Record<string, unknown>`
+            ? `${generateForTypeDef(ir.contextType, { objectTypes })} & Record<string, unknown>`
             : "Record<string, unknown>",
     });
 }
@@ -364,9 +348,7 @@ function addQueryParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: O
 export function generateTypes(ir: OntologyIR, opts: GenerateTypesOpts = {}): string {
     const outputTypeName = opts.outputTypeName ?? "GeneratedOntology";
     const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
-    const typeDefinitions = generateTypeDefinitions(collectTypeDefinitions(ir), {
-        objectTypes,
-    });
+    const typeDefinitions = generateTypeDefinitions(collectTypeDefinitions(ir), { objectTypes });
     const project = new Project({ useInMemoryFileSystem: true });
     const aggregateFile = project.createSourceFile("ontology-aggregate.ts", "");
     addOntologyContextType(aggregateFile, ir, outputTypeName);

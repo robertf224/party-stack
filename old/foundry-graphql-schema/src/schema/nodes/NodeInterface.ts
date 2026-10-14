@@ -17,10 +17,7 @@ function create(): GraphQLInterfaceType {
         name: TYPE_NAME,
         description: "A record with a global id.",
         fields: {
-            [FIELD_NAME]: {
-                description: "The global id of the record.",
-                type: Schemas.required(GraphQLID),
-            },
+            [FIELD_NAME]: { description: "The global id of the record.", type: Schemas.required(GraphQLID) },
         },
     });
 }
@@ -29,8 +26,4 @@ function getReference(getTypeReference: GetTypeReference): GraphQLInterfaceType 
     return getTypeReference(TYPE_NAME) as GraphQLInterfaceType;
 }
 
-export const NodeInterface = {
-    create,
-    getReference,
-    FIELD_NAME,
-};
+export const NodeInterface = { create, getReference, FIELD_NAME };

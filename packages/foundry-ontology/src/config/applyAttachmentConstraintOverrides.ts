@@ -14,26 +14,13 @@ export interface FoundryAttachmentConstraintOverride {
 function withAttachmentConstraint(type: TypeDef, constraint: AttachmentConstraint): TypeDef {
     switch (type.kind) {
         case "attachment":
-            return {
-                ...type,
-                value: {
-                    ...type.value,
-                    constraint,
-                },
-            };
+            return { ...type, value: { ...type.value, constraint } };
         case "optional":
-            return {
-                ...type,
-                value: {
-                    type: withAttachmentConstraint(type.value.type, constraint),
-                },
-            };
+            return { ...type, value: { type: withAttachmentConstraint(type.value.type, constraint) } };
         case "list":
             return {
                 ...type,
-                value: {
-                    elementType: withAttachmentConstraint(type.value.elementType, constraint),
-                },
+                value: { elementType: withAttachmentConstraint(type.value.elementType, constraint) },
             };
         default:
             throw new Error(

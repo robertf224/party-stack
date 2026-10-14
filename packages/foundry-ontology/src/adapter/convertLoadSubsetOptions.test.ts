@@ -97,10 +97,7 @@ describe("convertLoadSubsetFilter", () => {
         const expression = gt(new IR.PropRef<Temporal.Instant>(["createdAt"]), cursor);
         const filter = convertLoadSubsetFilter(expression);
 
-        expect(filter).toMatchObject({
-            type: "gt",
-            value: "2026-07-27T12:00:00Z",
-        });
+        expect(filter).toMatchObject({ type: "gt", value: "2026-07-27T12:00:00Z" });
         expect(
             compileSingleRowExpression(expression)({
                 createdAt: Temporal.Instant.from("2026-07-27T12:00:01Z"),
@@ -180,10 +177,7 @@ describe("convertLoadSubsetFilter", () => {
         });
         expect(
             convertLoadSubsetFilter(like(new IR.PropRef<string>(["name"]), "path\\\\name%"))
-        ).toMatchObject({
-            type: "wildcard",
-            value: "path\\\\name*",
-        });
+        ).toMatchObject({ type: "wildcard", value: "path\\\\name*" });
     });
 
     it("uses contains pushdowns for each wildcard-delimited term", () => {
@@ -251,10 +245,7 @@ describe("convertLoadSubsetFilter", () => {
 
         expect(filter).toEqual({
             type: "wildcard",
-            propertyIdentifier: {
-                type: "property",
-                apiName: "title",
-            },
+            propertyIdentifier: { type: "property", apiName: "title" },
             value: "issue?one*two*",
         });
     });
@@ -262,9 +253,6 @@ describe("convertLoadSubsetFilter", () => {
     it.each([ilike, like])("treats patterns containing only percent wildcards as unfiltered", (operator) => {
         const filter = convertLoadSubsetFilter(operator(new IR.PropRef<string>(["title"]), "%%"));
 
-        expect(filter).toEqual({
-            type: "and",
-            value: [],
-        });
+        expect(filter).toEqual({ type: "and", value: [] });
     });
 });

@@ -7,18 +7,14 @@ import type { OntologyBackendAdapter } from "../live/OntologyBackendAdapter.js";
 
 declare const backendAdapter: OntologyBackendAdapter;
 
-const blog = await createBlogLiveOntology({
-    backend: () => backendAdapter,
-});
+const blog = await createBlogLiveOntology({ backend: () => backendAdapter });
 const { Post, Author, Comment } = blog.objects;
 
 const postList = createCollection(
     liveQueryCollectionOptions({
-        query: new Query().from({ Post }).select(({ Post }) => ({
-            postId: Post.postId,
-            title: Post.title,
-            status: Post.status,
-        })),
+        query: new Query()
+            .from({ Post })
+            .select(({ Post }) => ({ postId: Post.postId, title: Post.title, status: Post.status })),
     })
 );
 

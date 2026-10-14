@@ -26,12 +26,8 @@ export function OntologyProvider({ children }: { children: ReactNode }) {
     const meta = use(
         useMemo(() => {
             const client = getClient();
-            const metaBackendAdapter = createFoundryMetaOntologyBackendAdapter({
-                client,
-            });
-            return createMetaLiveOntology({
-                backend: () => metaBackendAdapter,
-            });
+            const metaBackendAdapter = createFoundryMetaOntologyBackendAdapter({ client });
+            return createMetaLiveOntology({ backend: () => metaBackendAdapter });
         }, [])
     );
 
@@ -77,15 +73,10 @@ function OntologyInner({ meta, children }: { meta: LiveOntology<MetaOntology>; c
         } as unknown as OntologyIR;
 
         const client = getClient();
-        const backend = createFoundryOntologyBackend({
-            client,
-        });
+        const backend = createFoundryOntologyBackend({ client });
         let active = true;
         let ontology: LiveOntology | undefined;
-        void createLiveOntology({
-            ir,
-            backend,
-        }).then(
+        void createLiveOntology({ ir, backend }).then(
             (created) => {
                 if (!active) {
                     void created.cleanup();

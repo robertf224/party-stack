@@ -11,30 +11,14 @@ describe("convertSalesforceMetaActionType", () => {
             label: "Create Account",
             description: "Creates an account",
             inputs: [
-                {
-                    name: "accountName",
-                    label: "Account Name",
-                    type: "String",
-                    required: true,
-                },
-                {
-                    name: "ownerId",
-                    label: "Owner",
-                    type: "ID",
-                    required: false,
-                    sobjectType: "User",
-                },
+                { name: "accountName", label: "Account Name", type: "String", required: true },
+                { name: "ownerId", label: "Owner", type: "ID", required: false, sobjectType: "User" },
             ],
         });
 
         expect(action).toEqual({
             id: "salesforce:flow:Create_Account",
-            meta: {
-                salesforce: {
-                    kind: "flow",
-                    apiName: "Create_Account",
-                },
-            },
+            meta: { salesforce: { kind: "flow", apiName: "Create_Account" } },
             name: "Create_Account",
             displayName: "Create Account",
             description: "Creates an account",
@@ -52,12 +36,7 @@ describe("convertSalesforceMetaActionType", () => {
                     description: undefined,
                     type: {
                         kind: "optional",
-                        value: {
-                            type: {
-                                kind: "objectReference",
-                                value: { objectType: "User" },
-                            },
-                        },
+                        value: { type: { kind: "objectReference", value: { objectType: "User" } } },
                     },
                 },
             ],
@@ -68,22 +47,12 @@ describe("convertSalesforceMetaActionType", () => {
     it("treats provider parameters with null types as unknown", () => {
         const action = convertSalesforceMetaActionType({
             name: "Provider_Flow",
-            inputs: [
-                {
-                    name: "providerValue",
-                    type: null,
-                },
-            ],
+            inputs: [{ name: "providerValue", type: null }],
         });
 
         expect(action.parameters[0]?.type).toEqual({
             kind: "optional",
-            value: {
-                type: {
-                    kind: "unknown",
-                    value: {},
-                },
-            },
+            value: { type: { kind: "unknown", value: {} } },
         });
     });
 
@@ -96,12 +65,7 @@ describe("convertSalesforceMetaActionType", () => {
 
         expect(action).toMatchObject({
             id: "salesforce:standard:confirmSalesMeeting",
-            meta: {
-                salesforce: {
-                    kind: "standard",
-                    apiName: "confirmSalesMeeting",
-                },
-            },
+            meta: { salesforce: { kind: "standard", apiName: "confirmSalesMeeting" } },
             name: "confirmSalesMeeting",
             logic: [],
         });
@@ -112,18 +76,8 @@ describe("convertSalesforceMetaActionType", () => {
             {
                 name: "Create_Sales_Lead_Record",
                 inputs: [
-                    {
-                        name: "leadRecord",
-                        type: "SOBJECT",
-                        required: true,
-                        sObjectType: "Lead",
-                    },
-                    {
-                        name: "ownerId",
-                        type: "REFERENCE",
-                        required: true,
-                        sobjectType: "User",
-                    },
+                    { name: "leadRecord", type: "SOBJECT", required: true, sObjectType: "Lead" },
+                    { name: "ownerId", type: "REFERENCE", required: true, sobjectType: "User" },
                 ],
             },
             new Map([
@@ -132,18 +86,8 @@ describe("convertSalesforceMetaActionType", () => {
                     {
                         name: "Lead",
                         fields: [
-                            {
-                                name: "LastName",
-                                label: "Last Name",
-                                type: "string",
-                                nillable: false,
-                            },
-                            {
-                                name: "Company",
-                                label: "Company",
-                                type: "string",
-                                nillable: false,
-                            },
+                            { name: "LastName", label: "Last Name", type: "string", nillable: false },
+                            { name: "Company", label: "Company", type: "string", nillable: false },
                         ],
                     } as never,
                 ],
@@ -162,29 +106,13 @@ describe("convertSalesforceMetaActionType", () => {
                             name: "LastName",
                             displayName: "Last Name",
                             description: undefined,
-                            type: {
-                                kind: "optional",
-                                value: {
-                                    type: {
-                                        kind: "string",
-                                        value: {},
-                                    },
-                                },
-                            },
+                            type: { kind: "optional", value: { type: { kind: "string", value: {} } } },
                         },
                         {
                             name: "Company",
                             displayName: "Company",
                             description: undefined,
-                            type: {
-                                kind: "optional",
-                                value: {
-                                    type: {
-                                        kind: "string",
-                                        value: {},
-                                    },
-                                },
-                            },
+                            type: { kind: "optional", value: { type: { kind: "string", value: {} } } },
                         },
                     ],
                 },

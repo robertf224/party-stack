@@ -29,11 +29,7 @@ export function decodeFoundryMediaId(value: string): FoundryMediaId | undefined 
     ) {
         return;
     }
-    return {
-        mediaSetRid,
-        mediaSetViewRid,
-        mediaItemRid,
-    };
+    return { mediaSetRid, mediaSetViewRid, mediaItemRid };
 }
 
 export function mediaReferenceToFoundryMediaId(value: MediaReference): string {
@@ -41,11 +37,5 @@ export function mediaReferenceToFoundryMediaId(value: MediaReference): string {
 }
 
 export function foundryMediaIdToReference(id: FoundryMediaId, mimeType: string): MediaReference {
-    return {
-        mimeType,
-        reference: {
-            type: "mediaSetViewItem",
-            mediaSetViewItem: id,
-        },
-    };
+    return { mimeType, reference: { type: "mediaSetViewItem", mediaSetViewItem: id } };
 }

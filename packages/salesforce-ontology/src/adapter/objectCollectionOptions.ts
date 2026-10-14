@@ -211,9 +211,7 @@ function createSyncConfig(
                 }
             };
 
-            loadSubsetDedupe = new DeduplicatedLoadSubset({
-                loadSubset: (options) => loadSubset(options),
-            });
+            loadSubsetDedupe = new DeduplicatedLoadSubset({ loadSubset: (options) => loadSubset(options) });
             invalidate = async () => {
                 loadSubsetDedupe?.reset();
                 for (const subset of activeSubsets) {
@@ -254,10 +252,7 @@ function createSyncConfig(
             };
             deleteByKey = (key) => {
                 begin();
-                write({
-                    type: "delete",
-                    key,
-                });
+                write({ type: "delete", key });
                 const applied = commit();
                 if (applied instanceof Promise) {
                     void applied.catch((error) => {
@@ -281,10 +276,7 @@ function createSyncConfig(
                                 if (header.changeType === "DELETE") {
                                     begin();
                                     for (const id of header.recordIds) {
-                                        write({
-                                            type: "delete",
-                                            key: id,
-                                        });
+                                        write({ type: "delete", key: id });
                                     }
                                     const replayId = event.event?.replayId;
                                     if (replayId !== undefined) {
@@ -306,11 +298,7 @@ function createSyncConfig(
                                 markError(error instanceof Error ? error : new Error(String(error)));
                             });
                     },
-                    typeof restoredReplayId === "number"
-                        ? {
-                              replayId: restoredReplayId,
-                          }
-                        : undefined
+                    typeof restoredReplayId === "number" ? { replayId: restoredReplayId } : undefined
                 ).then(
                     (subscription) => {
                         if (disposed) {

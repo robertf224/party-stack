@@ -18,16 +18,8 @@ const ir: OntologyIR = {
             pluralDisplayName: "Tasks",
             primaryKey: "id",
             properties: [
-                {
-                    name: "id",
-                    displayName: "ID",
-                    type: o.string({}),
-                },
-                {
-                    name: "title",
-                    displayName: "Title",
-                    type: o.string({}),
-                },
+                { name: "id", displayName: "ID", type: o.string({}) },
+                { name: "title", displayName: "Title", type: o.string({}) },
             ],
         },
     ],
@@ -41,21 +33,13 @@ function backend(
 ): OntologyBackendAdapter {
     return {
         name: "test",
-        getCollectionOptions: () => ({
-            syncMode: "eager",
-            sync: { sync },
-        }),
+        getCollectionOptions: () => ({ syncMode: "eager", sync: { sync } }),
         applyAction: () => Promise.resolve(),
         runQueryFunction: () => Promise.resolve(undefined),
     };
 }
 
-function memoryPersistence(
-    initial: Array<{
-        key: string;
-        value: Record<string, unknown>;
-    }> = []
-): {
+function memoryPersistence(initial: Array<{ key: string; value: Record<string, unknown> }> = []): {
     adapter: PersistenceAdapter;
     applyCommittedTx: ReturnType<typeof vi.fn>;
 } {
@@ -70,14 +54,7 @@ function memoryPersistence(
         }
         return rows;
     };
-    const positions = new Map<
-        string,
-        {
-            latestTerm: number;
-            latestSeq: number;
-            latestRowVersion: number;
-        }
-    >();
+    const positions = new Map<string, { latestTerm: number; latestSeq: number; latestRowVersion: number }>();
     const applyCommittedTx = vi.fn((collectionId: string, transaction: PersistedTx) => {
         const rows = rowsFor(collectionId);
         if (transaction.truncate) rows.clear();
@@ -105,21 +82,12 @@ function memoryPersistence(
                     resetEpoch: 0,
                 }),
             loadSubset: (collectionId) =>
-                Promise.resolve(
-                    [...rowsFor(collectionId)].map(([key, value]) => ({
-                        key,
-                        value,
-                    }))
-                ),
+                Promise.resolve([...rowsFor(collectionId)].map(([key, value]) => ({ key, value }))),
             applyCommittedTx,
             ensureIndex: () => Promise.resolve(),
             getStreamPosition: (collectionId) =>
                 Promise.resolve(
-                    positions.get(collectionId) ?? {
-                        latestTerm: 0,
-                        latestSeq: 0,
-                        latestRowVersion: 0,
-                    }
+                    positions.get(collectionId) ?? { latestTerm: 0, latestSeq: 0, latestRowVersion: 0 }
                 ),
         },
         applyCommittedTx,
@@ -127,16 +95,8 @@ function memoryPersistence(
 }
 
 function createOptions() {
-    const coordination = new SingleProcessCoordination({
-        scope: "object-persistence-test",
-    });
-    return {
-        owner: "user-1",
-        ontologyId: "ontology-1",
-        ir,
-        objectType: ir.objectTypes[0]!,
-        coordination,
-    };
+    const coordination = new SingleProcessCoordination({ scope: "object-persistence-test" });
+    return { owner: "user-1", ontologyId: "ontology-1", ir, objectType: ir.objectTypes[0]!, coordination };
 }
 
 describe("createLiveOntologyObjectCollection", () => {
@@ -162,13 +122,7 @@ describe("createLiveOntologyObjectCollection", () => {
     it("hydrates persisted objects before marking the collection ready", async () => {
         const options = createOptions();
         const persistence = memoryPersistence([
-            {
-                key: "persisted",
-                value: {
-                    id: "persisted",
-                    title: "From persistence",
-                },
-            },
+            { key: "persisted", value: { id: "persisted", title: "From persistence" } },
         ]);
         const resolvePersistenceForCollection = vi.fn(() => persistence);
         const collection = createLiveOntologyObjectCollection({
@@ -192,9 +146,7 @@ describe("createLiveOntologyObjectCollection", () => {
             mode: "sync-present",
             schemaVersion: 1,
         });
-        expect(collection.get("persisted")).toMatchObject({
-            title: "From persistence",
-        });
+        expect(collection.get("persisted")).toMatchObject({ title: "From persistence" });
         await collection.cleanup();
         await options.coordination.close();
     });
@@ -384,13 +336,7 @@ describe("createLiveOntologyObjectCollection", () => {
             ...options,
             backendAdapter: backend(({ begin, write, commit, markError, markReady }) => {
                 begin();
-                write({
-                    type: "insert",
-                    value: {
-                        id: "remote",
-                        title: "From backend",
-                    },
-                });
+                write({ type: "insert", value: { id: "remote", title: "From backend" } });
                 const receipt = commit();
                 if (receipt === true) {
                     markReady();
@@ -412,9 +358,7 @@ describe("createLiveOntologyObjectCollection", () => {
         await vi.waitFor(() => {
             expect(persistence.applyCommittedTx).toHaveBeenCalled();
         });
-        expect(collection.get("remote")).toMatchObject({
-            title: "From backend",
-        });
+        expect(collection.get("remote")).toMatchObject({ title: "From backend" });
         await collection.cleanup();
         await options.coordination.close();
     });

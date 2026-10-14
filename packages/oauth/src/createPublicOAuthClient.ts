@@ -34,9 +34,7 @@ interface StoredTokenSet {
 const PENDING_MAX_AGE_MS = 10 * 60 * 1_000;
 
 interface OAuthCoordinationService {
-    methods: {
-        refresh(input: { userId: string }): Promise<OAuthSession>;
-    };
+    methods: { refresh(input: { userId: string }): Promise<OAuthSession> };
     events: Record<never, never>;
 }
 
@@ -45,10 +43,7 @@ function sessionFromTokens(userId: string, tokens: StoredTokenSet): OAuthSession
         ? { userId }
         : {
               userId,
-              expiration: {
-                  expiresAt: tokens.expiresAt,
-                  refreshable: tokens.refreshToken !== undefined,
-              },
+              expiration: { expiresAt: tokens.expiresAt, refreshable: tokens.refreshToken !== undefined },
           };
 }
 
@@ -80,14 +75,9 @@ export async function createPublicOAuthClient(
         token_endpoint: options.authorizationServer.tokenEndpoint,
         revocation_endpoint: options.authorizationServer.revocationEndpoint,
     };
-    const client: oauth.Client = {
-        client_id: options.clientId,
-        token_endpoint_auth_method: "none",
-    };
+    const client: oauth.Client = { client_id: options.clientId, token_endpoint_auth_method: "none" };
     const clientAuthentication = oauth.None();
-    const requestOptions = {
-        [oauth.customFetch]: options.fetch ?? globalThis.fetch.bind(globalThis),
-    };
+    const requestOptions = { [oauth.customFetch]: options.fetch ?? globalThis.fetch.bind(globalThis) };
     const accessTokens = new Map<string, StoredTokenSet>();
     let cleaned = false;
 
@@ -104,11 +94,7 @@ export async function createPublicOAuthClient(
         const existing = sessions.get(userId);
         if (!existing) {
             const transaction = sessions.insert(
-                {
-                    userId,
-                    secretKey,
-                    createdAt: Date.now(),
-                },
+                { userId, secretKey, createdAt: Date.now() },
                 { optimistic: false }
             );
             await transaction.isPersisted.promise;
@@ -117,9 +103,7 @@ export async function createPublicOAuthClient(
             await secrets.set(secretKey, JSON.stringify(tokens));
         } catch (error) {
             if (!existing && sessions.get(userId)) {
-                await sessions.delete(userId, {
-                    optimistic: false,
-                }).isPersisted.promise;
+                await sessions.delete(userId, { optimistic: false }).isPersisted.promise;
             }
             throw error;
         }
@@ -140,18 +124,14 @@ export async function createPublicOAuthClient(
         const record = sessions.get(userId);
         if (!record) return;
         await secrets.delete(record.secretKey);
-        await sessions.delete(userId, {
-            optimistic: false,
-        }).isPersisted.promise;
+        await sessions.delete(userId, { optimistic: false }).isPersisted.promise;
         accessTokens.delete(userId);
     };
 
     const removePending = async (state: string, secretKey: string) => {
         await secrets.delete(secretKey);
         if (!pending.get(state)) return;
-        const transaction = pending.delete(state, {
-            optimistic: false,
-        });
+        const transaction = pending.delete(state, { optimistic: false });
         await transaction.isPersisted.promise;
     };
     const cleanupStalePending = async () => {
@@ -261,9 +241,7 @@ export async function createPublicOAuthClient(
     const refresh = async (userId: string): Promise<OAuthSession> => {
         let session: OAuthSession;
         try {
-            session = await refreshCoordination.methods.refresh({
-                userId,
-            });
+            session = await refreshCoordination.methods.refresh({ userId });
         } catch (error) {
             if (error instanceof Error && error.name === "UnauthenticatedError") {
                 throw unauthenticated(error.message);
@@ -295,11 +273,7 @@ export async function createPublicOAuthClient(
                 const codeVerifier = oauth.generateRandomCodeVerifier();
                 const codeChallenge = await oauth.calculatePKCECodeChallenge(codeVerifier);
                 const transaction = pending.insert(
-                    {
-                        state,
-                        secretKey,
-                        createdAt: Date.now(),
-                    },
+                    { state, secretKey, createdAt: Date.now() },
                     { optimistic: false }
                 );
                 await transaction.isPersisted.promise;
@@ -337,9 +311,7 @@ export async function createPublicOAuthClient(
                 const tokens = await readTokens(record);
                 if (!tokens) {
                     if ((record.createdAt ?? 0) < Date.now() - PENDING_MAX_AGE_MS) {
-                        await sessions.delete(record.userId, {
-                            optimistic: false,
-                        }).isPersisted.promise;
+                        await sessions.delete(record.userId, { optimistic: false }).isPersisted.promise;
                     }
                     continue;
                 }

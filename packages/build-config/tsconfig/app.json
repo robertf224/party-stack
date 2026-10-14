@@ -6,9 +6,7 @@
         "noUncheckedIndexedAccess": false,
         "lib": ["DOM", "DOM.Iterable", "ESNext"],
         "types": ["node", "vite/client"],
-        "paths": {
-            "@/*": ["${configDir}/src/*"]
-        }
+        "paths": { "@/*": ["${configDir}/src/*"] }
     },
     "include": ["${configDir}/src/**/*.ts", "${configDir}/src/**/*.tsx", "${configDir}/vite.config.ts"]
 }

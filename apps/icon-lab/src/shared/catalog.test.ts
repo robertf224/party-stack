@@ -8,12 +8,7 @@ const appRoot = path.resolve(import.meta.dirname, "../..");
 
 describe("generated full icon catalog", () => {
     it("contains complete provider sets in compact archives", async () => {
-        const minimums = {
-            blueprint: 700,
-            lucide: 2_000,
-            material: 16_000,
-            salesforce: 1_700,
-        } as const;
+        const minimums = { blueprint: 700, lucide: 2_000, material: 16_000, salesforce: 1_700 } as const;
         for (const provider of Object.keys(minimums) as Array<keyof typeof minimums>) {
             const zip = unzipSync(
                 new Uint8Array(await readFile(path.join(appRoot, `public/icon-sets/${provider}.zip`)))

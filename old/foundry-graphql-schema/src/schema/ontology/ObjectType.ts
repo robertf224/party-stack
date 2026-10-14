@@ -93,9 +93,4 @@ function getReferenceByName(
     return getTypeReference(apiName) as GraphQLObjectType;
 }
 
-export const ObjectType = {
-    create,
-    getReference,
-    getReferenceByName,
-    getNodeIdHandler,
-};
+export const ObjectType = { create, getReference, getReferenceByName, getNodeIdHandler };

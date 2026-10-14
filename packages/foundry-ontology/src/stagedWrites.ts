@@ -14,10 +14,7 @@ import type { InitialQueryBuilder } from "@tanstack/db";
 export interface FoundryStagedWriteClient {
     create(objectType: unknown, object: Record<string, unknown>): Promise<unknown>;
     update(
-        object: {
-            $apiName: string;
-            $primaryKey: string | number;
-        },
+        object: { $apiName: string; $primaryKey: string | number },
         changes: Record<string, unknown>
     ): Promise<unknown>;
     delete(object: { $apiName: string; $primaryKey: string | number }): Promise<unknown>;
@@ -78,9 +75,7 @@ export function createFoundryStagedWriteMutatorTx(
                     return {
                         create: async (object: Record<string, unknown>) => {
                             await options.client.create(
-                                options.objectTypes?.[objectType] ?? {
-                                    $apiName: objectType,
-                                },
+                                options.objectTypes?.[objectType] ?? { $apiName: objectType },
                                 object
                             );
                         },
@@ -89,18 +84,12 @@ export function createFoundryStagedWriteMutatorTx(
                             changes: Record<string, unknown> | OntologyPropertyChange[]
                         ) => {
                             await options.client.update(
-                                {
-                                    $apiName: objectType,
-                                    $primaryKey: key,
-                                },
+                                { $apiName: objectType, $primaryKey: key },
                                 changesToRecord(changes)
                             );
                         },
                         delete: async (key: string | number) => {
-                            await options.client.delete({
-                                $apiName: objectType,
-                                $primaryKey: key,
-                            });
+                            await options.client.delete({ $apiName: objectType, $primaryKey: key });
                         },
                     };
                 },
@@ -125,9 +114,5 @@ export async function runFoundryOntologyMutator(options: {
         client: options.client,
         objectTypes: options.objectTypes,
     });
-    await options.mutator({
-        tx,
-        args: options.args,
-        context: options.context ?? {},
-    });
+    await options.mutator({ tx, args: options.args, context: options.context ?? {} });
 }

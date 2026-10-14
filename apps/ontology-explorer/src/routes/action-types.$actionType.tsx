@@ -4,9 +4,7 @@ import { TypeDefLabel } from "../components/TypeDefLabel";
 import { useOntology } from "../ontology/OntologyProvider";
 import type { ActionParameterDef, ActionLogicStep } from "@party-stack/ontology";
 
-export const Route = createFileRoute("/action-types/$actionType")({
-    component: ActionTypeDetail,
-});
+export const Route = createFileRoute("/action-types/$actionType")({ component: ActionTypeDetail });
 
 function ActionTypeDetail() {
     const { meta: metaOntology } = useOntology();

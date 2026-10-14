@@ -64,12 +64,7 @@ export function createLiveOntologyActions(options: {
                 options.blobManager.bindRemoteId(mapping.localId, mapping.remoteId)
             )
         );
-        return attachmentIdMappings.length > 0
-            ? {
-                  ...result,
-                  attachmentIdMappings,
-              }
-            : result;
+        return attachmentIdMappings.length > 0 ? { ...result, attachmentIdMappings } : result;
     };
 
     const applyOptimisticAction = async (
@@ -113,10 +108,7 @@ export function createLiveOntologyActions(options: {
             resolve = resolvePromise;
             reject = rejectPromise;
         });
-        const transaction = createTransaction({
-            autoCommit: false,
-            mutationFn: () => completion,
-        });
+        const transaction = createTransaction({ autoCommit: false, mutationFn: () => completion });
         if (!(await applyOptimisticAction(transaction, entry.request))) {
             return;
         }
@@ -188,9 +180,7 @@ export function createLiveOntologyActions(options: {
         parameters: Record<string, unknown>
     ): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>> => {
         if (!options.backendAdapter.validateAction) {
-            return Promise.resolve({
-                certain: false,
-            });
+            return Promise.resolve({ certain: false });
         }
         return options.backendAdapter.validateAction(actionTypeName, parameters, {
             objects: options.objects,
@@ -204,9 +194,7 @@ export function createLiveOntologyActions(options: {
         validationOptions?: LiveOntologyActionDraftValidationOptions<Record<string, unknown>>
     ): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>> => {
         if (!options.backendAdapter.validateActionDraft) {
-            return Promise.resolve({
-                certain: false,
-            });
+            return Promise.resolve({ certain: false });
         }
         return options.backendAdapter.validateActionDraft(actionTypeName, parameters, {
             objects: options.objects,
@@ -230,8 +218,5 @@ export function createLiveOntologyActions(options: {
         ])
     );
 
-    return {
-        actions,
-        outbox,
-    };
+    return { actions, outbox };
 }

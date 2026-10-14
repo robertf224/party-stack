@@ -144,6 +144,4 @@ function create(
     return Result.ok([fieldName, field]);
 }
 
-export const ActionField = {
-    create,
-};
+export const ActionField = { create };

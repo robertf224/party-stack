@@ -33,9 +33,7 @@ const ir: OntologyIR = {
                         {
                             property: ["ownerEmail"],
                             value: o.Expression.getAt({
-                                source: o.Expression.contextReference({
-                                    name: "user",
-                                }),
+                                source: o.Expression.contextReference({ name: "user" }),
                                 path: ["email"],
                             }),
                         },
@@ -90,13 +88,7 @@ describe("remote ontology server policy projection", () => {
             },
             validateAction: async (_actionType, parameters) => {
                 validatedParameters = parameters;
-                return {
-                    certain: true,
-                    value: {
-                        kind: "ok",
-                        value: undefined,
-                    },
-                };
+                return { certain: true, value: { kind: "ok", value: undefined } };
             },
             runQueryFunction: async (_queryFunctionType, parameters) => {
                 if (typeof parameters.name !== "string") throw new Error("Expected a string name");
@@ -112,9 +104,7 @@ describe("remote ontology server policy projection", () => {
                 fixedActionParameterValues: {
                     createNote: {
                         ownerEmail: o.Expression.getAt({
-                            source: o.Expression.contextReference({
-                                name: "user",
-                            }),
+                            source: o.Expression.contextReference({ name: "user" }),
                             path: ["email"],
                         }),
                     },
@@ -132,10 +122,7 @@ describe("remote ontology server policy projection", () => {
         const description = parseRemoteOntologyJson(
             await describeResponse.text()
         ) as RemoteOntologyDescription;
-        expect(description.capabilities).toEqual({
-            actionValidation: true,
-            actionParameterResolution: true,
-        });
+        expect(description.capabilities).toEqual({ actionValidation: true, actionParameterResolution: true });
         expect(description.ir.actionTypes[0]!.parameters.map((parameter) => parameter.name)).toEqual([
             "title",
             "dueDate",
@@ -146,21 +133,14 @@ describe("remote ontology server policy projection", () => {
                 method: "POST",
                 body: serializeRemoteOntologyJson({
                     actionType: "createNote",
-                    parameters: {
-                        title: "Hello",
-                        ownerEmail: "mallory@example.com",
-                        dueDate: "2026-06-15",
-                    },
+                    parameters: { title: "Hello", ownerEmail: "mallory@example.com", dueDate: "2026-06-15" },
                 }),
             })
         );
         expect(validateResponse.status).toBe(200);
         expect(parseRemoteOntologyJson(await validateResponse.text())).toEqual({
             certain: true,
-            value: {
-                kind: "ok",
-                value: null,
-            },
+            value: { kind: "ok", value: null },
         });
         expect(validatedParameters).toEqual({
             title: "Hello",
@@ -173,11 +153,7 @@ describe("remote ontology server policy projection", () => {
                 method: "POST",
                 body: serializeRemoteOntologyJson({
                     actionType: "createNote",
-                    parameters: {
-                        title: "Hello",
-                        ownerEmail: "mallory@example.com",
-                        dueDate: "2026-06-15",
-                    },
+                    parameters: { title: "Hello", ownerEmail: "mallory@example.com", dueDate: "2026-06-15" },
                 }),
             })
         );
@@ -193,28 +169,19 @@ describe("remote ontology server policy projection", () => {
                 method: "POST",
                 body: serializeRemoteOntologyJson({
                     actionType: "createNote",
-                    parameters: {
-                        title: "Hello",
-                        ownerEmail: "mallory@example.com",
-                    },
+                    parameters: { title: "Hello", ownerEmail: "mallory@example.com" },
                 }),
             })
         );
         expect(resolveResponse.status).toBe(200);
         expect(parseRemoteOntologyJson(await resolveResponse.text())).toEqual({
-            parameters: {
-                title: "Hello",
-            },
+            parameters: { title: "Hello" },
         });
     });
 
     it("resolves defaults from fixed object references without exposing blocked properties", async () => {
-        const employeeReference = o.Expression.inputReference({
-            name: "employee",
-        });
-        const employeeObject = o.Expression.objectLookup({
-            reference: employeeReference,
-        });
+        const employeeReference = o.Expression.inputReference({ name: "employee" });
+        const employeeObject = o.Expression.objectLookup({ reference: employeeReference });
         const securedIr: OntologyIR = {
             ...ir,
             objectTypes: [
@@ -224,21 +191,9 @@ describe("remote ontology server policy projection", () => {
                     pluralDisplayName: "Employees",
                     primaryKey: "id",
                     properties: [
-                        {
-                            name: "id",
-                            displayName: "ID",
-                            type: o.string({}),
-                        },
-                        {
-                            name: "title",
-                            displayName: "Title",
-                            type: o.string({}),
-                        },
-                        {
-                            name: "secret",
-                            displayName: "Secret",
-                            type: o.string({}),
-                        },
+                        { name: "id", displayName: "ID", type: o.string({}) },
+                        { name: "title", displayName: "Title", type: o.string({}) },
+                        { name: "secret", displayName: "Secret", type: o.string({}) },
                     ],
                 },
             ],
@@ -250,27 +205,19 @@ describe("remote ontology server policy projection", () => {
                         {
                             name: "employee",
                             displayName: "Employee",
-                            type: o.objectReference({
-                                objectType: "Employee",
-                            }),
+                            type: o.objectReference({ objectType: "Employee" }),
                         },
                         {
                             name: "title",
                             displayName: "Title",
                             type: o.string({}),
-                            defaultValue: o.Expression.getAt({
-                                source: employeeObject,
-                                path: ["title"],
-                            }),
+                            defaultValue: o.Expression.getAt({ source: employeeObject, path: ["title"] }),
                         },
                         {
                             name: "secret",
                             displayName: "Secret",
                             type: o.string({}),
-                            defaultValue: o.Expression.getAt({
-                                source: employeeObject,
-                                path: ["secret"],
-                            }),
+                            defaultValue: o.Expression.getAt({ source: employeeObject, path: ["secret"] }),
                         },
                     ],
                     logic: [],
@@ -288,11 +235,7 @@ describe("remote ontology server policy projection", () => {
                             begin();
                             write({
                                 type: "insert",
-                                value: {
-                                    id: "employee-1",
-                                    title: "Visible title",
-                                    secret: "hidden value",
-                                },
+                                value: { id: "employee-1", title: "Visible title", secret: "hidden value" },
                             });
                             expect(commit()).toBe(true);
                             markReady();
@@ -304,21 +247,12 @@ describe("remote ontology server policy projection", () => {
             },
             policy: {
                 fixedActionParameterValues: {
-                    editEmployee: {
-                        employee: o.Expression.literal({
-                            value: "employee-1",
-                        }),
-                    },
+                    editEmployee: { employee: o.Expression.literal({ value: "employee-1" }) },
                 },
                 baseObjectTypeQueries: {
-                    Employee: ({ q, collection }: any) =>
-                        q.from({
-                            object: collection,
-                        }),
+                    Employee: ({ q, collection }: any) => q.from({ object: collection }),
                 },
-                allowedObjectTypeProperties: {
-                    Employee: ["id", "title"],
-                },
+                allowedObjectTypeProperties: { Employee: ["id", "title"] },
             } as any,
         });
 
@@ -340,27 +274,19 @@ describe("remote ontology server policy projection", () => {
         const resolveResponse = await server.handleRequest(
             new Request("http://example.test/resolve-action-parameters", {
                 method: "POST",
-                body: serializeRemoteOntologyJson({
-                    actionType: "editEmployee",
-                    parameters: {},
-                }),
+                body: serializeRemoteOntologyJson({ actionType: "editEmployee", parameters: {} }),
             })
         );
 
         expect(resolveResponse.status).toBe(200);
         expect(parseRemoteOntologyJson(await resolveResponse.text())).toEqual({
-            parameters: {
-                title: "Visible title",
-            },
+            parameters: { title: "Visible title" },
         });
     });
 
     it("includes forwarded context in describe and preserves context references", async () => {
         const server = createRemoteOntologyServer<any, any>({
-            ir: {
-                ...ir,
-                objectTypes: [noteObjectType],
-            },
+            ir: { ...ir, objectTypes: [noteObjectType] },
             backendAdapter: {
                 name: "test",
                 getCollectionOptions: readyCollectionOptions,
@@ -370,9 +296,7 @@ describe("remote ontology server policy projection", () => {
             getContext: () => ({ user: { email: "alice@example.com" }, serviceUser: "svc" }),
             policy: {
                 clientContext: "forward",
-                allowedObjectTypeProperties: {
-                    Note: ["id", "ownerEmail"],
-                } as any,
+                allowedObjectTypeProperties: { Note: ["id", "ownerEmail"] } as any,
             },
         });
 
@@ -385,19 +309,14 @@ describe("remote ontology server policy projection", () => {
         const description = parseRemoteOntologyJson(await response.text()) as RemoteOntologyDescription;
         const action = description.ir.actionTypes.find((action) => action.name === "createContextNote")!;
         const step = action.logic[0]!;
-        expect(description.context).toEqual({
-            user: { email: "alice@example.com" },
-            serviceUser: "svc",
-        });
+        expect(description.context).toEqual({ user: { email: "alice@example.com" }, serviceUser: "svc" });
         expect(step.kind).toBe("createObject");
         if (step.kind !== "createObject") return;
         expect(step.value.values).toEqual([
             {
                 property: ["ownerEmail"],
                 value: o.Expression.getAt({
-                    source: o.Expression.contextReference({
-                        name: "user",
-                    }),
+                    source: o.Expression.contextReference({ name: "user" }),
                     path: ["email"],
                 }),
             },
@@ -406,10 +325,7 @@ describe("remote ontology server policy projection", () => {
 
     it("returns projected context without preserving source context references", async () => {
         const server = createRemoteOntologyServer<any, any>({
-            ir: {
-                ...ir,
-                objectTypes: [noteObjectType],
-            },
+            ir: { ...ir, objectTypes: [noteObjectType] },
             backendAdapter: {
                 name: "test",
                 getCollectionOptions: readyCollectionOptions,
@@ -419,9 +335,7 @@ describe("remote ontology server policy projection", () => {
             getContext: () => ({ user: { email: "alice@example.com" }, serviceUser: "svc" }),
             policy: {
                 clientContext: (ctx) => ({ user: ctx.user }),
-                allowedObjectTypeProperties: {
-                    Note: ["id", "ownerEmail"],
-                } as any,
+                allowedObjectTypeProperties: { Note: ["id", "ownerEmail"] } as any,
             },
         });
 
@@ -434,9 +348,7 @@ describe("remote ontology server policy projection", () => {
         const description = parseRemoteOntologyJson(await response.text()) as RemoteOntologyDescription;
         const action = description.ir.actionTypes.find((action) => action.name === "createContextNote")!;
         const step = action.logic[0]!;
-        expect(description.context).toEqual({
-            user: { email: "alice@example.com" },
-        });
+        expect(description.context).toEqual({ user: { email: "alice@example.com" } });
         expect(step.kind).toBe("createObject");
         if (step.kind !== "createObject") return;
         expect(step.value.values).toEqual([]);
@@ -454,9 +366,7 @@ describe("remote ontology server policy projection", () => {
                     return `Hello ${parameters.name}`;
                 },
             },
-            policy: {
-                canRunQueryFunction: () => true,
-            },
+            policy: { canRunQueryFunction: () => true },
         });
 
         const response = await server.handleRequest(
@@ -501,10 +411,7 @@ describe("remote ontology server policy projection", () => {
             runQueryFunction: async () => undefined,
         };
         const server = createRemoteOntologyServer<any, any>({
-            ir: {
-                ...ir,
-                objectTypes: [noteObjectType],
-            },
+            ir: { ...ir, objectTypes: [noteObjectType] },
             backendAdapter,
             policy: {
                 baseObjectTypeQueries: {
@@ -513,9 +420,7 @@ describe("remote ontology server policy projection", () => {
                             .from({ object: collection })
                             .where(({ object }: any) => eq(object.ownerEmail, "alice@example.com")),
                 },
-                allowedObjectTypeProperties: {
-                    Note: ["id", "ownerEmail", "status", "priority"],
-                },
+                allowedObjectTypeProperties: { Note: ["id", "ownerEmail", "status", "priority"] },
             } as any,
         });
         const response = await server.handleRequest(
@@ -533,10 +438,7 @@ describe("remote ontology server policy projection", () => {
                         orderBy: [
                             {
                                 expression: new IR.PropRef(["priority"]),
-                                compareOptions: {
-                                    direction: "asc",
-                                    nulls: "last",
-                                },
+                                compareOptions: { direction: "asc", nulls: "last" },
                             },
                         ],
                         offset: 1,
@@ -549,14 +451,7 @@ describe("remote ontology server policy projection", () => {
         expect(response.status).toBe(200);
         expect(parseRemoteOntologyJson(await response.text())).toEqual({
             objectType: "Note",
-            objects: [
-                {
-                    id: "three",
-                    ownerEmail: "alice@example.com",
-                    status: "open",
-                    priority: 5,
-                },
-            ],
+            objects: [{ id: "three", ownerEmail: "alice@example.com", status: "open", priority: 5 }],
         });
     });
 
@@ -569,13 +464,7 @@ describe("remote ontology server policy projection", () => {
                 {
                     name: "uploadDocument",
                     displayName: "Upload document",
-                    parameters: [
-                        {
-                            name: "file",
-                            displayName: "File",
-                            type: o.attachment({}),
-                        },
-                    ],
+                    parameters: [{ name: "file", displayName: "File", type: o.attachment({}) }],
                     logic: [],
                 },
             ],
@@ -590,10 +479,7 @@ describe("remote ontology server policy projection", () => {
                 attachments: {
                     materializeAttachment: async (attachment, blob) => {
                         materializedFile = blob;
-                        return {
-                            ...attachment,
-                            id: remoteId,
-                        };
+                        return { ...attachment, id: remoteId };
                     },
                     getAttachmentContent: () =>
                         Promise.reject(new Error("unexpected remote attachment read")),
@@ -603,47 +489,22 @@ describe("remote ontology server policy projection", () => {
                 },
                 runQueryFunction: async () => undefined,
             },
-            policy: {
-                canApplyAction: () => true,
-            },
+            policy: { canApplyAction: () => true },
         });
-        const transport = createInProcessHttpRemoteOntologyTransport(server, {
-            ir: uploadIr,
-        });
-        const file = new File(["attachment contents"], "evidence.txt", {
-            type: "text/plain",
-        });
+        const transport = createInProcessHttpRemoteOntologyTransport(server, { ir: uploadIr });
+        const file = new File(["attachment contents"], "evidence.txt", { type: "text/plain" });
 
         const response = await transport.applyAction(
-            {
-                actionType: "uploadDocument",
-                parameters: {
-                    file: { id: localId },
-                },
-            },
-            {
-                attachments: [
-                    {
-                        attachment: { id: localId },
-                        blob: file,
-                    },
-                ],
-            }
+            { actionType: "uploadDocument", parameters: { file: { id: localId } } },
+            { attachments: [{ attachment: { id: localId }, blob: file }] }
         );
 
         expect(materializedFile).toBeInstanceOf(File);
         expect((materializedFile as File).name).toBe("evidence.txt");
         expect(materializedFile?.type).toBe("text/plain");
         await expect(materializedFile?.text()).resolves.toBe("attachment contents");
-        expect(appliedParameters).toEqual({
-            file: { id: remoteId },
-        });
-        expect(response.attachmentIdMappings).toEqual([
-            {
-                localId,
-                remoteId,
-            },
-        ]);
+        expect(appliedParameters).toEqual({ file: { id: remoteId } });
+        expect(response.attachmentIdMappings).toEqual([{ localId, remoteId }]);
     });
 
     it("starts on-demand collections for apply-action without hanging", async () => {
@@ -667,12 +528,7 @@ describe("remote ontology server policy projection", () => {
                     logic: [
                         o.ActionLogicStep.createObject({
                             objectType: "Note",
-                            values: [
-                                {
-                                    property: ["id"],
-                                    value: o.Expression.literal({ value: "created" }),
-                                },
-                            ],
+                            values: [{ property: ["id"], value: o.Expression.literal({ value: "created" }) }],
                         }),
                     ],
                 },
@@ -734,10 +590,7 @@ describe("remote ontology server policy projection", () => {
                 method: "POST",
                 body: serializeRemoteOntologyJson({
                     actionType: "createNote",
-                    parameters: {
-                        title: "Hello",
-                        note: "note-1",
-                    },
+                    parameters: { title: "Hello", note: "note-1" },
                 }),
             })
         );
@@ -752,10 +605,7 @@ describe("remote ontology server policy projection", () => {
 
     it("cleans up on-demand collections after apply-action failure", async () => {
         let cleanedUp = false;
-        const onDemandIr: OntologyIR = {
-            ...ir,
-            objectTypes: [noteObjectType],
-        };
+        const onDemandIr: OntologyIR = { ...ir, objectTypes: [noteObjectType] };
         const backendAdapter: OntologyBackendAdapter = {
             name: "test",
             getCollectionOptions: () => ({
@@ -781,9 +631,7 @@ describe("remote ontology server policy projection", () => {
             ir: onDemandIr,
             backendAdapter,
             getContext: () => ({}),
-            policy: {
-                canApplyAction: () => true,
-            },
+            policy: { canApplyAction: () => true },
         });
 
         const response = await server.handleRequest(
@@ -791,11 +639,7 @@ describe("remote ontology server policy projection", () => {
                 method: "POST",
                 body: serializeRemoteOntologyJson({
                     actionType: "createNote",
-                    parameters: {
-                        title: "Hello",
-                        ownerEmail: "alice@example.com",
-                        dueDate: "2026-06-15",
-                    },
+                    parameters: { title: "Hello", ownerEmail: "alice@example.com", dueDate: "2026-06-15" },
                 }),
             })
         );

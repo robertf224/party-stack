@@ -66,13 +66,7 @@ const DEFAULT_SCOPES = [
 function activeState(expiresAt: number | undefined, refreshable: boolean): Connection<"active">["state"] {
     return expiresAt === undefined
         ? { status: "active" }
-        : {
-              status: "active",
-              expiration: {
-                  expiresAt,
-                  refreshable,
-              },
-          };
+        : { status: "active", expiration: { expiresAt, refreshable } };
 }
 
 function createFoundryEgressWrapper(options: {
@@ -91,10 +85,7 @@ function createFoundryEgressWrapper(options: {
             createWebSocket: (url, protocols) => handlers.createWebSocket(url, protocols),
         });
         return withHttpAuthenticationErrorHandling(
-            withHttpRetryHandling({
-                fetch: (request) => fetch(request),
-                createWebSocket,
-            })
+            withHttpRetryHandling({ fetch: (request) => fetch(request), createWebSocket })
         );
     };
 }
@@ -158,10 +149,7 @@ async function createFoundryConnectionAdapterInstance(
             throw new Error("Foundry API token connections are not configured.");
         }
         const { userId, expiresAt } = getTokenDetails(token);
-        const connection: Connection<"active"> = {
-            userId,
-            state: activeState(expiresAt, false),
-        };
+        const connection: Connection<"active"> = { userId, state: activeState(expiresAt, false) };
         const session: ConnectionSession = {
             disconnect() {
                 if (token === options.token) {

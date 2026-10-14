@@ -24,16 +24,8 @@ const conformanceIR: OntologyIR = {
             primaryKey: "id",
             properties: [
                 { name: "id", displayName: "ID", type: o.string({}) },
-                {
-                    name: "title",
-                    displayName: "Title",
-                    type: o.string({}),
-                },
-                {
-                    name: "owner",
-                    displayName: "Owner",
-                    type: o.string({}),
-                },
+                { name: "title", displayName: "Title", type: o.string({}) },
+                { name: "owner", displayName: "Owner", type: o.string({}) },
             ],
         },
         {
@@ -43,11 +35,7 @@ const conformanceIR: OntologyIR = {
             primaryKey: "id",
             properties: [
                 { name: "id", displayName: "ID", type: o.string({}) },
-                {
-                    name: "attachment",
-                    displayName: "Attachment",
-                    type: o.attachment({}),
-                },
+                { name: "attachment", displayName: "Attachment", type: o.attachment({}) },
             ],
         },
     ],
@@ -58,42 +46,21 @@ const conformanceIR: OntologyIR = {
             displayName: "Create note",
             parameters: [
                 { name: "id", displayName: "ID", type: o.string({}) },
-                {
-                    name: "title",
-                    displayName: "Title",
-                    type: o.string({}),
-                },
+                { name: "title", displayName: "Title", type: o.string({}) },
                 {
                     name: "owner",
                     displayName: "Owner",
                     type: o.string({}),
-                    defaultValue: o.Expression.contextReference({
-                        name: "user",
-                    }),
+                    defaultValue: o.Expression.contextReference({ name: "user" }),
                 },
             ],
             logic: [
                 o.ActionLogicStep.createObject({
                     objectType: "Note",
                     values: [
-                        {
-                            property: ["id"],
-                            value: o.Expression.inputReference({
-                                name: "id",
-                            }),
-                        },
-                        {
-                            property: ["title"],
-                            value: o.Expression.inputReference({
-                                name: "title",
-                            }),
-                        },
-                        {
-                            property: ["owner"],
-                            value: o.Expression.inputReference({
-                                name: "owner",
-                            }),
-                        },
+                        { property: ["id"], value: o.Expression.inputReference({ name: "id" }) },
+                        { property: ["title"], value: o.Expression.inputReference({ name: "title" }) },
+                        { property: ["owner"], value: o.Expression.inputReference({ name: "owner" }) },
                     ],
                 }),
             ],
@@ -102,16 +69,8 @@ const conformanceIR: OntologyIR = {
             name: "renameNote",
             displayName: "Rename note",
             parameters: [
-                {
-                    name: "note",
-                    displayName: "Note",
-                    type: o.objectReference({ objectType: "Note" }),
-                },
-                {
-                    name: "title",
-                    displayName: "Title",
-                    type: o.string({}),
-                },
+                { name: "note", displayName: "Note", type: o.objectReference({ objectType: "Note" }) },
+                { name: "title", displayName: "Title", type: o.string({}) },
             ],
             logic: [],
         },
@@ -120,27 +79,16 @@ const conformanceIR: OntologyIR = {
             displayName: "Create asset",
             parameters: [
                 { name: "id", displayName: "ID", type: o.string({}) },
-                {
-                    name: "attachment",
-                    displayName: "Attachment",
-                    type: o.attachment({}),
-                },
+                { name: "attachment", displayName: "Attachment", type: o.attachment({}) },
             ],
             logic: [
                 o.ActionLogicStep.createObject({
                     objectType: "Asset",
                     values: [
-                        {
-                            property: ["id"],
-                            value: o.Expression.inputReference({
-                                name: "id",
-                            }),
-                        },
+                        { property: ["id"], value: o.Expression.inputReference({ name: "id" }) },
                         {
                             property: ["attachment"],
-                            value: o.Expression.inputReference({
-                                name: "attachment",
-                            }),
+                            value: o.Expression.inputReference({ name: "attachment" }),
                         },
                     ],
                 }),
@@ -152,20 +100,11 @@ const conformanceIR: OntologyIR = {
             name: "noteTitle",
             displayName: "Note title",
             parameters: [
-                {
-                    name: "note",
-                    displayName: "Note",
-                    type: o.objectReference({ objectType: "Note" }),
-                },
+                { name: "note", displayName: "Note", type: o.objectReference({ objectType: "Note" }) },
             ],
             returnType: o.string({}),
         },
-        {
-            name: "currentUser",
-            displayName: "Current user",
-            parameters: [],
-            returnType: o.string({}),
-        },
+        { name: "currentUser", displayName: "Current user", parameters: [], returnType: o.string({}) },
     ],
 };
 
@@ -196,9 +135,7 @@ async function readObject(
 
 const mutators = {
     renameNote: async ({ tx, args }) => {
-        await tx.mutate.Note!.update(args.note as string, {
-            title: args.title,
-        });
+        await tx.mutate.Note!.update(args.note as string, { title: args.title });
     },
 } satisfies OntologyMutatorRegistry;
 
@@ -233,16 +170,8 @@ function resetAttachmentMigration(database: SQLiteDatabase): void {
 }
 
 function runSchemaCreation(database: SQLiteDatabase): void {
-    createSQLiteOntologyBackendAdapter({
-        ir: conformanceIR,
-        database,
-        name: "sqlite",
-    });
-    createSQLiteOntologyBackendAdapter({
-        ir: conformanceIR,
-        database,
-        name: "sqlite",
-    });
+    createSQLiteOntologyBackendAdapter({ ir: conformanceIR, database, name: "sqlite" });
+    createSQLiteOntologyBackendAdapter({ ir: conformanceIR, database, name: "sqlite" });
     assert(
         database
             .prepare(
@@ -263,11 +192,7 @@ function runSchemaCreation(database: SQLiteDatabase): void {
     );
     let secondOntologyRejected = false;
     try {
-        createSQLiteOntologyBackendAdapter({
-            ir: conformanceIR,
-            database,
-            name: "other-ontology",
-        });
+        createSQLiteOntologyBackendAdapter({ ir: conformanceIR, database, name: "other-ontology" });
     } catch {
         secondOntologyRejected = true;
     }
@@ -277,26 +202,14 @@ function runSchemaCreation(database: SQLiteDatabase): void {
 async function runActionsAndContext(database: SQLiteDatabase): Promise<void> {
     const ontology = await createLiveOntology({
         ir: conformanceIR,
-        backend: () =>
-            createSQLiteOntologyBackendAdapter({
-                ir: conformanceIR,
-                database,
-                name: "sqlite",
-            }),
+        backend: () => createSQLiteOntologyBackendAdapter({ ir: conformanceIR, database, name: "sqlite" }),
         context: { user: "alice" },
     });
     try {
-        await ontology.actions.createNote!({
-            id: "note-1",
-            title: "Hello",
-        });
+        await ontology.actions.createNote!({ id: "note-1", title: "Hello" });
         const note = await readObject(ontology.objects.Note!, "note-1");
         assertEqual(
-            note && {
-                id: note.id,
-                title: note.title,
-                owner: note.owner,
-            },
+            note && { id: note.id, title: note.title, owner: note.owner },
             { id: "note-1", title: "Hello", owner: "alice" },
             "Declarative action or context.user failed."
         );
@@ -319,14 +232,8 @@ async function runHandlers(database: SQLiteDatabase): Promise<void> {
         context: { user: "alice" },
     });
     try {
-        await ontology.actions.createNote!({
-            id: "note-1",
-            title: "Before",
-        });
-        await ontology.actions.renameNote!({
-            note: "note-1",
-            title: "After",
-        });
+        await ontology.actions.createNote!({ id: "note-1", title: "Before" });
+        await ontology.actions.renameNote!({ note: "note-1", title: "After" });
         assertEqual(
             await ontology.queryFunctions.noteTitle!({ note: "note-1" }),
             "After",
@@ -345,25 +252,13 @@ async function runHandlers(database: SQLiteDatabase): Promise<void> {
 async function runInlineAttachments(database: SQLiteDatabase): Promise<void> {
     const ontology = await createLiveOntology({
         ir: conformanceIR,
-        backend: () =>
-            createSQLiteOntologyBackendAdapter({
-                ir: conformanceIR,
-                database,
-                name: "sqlite",
-            }),
+        backend: () => createSQLiteOntologyBackendAdapter({ ir: conformanceIR, database, name: "sqlite" }),
     });
     try {
         const created = await ontology.attachments.create(new Blob(["inline"], { type: "text/plain" }), {
-            target: {
-                kind: "objectProperty",
-                objectType: "Asset",
-                property: "attachment",
-            },
+            target: { kind: "objectProperty", objectType: "Asset", property: "attachment" },
         });
-        await ontology.actions.createAsset!({
-            id: "asset-1",
-            attachment: created.attachment,
-        });
+        await ontology.actions.createAsset!({ id: "asset-1", attachment: created.attachment });
         assertEqual(
             await (await ontology.attachments.blob(created.attachment)).text(),
             "inline",
@@ -411,11 +306,7 @@ async function runLegacyAttachmentMigration(database: SQLiteDatabase): Promise<v
              ) VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
         .run("legacy", new TextEncoder().encode("legacy"), "text/plain", "legacy.txt", 6, 1, 1);
-    const adapter = createSQLiteOntologyBackendAdapter({
-        ir: conformanceIR,
-        database,
-        name: "sqlite",
-    });
+    const adapter = createSQLiteOntologyBackendAdapter({ ir: conformanceIR, database, name: "sqlite" });
     const columns = database.prepare(`PRAGMA table_info("party_stack_attachments")`).all() as Array<{
         name: string;
         pk: number;
@@ -503,16 +394,9 @@ async function runExternalAttachments(database: SQLiteDatabase): Promise<void> {
     });
     try {
         const created = await ontology.attachments.create(new Blob(["external"], { type: "text/plain" }), {
-            target: {
-                kind: "objectProperty",
-                objectType: "Asset",
-                property: "attachment",
-            },
+            target: { kind: "objectProperty", objectType: "Asset", property: "attachment" },
         });
-        await ontology.actions.createAsset!({
-            id: "external-asset",
-            attachment: created.attachment,
-        });
+        await ontology.actions.createAsset!({ id: "external-asset", attachment: created.attachment });
         assertEqual(
             await (await ontology.attachments.blob(created.attachment)).text(),
             "external",
@@ -530,30 +414,18 @@ async function runExternalAttachments(database: SQLiteDatabase): Promise<void> {
                 ir: conformanceIR,
                 database,
                 name: "sqlite",
-                attachmentStorage: {
-                    external: { bytes: delayedBytes },
-                },
+                attachmentStorage: { external: { bytes: delayedBytes } },
             }),
     });
     try {
         const created = await delayed.attachments.create(new Blob(["delayed"], { type: "text/plain" }), {
-            target: {
-                kind: "objectProperty",
-                objectType: "Asset",
-                property: "attachment",
-            },
+            target: { kind: "objectProperty", objectType: "Asset", property: "attachment" },
         });
-        const action = delayed.actions.createAsset!({
-            id: "delayed-asset",
-            attachment: created.attachment,
-        });
+        const action = delayed.actions.createAsset!({ id: "delayed-asset", attachment: created.attachment });
         void action.catch(() => undefined);
         await delayedBytes.writeStarted;
         assertEqual(
-            await collectSQLiteAttachmentOrphans({
-                database,
-                bytes: delayedBytes,
-            }),
+            await collectSQLiteAttachmentOrphans({ database, bytes: delayedBytes }),
             0,
             "Collector claimed an active upload."
         );
@@ -573,21 +445,9 @@ export const sqliteOntologyConformanceCases = [
         name: "persists declarative actions with context.user",
         run: runActionsAndContext,
     },
-    {
-        id: "handlers",
-        name: "runs registered mutators and query functions",
-        run: runHandlers,
-    },
-    {
-        id: "inline-attachments",
-        name: "persists inline SQLite attachment bytes",
-        run: runInlineAttachments,
-    },
-    {
-        id: "transaction-rollback",
-        name: "rolls back synchronous transactions",
-        run: runTransactionRollback,
-    },
+    { id: "handlers", name: "runs registered mutators and query functions", run: runHandlers },
+    { id: "inline-attachments", name: "persists inline SQLite attachment bytes", run: runInlineAttachments },
+    { id: "transaction-rollback", name: "rolls back synchronous transactions", run: runTransactionRollback },
     {
         id: "legacy-attachments",
         name: "migrates legacy attachment scaffolding",

@@ -15,11 +15,7 @@ describe("generateTypes", () => {
                         value: {
                             fields: [
                                 { name: "city", displayName: "City", type: o.string({}) },
-                                {
-                                    name: "zip",
-                                    displayName: "ZIP",
-                                    type: o.optional({ type: o.string({}) }),
-                                },
+                                { name: "zip", displayName: "ZIP", type: o.optional({ type: o.string({}) }) },
                             ],
                         },
                     },
@@ -54,11 +50,7 @@ describe("generateTypes", () => {
                 },
                 {
                     name: "AnyImage",
-                    type: o.attachment({
-                        constraint: {
-                            content: o.AttachmentContentConstraint.image({}),
-                        },
-                    }),
+                    type: o.attachment({ constraint: { content: o.AttachmentContentConstraint.image({}) } }),
                 },
             ],
         };
@@ -91,21 +83,13 @@ describe("generateTypes", () => {
                 {
                     name: "StatusHolder",
                     type: o.struct({
-                        fields: [
-                            {
-                                name: "status",
-                                displayName: "Status",
-                                type: o.ref({ name: "Status" }),
-                            },
-                        ],
+                        fields: [{ name: "status", displayName: "Status", type: o.ref({ name: "Status" }) }],
                     }),
                 },
                 {
                     name: "Priority",
                     type: o.string({
-                        constraint: o.StringConstraint.enum({
-                            options: [{ value: "high", label: "High" }],
-                        }),
+                        constraint: o.StringConstraint.enum({ options: [{ value: "high", label: "High" }] }),
                     }),
                 },
             ],
@@ -309,11 +293,7 @@ describe("generateTypes", () => {
                     displayName: "Search Posts",
                     parameters: [
                         { name: "query", displayName: "Query", type: o.string({}) },
-                        {
-                            name: "limit",
-                            displayName: "Limit",
-                            type: o.optional({ type: o.integer({}) }),
-                        },
+                        { name: "limit", displayName: "Limit", type: o.optional({ type: o.integer({}) }) },
                     ],
                     returnType: o.list({ elementType: o.string({}) }),
                 },

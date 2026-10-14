@@ -21,14 +21,7 @@ function memoryAdapter(): PersistenceAdapter & {
     getStreamPosition: NonNullable<PersistenceAdapter["getStreamPosition"]>;
 } {
     const collections = new Map<string, Map<string | number, Record<string, unknown>>>();
-    const positions = new Map<
-        string,
-        {
-            latestTerm: number;
-            latestSeq: number;
-            latestRowVersion: number;
-        }
-    >();
+    const positions = new Map<string, { latestTerm: number; latestSeq: number; latestRowVersion: number }>();
     const rows = (collectionId: string) => {
         let collection = collections.get(collectionId);
         if (!collection) {
@@ -46,12 +39,7 @@ function memoryAdapter(): PersistenceAdapter & {
                 resetEpoch: 0,
             }),
         loadSubset: (collectionId) =>
-            Promise.resolve(
-                [...rows(collectionId)].map(([key, value]) => ({
-                    key,
-                    value,
-                }))
-            ),
+            Promise.resolve([...rows(collectionId)].map(([key, value]) => ({ key, value }))),
         applyCommittedTx: (collectionId: string, transaction: PersistedTx) => {
             const collection = rows(collectionId);
             for (const mutation of transaction.mutations) {
@@ -71,11 +59,7 @@ function memoryAdapter(): PersistenceAdapter & {
         ensureIndex: () => Promise.resolve(),
         getStreamPosition: (collectionId) =>
             Promise.resolve(
-                positions.get(collectionId) ?? {
-                    latestTerm: 0,
-                    latestSeq: 0,
-                    latestRowVersion: 0,
-                }
+                positions.get(collectionId) ?? { latestTerm: 0, latestSeq: 0, latestRowVersion: 0 }
             ),
     };
 }
@@ -83,10 +67,7 @@ function memoryAdapter(): PersistenceAdapter & {
 function coordinatedRuntime(options: {
     adapter: RuntimeAdapter["persistence"];
     coordination: Coordination;
-}): {
-    runtime: RuntimeAdapter;
-    coordination: Coordination;
-} {
+}): { runtime: RuntimeAdapter; coordination: Coordination } {
     const coordination = options.coordination;
     const runtime: RuntimeAdapter = {
         owner: "test-owner",
@@ -100,9 +81,7 @@ function coordinatedRuntime(options: {
 
 describe("createLocalCollection", () => {
     it("creates an in-memory collection without runtime persistence", async () => {
-        const coordination = new SingleProcessCoordination({
-            scope: "memory-items",
-        });
+        const coordination = new SingleProcessCoordination({ scope: "memory-items" });
         const collection = createLocalCollection<Item, string>({
             name: "memory-items",
             getKey: (item) => item.id,
@@ -115,16 +94,10 @@ describe("createLocalCollection", () => {
         });
 
         await collection.preload();
-        const transaction = collection.insert({
-            id: "one",
-            title: "In memory",
-        });
+        const transaction = collection.insert({ id: "one", title: "In memory" });
         await transaction.isPersisted.promise;
 
-        expect(collection.get("one")).toMatchObject({
-            id: "one",
-            title: "In memory",
-        });
+        expect(collection.get("one")).toMatchObject({ id: "one", title: "In memory" });
         const first = await queryOnce((query) =>
             query
                 .from({ item: collection })
@@ -139,15 +112,7 @@ describe("createLocalCollection", () => {
 
     it("loads through the runtime persistence adapter when available", async () => {
         const loadSubset = vi.fn(() =>
-            Promise.resolve([
-                {
-                    key: "one",
-                    value: {
-                        id: "one",
-                        title: "Persisted",
-                    },
-                },
-            ])
+            Promise.resolve([{ key: "one", value: { id: "one", title: "Persisted" } }])
         );
         const loadResumeSnapshot = vi.fn(async () => ({
             rows: await loadSubset(),
@@ -163,9 +128,7 @@ describe("createLocalCollection", () => {
             applyCommittedTx: vi.fn(() => Promise.resolve()),
             ensureIndex: vi.fn(() => Promise.resolve()),
         };
-        const coordination = new SingleProcessCoordination({
-            scope: "persisted-items",
-        });
+        const coordination = new SingleProcessCoordination({ scope: "persisted-items" });
         const collection = createLocalCollection<Item, string>({
             name: "persisted-items",
             getKey: (item) => item.id,
@@ -184,10 +147,7 @@ describe("createLocalCollection", () => {
             "party-stack:test-owner:persisted:persisted-items",
             expect.any(Object)
         );
-        expect(collection.get("one")).toMatchObject({
-            id: "one",
-            title: "Persisted",
-        });
+        expect(collection.get("one")).toMatchObject({ id: "one", title: "Persisted" });
         const first = await queryOnce((query) =>
             query
                 .from({ item: collection })
@@ -202,30 +162,15 @@ describe("createLocalCollection", () => {
 
     it("propagates committed mutations between coordinated contexts", async () => {
         const adapter = memoryAdapter();
-        const coordination = new SingleProcessCoordination({
-            scope: "local-collection-test",
-        });
-        const firstRuntime = coordinatedRuntime({
-            adapter: { adapter },
-            coordination,
-        });
-        const secondRuntime = coordinatedRuntime({
-            adapter: { adapter },
-            coordination,
-        });
+        const coordination = new SingleProcessCoordination({ scope: "local-collection-test" });
+        const firstRuntime = coordinatedRuntime({ adapter: { adapter }, coordination });
+        const secondRuntime = coordinatedRuntime({ adapter: { adapter }, coordination });
         const createItems = ({ runtime }: ReturnType<typeof coordinatedRuntime>) =>
-            createLocalCollection<Item, string>({
-                name: "shared-items",
-                getKey: (item) => item.id,
-                runtime,
-            });
+            createLocalCollection<Item, string>({ name: "shared-items", getKey: (item) => item.id, runtime });
         const first = createItems(firstRuntime);
         const second = createItems(secondRuntime);
         await Promise.all([first.preload(), second.preload()]);
-        await second.insert({
-            id: "one",
-            title: "Shared",
-        }).isPersisted.promise;
+        await second.insert({ id: "one", title: "Shared" }).isPersisted.promise;
         await vi.waitFor(() => {
             expect(first.get("one")?.title).toBe("Shared");
             expect(second.get("one")?.title).toBe("Shared");
@@ -238,17 +183,9 @@ describe("createLocalCollection", () => {
 
     it("removes non-cloneable subscription and signal state from remote subset requests", async () => {
         const adapter = memoryAdapter();
-        const coordination = new SingleProcessCoordination({
-            scope: "remote-subset-test",
-        });
-        const first = coordinatedRuntime({
-            adapter: { adapter },
-            coordination,
-        });
-        const second = coordinatedRuntime({
-            adapter: { adapter },
-            coordination,
-        });
+        const coordination = new SingleProcessCoordination({ scope: "remote-subset-test" });
+        const first = coordinatedRuntime({ adapter: { adapter }, coordination });
+        const second = coordinatedRuntime({ adapter: { adapter }, coordination });
         const firstCoordinator = createPersistedCollectionCoordinator(first.coordination, adapter);
         const secondCoordinator = createPersistedCollectionCoordinator(second.coordination, adapter);
         const load = vi.fn((options: unknown) => {
@@ -278,9 +215,7 @@ describe("createLocalCollection", () => {
         expect(unloadSubset).toHaveBeenCalledWith(load.mock.calls[0]?.[0]);
         unregister();
         await expect(
-            firstCoordinator.requestEnsurePersistedIndex("items", "index", {
-                expressionSql: [],
-            })
+            firstCoordinator.requestEnsurePersistedIndex("items", "index", { expressionSql: [] })
         ).resolves.toBeUndefined();
 
         await coordination.close();
@@ -382,9 +317,7 @@ describe("createLocalCollection", () => {
     it("routes client-only persistence through a SharedWorker host", async () => {
         const adapter = memoryAdapter();
         const channel = new MessageChannel();
-        const hostCoordination = new SharedWorkerCoordinationHost({
-            scope: "shared-worker-persistence",
-        });
+        const hostCoordination = new SharedWorkerCoordinationHost({ scope: "shared-worker-persistence" });
         const disconnect = hostCoordination.connect(channel.port1);
         const clientCoordination = new SharedWorkerCoordinationClient({
             scope: "shared-worker-persistence",
@@ -414,10 +347,7 @@ describe("createLocalCollection", () => {
         });
         await Promise.all([host.preload(), client.preload()]);
 
-        await client.insert({
-            id: "one",
-            title: "From client",
-        }).isPersisted.promise;
+        await client.insert({ id: "one", title: "From client" }).isPersisted.promise;
 
         await vi.waitFor(() => {
             expect(host.get("one")?.title).toBe("From client");
@@ -602,9 +532,7 @@ describe("collection-scoped persistence", () => {
         );
         const broadcast: unknown = listener.mock.calls[0]?.[0];
         expect(broadcast).toMatchObject({
-            payload: {
-                rowMetadataMutations: [{ type: "set", key: "one", value: { etag: "v1" } }],
-            },
+            payload: { rowMetadataMutations: [{ type: "set", key: "one", value: { etag: "v1" } }] },
         });
         unsubscribe();
         await coordination.close();

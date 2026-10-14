@@ -9,9 +9,6 @@ export function buildJsDocs(opts: {
     if (!description && !deprecated) return undefined;
 
     return [
-        {
-            description,
-            tags: deprecated ? [{ tagName: "deprecated", text: deprecated.message }] : undefined,
-        },
+        { description, tags: deprecated ? [{ tagName: "deprecated", text: deprecated.message }] : undefined },
     ];
 }

@@ -4,17 +4,8 @@ import type { Collection } from "@tanstack/db";
 export type BlobState = "staged" | "persisted" | "cached";
 
 export type BlobOperation =
-    | {
-          kind: "stage" | "cache" | "purge";
-          status: "pending";
-          operationId: string;
-      }
-    | {
-          kind: "stage" | "cache" | "purge";
-          status: "failed";
-          operationId: string;
-          error: string;
-      };
+    | { kind: "stage" | "cache" | "purge"; status: "pending"; operationId: string }
+    | { kind: "stage" | "cache" | "purge"; status: "failed"; operationId: string; error: string };
 
 export interface PartialBlobMetadata {
     size?: number;

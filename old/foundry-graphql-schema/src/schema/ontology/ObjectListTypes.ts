@@ -28,14 +28,8 @@ function getPageTypeReference(
 const OrderingDirectionType = new GraphQLEnumType({
     name: "OrderingDirection",
     values: {
-        asc: {
-            value: "asc",
-            description: "Ascending order",
-        },
-        desc: {
-            value: "desc",
-            description: "Descending order",
-        },
+        asc: { value: "asc", description: "Ascending order" },
+        desc: { value: "desc", description: "Descending order" },
     },
 });
 
@@ -86,9 +80,7 @@ function createOrderByType(typeRegistry: TypeRegistry, objectType: ObjectTypeV2)
         name: `${objectType.apiName}OrderBy`,
         isOneOf: true,
         fields: typeRegistry.use((getTypeReference) => ({
-            fields: {
-                type: Schemas.list(getFieldOrderingTypeReference(getTypeReference, objectType)),
-            },
+            fields: { type: Schemas.list(getFieldOrderingTypeReference(getTypeReference, objectType)) },
         })),
     });
 }

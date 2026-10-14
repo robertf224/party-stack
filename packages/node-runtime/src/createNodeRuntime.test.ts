@@ -16,12 +16,7 @@ const directories: string[] = [];
 
 afterEach(async () => {
     await Promise.all(
-        directories.splice(0).map((directory) =>
-            rm(directory, {
-                recursive: true,
-                force: true,
-            })
-        )
+        directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))
     );
 });
 
@@ -45,12 +40,7 @@ describe("createNodeRuntime", () => {
             createLocalCollection<
                 { id: string; instant: Temporal.Instant; nested: { dates: Temporal.PlainDate[] } },
                 string
-            >({
-                name: "temporal",
-                getKey: (item) => item.id,
-                runtime,
-                schemaVersion: 1,
-            });
+            >({ name: "temporal", getKey: (item) => item.id, runtime, schemaVersion: 1 });
         const firstRuntime = await provider("owner", "temporal");
         const first = open(firstRuntime);
         const collectionId = first.id;
@@ -127,16 +117,11 @@ describe("createNodeRuntime", () => {
     it("reopens persisted SQLite collections", async () => {
         const directory = await mkdtemp(join(tmpdir(), "party-stack-runtime-"));
         directories.push(directory);
-        const provider = createNodeRuntimeWithOptions({
-            dataDirectory: directory,
-        });
+        const provider = createNodeRuntimeWithOptions({ dataDirectory: directory });
         const firstRuntime = await provider("owner", "namespace");
         const first = createItems(firstRuntime);
         await first.preload();
-        await first.insert({
-            id: "one",
-            title: "Persisted",
-        }).isPersisted.promise;
+        await first.insert({ id: "one", title: "Persisted" }).isPersisted.promise;
         await first.cleanup();
         await firstRuntime.cleanup?.();
 
@@ -144,10 +129,7 @@ describe("createNodeRuntime", () => {
         const second = createItems(secondRuntime);
         await second.preload();
 
-        expect(second.get("one")).toMatchObject({
-            id: "one",
-            title: "Persisted",
-        });
+        expect(second.get("one")).toMatchObject({ id: "one", title: "Persisted" });
         await second.cleanup();
         await secondRuntime.destroy?.();
     });
@@ -157,12 +139,7 @@ describe("createNodeRuntime", () => {
         directories.push(directory);
         const runtime = await createNodeRuntimeWithOptions({ dataDirectory: directory })("owner", "schemas");
         const open = (name: string, schemaVersion: number) =>
-            createLocalCollection<Item, string>({
-                name,
-                schemaVersion,
-                runtime,
-                getKey: (item) => item.id,
-            });
+            createLocalCollection<Item, string>({ name, schemaVersion, runtime, getKey: (item) => item.id });
         const tasks = open("tasks", 2);
         const settings = open("settings", 7);
         try {
@@ -203,9 +180,7 @@ describe("createNodeRuntime", () => {
     it("isolates runtime namespaces", async () => {
         const directory = await mkdtemp(join(tmpdir(), "party-stack-runtime-"));
         directories.push(directory);
-        const provider = createNodeRuntimeWithOptions({
-            dataDirectory: directory,
-        });
+        const provider = createNodeRuntimeWithOptions({ dataDirectory: directory });
         const first = await provider("owner", "one");
         const second = await provider("owner", "two");
 

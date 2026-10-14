@@ -35,9 +35,7 @@ export class NodeFileSystemBlobBytesStore implements BlobBytesStore {
             return new Blob([await readFile(this.#path(id))]);
         } catch (error) {
             if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-                throw new Error(`Blob bytes not found for "${id}".`, {
-                    cause: error,
-                });
+                throw new Error(`Blob bytes not found for "${id}".`, { cause: error });
             }
             throw error;
         }

@@ -8,9 +8,7 @@ export function waitForAbort(signal: AbortSignal): Operation<never> {
             abort();
             return () => undefined;
         }
-        signal.addEventListener("abort", abort, {
-            once: true,
-        });
+        signal.addEventListener("abort", abort, { once: true });
         return () => signal.removeEventListener("abort", abort);
     }, "wait for abort");
 }

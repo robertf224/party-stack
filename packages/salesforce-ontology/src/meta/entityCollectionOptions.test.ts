@@ -10,20 +10,8 @@ function taskDescribe() {
         labelPlural: "Tasks",
         queryable: true,
         fields: [
-            {
-                name: "Id",
-                label: "Task ID",
-                type: "id",
-                nillable: false,
-                referenceTo: [],
-            },
-            {
-                name: "Subject",
-                label: "Subject",
-                type: "string",
-                nillable: true,
-                referenceTo: [],
-            },
+            { name: "Id", label: "Task ID", type: "id", nillable: false, referenceTo: [] },
+            { name: "Subject", label: "Subject", type: "string", nillable: true, referenceTo: [] },
         ],
     };
 }
@@ -35,10 +23,7 @@ describe("Salesforce ObjectType metadata queries", () => {
         const meta = await createMetaLiveOntology({
             backend: () =>
                 createSalesforceMetaOntologyBackendAdapter({
-                    client: {
-                        describeGlobal,
-                        describeSObject,
-                    } as never,
+                    client: { describeGlobal, describeSObject } as never,
                 }),
             persistObjects: false,
         });
@@ -46,9 +31,7 @@ describe("Salesforce ObjectType metadata queries", () => {
         try {
             const rows = await queryOnce((q) =>
                 q
-                    .from({
-                        ObjectType: meta.objects.ObjectType,
-                    })
+                    .from({ ObjectType: meta.objects.ObjectType })
                     .where(({ ObjectType }) => eq(ObjectType.name, "Task"))
             );
 
@@ -66,53 +49,29 @@ describe("Salesforce ObjectType metadata queries", () => {
     it("lists lightweight global summaries without per-object describes", async () => {
         const describeGlobal = vi.fn().mockResolvedValue({
             sobjects: [
-                {
-                    name: "Task",
-                    label: "Task",
-                    labelPlural: "Tasks",
-                    queryable: true,
-                },
-                {
-                    name: "Hidden",
-                    label: "Hidden",
-                    labelPlural: "Hidden",
-                    queryable: false,
-                },
+                { name: "Task", label: "Task", labelPlural: "Tasks", queryable: true },
+                { name: "Hidden", label: "Hidden", labelPlural: "Hidden", queryable: false },
             ],
         });
         const describeSObject = vi.fn().mockResolvedValue(taskDescribe());
         const meta = await createMetaLiveOntology({
             backend: () =>
                 createSalesforceMetaOntologyBackendAdapter({
-                    client: {
-                        describeGlobal,
-                        describeSObject,
-                    } as never,
+                    client: { describeGlobal, describeSObject } as never,
                 }),
             persistObjects: false,
         });
 
         try {
-            const rows = await queryOnce((q) =>
-                q.from({
-                    ObjectType: meta.objects.ObjectType,
-                })
-            );
+            const rows = await queryOnce((q) => q.from({ ObjectType: meta.objects.ObjectType }));
 
             expect(describeGlobal).toHaveBeenCalledOnce();
             expect(describeSObject).not.toHaveBeenCalled();
-            expect(rows).toEqual([
-                expect.objectContaining({
-                    name: "Task",
-                    properties: [],
-                }),
-            ]);
+            expect(rows).toEqual([expect.objectContaining({ name: "Task", properties: [] })]);
 
             const detail = await queryOnce((q) =>
                 q
-                    .from({
-                        ObjectType: meta.objects.ObjectType,
-                    })
+                    .from({ ObjectType: meta.objects.ObjectType })
                     .where(({ ObjectType }) => eq(ObjectType.name, "Task"))
             );
             expect(describeSObject).toHaveBeenCalledExactlyOnceWith("Task");

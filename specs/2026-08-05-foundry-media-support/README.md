@@ -24,24 +24,13 @@ Datasource-driven routing and predicted media IDs remain future work. Begin that
 Load object types with datasources in addition to the existing full ontology metadata. If the API begins returning the field before the SDK publishes it, locally augment its type:
 
 ```ts
-type MediaSetViewDatasourceWithSetRid = ObjectTypeMediaSetViewDatasource & {
-    mediaSetRid: MediaSetRid;
-};
+type MediaSetViewDatasourceWithSetRid = ObjectTypeMediaSetViewDatasource & { mediaSetRid: MediaSetRid };
 ```
 
 Build a lookup keyed by object type and property API name:
 
 ```ts
-Map<
-    ObjectTypeApiName,
-    Map<
-        PropertyApiName,
-        {
-            mediaSetRid: MediaSetRid;
-            mediaSetViewRid: MediaSetViewRid;
-        }
-    >
->;
+Map<ObjectTypeApiName, Map<PropertyApiName, { mediaSetRid: MediaSetRid; mediaSetViewRid: MediaSetViewRid }>>;
 ```
 
 Reject or explicitly disambiguate conflicting media-set datasources for the same property. Do not silently select one.
@@ -102,11 +91,7 @@ Once a target includes `mediaSetRid` and `mediaSetViewRid`, generate the final m
 The Media Sets upload endpoint accepts a caller-provided `mediaItemRid`, allowing upload to use the predicted ID:
 
 ```ts
-await MediaSets.upload(client, mediaSetRid, blob, {
-    mediaItemRid,
-    viewRid: mediaSetViewRid,
-    mediaItemPath,
-});
+await MediaSets.upload(client, mediaSetRid, blob, { mediaItemRid, viewRid: mediaSetViewRid, mediaItemPath });
 ```
 
 Verify that the returned `mediaItemRid` and `mediaSetViewRid` match the prediction.

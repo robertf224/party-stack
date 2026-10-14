@@ -118,16 +118,10 @@ export function App() {
         const seedIcon = catalog.icons.find((icon) => icon.id === neighborSeed);
         return catalog.icons
             .filter((icon) => icon.id !== neighborSeed && embeddingStore.has(icon.id))
-            .map((icon) => ({
-                icon,
-                score: embeddingStore.similarity(neighborSeed, icon.id),
-            }))
+            .map((icon) => ({ icon, score: embeddingStore.similarity(neighborSeed, icon.id) }))
             .sort((a, b) => b.score - a.score)
             .slice(0, 24)
-            .map((row) => ({
-                ...row,
-                sameProvider: row.icon.provider === seedIcon?.provider,
-            }));
+            .map((row) => ({ ...row, sameProvider: row.icon.provider === seedIcon?.provider }));
     }, [neighborSeed, catalog, embeddingStore]);
 
     const scatterPoints = useMemo(() => {

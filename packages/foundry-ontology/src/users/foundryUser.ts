@@ -9,21 +9,9 @@ export const foundryUserObjectType: ObjectTypeDef = {
     properties: [
         { name: "id", displayName: "ID", type: o.string({}) },
         { name: "username", displayName: "Username", type: o.string({}) },
-        {
-            name: "givenName",
-            displayName: "Given name",
-            type: o.optional({ type: o.string({}) }),
-        },
-        {
-            name: "familyName",
-            displayName: "Family name",
-            type: o.optional({ type: o.string({}) }),
-        },
-        {
-            name: "email",
-            displayName: "Email",
-            type: o.optional({ type: o.string({}) }),
-        },
+        { name: "givenName", displayName: "Given name", type: o.optional({ type: o.string({}) }) },
+        { name: "familyName", displayName: "Family name", type: o.optional({ type: o.string({}) }) },
+        { name: "email", displayName: "Email", type: o.optional({ type: o.string({}) }) },
         {
             name: "profilePicture",
             displayName: "Profile picture",
@@ -54,9 +42,7 @@ const PROFILE_PICTURE_CACHE_WINDOW_MS = 60 * 60 * 1_000;
  */
 export function foundryUserProfilePictureAttachment(userId: string): v.attachment {
     const cacheBucket = Math.floor(Date.now() / PROFILE_PICTURE_CACHE_WINDOW_MS);
-    return {
-        id: `${PROFILE_PICTURE_PREFIX}${encodeURIComponent(userId)}:${cacheBucket}`,
-    };
+    return { id: `${PROFILE_PICTURE_PREFIX}${encodeURIComponent(userId)}:${cacheBucket}` };
 }
 
 export function decodeFoundryUserProfilePictureAttachment(attachmentId: string): string | undefined {
@@ -76,7 +62,5 @@ export function decodeFoundryUserProfilePictureAttachment(attachmentId: string):
 }
 
 export function createFoundryUserObjectType(objectType: string, lens: Lens): ObjectTypeDef {
-    return applyLensToObjectType(foundryUserObjectType, lens, {
-        name: objectType,
-    });
+    return applyLensToObjectType(foundryUserObjectType, lens, { name: objectType });
 }

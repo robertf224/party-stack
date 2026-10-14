@@ -6,8 +6,5 @@ export async function measureBlobDimensions(blob: Blob): Promise<BlobDimensions>
     if (!dimensions) {
         throw new Error(`Unable to determine dimensions for blob type "${blob.type || "(empty)"}".`);
     }
-    return {
-        width: dimensions.width,
-        height: dimensions.height,
-    };
+    return { width: dimensions.width, height: dimensions.height };
 }

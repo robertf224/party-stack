@@ -36,9 +36,7 @@ describe("createPublicOAuthClient", () => {
             const request = new Request(input, init);
             const body = new URLSearchParams(await request.text());
             if (request.url.endsWith("/revoke")) {
-                return new Response(null, {
-                    status: 200,
-                });
+                return new Response(null, { status: 200 });
             }
             const refresh = body.get("grant_type") === "refresh_token";
             return Response.json({
@@ -148,12 +146,7 @@ describe("createPublicOAuthClient", () => {
                           token_type: "Bearer",
                           expires_in: 0,
                       })
-                    : Response.json(
-                          {
-                              error: "invalid_grant",
-                          },
-                          { status: 400 }
-                      )
+                    : Response.json({ error: "invalid_grant" }, { status: 400 })
             );
         });
         const client = await createPublicOAuthClient({

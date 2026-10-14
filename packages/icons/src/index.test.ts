@@ -10,14 +10,8 @@ describe("universal icon vocabulary", () => {
     });
 
     it("keeps provider data in namespaced meta", () => {
-        const icon: IconDescriptor = {
-            name: "airplane",
-            meta: { example: { name: "plane" } },
-        };
+        const icon: IconDescriptor = { name: "airplane", meta: { example: { name: "plane" } } };
 
-        expect(icon).toEqual({
-            name: "airplane",
-            meta: { example: { name: "plane" } },
-        });
+        expect(icon).toEqual({ name: "airplane", meta: { example: { name: "plane" } } });
     });
 });

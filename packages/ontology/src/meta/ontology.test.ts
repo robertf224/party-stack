@@ -49,14 +49,8 @@ describe("meta ontology runtime fields", () => {
                 type: {
                     kind: "map",
                     value: {
-                        keyType: {
-                            kind: "string",
-                            value: {},
-                        },
-                        valueType: {
-                            kind: "unknown",
-                            value: {},
-                        },
+                        keyType: { kind: "string", value: {} },
+                        valueType: { kind: "unknown", value: {} },
                     },
                 },
             },
@@ -74,9 +68,7 @@ describe("meta ontology runtime fields", () => {
         });
         expect(objectType?.properties.find(({ name }) => name === "title")?.type).toEqual({
             kind: "optional",
-            value: {
-                type: { kind: "string", value: {} },
-            },
+            value: { type: { kind: "string", value: {} } },
         });
 
         expect(property?.type.kind).toBe("struct");

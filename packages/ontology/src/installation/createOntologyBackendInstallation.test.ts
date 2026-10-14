@@ -5,13 +5,7 @@ import { createOntologyBackendInstallation } from "./createOntologyBackendInstal
 import type { OntologyIR } from "../ir/index.js";
 import type { BackendConnectionAdapter, ConnectionEgressHandlers } from "@party-stack/connections";
 
-const ir: OntologyIR = {
-    types: [],
-    objectTypes: [],
-    linkTypes: [],
-    actionTypes: [],
-    queryFunctionTypes: [],
-};
+const ir: OntologyIR = { types: [], objectTypes: [], linkTypes: [], actionTypes: [], queryFunctionTypes: [] };
 
 function createTestBackend() {
     return {
@@ -33,30 +27,17 @@ function createTestConnectionAdapter() {
         name: "test",
         createAuthenticationClient: (controller) => ({
             async signIn() {
-                const connection = {
-                    userId: "user-1",
-                    state: {
-                        status: "active" as const,
-                    },
-                };
+                const connection = { userId: "user-1", state: { status: "active" as const } };
                 await controller.connect({
                     connection,
-                    session: {
-                        disconnect: () => Promise.resolve(),
-                        egress: () => handlers,
-                    },
+                    session: { disconnect: () => Promise.resolve(), egress: () => handlers },
                 });
                 return connection;
             },
         }),
         restoreConnections: () => Promise.resolve([]),
     } satisfies BackendConnectionAdapter<{
-        signIn(): Promise<{
-            userId: string;
-            state: {
-                status: "active";
-            };
-        }>;
+        signIn(): Promise<{ userId: string; state: { status: "active" } }>;
     }>;
 }
 
@@ -75,24 +56,15 @@ describe("createOntologyBackendInstallation", () => {
             createWebSocket: () => Promise.reject(new Error("unexpected websocket")),
         };
         const adapter: BackendConnectionAdapter<{
-            signIn(): Promise<{
-                userId: string;
-                state: { status: "active" };
-            }>;
+            signIn(): Promise<{ userId: string; state: { status: "active" } }>;
         }> = {
             name: "test",
             createAuthenticationClient: (controller) => ({
                 async signIn() {
-                    const connection = {
-                        userId: "user-1",
-                        state: { status: "active" as const },
-                    };
+                    const connection = { userId: "user-1", state: { status: "active" as const } };
                     await controller.connect({
                         connection,
-                        session: {
-                            disconnect: () => Promise.resolve(),
-                            egress: () => handlers,
-                        },
+                        session: { disconnect: () => Promise.resolve(), egress: () => handlers },
                     });
                     return connection;
                 },
@@ -108,9 +80,7 @@ describe("createOntologyBackendInstallation", () => {
                     matches: () => true,
                     configure: () => ({
                         ir,
-                        context: {
-                            user: "spoofed",
-                        },
+                        context: { user: "spoofed" },
                         backend: () => ({
                             name: "test",
                             getCollectionOptions: () => {
@@ -155,21 +125,13 @@ describe("createOntologyBackendInstallation", () => {
         const cleanupMeta = vi.fn();
         const configureMeta = vi.fn(() => ({
             ir,
-            backend: () => ({
-                ...createTestBackend(),
-                cleanup: cleanupMeta,
-            }),
+            backend: () => ({ ...createTestBackend(), cleanup: cleanupMeta }),
         }));
         const installation = await createOntologyBackendInstallation({
             installationId: "meta-route",
             connections: () => adapter,
             runtime: createDefaultRuntime,
-            routes: [
-                {
-                    matches: (ontologyId) => ontologyId === "ontology",
-                    configureMeta,
-                },
-            ],
+            routes: [{ matches: (ontologyId) => ontologyId === "ontology", configureMeta }],
         });
         const connection = await installation.authentication.signIn();
 
@@ -185,10 +147,7 @@ describe("createOntologyBackendInstallation", () => {
         expect(first).toBe(second);
         expect(first.context.user).toBe("user-1");
         expect(configureMeta).toHaveBeenCalledOnce();
-        await installation.closeMetaOntology({
-            userId: connection.userId,
-            ontologyId: "ontology",
-        });
+        await installation.closeMetaOntology({ userId: connection.userId, ontologyId: "ontology" });
         expect(cleanupMeta).toHaveBeenCalledOnce();
         const reopened = await installation.openMetaOntology({
             userId: connection.userId,
@@ -203,15 +162,7 @@ describe("createOntologyBackendInstallation", () => {
 
     it("projects route IR into metadata when configureMeta is absent", async () => {
         const adapter = createTestConnectionAdapter();
-        const sourceIR: OntologyIR = {
-            ...ir,
-            types: [
-                {
-                    name: "Priority",
-                    type: o.string({}),
-                },
-            ],
-        };
+        const sourceIR: OntologyIR = { ...ir, types: [{ name: "Priority", type: o.string({}) }] };
         const installation = await createOntologyBackendInstallation({
             installationId: "ir-meta-route",
             connections: () => adapter,
@@ -219,10 +170,7 @@ describe("createOntologyBackendInstallation", () => {
             routes: [
                 {
                     matches: (ontologyId) => ontologyId === "ontology",
-                    configure: () => ({
-                        ir: sourceIR,
-                        backend: createTestBackend,
-                    }),
+                    configure: () => ({ ir: sourceIR, backend: createTestBackend }),
                 },
             ],
         });
@@ -253,29 +201,20 @@ describe("createOntologyBackendInstallation", () => {
                     matches: (ontologyId) => ontologyId === "ontology",
                     configureMeta: () => ({
                         ir,
-                        backend: () => ({
-                            ...createTestBackend(),
-                            cleanup: cleanupMeta,
-                        }),
+                        backend: () => ({ ...createTestBackend(), cleanup: cleanupMeta }),
                     }),
                 },
             ],
         });
         const connection = await installation.authentication.signIn();
-        await installation.openMetaOntology({
-            userId: connection.userId,
-            ontologyId: "ontology",
-        });
+        await installation.openMetaOntology({ userId: connection.userId, ontologyId: "ontology" });
 
         await installation.forget(connection.userId);
 
         expect(cleanupMeta).toHaveBeenCalledOnce();
         expect(installation.connections.get(connection.userId)).toBeUndefined();
         await expect(
-            installation.openMetaOntology({
-                userId: connection.userId,
-                ontologyId: "ontology",
-            })
+            installation.openMetaOntology({ userId: connection.userId, ontologyId: "ontology" })
         ).rejects.toThrow(`User "${connection.userId}" is not connected`);
         await installation.cleanup();
     });
@@ -287,61 +226,32 @@ describe("createOntologyBackendInstallation", () => {
             connections: () => adapter,
             runtime: createDefaultRuntime,
             routes: [
-                {
-                    matches: () => true,
-                    configure: () => ({
-                        ir,
-                        backend: createTestBackend,
-                    }),
-                },
-                {
-                    matches: () => true,
-                    configure: () => ({
-                        ir,
-                        backend: createTestBackend,
-                    }),
-                },
+                { matches: () => true, configure: () => ({ ir, backend: createTestBackend }) },
+                { matches: () => true, configure: () => ({ ir, backend: createTestBackend }) },
             ],
         });
         const connection = await installation.authentication.signIn();
 
         await expect(
-            installation.openOntology({
-                userId: connection.userId,
-                ontologyId: "matched",
-            })
+            installation.openOntology({ userId: connection.userId, ontologyId: "matched" })
         ).rejects.toThrow('Multiple ontology routes matched "matched"');
         await installation.cleanup();
     });
 
     it("deduplicates concurrent opens and cleanup", async () => {
         const adapter = createTestConnectionAdapter();
-        const configure = vi.fn(() => ({
-            ir,
-            backend: createTestBackend,
-        }));
+        const configure = vi.fn(() => ({ ir, backend: createTestBackend }));
         const installation = await createOntologyBackendInstallation({
             installationId: "concurrent-open",
             connections: () => adapter,
             runtime: createDefaultRuntime,
-            routes: [
-                {
-                    matches: (ontologyId) => ontologyId === "ontology",
-                    configure,
-                },
-            ],
+            routes: [{ matches: (ontologyId) => ontologyId === "ontology", configure }],
         });
         const connection = await installation.authentication.signIn();
 
         const [first, second] = await Promise.all([
-            installation.openOntology({
-                userId: connection.userId,
-                ontologyId: "ontology",
-            }),
-            installation.openOntology({
-                userId: connection.userId,
-                ontologyId: "ontology",
-            }),
+            installation.openOntology({ userId: connection.userId, ontologyId: "ontology" }),
+            installation.openOntology({ userId: connection.userId, ontologyId: "ontology" }),
         ]);
 
         expect(first).toBe(second);
@@ -351,10 +261,7 @@ describe("createOntologyBackendInstallation", () => {
         expect(firstCleanup).toBe(secondCleanup);
         await firstCleanup;
         await expect(
-            installation.openOntology({
-                userId: connection.userId,
-                ontologyId: "ontology",
-            })
+            installation.openOntology({ userId: connection.userId, ontologyId: "ontology" })
         ).rejects.toThrow('Backend installation "concurrent-open" is closed.');
     });
 });

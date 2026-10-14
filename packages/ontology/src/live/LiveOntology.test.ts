@@ -11,25 +11,13 @@ const ir: OntologyIR = {
     linkTypes: [],
     actionTypes: [],
     queryFunctionTypes: [
-        {
-            name: "currentUser",
-            displayName: "Current User",
-            parameters: [],
-            returnType: o.string({}),
-        },
+        { name: "currentUser", displayName: "Current User", parameters: [], returnType: o.string({}) },
     ],
 };
 
 const actionIr: OntologyIR = {
     ...ir,
-    actionTypes: [
-        {
-            name: "save",
-            displayName: "Save",
-            parameters: [],
-            logic: [],
-        },
-    ],
+    actionTypes: [{ name: "save", displayName: "Save", parameters: [], logic: [] }],
     queryFunctionTypes: [],
 };
 
@@ -56,9 +44,7 @@ describe("createLiveOntology", () => {
                     owner,
                     namespace: "auth-test",
                     blobBytes: new MemoryBlobBytesStore(),
-                    coordination: new SingleProcessCoordination({
-                        scope: "auth-test",
-                    }),
+                    coordination: new SingleProcessCoordination({ scope: "auth-test" }),
                 };
             },
         });
@@ -68,16 +54,10 @@ describe("createLiveOntology", () => {
     });
 
     it("derives runtime scope and owns the provider result", async () => {
-        const context = {
-            user: "user-1",
-            account: { id: "user-1" },
-            role: "editor",
-        };
+        const context = { user: "user-1", account: { id: "user-1" }, role: "editor" };
         let receivedContext: Record<string, unknown> | undefined;
         const cleanupOrder: string[] = [];
-        const coordination = new SingleProcessCoordination({
-            scope: "party-stack:user-1:ontology-1",
-        });
+        const coordination = new SingleProcessCoordination({ scope: "party-stack:user-1:ontology-1" });
         const closeCoordination = vi.spyOn(coordination, "close").mockImplementation(() => {
             cleanupOrder.push("coordination");
             return Promise.resolve();
@@ -159,9 +139,7 @@ describe("createLiveOntology", () => {
         };
         const listeners = new Set<(isConnected: boolean) => void>();
         let isConnected = false;
-        const coordination = new SingleProcessCoordination({
-            scope: "write-routing",
-        });
+        const coordination = new SingleProcessCoordination({ scope: "write-routing" });
 
         const ontology = await createLiveOntology({
             id: "write-routing",
@@ -187,13 +165,7 @@ describe("createLiveOntology", () => {
         await ontology.actions.save!({});
         expect(applyAction).toHaveBeenCalledOnce();
 
-        const queued = ontology.actions.save!(
-            {},
-            {
-                mode: "outbox",
-                visibility: "optimistic",
-            }
-        );
+        const queued = ontology.actions.save!({}, { mode: "outbox", visibility: "optimistic" });
         await vi.waitFor(() => {
             expect(ontology.outbox.collection.size).toBe(1);
         });
@@ -214,9 +186,7 @@ describe("createLiveOntology", () => {
     it("resolves defaults only for direct and outbox optimistic projections", async () => {
         const applyAction = vi.fn<OntologyBackendAdapter["applyAction"]>(() => Promise.resolve());
         const projectedParameters: Record<string, unknown>[] = [];
-        const coordination = new SingleProcessCoordination({
-            scope: "projection-defaults",
-        });
+        const coordination = new SingleProcessCoordination({ scope: "projection-defaults" });
         const ontology = await createLiveOntology({
             id: "projection-defaults",
             ir: {
@@ -248,10 +218,7 @@ describe("createLiveOntology", () => {
                 namespace: "projection-defaults",
                 blobBytes: new MemoryBlobBytesStore(),
                 coordination,
-                connectivity: {
-                    isConnected: false,
-                    subscribe: () => () => {},
-                },
+                connectivity: { isConnected: false, subscribe: () => () => {} },
             }),
             writes: {
                 mutators: {
@@ -266,13 +233,7 @@ describe("createLiveOntology", () => {
         expect(projectedParameters).toEqual([{ label: "resolved" }]);
         expect(applyAction.mock.calls[0]?.[1]).toEqual({});
 
-        const queued = ontology.actions.save!(
-            {},
-            {
-                mode: "outbox",
-                visibility: "optimistic",
-            }
-        );
+        const queued = ontology.actions.save!({}, { mode: "outbox", visibility: "optimistic" });
         void queued.catch(() => undefined);
         await vi.waitFor(() => {
             expect(projectedParameters).toEqual([{ label: "resolved" }, { label: "resolved" }]);
@@ -285,9 +246,7 @@ describe("createLiveOntology", () => {
 
     it("rejects optimistic actions backed by a non-live adapter", async () => {
         const applyAction = vi.fn<OntologyBackendAdapter["applyAction"]>(() => Promise.resolve());
-        const coordination = new SingleProcessCoordination({
-            scope: "non-live-optimistic",
-        });
+        const coordination = new SingleProcessCoordination({ scope: "non-live-optimistic" });
         const ontology = await createLiveOntology({
             id: "non-live-optimistic",
             ir: actionIr,
@@ -322,17 +281,10 @@ describe("createLiveOntology", () => {
         const validateAction = vi.fn(() =>
             Promise.resolve({
                 certain: true as const,
-                value: {
-                    kind: "err" as const,
-                    value: [{ message: "Invalid action." }],
-                },
+                value: { kind: "err" as const, value: [{ message: "Invalid action." }] },
             })
         );
-        const validateActionDraft = vi.fn(() =>
-            Promise.resolve({
-                certain: false as const,
-            })
-        );
+        const validateActionDraft = vi.fn(() => Promise.resolve({ certain: false as const }));
         const context = { user: "user-1" };
         const ontology = await createLiveOntology({
             id: "action-validation",
@@ -352,50 +304,27 @@ describe("createLiveOntology", () => {
                 owner: "user-1",
                 namespace: "action-validation",
                 blobBytes: new MemoryBlobBytesStore(),
-                coordination: new SingleProcessCoordination({
-                    scope: "action-validation",
-                }),
+                coordination: new SingleProcessCoordination({ scope: "action-validation" }),
             }),
         });
 
         await expect(ontology.actions.save!.validate({})).resolves.toEqual({
             certain: true,
-            value: {
-                kind: "err",
-                value: [{ message: "Invalid action." }],
-            },
+            value: { kind: "err", value: [{ message: "Invalid action." }] },
         });
-        expect(validateAction).toHaveBeenCalledWith(
-            "save",
-            {},
-            {
-                objects: {},
-                context,
-            }
-        );
-        await ontology.actions.save!.validateDraft(
-            {},
-            {
-                knownParameters: [],
-            }
-        );
+        expect(validateAction).toHaveBeenCalledWith("save", {}, { objects: {}, context });
+        await ontology.actions.save!.validateDraft({}, { knownParameters: [] });
         expect(validateActionDraft).toHaveBeenCalledWith(
             "save",
             {},
-            {
-                objects: {},
-                context,
-                knownParameters: [],
-            }
+            { objects: {}, context, knownParameters: [] }
         );
         expect(applyAction).not.toHaveBeenCalled();
         await ontology.cleanup();
     });
 
     it("reports uncertain validation when the backend does not implement it", async () => {
-        const coordination = new SingleProcessCoordination({
-            scope: "unsupported-action-validation",
-        });
+        const coordination = new SingleProcessCoordination({ scope: "unsupported-action-validation" });
         const ontology = await createLiveOntology({
             id: "unsupported-action-validation",
             ir: actionIr,
@@ -415,9 +344,7 @@ describe("createLiveOntology", () => {
             }),
         });
 
-        await expect(ontology.actions.save!.validate({})).resolves.toEqual({
-            certain: false,
-        });
+        await expect(ontology.actions.save!.validate({})).resolves.toEqual({ certain: false });
         await ontology.cleanup();
         await coordination.close();
     });
@@ -429,9 +356,7 @@ describe("createLiveOntology", () => {
         };
         process.on("unhandledRejection", onUnhandled);
 
-        const coordination = new SingleProcessCoordination({
-            scope: "lifecycle-cleanup",
-        });
+        const coordination = new SingleProcessCoordination({ scope: "lifecycle-cleanup" });
         const backendAdapter: OntologyBackendAdapter = {
             name: "test",
             getCollectionOptions: () => ({
@@ -458,13 +383,7 @@ describe("createLiveOntology", () => {
                             displayName: "Note",
                             pluralDisplayName: "Notes",
                             primaryKey: "id",
-                            properties: [
-                                {
-                                    name: "id",
-                                    displayName: "ID",
-                                    type: o.string({}),
-                                },
-                            ],
+                            properties: [{ name: "id", displayName: "ID", type: o.string({}) }],
                         },
                     ],
                     queryFunctionTypes: [],
@@ -490,9 +409,7 @@ describe("createLiveOntology", () => {
 
     it("waits for on-demand collections via waitForLiveOntologyReady", async () => {
         let syncStarted = false;
-        const coordination = new SingleProcessCoordination({
-            scope: "wait-ready",
-        });
+        const coordination = new SingleProcessCoordination({ scope: "wait-ready" });
         const backendAdapter: OntologyBackendAdapter = {
             name: "test",
             getCollectionOptions: () => ({
@@ -502,9 +419,7 @@ describe("createLiveOntology", () => {
                         syncStarted = true;
                         // Defer ready so waitForCollectionReady must start sync first.
                         queueMicrotask(() => markReady());
-                        return {
-                            loadSubset: () => true as const,
-                        };
+                        return { loadSubset: () => true as const };
                     },
                 },
             }),
@@ -522,13 +437,7 @@ describe("createLiveOntology", () => {
                         displayName: "Note",
                         pluralDisplayName: "Notes",
                         primaryKey: "id",
-                        properties: [
-                            {
-                                name: "id",
-                                displayName: "ID",
-                                type: o.string({}),
-                            },
-                        ],
+                        properties: [{ name: "id", displayName: "ID", type: o.string({}) }],
                     },
                 ],
                 queryFunctionTypes: [],

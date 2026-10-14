@@ -54,11 +54,7 @@ describe("library config composition", () => {
         expect(config.run?.tasks?.check).toMatchObject({
             dependsOn: [{ task: "build", from: ["dependencies", "devDependencies"] }],
         });
-        expect(config.pack).toMatchObject({
-            root: "src",
-            outDir: "lib",
-            deps: { neverBundle: [/\.css$/] },
-        });
+        expect(config.pack).toMatchObject({ root: "src", outDir: "lib", deps: { neverBundle: [/\.css$/] } });
         expect(config.test).toMatchObject({ include: ["test/**/*.test.ts"], clearMocks: false });
     });
 

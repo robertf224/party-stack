@@ -54,16 +54,10 @@ const ir = {
 
 describe("ontology JSON codec", () => {
     it("encodes and decodes named types", () => {
-        const value = {
-            publishedOn: Temporal.PlainDate.from("2026-06-09"),
-            tags: ["ontology"],
-        };
+        const value = { publishedOn: Temporal.PlainDate.from("2026-06-09"), tags: ["ontology"] };
 
         const encoded = encode({ ir, target: { kind: "type", name: "Metadata" }, value });
-        expect(encoded).toEqual({
-            publishedOn: "2026-06-09",
-            tags: ["ontology"],
-        });
+        expect(encoded).toEqual({ publishedOn: "2026-06-09", tags: ["ontology"] });
 
         expect(decode({ ir, target: { kind: "type", name: "Metadata" }, value: encoded })).toEqual(value);
     });
@@ -72,20 +66,14 @@ describe("ontology JSON codec", () => {
         const object = {
             id: "post-1",
             createdAt: Temporal.Instant.from("2026-06-09T12:00:00Z"),
-            metadata: {
-                publishedOn: Temporal.PlainDate.from("2026-06-09"),
-                tags: ["ontology"],
-            },
+            metadata: { publishedOn: Temporal.PlainDate.from("2026-06-09"), tags: ["ontology"] },
         };
 
         const encoded = encode({ ir, target: { kind: "object", name: "Post" }, value: object });
         expect(encoded).toEqual({
             id: "post-1",
             createdAt: "2026-06-09T12:00:00Z",
-            metadata: {
-                publishedOn: "2026-06-09",
-                tags: ["ontology"],
-            },
+            metadata: { publishedOn: "2026-06-09", tags: ["ontology"] },
         });
 
         expect(decode({ ir, target: { kind: "object", name: "Post" }, value: encoded })).toEqual(object);
@@ -93,11 +81,7 @@ describe("ontology JSON codec", () => {
 
     it("normalizes optional nulls on object reads while preserving action nulls", () => {
         expect(
-            decode({
-                ir,
-                target: { kind: "object", name: "Post" },
-                value: { id: "post-1", subtitle: null },
-            })
+            decode({ ir, target: { kind: "object", name: "Post" }, value: { id: "post-1", subtitle: null } })
         ).toEqual({ id: "post-1", subtitle: undefined });
 
         expect(
@@ -111,43 +95,21 @@ describe("ontology JSON codec", () => {
 
     it("encodes and decodes action and query function parameter objects by name", () => {
         const value = {
-            metadata: {
-                publishedOn: Temporal.PlainDate.from("2026-06-09"),
-                tags: ["ontology"],
-            },
+            metadata: { publishedOn: Temporal.PlainDate.from("2026-06-09"), tags: ["ontology"] },
         };
-        const encoded = {
-            metadata: {
-                publishedOn: "2026-06-09",
-                tags: ["ontology"],
-            },
-        };
+        const encoded = { metadata: { publishedOn: "2026-06-09", tags: ["ontology"] } };
 
+        expect(encode({ ir, target: { kind: "actionParameters", actionType: "createPost" }, value })).toEqual(
+            encoded
+        );
         expect(
-            encode({
-                ir,
-                target: { kind: "actionParameters", actionType: "createPost" },
-                value,
-            })
-        ).toEqual(encoded);
-        expect(
-            decode({
-                ir,
-                target: { kind: "actionParameters", actionType: "createPost" },
-                value: encoded,
-            })
+            decode({ ir, target: { kind: "actionParameters", actionType: "createPost" }, value: encoded })
         ).toEqual(value);
     });
 
     it("encodes and decodes single query targets by name", () => {
-        const value = {
-            publishedOn: Temporal.PlainDate.from("2026-06-09"),
-            tags: ["ontology"],
-        };
-        const encoded = {
-            publishedOn: "2026-06-09",
-            tags: ["ontology"],
-        };
+        const value = { publishedOn: Temporal.PlainDate.from("2026-06-09"), tags: ["ontology"] };
+        const encoded = { publishedOn: "2026-06-09", tags: ["ontology"] };
 
         expect(
             decode({
@@ -157,11 +119,7 @@ describe("ontology JSON codec", () => {
             })
         ).toEqual(value);
         expect(
-            decode({
-                ir,
-                target: { kind: "queryFunctionReturn", queryFunctionType: "getPost" },
-                value: null,
-            })
+            decode({ ir, target: { kind: "queryFunctionReturn", queryFunctionType: "getPost" }, value: null })
         ).toBeUndefined();
     });
 });

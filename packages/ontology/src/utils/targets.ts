@@ -3,10 +3,7 @@ import type { ActionTypeName, ObjectTypeName, QueryFunctionTypeName, TypeName } 
 
 // TODO: allow more nested targets
 
-export type OntologyTypeTarget<IR extends OntologyIR = OntologyIR> = {
-    kind: "type";
-    name: TypeName<IR>;
-};
+export type OntologyTypeTarget<IR extends OntologyIR = OntologyIR> = { kind: "type"; name: TypeName<IR> };
 
 export type OntologyObjectTarget<IR extends OntologyIR = OntologyIR> = {
     kind: "object";

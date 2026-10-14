@@ -17,16 +17,8 @@ const ir: OntologyIR = {
             pluralDisplayName: "Users",
             primaryKey: "id",
             properties: [
-                {
-                    name: "id",
-                    displayName: "ID",
-                    type: o.string({}),
-                },
-                {
-                    name: "name",
-                    displayName: "Name",
-                    type: o.string({}),
-                },
+                { name: "id", displayName: "ID", type: o.string({}) },
+                { name: "name", displayName: "Name", type: o.string({}) },
             ],
         },
     ],
@@ -35,25 +27,13 @@ const ir: OntologyIR = {
             name: "assign",
             displayName: "Assign",
             parameters: [
-                {
-                    name: "user",
-                    displayName: "User",
-                    type: o.objectReference({
-                        objectType: "User",
-                    }),
-                },
+                { name: "user", displayName: "User", type: o.objectReference({ objectType: "User" }) },
                 {
                     name: "entries",
                     displayName: "Entries",
                     type: o.list({
                         elementType: o.struct({
-                            fields: [
-                                {
-                                    name: "code",
-                                    displayName: "Code",
-                                    type: o.string({}),
-                                },
-                            ],
+                            fields: [{ name: "code", displayName: "Code", type: o.string({}) }],
                         }),
                     }),
                 },
@@ -69,12 +49,7 @@ describe("evaluateExpression", () => {
             localOnlyCollectionOptions<OntologyObject, string | number>({
                 id: "expression-users",
                 getKey: (user) => user.id as string | number,
-                initialData: [
-                    {
-                        id: "user-1",
-                        name: "Ada",
-                    },
-                ],
+                initialData: [{ id: "user-1", name: "Ada" }],
             })
         );
         await users.preload();
@@ -88,12 +63,7 @@ describe("evaluateExpression", () => {
                     value: {
                         source: {
                             kind: "objectLookup",
-                            value: {
-                                reference: {
-                                    kind: "inputReference",
-                                    value: { name: "user" },
-                                },
-                            },
+                            value: { reference: { kind: "inputReference", value: { name: "user" } } },
                         },
                         path: ["name"],
                     },
@@ -159,12 +129,7 @@ describe("evaluateExpression", () => {
             evaluateExpression({
                 ir,
                 actionTypeName: "assign",
-                expression: {
-                    kind: "inputReference",
-                    value: {
-                        name: "user",
-                    },
-                },
+                expression: { kind: "inputReference", value: { name: "user" } },
                 resolveParameter: () => Promise.resolve("user-1"),
                 context: {},
                 tx: { query } as never,
@@ -179,16 +144,8 @@ describe("evaluateExpression", () => {
             pluralDisplayName: "Projects",
             primaryKey: "id",
             properties: [
-                {
-                    name: "id",
-                    displayName: "ID",
-                    type: o.string({}),
-                },
-                {
-                    name: "ownerId",
-                    displayName: "Owner",
-                    type: o.string({}),
-                },
+                { name: "id", displayName: "ID", type: o.string({}) },
+                { name: "ownerId", displayName: "Owner", type: o.string({}) },
             ],
         };
         const linkIr: OntologyIR = {
@@ -197,16 +154,8 @@ describe("evaluateExpression", () => {
             linkTypes: [
                 {
                     id: "projectOwner",
-                    source: {
-                        objectType: "Project",
-                        name: "projects",
-                        displayName: "Projects",
-                    },
-                    target: {
-                        objectType: "User",
-                        name: "owner",
-                        displayName: "Owner",
-                    },
+                    source: { objectType: "Project", name: "projects", displayName: "Projects" },
+                    target: { objectType: "User", name: "owner", displayName: "Owner" },
                     foreignKey: "ownerId",
                     cardinality: "one",
                 },
@@ -219,9 +168,7 @@ describe("evaluateExpression", () => {
                         {
                             name: "project",
                             displayName: "Project",
-                            type: o.objectReference({
-                                objectType: "Project",
-                            }),
+                            type: o.objectReference({ objectType: "Project" }),
                         },
                     ],
                 },
@@ -231,24 +178,14 @@ describe("evaluateExpression", () => {
             localOnlyCollectionOptions<OntologyObject, string | number>({
                 id: "link-hop-users",
                 getKey: (user) => user.id as string | number,
-                initialData: [
-                    {
-                        id: "user-1",
-                        name: "Ada",
-                    },
-                ],
+                initialData: [{ id: "user-1", name: "Ada" }],
             })
         );
         const projects = createCollection(
             localOnlyCollectionOptions<OntologyObject, string | number>({
                 id: "link-hop-projects",
                 getKey: (project) => project.id as string | number,
-                initialData: [
-                    {
-                        id: "project-1",
-                        ownerId: "user-1",
-                    },
-                ],
+                initialData: [{ id: "project-1", ownerId: "user-1" }],
             })
         );
         await Promise.all([users.preload(), projects.preload()]);
@@ -260,9 +197,7 @@ describe("evaluateExpression", () => {
                 expression: o.Expression.getAt({
                     source: o.Expression.linkHop({
                         source: o.Expression.objectLookup({
-                            reference: o.Expression.inputReference({
-                                name: "project",
-                            }),
+                            reference: o.Expression.inputReference({ name: "project" }),
                         }),
                         link: "owner",
                     }),
@@ -270,10 +205,7 @@ describe("evaluateExpression", () => {
                 }),
                 resolveParameter: () => Promise.resolve("project-1"),
                 context: {},
-                tx: createReadTx({
-                    User: users,
-                    Project: projects,
-                }),
+                tx: createReadTx({ User: users, Project: projects }),
             })
         ).resolves.toBe("Ada");
 
@@ -286,27 +218,18 @@ describe("evaluateExpression", () => {
                 ir,
                 actionTypeName: "assign",
                 expression: o.Expression.map({
-                    source: o.Expression.inputReference({
-                        name: "entries",
-                    }),
+                    source: o.Expression.inputReference({ name: "entries" }),
                     binding: "entry",
                     body: o.Expression.struct({
                         fields: [
                             {
                                 name: "renamedCode",
                                 value: o.Expression.getAt({
-                                    source: o.Expression.localReference({
-                                        name: "entry",
-                                    }),
+                                    source: o.Expression.localReference({ name: "entry" }),
                                     path: ["code"],
                                 }),
                             },
-                            {
-                                name: "actor",
-                                value: o.Expression.contextReference({
-                                    name: "user",
-                                }),
-                            },
+                            { name: "actor", value: o.Expression.contextReference({ name: "user" }) },
                         ],
                     }),
                 }),
@@ -316,14 +239,8 @@ describe("evaluateExpression", () => {
                 tx: createReadTx({}),
             })
         ).resolves.toEqual([
-            {
-                renamedCode: "alpha",
-                actor: "user-1",
-            },
-            {
-                renamedCode: "beta",
-                actor: "user-1",
-            },
+            { renamedCode: "alpha", actor: "user-1" },
+            { renamedCode: "beta", actor: "user-1" },
         ]);
     });
 
@@ -333,13 +250,9 @@ describe("evaluateExpression", () => {
                 ir,
                 actionTypeName: "assign",
                 expression: o.Expression.map({
-                    source: o.Expression.inputReference({
-                        name: "entries",
-                    }),
+                    source: o.Expression.inputReference({ name: "entries" }),
                     binding: "entry",
-                    body: o.Expression.localReference({
-                        name: "entry",
-                    }),
+                    body: o.Expression.localReference({ name: "entry" }),
                 }),
                 resolveParameter: () => Promise.resolve(undefined),
                 context: {},

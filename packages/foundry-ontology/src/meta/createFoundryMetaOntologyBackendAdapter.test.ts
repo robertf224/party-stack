@@ -5,10 +5,7 @@ import type { OntologyClient } from "@party-stack/foundry-client";
 
 vi.mock("@tanstack/query-db-collection", async (importOriginal) => {
     const original = await importOriginal<typeof import("@tanstack/query-db-collection")>();
-    return {
-        ...original,
-        queryCollectionOptions: vi.fn(original.queryCollectionOptions),
-    };
+    return { ...original, queryCollectionOptions: vi.fn(original.queryCollectionOptions) };
 });
 
 const client: OntologyClient = {

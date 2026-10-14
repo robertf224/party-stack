@@ -5,10 +5,7 @@ const IssueTracker = lazy(() =>
     import("../app/IssueTracker").then(({ IssueTracker }) => ({ default: IssueTracker }))
 );
 
-export const Route = createFileRoute("/project/$projectId")({
-    ssr: false,
-    component: ProjectRoute,
-});
+export const Route = createFileRoute("/project/$projectId")({ ssr: false, component: ProjectRoute });
 
 function ProjectRoute() {
     const { projectId } = Route.useParams();

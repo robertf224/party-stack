@@ -91,10 +91,7 @@ export function useOutboxLeader(options: OutboxLeaderOptions): Operation<void> {
                                     executionId,
                                     retryable: true,
                                     retryAt: Date.now(),
-                                    error: {
-                                        name: normalized.name,
-                                        message: normalized.message,
-                                    },
+                                    error: { name: normalized.name, message: normalized.message },
                                 })
                             );
                             break;
@@ -102,10 +99,7 @@ export function useOutboxLeader(options: OutboxLeaderOptions): Operation<void> {
                         const retryable = !(normalized instanceof NonRetryableError);
                         const retryScheduled = retryable && entry.attempts < options.maxRetries;
                         try {
-                            const errorDetails = {
-                                name: normalized.name,
-                                message: normalized.message,
-                            };
+                            const errorDetails = { name: normalized.name, message: normalized.message };
                             if (retryScheduled) {
                                 yield* until(
                                     options.service.methods.fail({
@@ -151,13 +145,7 @@ export function useOutboxLeader(options: OutboxLeaderOptions): Operation<void> {
                         throw signal.reason;
                     }
                     try {
-                        yield* until(
-                            options.service.methods.complete({
-                                id: entry.id,
-                                executionId,
-                                result,
-                            })
-                        );
+                        yield* until(options.service.methods.complete({ id: entry.id, executionId, result }));
                     } catch (error) {
                         if (isStaleExecution(error)) break;
                         throw error;
@@ -176,9 +164,7 @@ export async function runOutboxLeader(signal: AbortSignal, options: OutboxLeader
     const haltTask = () => {
         halt ??= Promise.resolve(task.halt()).then(() => undefined);
     };
-    signal.addEventListener("abort", haltTask, {
-        once: true,
-    });
+    signal.addEventListener("abort", haltTask, { once: true });
     if (signal.aborted) haltTask();
 
     try {

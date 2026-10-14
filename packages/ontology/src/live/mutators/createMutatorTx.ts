@@ -8,9 +8,7 @@ import type {
 } from "./types.js";
 
 export function createReadTx(objects: OntologyMutatorObjects): OntologyReadTx {
-    return {
-        query: (build) => queryOnce((query) => build(query, objects) as never),
-    };
+    return { query: (build) => queryOnce((query) => build(query, objects) as never) };
 }
 
 export function createMutatorTx(options: {

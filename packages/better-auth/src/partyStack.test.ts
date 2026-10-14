@@ -6,9 +6,7 @@ import { createPartyStackSessionProtocol, PARTY_STACK_SESSION_HEADER } from "./s
 
 describe("partyStack", () => {
     it("provides the multi-session server API", () => {
-        const plugin = partyStack({
-            maximumSessions: 10,
-        });
+        const plugin = partyStack({ maximumSessions: 10 });
 
         expect(plugin.id).toBe("party-stack");
         expect(plugin.endpoints.listDeviceSessions).toBeDefined();
@@ -17,26 +15,13 @@ describe("partyStack", () => {
     });
 
     it("makes normal getSession calls request-scoped", async () => {
-        const database = {
-            user: [],
-            session: [],
-            account: [],
-            verification: [],
-        };
+        const database = { user: [], session: [], account: [], verification: [] };
         const auth = betterAuth({
             baseURL: "http://localhost:3000",
             secret: "party-stack-test-secret-party-stack-test-secret",
             database: memoryAdapter(database),
-            emailAndPassword: {
-                enabled: true,
-                minPasswordLength: 3,
-            },
-            session: {
-                cookieCache: {
-                    enabled: true,
-                    maxAge: 300,
-                },
-            },
+            emailAndPassword: { enabled: true, minPasswordLength: 3 },
+            session: { cookieCache: { enabled: true, maxAge: 300 } },
             plugins: [partyStack()],
         });
         const cookies = new Map<string, string>();
@@ -58,15 +43,8 @@ describe("partyStack", () => {
             const response = await auth.handler(
                 new Request("http://localhost:3000/api/auth/sign-up/email", {
                     method: "POST",
-                    headers: {
-                        "content-type": "application/json",
-                        cookie: cookieHeader(),
-                    },
-                    body: JSON.stringify({
-                        email,
-                        password: "password",
-                        name,
-                    }),
+                    headers: { "content-type": "application/json", cookie: cookieHeader() },
+                    body: JSON.stringify({ email, password: "password", name }),
                 })
             );
             expect(response.status).toBe(200);
@@ -75,49 +53,23 @@ describe("partyStack", () => {
 
         await signUp("ada@example.com", "Ada");
         await signUp("grace@example.com", "Grace");
-        const headers = new Headers({
-            cookie: cookieHeader(),
-        });
-        const sessions = await auth.api.listDeviceSessions({
-            headers,
-        });
+        const headers = new Headers({ cookie: cookieHeader() });
+        const sessions = await auth.api.listDeviceSessions({ headers });
         const ada = sessions.find(({ user }) => user.email === "ada@example.com");
         expect(ada).toBeDefined();
-        expect(
-            (
-                await auth.api.getSession({
-                    headers,
-                })
-            )?.user.email
-        ).toBe("grace@example.com");
+        expect((await auth.api.getSession({ headers }))?.user.email).toBe("grace@example.com");
 
         headers.set(PARTY_STACK_SESSION_HEADER, ada!.session.id);
-        expect(
-            (
-                await auth.api.getSession({
-                    headers,
-                })
-            )?.user.email
-        ).toBe("ada@example.com");
+        expect((await auth.api.getSession({ headers }))?.user.email).toBe("ada@example.com");
 
         headers.delete(PARTY_STACK_SESSION_HEADER);
         headers.set(
             "sec-websocket-protocol",
             [createPartyStackSessionProtocol(ada!.session.id), "ontology"].join(", ")
         );
-        expect(
-            (
-                await auth.api.getSession({
-                    headers,
-                })
-            )?.user.email
-        ).toBe("ada@example.com");
+        expect((await auth.api.getSession({ headers }))?.user.email).toBe("ada@example.com");
 
         headers.set("sec-websocket-protocol", createPartyStackSessionProtocol("missing-session"));
-        expect(
-            await auth.api.getSession({
-                headers,
-            })
-        ).toBeNull();
+        expect(await auth.api.getSession({ headers })).toBeNull();
     });
 });

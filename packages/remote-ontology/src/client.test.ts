@@ -32,9 +32,7 @@ const ir: OntologyIR = {
                     displayName: "Owner",
                     type: o.string({}),
                     defaultValue: o.Expression.getAt({
-                        source: o.Expression.contextReference({
-                            name: "user",
-                        }),
+                        source: o.Expression.contextReference({ name: "user" }),
                         path: ["email"],
                     }),
                 },
@@ -62,36 +60,20 @@ describe("createRemoteLiveOntology", () => {
             describe: async () => ({
                 ir,
                 context: { user: { email: "alice@example.com" } },
-                capabilities: {
-                    actionParameterResolution: true,
-                },
+                capabilities: { actionParameterResolution: true },
             }),
-            loadSubset: async (request) => ({
-                objectType: request.objectType,
-                objects: [],
-            }),
+            loadSubset: async (request) => ({ objectType: request.objectType, objects: [] }),
             applyAction: async (request) => {
                 appliedParameters = request.parameters;
                 return {};
             },
             validateAction: async (request) => {
                 validatedParameters = request.parameters;
-                return {
-                    certain: true,
-                    value: {
-                        kind: "ok",
-                        value: null,
-                    },
-                };
+                return { certain: true, value: { kind: "ok", value: null } };
             },
             resolveActionParameters: async (request) => {
                 resolutionRequest = request.parameters;
-                return {
-                    parameters: {
-                        ...request.parameters,
-                        ownerEmail: "resolved@example.com",
-                    },
-                };
+                return { parameters: { ...request.parameters, ownerEmail: "resolved@example.com" } };
             },
             runQueryFunction: async (request) => {
                 if (typeof request.parameters.name !== "string") throw new Error("Expected a string name");
@@ -117,10 +99,7 @@ describe("createRemoteLiveOntology", () => {
             ownerEmail: "resolved@example.com",
             dueDate: Temporal.PlainDate.from("2026-06-15"),
         });
-        expect(resolutionRequest).toEqual({
-            title: "Hello",
-            dueDate: Temporal.PlainDate.from("2026-06-15"),
-        });
+        expect(resolutionRequest).toEqual({ title: "Hello", dueDate: Temporal.PlainDate.from("2026-06-15") });
         resolutionRequest = undefined;
 
         await ontology.actions.createNote!({
@@ -128,36 +107,18 @@ describe("createRemoteLiveOntology", () => {
             dueDate: Temporal.PlainDate.from("2026-06-15"),
         });
 
-        expect(appliedParameters).toEqual({
-            title: "Hello",
-            dueDate: Temporal.PlainDate.from("2026-06-15"),
-        });
+        expect(appliedParameters).toEqual({ title: "Hello", dueDate: Temporal.PlainDate.from("2026-06-15") });
         expect(resolutionRequest).toBeUndefined();
         await expect(
             ontology.actions.createNote!.validate({
                 title: "Hello",
                 dueDate: Temporal.PlainDate.from("2026-06-15"),
             })
-        ).resolves.toEqual({
-            certain: true,
-            value: {
-                kind: "ok",
-                value: undefined,
-            },
-        });
+        ).resolves.toEqual({ certain: true, value: { kind: "ok", value: undefined } });
         expect(validatedParameters).toEqual(appliedParameters);
         await expect(
-            ontology.actions.createNote!.validateDraft(
-                {
-                    title: "Hello",
-                },
-                {
-                    knownParameters: ["title"],
-                }
-            )
-        ).resolves.toEqual({
-            certain: false,
-        });
+            ontology.actions.createNote!.validateDraft({ title: "Hello" }, { knownParameters: ["title"] })
+        ).resolves.toEqual({ certain: false });
         await expect(ontology.queryFunctions.greet!({ name: "Alice" })).resolves.toBe("Hello Alice");
         await ontology.cleanup();
     });
@@ -171,10 +132,7 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
             live: false,
             transport: {
                 describe: async () => ({ ir }),
-                loadSubset: async (request) => ({
-                    objectType: request.objectType,
-                    objects: [],
-                }),
+                loadSubset: async (request) => ({ objectType: request.objectType, objects: [] }),
                 applyAction: async () => ({
                     invalidatedObjectTypes: ["Note"],
                     attachmentIdMappings: [{ localId: "local", remoteId: "remote" }],
@@ -190,13 +148,7 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
             adapter.applyAction(
                 "createNote",
                 { title: "one" },
-                {
-                    objects: {
-                        Note: {
-                            utils: { refetch },
-                        } as never,
-                    },
-                }
+                { objects: { Note: { utils: { refetch } } as never } }
             )
         ).resolves.toMatchObject({
             invalidatedObjectTypes: ["Note"],
@@ -209,20 +161,13 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
     it("resolves successful writes even when subsequent refetches reject or abort", async () => {
         const transport: RemoteOntologyTransport = {
             describe: async () => ({ ir }),
-            loadSubset: async (request) => ({
-                objectType: request.objectType,
-                objects: [],
-            }),
+            loadSubset: async (request) => ({ objectType: request.objectType, objects: [] }),
             applyAction: async () => ({
                 invalidatedObjectTypes: ["Note"],
                 attachmentIdMappings: [{ localId: "local", remoteId: "remote" }],
             }),
-            validateAction: async () => ({
-                certain: false,
-            }),
-            resolveActionParameters: async () => ({
-                parameters: {},
-            }),
+            validateAction: async () => ({ certain: false }),
+            resolveActionParameters: async () => ({ parameters: {} }),
             runQueryFunction: async () => ({ value: undefined }),
             getAttachmentMetadata: async () => ({}),
             getAttachmentContent: async () => new Blob(),
@@ -237,13 +182,7 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
         const first = (await adapter.applyAction(
             "createNote",
             { title: "one" },
-            {
-                objects: {
-                    Note: {
-                        utils: { refetch },
-                    } as never,
-                },
-            }
+            { objects: { Note: { utils: { refetch } } as never } }
         )) as OntologyApplyActionClientResult;
 
         expect(first.attachmentIdMappings).toEqual([{ localId: "local", remoteId: "remote" }]);
@@ -253,13 +192,7 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
         await adapter.applyAction(
             "createNote",
             { title: "two" },
-            {
-                objects: {
-                    Note: {
-                        utils: { refetch },
-                    } as never,
-                },
-            }
+            { objects: { Note: { utils: { refetch } } as never } }
         );
 
         expect(refetch).toHaveBeenCalledTimes(2);
@@ -278,21 +211,10 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
             ir,
             transport: {
                 describe: async () => ({ ir }),
-                loadSubset: async (request) => ({
-                    objectType: request.objectType,
-                    objects: [],
-                }),
+                loadSubset: async (request) => ({ objectType: request.objectType, objects: [] }),
                 applyAction: async () => ({ invalidatedObjectTypes: ["Note"] }),
-                validateAction: async () => ({
-                    certain: true,
-                    value: {
-                        kind: "ok",
-                        value: null,
-                    },
-                }),
-                resolveActionParameters: async () => ({
-                    parameters: {},
-                }),
+                validateAction: async () => ({ certain: true, value: { kind: "ok", value: null } }),
+                resolveActionParameters: async () => ({ parameters: {} }),
                 runQueryFunction: async () => ({ value: undefined }),
                 getAttachmentMetadata: async () => ({}),
                 getAttachmentContent: async () => new Blob(),
@@ -304,13 +226,7 @@ describe("createRemoteOntologyBackendAdapter.applyAction", () => {
             .applyAction(
                 "createNote",
                 { title: "one" },
-                {
-                    objects: {
-                        Note: {
-                            utils: { refetch },
-                        } as never,
-                    },
-                }
+                { objects: { Note: { utils: { refetch } } as never } }
             )
             .then(() => {
                 confirmed = true;
@@ -331,23 +247,22 @@ describe("createRemoteOntologyBackendAdapter.loadSubset", () => {
         }> = [];
         const loadSubset = vi.fn(
             (_request: unknown, options?: { signal?: AbortSignal }) =>
-                new Promise<{
-                    objectType: string;
-                    objects: Array<Record<string, unknown>>;
-                }>((resolve, reject) => {
-                    requests.push({ resolve });
-                    const signal = options?.signal;
-                    signal?.addEventListener(
-                        "abort",
-                        () =>
-                            reject(
-                                signal.reason instanceof Error
-                                    ? signal.reason
-                                    : new DOMException("Request aborted.", "AbortError")
-                            ),
-                        { once: true }
-                    );
-                })
+                new Promise<{ objectType: string; objects: Array<Record<string, unknown>> }>(
+                    (resolve, reject) => {
+                        requests.push({ resolve });
+                        const signal = options?.signal;
+                        signal?.addEventListener(
+                            "abort",
+                            () =>
+                                reject(
+                                    signal.reason instanceof Error
+                                        ? signal.reason
+                                        : new DOMException("Request aborted.", "AbortError")
+                                ),
+                            { once: true }
+                        );
+                    }
+                )
         );
         const transport: RemoteOntologyTransport = {
             describe: async () => ({ ir }),
@@ -364,14 +279,8 @@ describe("createRemoteOntologyBackendAdapter.loadSubset", () => {
         const controllerA = new AbortController();
         const controllerB = new AbortController();
 
-        const requestA = collection._sync.loadSubset({
-            limit: 1,
-            signal: controllerA.signal,
-        });
-        const requestB = collection._sync.loadSubset({
-            limit: 1,
-            signal: controllerB.signal,
-        });
+        const requestA = collection._sync.loadSubset({ limit: 1, signal: controllerA.signal });
+        const requestB = collection._sync.loadSubset({ limit: 1, signal: controllerB.signal });
 
         expect(requestA).not.toBe(requestB);
         await vi.waitFor(() => expect(loadSubset).toHaveBeenCalledTimes(2));
@@ -379,10 +288,7 @@ describe("createRemoteOntologyBackendAdapter.loadSubset", () => {
         expect(loadSubset.mock.calls[1]?.[1]?.signal).toBe(controllerB.signal);
 
         controllerA.abort(new DOMException("Request A canceled.", "AbortError"));
-        requests[1]!.resolve({
-            objectType: "Note",
-            objects: [{ id: "note-b" }],
-        });
+        requests[1]!.resolve({ objectType: "Note", objects: [{ id: "note-b" }] });
 
         await expect(requestA).rejects.toMatchObject({ name: "AbortError" });
         await expect(requestB).resolves.toBeUndefined();

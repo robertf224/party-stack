@@ -27,10 +27,7 @@ function convertSalesforceInvocableMetaActionType(
 ): MetaActionType {
     return {
         id,
-        meta: salesforceActionMeta({
-            kind,
-            apiName: describe.name,
-        }),
+        meta: salesforceActionMeta({ kind, apiName: describe.name }),
         name: toOntologyActionTypeName(describe.name),
         displayName: describe.label ?? describe.name,
         description: describe.description,

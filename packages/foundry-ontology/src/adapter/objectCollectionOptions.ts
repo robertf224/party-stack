@@ -106,10 +106,7 @@ function deserializeEditHistoryCursor(value: unknown): EditHistoryCursor | undef
     ) {
         return undefined;
     }
-    return {
-        timestamp: value.timestamp,
-        seenEntryKeysAtTimestamp: new Set(value.seenEntryKeysAtTimestamp),
-    };
+    return { timestamp: value.timestamp, seenEntryKeysAtTimestamp: new Set(value.seenEntryKeysAtTimestamp) };
 }
 
 function editHistoryCursorsEqual(left: EditHistoryCursor, right: EditHistoryCursor): boolean {
@@ -169,9 +166,7 @@ function getPrimaryKeyValue(
     if (values.length !== 1) {
         throw new Error("Foundry object collections currently only support single-field primary keys.");
     }
-    const value = decodeEditObject({
-        [primaryKeyProperty]: values[0],
-    })[primaryKeyProperty];
+    const value = decodeEditObject({ [primaryKeyProperty]: values[0] })[primaryKeyProperty];
     if (typeof value !== "string" && typeof value !== "number") {
         throw new Error("Foundry object collections currently only support string or number primary keys.");
     }
@@ -217,10 +212,7 @@ async function fetchFoundryObjects(
         ? {
               ...client,
               fetch: (input: RequestInfo | URL, init?: RequestInit) =>
-                  client.fetch(input, {
-                      ...init,
-                      signal: opts.signal,
-                  }),
+                  client.fetch(input, { ...init, signal: opts.signal }),
           }
         : client;
     const results = await AsyncIterable.toArray(
@@ -374,12 +366,7 @@ function createSyncConfig(
                 const existing = exists ? params.collection.get(key) : undefined;
                 write({
                     type: exists ? "update" : "insert",
-                    value: existing
-                        ? {
-                              ...existing,
-                              ...object,
-                          }
-                        : object,
+                    value: existing ? { ...existing, ...object } : object,
                 });
             };
 
@@ -404,17 +391,10 @@ function createSyncConfig(
             const decodeEditProperties = (
                 properties: Record<string, unknown>,
                 primaryKey: string | number
-            ): FoundryObject =>
-                decodeEditObject({
-                    ...properties,
-                    [primaryKeyProperty]: primaryKey,
-                });
+            ): FoundryObject => decodeEditObject({ ...properties, [primaryKeyProperty]: primaryKey });
 
             const decodeWatcherObject = (object: FoundryObject, primaryKey: string | number): FoundryObject =>
-                decodeObject({
-                    ...object,
-                    [primaryKeyProperty]: primaryKey,
-                });
+                decodeObject({ ...object, [primaryKeyProperty]: primaryKey });
 
             const applyDirectWatcherUpdates = async (updates: ObjectSetUpdate[]): Promise<void> => {
                 const pendingMutations = new Map<
@@ -497,10 +477,7 @@ function createSyncConfig(
                 for await (const entry of AsyncIterable.fromPagination(
                     (pageSize, pageToken: string | undefined) =>
                         fetchEditHistoryPage({
-                            filters: {
-                                type: "timestampFilter",
-                                startTime: nextEditHistoryCursor.timestamp,
-                            },
+                            filters: { type: "timestampFilter", startTime: nextEditHistoryCursor.timestamp },
                             includeAllPreviousProperties: true,
                             pageSize,
                             pageToken,
@@ -590,10 +567,7 @@ function createSyncConfig(
                 begin();
                 truncate();
                 for (const object of objects) {
-                    write({
-                        type: "insert",
-                        value: object,
-                    });
+                    write({ type: "insert", value: object });
                 }
                 const receipt = commit();
 

@@ -36,10 +36,7 @@ function validateNonNegativeRange(
         }
     }
     if (range.min !== undefined && range.max !== undefined && range.min > range.max) {
-        errors.push({
-            message: "Range min must be less than or equal to max.",
-            path,
-        });
+        errors.push({ message: "Range min must be less than or equal to max.", path });
     }
     return errors;
 }
@@ -124,10 +121,7 @@ function validateTypeDef(
         case "map": {
             const errors: ValidationIssue[] = [];
             if (type.value.keyType.kind !== "string") {
-                errors.push({
-                    message: "Map key types must be string.",
-                    path: [...path, "keyType"],
-                });
+                errors.push({ message: "Map key types must be string.", path: [...path, "keyType"] });
             }
             return [
                 ...errors,
@@ -245,10 +239,7 @@ function validateProperties(
         const propPath = [...path, i];
 
         if (names.has(prop.name)) {
-            errors.push({
-                message: `Duplicate property name: "${prop.name}".`,
-                path: [...propPath, "name"],
-            });
+            errors.push({ message: `Duplicate property name: "${prop.name}".`, path: [...propPath, "name"] });
         }
         names.add(prop.name);
 
@@ -308,12 +299,7 @@ function resolveFieldType(
     }
 }
 
-type ExpressionValueType =
-    | TypeDef
-    | {
-          kind: "ontologyObject";
-          objectType: string;
-      };
+type ExpressionValueType = TypeDef | { kind: "ontologyObject"; objectType: string };
 
 function resolveExpressionType(
     expression: Expression,
@@ -372,10 +358,7 @@ function resolveExpressionType(
                       ? unwrapOptionalType(referenceType, valueTypes)
                       : undefined;
             return resolved?.kind === "objectReference"
-                ? {
-                      kind: "ontologyObject",
-                      objectType: resolved.value.objectType,
-                  }
+                ? { kind: "ontologyObject", objectType: resolved.value.objectType }
                 : undefined;
         }
         case "linkHop": {
@@ -392,10 +375,7 @@ function resolveExpressionType(
                 return undefined;
             }
             const link = resolveLinkHop(
-                {
-                    objectTypes: [...objectTypes.values()],
-                    linkTypes: [...linkTypes],
-                },
+                { objectTypes: [...objectTypes.values()], linkTypes: [...linkTypes] },
                 sourceType.objectType,
                 expression.value.link
             );
@@ -432,10 +412,7 @@ function resolveExpressionType(
                             );
                             return resolved && resolved.kind !== "ontologyObject"
                                 ? resolved
-                                : {
-                                      kind: "unknown" as const,
-                                      value: {},
-                                  };
+                                : { kind: "unknown" as const, value: {} };
                         })(),
                     })),
                 },
@@ -469,10 +446,7 @@ function resolveExpressionType(
                 bodyLocals
             );
             return bodyType && bodyType.kind !== "ontologyObject"
-                ? {
-                      kind: "list",
-                      value: { elementType: bodyType },
-                  }
+                ? { kind: "list", value: { elementType: bodyType } }
                 : undefined;
         }
         case "literal":
@@ -703,12 +677,7 @@ function validateActionObjectReference(
     const parameter = parameters.get(parameterName);
     if (!parameter) {
         return {
-            errors: [
-                {
-                    message: `Unknown action parameter: "${parameterName}".`,
-                    path: [...path, "name"],
-                },
-            ],
+            errors: [{ message: `Unknown action parameter: "${parameterName}".`, path: [...path, "name"] }],
         };
     }
 
@@ -974,10 +943,7 @@ export function validate(ontology: OntologyIR): ValidationResult {
     for (let i = 0; i < ontology.types.length; i++) {
         const vt = ontology.types[i]!;
         if (valueTypeNames.has(vt.name)) {
-            errors.push({
-                message: `Duplicate value type name: "${vt.name}".`,
-                path: ["types", i, "name"],
-            });
+            errors.push({ message: `Duplicate value type name: "${vt.name}".`, path: ["types", i, "name"] });
         }
         valueTypeNames.add(vt.name);
     }
@@ -1062,10 +1028,7 @@ export function validate(ontology: OntologyIR): ValidationResult {
         const ltPath = ["linkTypes", i] as (string | number)[];
 
         if (linkIds.has(lt.id)) {
-            errors.push({
-                message: `Duplicate link type id: "${lt.id}".`,
-                path: [...ltPath, "id"],
-            });
+            errors.push({ message: `Duplicate link type id: "${lt.id}".`, path: [...ltPath, "id"] });
         }
         linkIds.add(lt.id);
 

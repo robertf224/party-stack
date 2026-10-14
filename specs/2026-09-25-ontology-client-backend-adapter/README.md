@@ -30,17 +30,9 @@ The immediate Cloudflare issue is fixed before that refactor by constructing the
 Foundry adapter with `live: false`.
 
 ```ts
-const backendAdapter = createFoundryOntologyBackendAdapter({
-    client: foundryClient,
-    ir,
-    live: false,
-});
+const backendAdapter = createFoundryOntologyBackendAdapter({ client: foundryClient, ir, live: false });
 
-const server = createRemoteOntologyServer({
-    ir,
-    backendAdapter,
-    policy,
-});
+const server = createRemoteOntologyServer({ ir, backendAdapter, policy });
 ```
 
 For now, `createRemoteOntologyServer` still creates temporary `LiveOntology`
@@ -245,20 +237,14 @@ Example:
 ```ts
 const note = await client.objects.Note.get("note-1");
 
-await client.actions.updateNote({
-    note: "note-1",
-    title: "Updated",
-});
+await client.actions.updateNote({ note: "note-1", title: "Updated" });
 
 const counts = await client.query((q, objects) =>
     q
         .from({ note: objects.Note })
         .where(({ note }) => eq(note.ownerId, client.context.user))
         .groupBy(({ note }) => note.status)
-        .select(({ note }) => ({
-            status: note.status,
-            count: count(note.id),
-        }))
+        .select(({ note }) => ({ status: note.status, count: count(note.id) }))
 );
 ```
 
@@ -380,10 +366,7 @@ interface ChangeBatch<Checkpoint> {
     observedActionKeys?: string[];
 }
 
-type Resync = {
-    type: "resync";
-    reason?: "reconnect" | "gap" | "unknown-change" | "manual";
-};
+type Resync = { type: "resync"; reason?: "reconnect" | "gap" | "unknown-change" | "manual" };
 ```
 
 Checkpoint types remain backend-owned. Ontology core persists a checkpoint only
@@ -528,14 +511,8 @@ Foundry example:
 ```ts
 // applyAction
 return {
-    effects: editedObjectTypes.map((objectType) => ({
-        objectType,
-        scope: { kind: "unknown" },
-    })),
-    observations: editedObjectTypes.map((objectType) => ({
-        objectType,
-        key: `foundry:${operationId}`,
-    })),
+    effects: editedObjectTypes.map((objectType) => ({ objectType, scope: { kind: "unknown" } })),
+    observations: editedObjectTypes.map((objectType) => ({ objectType, key: `foundry:${operationId}` })),
 };
 
 // pull edit history

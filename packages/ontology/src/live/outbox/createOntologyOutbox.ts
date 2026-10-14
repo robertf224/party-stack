@@ -128,13 +128,9 @@ export function useOntologyOutbox(
         const lifetime: {
             server?: CoordinationServiceServer<OutboxCoordinationService>;
             unsubscribeResults?: () => void;
-            unsubscribeCollection?: {
-                unsubscribe(): void;
-            };
+            unsubscribeCollection?: { unsubscribe(): void };
             connectivityTask?: Task<void>;
-            unsubscribeConnection?: {
-                unsubscribe(): void;
-            };
+            unsubscribeConnection?: { unsubscribe(): void };
             leaderTask?: Task<void>;
             leaderRun?: Promise<unknown>;
         } = {};
@@ -223,9 +219,7 @@ export function useOntologyOutbox(
                         try {
                             const leaderRun = host.runAsLeader(
                                 ({ signal }) => runOutboxLeader(signal, leaderOptions),
-                                {
-                                    signal: lifetimeSignal,
-                                }
+                                { signal: lifetimeSignal }
                             );
                             lifetime.leaderRun = leaderRun;
                             yield* until(leaderRun);
@@ -247,12 +241,8 @@ export function useOntologyOutbox(
                 collection,
                 ready: Promise.resolve(),
                 async enqueue<Result>(
-                    request: Omit<OntologyActionRequest, "idempotencyKey"> & {
-                        idempotencyKey?: string;
-                    },
-                    enqueueOptions?: {
-                        visibility?: "confirmed" | "optimistic";
-                    }
+                    request: Omit<OntologyActionRequest, "idempotencyKey"> & { idempotencyKey?: string },
+                    enqueueOptions?: { visibility?: "confirmed" | "optimistic" }
                 ) {
                     const timestamp = Date.now();
                     const proposed: OntologyOutboxEntry = {
@@ -276,9 +266,7 @@ export function useOntologyOutbox(
 
                     let entry: OntologyOutboxEntry;
                     try {
-                        entry = await service.methods.enqueue({
-                            entry: proposed,
-                        });
+                        entry = await service.methods.enqueue({ entry: proposed });
                     } catch (error) {
                         completions.delete(proposed.id);
                         completion.reject(normalizeError(error));
@@ -287,10 +275,7 @@ export function useOntologyOutbox(
 
                     await projections.ensure(entry);
 
-                    return {
-                        entry,
-                        completed: completion.promise,
-                    } as EnqueuedOntologyAction<Result>;
+                    return { entry, completed: completion.promise } as EnqueuedOntologyAction<Result>;
                 },
                 async edit(id, update) {
                     const current = repository.get(id);
@@ -299,10 +284,7 @@ export function useOntologyOutbox(
                     }
                     const request = cloneValue(current.request);
                     update(request);
-                    const entry = await service.methods.edit({
-                        id,
-                        request,
-                    });
+                    const entry = await service.methods.edit({ id, request });
                     await projections.ensure(entry);
                     return entry;
                 },

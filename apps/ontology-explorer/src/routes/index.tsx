@@ -3,9 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useOntology } from "../ontology/OntologyProvider";
 import type { MetaLinkType } from "@party-stack/ontology";
 
-export const Route = createFileRoute("/")({
-    component: Dashboard,
-});
+export const Route = createFileRoute("/")({ component: Dashboard });
 
 function Dashboard() {
     const { meta } = useOntology();

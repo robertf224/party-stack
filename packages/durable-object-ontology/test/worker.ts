@@ -54,17 +54,10 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
         });
         try {
             if (id && title) {
-                await ontology.actions.createNote!({
-                    id,
-                    title,
-                });
+                await ontology.actions.createNote!({ id, title });
             }
             await queryOnce((query) =>
-                query
-                    .from({
-                        note: ontology.objects.Note!,
-                    })
-                    .select(({ note }) => note)
+                query.from({ note: ontology.objects.Note! }).select(({ note }) => note)
             );
             return [...ontology.objects.Note!.values()].map((note) => String(note.title));
         } finally {
@@ -72,11 +65,7 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
         }
     }
 
-    async runR2Backend(): Promise<{
-        content: string;
-        type: string;
-        sqlBytesAreExternal: boolean;
-    }> {
+    async runR2Backend(): Promise<{ content: string; type: string; sqlBytesAreExternal: boolean }> {
         const ontology = await createLiveOntology({
             ir: sqliteOntologyConformanceIR,
             backend: () =>
@@ -90,21 +79,10 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
         });
         try {
             const created = await ontology.attachments.create(
-                new Blob(["r2-content"], {
-                    type: "text/plain",
-                }),
-                {
-                    target: {
-                        kind: "objectProperty",
-                        objectType: "Asset",
-                        property: "attachment",
-                    },
-                }
+                new Blob(["r2-content"], { type: "text/plain" }),
+                { target: { kind: "objectProperty", objectType: "Asset", property: "attachment" } }
             );
-            await ontology.actions.createAsset!({
-                id: "asset-1",
-                attachment: created.attachment,
-            });
+            await ontology.actions.createAsset!({ id: "asset-1", attachment: created.attachment });
             const blob = await ontology.attachments.blob(created.attachment);
             const row = this.database
                 .prepare(
@@ -112,12 +90,7 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
                      FROM party_stack_attachments
                      WHERE id = ?`
                 )
-                .get(created.attachment.id) as
-                | {
-                      bytes: unknown;
-                      storage_key: string | null;
-                  }
-                | undefined;
+                .get(created.attachment.id) as { bytes: unknown; storage_key: string | null } | undefined;
             return {
                 content: await blob.text(),
                 type: blob.type,
@@ -141,44 +114,24 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
                 }),
         });
         try {
-            const created = await ontology.attachments.create(
-                new Blob(["inline"], {
-                    type: "text/plain",
-                }),
-                {
-                    target: {
-                        kind: "objectProperty",
-                        objectType: "Asset",
-                        property: "attachment",
-                    },
-                }
-            );
-            await ontology.actions.createAsset!({
-                id: "inline-asset",
-                attachment: created.attachment,
+            const created = await ontology.attachments.create(new Blob(["inline"], { type: "text/plain" }), {
+                target: { kind: "objectProperty", objectType: "Asset", property: "attachment" },
             });
+            await ontology.actions.createAsset!({ id: "inline-asset", attachment: created.attachment });
             const row = this.database
                 .prepare(
                     `SELECT bytes, storage_key
                      FROM party_stack_attachments
                      WHERE id = ?`
                 )
-                .get(created.attachment.id) as
-                | {
-                      bytes: unknown;
-                      storage_key: string | null;
-                  }
-                | undefined;
+                .get(created.attachment.id) as { bytes: unknown; storage_key: string | null } | undefined;
             return row?.bytes !== null && row?.storage_key === null;
         } finally {
             await ontology.cleanup();
         }
     }
 
-    async runR2Destruction(): Promise<{
-        quiesced: boolean;
-        r2Empty: boolean;
-    }> {
+    async runR2Destruction(): Promise<{ quiesced: boolean; r2Empty: boolean }> {
         await this.runR2Backend();
         let quiesced = false;
         const installationId = this.ctx.id.toString();
@@ -196,13 +149,8 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
             installationId,
             ontologyId: "ontology",
         });
-        const listed = await this.env.BLOBS.list({
-            prefix: await scopedStore.prefix,
-        });
-        return {
-            quiesced,
-            r2Empty: listed.objects.length === 0,
-        };
+        const listed = await this.env.BLOBS.list({ prefix: await scopedStore.prefix });
+        return { quiesced, r2Empty: listed.objects.length === 0 };
     }
 
     async destroyStorage(): Promise<void> {

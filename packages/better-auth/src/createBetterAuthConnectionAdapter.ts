@@ -61,10 +61,7 @@ export function createBetterAuthConnectionAdapter<Client extends BetterAuthConne
                 userId,
                 state: {
                     status: "active",
-                    expiration: {
-                        expiresAt: selected.session.expiresAt.getTime(),
-                        refreshable: true,
-                    },
+                    expiration: { expiresAt: selected.session.expiresAt.getTime(), refreshable: true },
                 },
             };
             const session: ConnectionSession = {
@@ -78,9 +75,7 @@ export function createBetterAuthConnectionAdapter<Client extends BetterAuthConne
                     return createEstablishedConnection(restored);
                 },
                 async disconnect() {
-                    const result = await client.multiSession.revoke({
-                        sessionToken: token,
-                    });
+                    const result = await client.multiSession.revoke({ sessionToken: token });
                     if (result.error) {
                         throw new Error("Failed to revoke the Better Auth session.", { cause: result.error });
                     }
@@ -91,11 +86,7 @@ export function createBetterAuthConnectionAdapter<Client extends BetterAuthConne
                         async fetch(request) {
                             const headers = new Headers(request.headers);
                             headers.set(PARTY_STACK_SESSION_HEADER, selector);
-                            return handlers.fetch(
-                                new Request(request, {
-                                    headers,
-                                })
-                            );
+                            return handlers.fetch(new Request(request, { headers }));
                         },
                         createWebSocket(url, protocols) {
                             const requested = Array.isArray(protocols)

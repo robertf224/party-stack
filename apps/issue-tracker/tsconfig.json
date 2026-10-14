@@ -1,6 +1,4 @@
 {
     "extends": "@party-stack/tanstack-start-build-config/tsconfig.json",
-    "compilerOptions": {
-        "allowJs": true
-    }
+    "compilerOptions": { "allowJs": true }
 }

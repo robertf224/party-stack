@@ -99,27 +99,17 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
     const recordPartition = async (partition: LocalOntologyPartition): Promise<void> => {
         const existing = partitions.get(partition.id);
         const transaction = existing
-            ? partitions.update(
-                  partition.id,
-                  {
-                      optimistic: false,
-                  },
-                  (draft) => {
-                      Object.assign(draft, partition);
-                  }
-              )
-            : partitions.insert(partition, {
-                  optimistic: false,
-              });
+            ? partitions.update(partition.id, { optimistic: false }, (draft) => {
+                  Object.assign(draft, partition);
+              })
+            : partitions.insert(partition, { optimistic: false });
         await transaction.isPersisted.promise;
     };
     const removePartitionRecord = async (id: string): Promise<void> => {
         if (!partitions.get(id)) {
             return;
         }
-        const transaction = partitions.delete(id, {
-            optimistic: false,
-        });
+        const transaction = partitions.delete(id, { optimistic: false });
         await transaction.isPersisted.promise;
     };
     const destroyPartition = async (partition: LocalOntologyPartition): Promise<void> => {
@@ -191,20 +181,14 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
         }
         const open = (async () => {
             const route = routeFor(options.routes, ontologyId);
-            const configureOptions = {
-                connection: current,
-                egress,
-                ontologyId,
-            };
+            const configureOptions = { connection: current, egress, ontologyId };
             let configured;
             if (meta) {
                 if (route.configureMeta) {
                     configured = await route.configureMeta(configureOptions);
                 } else if (route.configure) {
                     const application = await route.configure(configureOptions);
-                    configured = createMetaOntologyConfiguration({
-                        ir: application.ir,
-                    });
+                    configured = createMetaOntologyConfiguration({ ir: application.ir });
                 } else {
                     throw new Error(`Ontology route for "${ontologyId}" does not support metadata.`);
                 }
@@ -224,12 +208,7 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
             const runtimeNamespace = `${liveOntologyNamespace(options.installationId, ontologyId)}${
                 meta ? ":meta" : ""
             }`;
-            await recordPartition({
-                id: key,
-                userId,
-                ontologyId,
-                meta: meta ? true : undefined,
-            });
+            await recordPartition({ id: key, userId, ontologyId, meta: meta ? true : undefined });
             const ontology = await createLiveOntology({
                 id: runtimeNamespace,
                 ir: configured.ir,
@@ -298,18 +277,10 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
             userId: string;
             ontologyId: string;
         }): Promise<LiveOntology<Ontology>> {
-            return openConfiguredOntology<Ontology>({
-                userId,
-                ontologyId,
-                meta: false,
-            });
+            return openConfiguredOntology<Ontology>({ userId, ontologyId, meta: false });
         },
         async openMetaOntology({ userId, ontologyId }) {
-            return openConfiguredOntology<MetaOntology>({
-                userId,
-                ontologyId,
-                meta: true,
-            });
+            return openConfiguredOntology<MetaOntology>({ userId, ontologyId, meta: true });
         },
         closeOntology: ({ userId, ontologyId }) => close(userId, ontologyId),
         closeMetaOntology: ({ userId, ontologyId }) => closeKey(metaOntologyKey(userId, ontologyId)),

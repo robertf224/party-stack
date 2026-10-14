@@ -26,41 +26,26 @@ function decorateAttachmentValue(opts: {
             }
             return;
         case "optional":
-            decorateAttachmentValue({
-                ...opts,
-                type: type.value.type,
-            });
+            decorateAttachmentValue({ ...opts, type: type.value.type });
             return;
         case "list":
             if (Array.isArray(opts.value)) {
                 for (const item of opts.value) {
-                    decorateAttachmentValue({
-                        ...opts,
-                        type: type.value.elementType,
-                        value: item,
-                    });
+                    decorateAttachmentValue({ ...opts, type: type.value.elementType, value: item });
                 }
             }
             return;
         case "map":
             if (isRecord(opts.value)) {
                 for (const item of Object.values(opts.value)) {
-                    decorateAttachmentValue({
-                        ...opts,
-                        type: type.value.valueType,
-                        value: item,
-                    });
+                    decorateAttachmentValue({ ...opts, type: type.value.valueType, value: item });
                 }
             }
             return;
         case "struct":
             if (isRecord(opts.value)) {
                 for (const field of type.value.fields) {
-                    decorateAttachmentValue({
-                        ...opts,
-                        type: field.type,
-                        value: opts.value[field.name],
-                    });
+                    decorateAttachmentValue({ ...opts, type: field.type, value: opts.value[field.name] });
                 }
             }
             return;
@@ -84,11 +69,7 @@ export function decorateObjectAttachmentSources(opts: {
             ir: opts.ir,
             type: property.type,
             value: opts.object[property.name],
-            source: {
-                objectType: opts.objectType.name,
-                primaryKey,
-                property: property.name,
-            },
+            source: { objectType: opts.objectType.name, primaryKey, property: property.name },
         });
     }
 

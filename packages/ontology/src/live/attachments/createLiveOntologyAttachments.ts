@@ -24,12 +24,7 @@ interface LiveOntologyAttachmentCreateOptions {
 
 interface AttachmentOntologyDefinition {
     objectTypes: Record<string, Record<string, unknown>>;
-    actionTypes: Record<
-        string,
-        {
-            parameters: Record<string, unknown>;
-        }
-    >;
+    actionTypes: Record<string, { parameters: Record<string, unknown> }>;
 }
 
 type ExtractAttachment<Value> =
@@ -44,21 +39,13 @@ type AttachmentAtTarget<
     Target,
 > = string extends keyof Ontology["objectTypes"]
     ? v.attachment
-    : Target extends {
-            kind: "objectProperty";
-            objectType: infer ObjectType;
-            property: infer Property;
-        }
+    : Target extends { kind: "objectProperty"; objectType: infer ObjectType; property: infer Property }
       ? ObjectType extends keyof Ontology["objectTypes"]
           ? Property extends keyof Ontology["objectTypes"][ObjectType]
               ? ExtractAttachment<Ontology["objectTypes"][ObjectType][Property]>
               : never
           : never
-      : Target extends {
-              kind: "actionParameter";
-              actionType: infer ActionType;
-              parameter: infer Parameter;
-          }
+      : Target extends { kind: "actionParameter"; actionType: infer ActionType; parameter: infer Parameter }
         ? ActionType extends keyof Ontology["actionTypes"]
             ? Parameter extends keyof Ontology["actionTypes"][ActionType]["parameters"]
                 ? ExtractAttachment<Ontology["actionTypes"][ActionType]["parameters"][Parameter]>
@@ -135,15 +122,10 @@ export function createLiveOntologyAttachments<
         const id =
             normalizedOpts.id ??
             (targetType?.kind === "attachment" && attachmentsAdapter.generateAttachmentId
-                ? await attachmentsAdapter.generateAttachmentId(blob, {
-                      target: targetType.value,
-                  })
+                ? await attachmentsAdapter.generateAttachmentId(blob, { target: targetType.value })
                 : crypto.randomUUID());
         await blobManager.stage(id, blob);
-        const attachment: v.attachment = {
-            id,
-            type: blob.type,
-        };
+        const attachment: v.attachment = { id, type: blob.type };
         const materializeAttachment = attachmentsAdapter.materializeAttachment;
         const materializeOptions = {
             target: targetType?.kind === "attachment" ? targetType.value : undefined,
@@ -164,20 +146,15 @@ export function createLiveOntologyAttachments<
                     }
                 });
             void promise.catch(() => undefined);
-            return {
-                attachment,
-                isMaterialized: promise,
-            } as unknown as LiveOntologyAttachmentCreateResult<Ontology, Options>;
+            return { attachment, isMaterialized: promise } as unknown as LiveOntologyAttachmentCreateResult<
+                Ontology,
+                Options
+            >;
         }
-        return {
-            attachment,
-        } as LiveOntologyAttachmentCreateResult<Ontology, Options>;
+        return { attachment } as LiveOntologyAttachmentCreateResult<Ontology, Options>;
     };
 
-    const blob = (attachment: v.attachment) =>
-        blobManager.read(attachment.id, {
-            meta: { attachment },
-        });
+    const blob = (attachment: v.attachment) => blobManager.read(attachment.id, { meta: { attachment } });
 
     async function metadata<Type extends string>(
         attachment: v.attachment<Type>
@@ -206,9 +183,5 @@ export function createLiveOntologyAttachments<
         } as v.attachment<Type> & PartialAttachmentMetadata<Type>;
     }
 
-    return {
-        create,
-        metadata,
-        blob,
-    };
+    return { create, metadata, blob };
 }

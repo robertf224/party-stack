@@ -10,21 +10,13 @@ export type ObjectAlreadyExistsError = Omit<PalantirApiError, "parameters"> & {
 export type InvalidParameterValueError = Omit<PalantirApiError, "parameters"> & {
     errorName: "InvalidParameterValue";
     errorCode: "INVALID_ARGUMENT";
-    parameters: {
-        parameterBaseType: string;
-        parameterId: string;
-        parameterValue: unknown;
-    };
+    parameters: { parameterBaseType: string; parameterId: string; parameterValue: unknown };
 };
 
 export type ParametersNotFoundError = Omit<PalantirApiError, "parameters"> & {
     errorName: "ParametersNotFound";
     errorCode: "INVALID_ARGUMENT";
-    parameters: {
-        actionType: string;
-        unknownParameterIds: string[];
-        configuredParameterIds: string[];
-    };
+    parameters: { actionType: string; unknownParameterIds: string[]; configuredParameterIds: string[] };
 };
 
 export type KnownActionError =

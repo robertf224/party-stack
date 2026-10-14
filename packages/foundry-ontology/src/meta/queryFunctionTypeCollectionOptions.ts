@@ -18,10 +18,7 @@ async function listQueryFunctionTypes(opts: QueryFunctionTypeCollectionOpts): Pr
     return AsyncIterable.toArray(
         AsyncIterable.fromPagination(
             (pageSize, pageToken: string | undefined) =>
-                QueryTypes.list(opts.client, opts.client.ontologyRid, {
-                    pageSize,
-                    pageToken,
-                }),
+                QueryTypes.list(opts.client, opts.client.ontologyRid, { pageSize, pageToken }),
             (page) => page.nextPageToken,
             (page) => page.data,
             100

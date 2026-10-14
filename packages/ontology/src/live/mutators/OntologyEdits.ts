@@ -35,10 +35,7 @@ async function propertyChanges(options: {
             tx: options.tx,
         });
         if (value !== undefined) {
-            changes.push({
-                path: assignment.property,
-                value,
-            });
+            changes.push({ path: assignment.property, value });
         }
     }
     return changes;
@@ -62,17 +59,10 @@ export async function applyActionLogicToMutatorTx(options: {
         if (step.kind === "createObject") {
             const type = objectType(options.ir, step.value.objectType);
             let object: Record<string, unknown> = {};
-            for (const change of await propertyChanges({
-                ...options,
-                assignments: step.value.values,
-            })) {
+            for (const change of await propertyChanges({ ...options, assignments: step.value.values })) {
                 object = setAtPath(object, change.path, change.value);
             }
-            decorateObjectAttachmentSources({
-                ir: options.ir,
-                objectType: type,
-                object,
-            });
+            decorateObjectAttachmentSources({ ir: options.ir, objectType: type, object });
             if (object[type.primaryKey] === undefined) {
                 const primaryKey = type.properties.find((property) => property.name === type.primaryKey);
                 if (
@@ -96,10 +86,7 @@ export async function applyActionLogicToMutatorTx(options: {
         if (step.kind === "updateObject") {
             await options.tx.mutate[type.name]!.update(
                 key,
-                await propertyChanges({
-                    ...options,
-                    assignments: step.value.values,
-                })
+                await propertyChanges({ ...options, assignments: step.value.values })
             );
         } else {
             await options.tx.mutate[type.name]!.delete(key);

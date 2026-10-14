@@ -226,10 +226,7 @@ function decodeGeoPoint(value: unknown): unknown {
 
 function encodeGeoPoint(value: unknown): unknown {
     if (isPlainObject(value) && typeof value.lat === "number" && typeof value.lon === "number") {
-        return {
-            latitude: value.lat,
-            longitude: value.lon,
-        };
+        return { latitude: value.lat, longitude: value.lon };
     }
     return value;
 }

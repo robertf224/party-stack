@@ -1,19 +1,9 @@
 import type { SalesforceCrudOperation } from "./utils/ids.js";
 
 export type SalesforceActionMetadata =
-    | {
-          kind: "flow";
-          apiName: string;
-      }
-    | {
-          kind: "standard";
-          apiName: string;
-      }
-    | {
-          kind: "crud";
-          objectType: string;
-          operation: SalesforceCrudOperation;
-      };
+    | { kind: "flow"; apiName: string }
+    | { kind: "standard"; apiName: string }
+    | { kind: "crud"; objectType: string; operation: SalesforceCrudOperation };
 
 export function salesforceActionMeta(metadata: SalesforceActionMetadata): Record<string, unknown> {
     return { salesforce: metadata };
@@ -28,10 +18,7 @@ export function getSalesforceActionMetadata(actionType: {
     }
     const metadata = value as Record<string, unknown>;
     if ((metadata.kind === "flow" || metadata.kind === "standard") && typeof metadata.apiName === "string") {
-        return {
-            kind: metadata.kind,
-            apiName: metadata.apiName,
-        };
+        return { kind: metadata.kind, apiName: metadata.apiName };
     }
     if (
         metadata.kind === "crud" &&
@@ -40,11 +27,7 @@ export function getSalesforceActionMetadata(actionType: {
             metadata.operation === "update" ||
             metadata.operation === "delete")
     ) {
-        return {
-            kind: "crud",
-            objectType: metadata.objectType,
-            operation: metadata.operation,
-        };
+        return { kind: "crud", objectType: metadata.objectType, operation: metadata.operation };
     }
     return undefined;
 }

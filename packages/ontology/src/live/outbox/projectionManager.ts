@@ -18,10 +18,7 @@ function desiredProjections(entries: readonly OntologyOutboxEntry[]): DesiredPro
     return [...entries]
         .filter((entry) => entry.status !== "failed" || entry.retryable)
         .sort((left, right) => left.sequence - right.sequence)
-        .map((entry) => ({
-            entry,
-            fingerprint: requestFingerprint(entry.request),
-        }));
+        .map((entry) => ({ entry, fingerprint: requestFingerprint(entry.request) }));
 }
 
 export class OutboxProjectionManager {

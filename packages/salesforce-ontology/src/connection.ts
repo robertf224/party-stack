@@ -83,13 +83,7 @@ function normalizeUrl(value: string): string {
 function activeState(expiresAt: number | undefined, refreshable: boolean): Connection<"active">["state"] {
     return expiresAt === undefined
         ? { status: "active" }
-        : {
-              status: "active",
-              expiration: {
-                  expiresAt,
-                  refreshable,
-              },
-          };
+        : { status: "active", expiration: { expiresAt, refreshable } };
 }
 
 async function resolveSalesforceUserId(options: {
@@ -98,10 +92,7 @@ async function resolveSalesforceUserId(options: {
     fetch: typeof globalThis.fetch;
 }): Promise<string> {
     const response = await options.fetch(`${options.loginUrl}/services/oauth2/userinfo`, {
-        headers: {
-            Authorization: `Bearer ${options.token}`,
-            Accept: "application/json",
-        },
+        headers: { Authorization: `Bearer ${options.token}`, Accept: "application/json" },
     });
     if (response.status === 401) {
         throw unauthenticated("Salesforce access token is invalid or expired.");
@@ -142,11 +133,7 @@ function createSalesforceEgressWrapper(options: {
                     const send = async (current: Request) => {
                         const headers = new Headers(current.headers);
                         headers.set("Authorization", `Bearer ${await options.tokenProvider()}`);
-                        return handlers.fetch(
-                            new Request(current, {
-                                headers,
-                            })
-                        );
+                        return handlers.fetch(new Request(current, { headers }));
                     };
                     let response = await send(request);
                     if (response.status === 401 && options.refresh) {
@@ -186,12 +173,7 @@ async function createSalesforceConnectionAdapterInstance(
               runtime: context.runtime,
               fetch: options.oauth.fetch,
               dangerouslyPersistSecrets: options.oauth.dangerouslyPersistSecrets,
-              resolveUserId: (token) =>
-                  resolveSalesforceUserId({
-                      loginUrl,
-                      token,
-                      fetch: fetchImpl,
-                  }),
+              resolveUserId: (token) => resolveSalesforceUserId({ loginUrl, token, fetch: fetchImpl }),
           })
         : undefined;
     const clientCredentialsOauth: ClientCredentialsOAuthClient | undefined = options.clientCredentials
@@ -201,20 +183,12 @@ async function createSalesforceConnectionAdapterInstance(
               tokenEndpoint: `${loginUrl}/services/oauth2/token`,
               scopes: options.clientCredentials.scopes,
               fetch: options.clientCredentials.fetch,
-              resolveUserId: (token) =>
-                  resolveSalesforceUserId({
-                      loginUrl,
-                      token,
-                      fetch: fetchImpl,
-                  }),
+              resolveUserId: (token) => resolveSalesforceUserId({ loginUrl, token, fetch: fetchImpl }),
           })
         : undefined;
 
     const createTokenSession = async (
-        authenticationOptions: {
-            token?: string;
-            userId?: string;
-        } = {}
+        authenticationOptions: { token?: string; userId?: string } = {}
     ): Promise<EstablishedConnection> => {
         const token = authenticationOptions.token ?? options.token;
         if (!token) {
@@ -223,15 +197,8 @@ async function createSalesforceConnectionAdapterInstance(
         const userId =
             authenticationOptions.userId ??
             options.userId ??
-            (await resolveSalesforceUserId({
-                loginUrl,
-                token,
-                fetch: fetchImpl,
-            }));
-        const connection: Connection<"active"> = {
-            userId,
-            state: { status: "active" },
-        };
+            (await resolveSalesforceUserId({ loginUrl, token, fetch: fetchImpl }));
+        const connection: Connection<"active"> = { userId, state: { status: "active" } };
         tokenProviders.set(userId, () => Promise.resolve(token));
         const session: ConnectionSession = {
             disconnect() {
@@ -301,10 +268,7 @@ async function createSalesforceConnectionAdapterInstance(
         const tokenProvider = () => clientCredentialsOauth.getAccessToken();
         tokenProviders.set(userId, tokenProvider);
         return {
-            connection: {
-                userId,
-                state: activeState(oauthSession.expiration?.expiresAt, true),
-            },
+            connection: { userId, state: activeState(oauthSession.expiration?.expiresAt, true) },
             session: {
                 refresh: () => createClientCredentialsSession(true),
                 disconnect() {

@@ -12,13 +12,7 @@ describe("unwrapValueType", () => {
             actionTypes: [],
             queryFunctionTypes: [],
         };
-        const type = o.optional({
-            type: o.list({
-                elementType: o.optional({
-                    type: o.string({}),
-                }),
-            }),
-        });
+        const type = o.optional({ type: o.list({ elementType: o.optional({ type: o.string({}) }) }) });
 
         expect(unwrapValueType(ir, type)).toEqual(o.string({}));
     });
@@ -29,11 +23,7 @@ describe("unwrapValueType", () => {
                 {
                     name: "AttachmentList",
                     type: o.optional({
-                        type: o.list({
-                            elementType: o.optional({
-                                type: o.attachment({}),
-                            }),
-                        }),
+                        type: o.list({ elementType: o.optional({ type: o.attachment({}) }) }),
                     }),
                 },
             ],
@@ -99,11 +89,7 @@ describe("getTargetValueType", () => {
                 {
                     name: "AttachmentList",
                     type: o.optional({
-                        type: o.list({
-                            elementType: o.optional({
-                                type: o.attachment({}),
-                            }),
-                        }),
+                        type: o.list({ elementType: o.optional({ type: o.attachment({}) }) }),
                     }),
                 },
             ],
@@ -129,11 +115,7 @@ describe("getTargetValueType", () => {
         };
 
         expect(
-            getTargetValueType(ir, {
-                kind: "objectProperty",
-                objectType: "Post",
-                property: "attachments",
-            })
+            getTargetValueType(ir, { kind: "objectProperty", objectType: "Post", property: "attachments" })
         ).toEqual(o.attachment({}));
     });
 
@@ -147,11 +129,7 @@ describe("getTargetValueType", () => {
         };
 
         expect(() =>
-            getTargetValueType(ir, {
-                kind: "objectProperty",
-                objectType: "Post",
-                property: "attachments",
-            })
+            getTargetValueType(ir, { kind: "objectProperty", objectType: "Post", property: "attachments" })
         ).toThrow('Unknown object type "Post".');
     });
 
@@ -173,11 +151,7 @@ describe("getTargetValueType", () => {
         };
 
         expect(() =>
-            getTargetValueType(ir, {
-                kind: "objectProperty",
-                objectType: "Post",
-                property: "attachments",
-            })
+            getTargetValueType(ir, { kind: "objectProperty", objectType: "Post", property: "attachments" })
         ).toThrow('Unknown property "attachments" on "Post".');
     });
 });

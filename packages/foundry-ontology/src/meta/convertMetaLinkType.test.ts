@@ -70,16 +70,8 @@ describe("convertFoundryMetaLinkTypes", () => {
         expect(result).toEqual([
             {
                 id: linkRid,
-                source: {
-                    objectType: "Post",
-                    name: "posts",
-                    displayName: "Posts",
-                },
-                target: {
-                    objectType: "Author",
-                    name: "author",
-                    displayName: "Author",
-                },
+                source: { objectType: "Post", name: "posts", displayName: "Posts" },
+                target: { objectType: "Author", name: "author", displayName: "Author" },
                 foreignKey: "authorId",
                 cardinality: "many",
             },

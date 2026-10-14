@@ -18,10 +18,7 @@ function App() {
         hasNextPage,
         isFetchingNextPage,
         fetchNextPage,
-    } = useObjects(Task, {
-        $orderBy: { completedAt: "asc", createdAt: "desc" },
-        $pageSize: 10,
-    });
+    } = useObjects(Task, { $orderBy: { completedAt: "asc", createdAt: "desc" }, $pageSize: 10 });
     useLiveObjectSet(Task);
 
     const { mutate: addTask, isPending } = useAction(createTask);
@@ -47,11 +44,7 @@ function App() {
 
     const {
         data: { $count: totalTodos },
-    } = useAggregations(Task, {
-        $select: {
-            $count: "unordered",
-        },
-    });
+    } = useAggregations(Task, { $select: { $count: "unordered" } });
 
     return (
         <div className="min-h-screen bg-gray-100">

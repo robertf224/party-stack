@@ -211,9 +211,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
 
     const deleteRef = async (id: string): Promise<void> => {
         if (!collection.has(id)) return;
-        await collection.delete(id, {
-            optimistic: false,
-        }).isPersisted.promise;
+        await collection.delete(id, { optimistic: false }).isPersisted.promise;
     };
 
     const applyMetadata = (draft: BlobMetadataRecord, metadata: PartialBlobMetadata): void => {
@@ -242,10 +240,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
 
     const currentOperation = async (
         input: BlobOperationInput
-    ): Promise<{
-        ref: BlobWriteRecord;
-        operation: Extract<BlobOperation, { status: "pending" }>;
-    }> => {
+    ): Promise<{ ref: BlobWriteRecord; operation: Extract<BlobOperation, { status: "pending" }> }> => {
         const ref = await findRef(input.id);
         const operation = ref?.operation;
         if (
@@ -289,11 +284,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                       name:
                           input.metadata.name ?? (typeof existing?.name === "string" ? existing.name : null),
                       state: input.kind === "cache" ? (existing?.state ?? "persisted") : existing?.state,
-                      operation: {
-                          kind: input.kind,
-                          status: "pending",
-                          operationId,
-                      },
+                      operation: { kind: input.kind, status: "pending", operationId },
                       lastAccessedAt: existing?.lastAccessedAt,
                       createdAt: existing?.createdAt ?? timestamp,
                       updatedAt: timestamp,
@@ -305,10 +296,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                       activeOperationIds.delete(operationId);
                       throw error;
                   }
-                  return {
-                      id: ref.id,
-                      operationId,
-                  };
+                  return { id: ref.id, operationId };
               },
 
               async commitWrite(input) {
@@ -446,11 +434,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                   activeOperationIds.add(operationId);
                   try {
                       await patchRef(ref.id, (draft, updatedAt) => {
-                          draft.operation = {
-                              kind: "purge",
-                              status: "pending",
-                              operationId,
-                          };
+                          draft.operation = { kind: "purge", status: "pending", operationId };
                           draft.updatedAt = updatedAt;
                       });
                       await bytes.delete(ref.id);
@@ -483,10 +467,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
                       query
                           .from({ blob: collection })
                           .where(({ blob }) => eq(blob.operation!.status, "pending"))
-                          .select(({ blob }) => ({
-                              id: blob.id,
-                              operation: blob.operation,
-                          }))
+                          .select(({ blob }) => ({ id: blob.id, operation: blob.operation }))
                   )) as Array<Pick<BlobMetadataRecord, "id" | "operation">>;
 
                   for (const pending of refs) {
@@ -556,21 +537,14 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
         const operation = await client.methods.beginWrite({
             id,
             kind,
-            metadata: {
-                type: blob.type,
-                size: blob.size,
-                name: blobName(blob),
-            },
+            metadata: { type: blob.type, size: blob.size, name: blobName(blob) },
         });
         try {
             await bytes.write(operation.id, blob);
             return await client.methods.commitWrite(operation);
         } catch (error) {
             try {
-                await client.methods.failWrite({
-                    ...operation,
-                    error: errorMessage(error),
-                });
+                await client.methods.failWrite({ ...operation, error: errorMessage(error) });
             } catch {
                 // A stale failure must not delete bytes belonging to a
                 // newer operation. Preserve the original operation error.
@@ -608,9 +582,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
             try {
                 blob = await bytes.read(resolvedId);
             } catch (cause) {
-                throw new BlobBytesUnavailableError(resolvedId, {
-                    cause,
-                });
+                throw new BlobBytesUnavailableError(resolvedId, { cause });
             }
             if (ref) {
                 await client.methods.touch({ id: ref.id });
@@ -618,11 +590,7 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
             return blob;
         },
 
-        bindRemoteId: (localId, remoteId) =>
-            client.methods.bindRemoteId({
-                localId,
-                remoteId,
-            }),
+        bindRemoteId: (localId, remoteId) => client.methods.bindRemoteId({ localId, remoteId }),
         purge: (id, callOptions) => client.methods.purge({ id }, callOptions),
         async recoverAsLeader(signal) {
             if (!isCoordinationHost(options.runtime.coordination)) {

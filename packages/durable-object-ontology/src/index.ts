@@ -71,9 +71,7 @@ export function createDurableObjectSQLiteDatabase(
 
 export interface R2ObjectBodyLike {
     arrayBuffer(): Promise<ArrayBuffer>;
-    httpMetadata?: {
-        contentType?: string;
-    };
+    httpMetadata?: { contentType?: string };
 }
 
 export interface R2ListedObjectLike {
@@ -90,11 +88,7 @@ export interface R2BucketLike {
     put(
         key: string,
         value: Blob | ArrayBuffer,
-        options?: {
-            httpMetadata?: {
-                contentType?: string;
-            };
-        }
+        options?: { httpMetadata?: { contentType?: string } }
     ): Promise<unknown>;
     get(key: string): Promise<R2ObjectBodyLike | null>;
     delete(keys: string | readonly string[]): Promise<void>;
@@ -133,10 +127,7 @@ async function r2Prefix(options: { installationId: string; ontologyId: string })
 async function deleteR2Prefix(bucket: R2BucketLike, prefix: string): Promise<void> {
     let cursor: string | undefined;
     do {
-        const listed = await bucket.list({
-            prefix,
-            ...(cursor ? { cursor } : {}),
-        });
+        const listed = await bucket.list({ prefix, ...(cursor ? { cursor } : {}) });
         const keys = listed.objects.map((object) => object.key);
         if (keys.length > 0) {
             await bucket.delete(keys);
@@ -180,9 +171,7 @@ export class R2AttachmentBytesStore {
     write(id: string, blob: Blob): Promise<void> {
         return this.track(async () => {
             await this.options.bucket.put(await this.key(id), blob, {
-                httpMetadata: {
-                    contentType: blob.type || "application/octet-stream",
-                },
+                httpMetadata: { contentType: blob.type || "application/octet-stream" },
             });
         });
     }
@@ -244,14 +233,8 @@ interface DurableObjectOntologyBackendCommonOptions {
 }
 
 type DurableObjectOntologyAttachmentOptions =
-    | {
-          attachmentStorage?: "r2";
-          bucket: R2BucketLike;
-      }
-    | {
-          attachmentStorage: "sqlite" | SQLiteAttachmentStorageOptions;
-          bucket?: R2BucketLike;
-      };
+    | { attachmentStorage?: "r2"; bucket: R2BucketLike }
+    | { attachmentStorage: "sqlite" | SQLiteAttachmentStorageOptions; bucket?: R2BucketLike };
 
 type DurableObjectOntologyBackendBaseOptions = DurableObjectOntologyBackendCommonOptions &
     DurableObjectOntologyAttachmentOptions;
@@ -268,9 +251,7 @@ function resolveAttachmentStorage(options: DurableObjectOntologyBackendBaseOptio
         return { storage: undefined };
     }
     if (options.attachmentStorage && typeof options.attachmentStorage === "object") {
-        return {
-            storage: options.attachmentStorage,
-        };
+        return { storage: options.attachmentStorage };
     }
     if (!options.bucket) {
         throw new Error("R2 attachment storage requires a bucket.");
@@ -280,14 +261,7 @@ function resolveAttachmentStorage(options: DurableObjectOntologyBackendBaseOptio
         installationId: options.installationId,
         ontologyId: options.ontologyId,
     });
-    return {
-        storage: {
-            external: {
-                bytes: ownedR2,
-            },
-        },
-        ownedR2,
-    };
+    return { storage: { external: { bytes: ownedR2 } }, ownedR2 };
 }
 
 export function createDurableObjectOntologyBackendAdapter(
@@ -321,9 +295,5 @@ export type CreateDurableObjectOntologyBackendOptions = DurableObjectOntologyBac
 export function createDurableObjectOntologyBackend(
     options: CreateDurableObjectOntologyBackendOptions
 ): OntologyBackendAdapterProvider {
-    return (ir) =>
-        createDurableObjectOntologyBackendAdapter({
-            ...options,
-            ir,
-        });
+    return (ir) => createDurableObjectOntologyBackendAdapter({ ...options, ir });
 }

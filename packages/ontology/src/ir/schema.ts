@@ -8,9 +8,7 @@ export default {
             name: "IconName",
             description: "A renderer-independent icon name from @party-stack/icons.",
             type: o.string({
-                constraint: o.StringConstraint.enum({
-                    options: IconNames.map((value) => ({ value })),
-                }),
+                constraint: o.StringConstraint.enum({ options: IconNames.map((value) => ({ value })) }),
             }),
         },
         {
@@ -28,10 +26,7 @@ export default {
                         name: "meta",
                         displayName: "Meta",
                         type: o.optional({
-                            type: o.map({
-                                keyType: o.string({}),
-                                valueType: o.unknown({}),
-                            }),
+                            type: o.map({ keyType: o.string({}), valueType: o.unknown({}) }),
                         }),
                         description: "Namespaced source-provider meta.",
                     },
@@ -40,31 +35,15 @@ export default {
         },
         {
             name: "Deprecation",
-            type: o.struct({
-                fields: [
-                    {
-                        name: "message",
-                        displayName: "Message",
-                        type: o.string({}),
-                    },
-                ],
-            }),
+            type: o.struct({ fields: [{ name: "message", displayName: "Message", type: o.string({}) }] }),
         },
         {
             name: "StringSuggestion",
             description: "A suggested value for a string.",
             type: o.struct({
                 fields: [
-                    {
-                        name: "value",
-                        displayName: "Value",
-                        type: o.string({}),
-                    },
-                    {
-                        name: "label",
-                        displayName: "Label",
-                        type: o.optional({ type: o.string({}) }),
-                    },
+                    { name: "value", displayName: "Value", type: o.string({}) },
+                    { name: "label", displayName: "Label", type: o.optional({ type: o.string({}) }) },
                 ],
             }),
         },
@@ -76,9 +55,7 @@ export default {
                     {
                         name: "options",
                         displayName: "Options",
-                        type: o.list({
-                            elementType: o.ref({ name: "StringSuggestion" }),
-                        }),
+                        type: o.list({ elementType: o.ref({ name: "StringSuggestion" }) }),
                     },
                 ],
             }),
@@ -86,15 +63,7 @@ export default {
         {
             name: "StringRegexConstraint",
             description: "Constrains a string to a regex.",
-            type: o.struct({
-                fields: [
-                    {
-                        name: "regex",
-                        displayName: "Regex",
-                        type: o.string({}),
-                    },
-                ],
-            }),
+            type: o.struct({ fields: [{ name: "regex", displayName: "Regex", type: o.string({}) }] }),
         },
         {
             name: "StringConstraint",
@@ -120,24 +89,14 @@ export default {
                         name: "suggestions",
                         displayName: "Suggestions",
                         type: o.optional({
-                            type: o.list({
-                                elementType: o.ref({ name: "StringSuggestion" }),
-                            }),
+                            type: o.list({ elementType: o.ref({ name: "StringSuggestion" }) }),
                         }),
                     },
                 ],
             }),
         },
-        {
-            name: "BooleanTypeDef",
-            description: "A boolean type.",
-            type: o.struct({ fields: [] }),
-        },
-        {
-            name: "IntegerTypeDef",
-            description: "A 32-bit integer type.",
-            type: o.struct({ fields: [] }),
-        },
+        { name: "BooleanTypeDef", description: "A boolean type.", type: o.struct({ fields: [] }) },
+        { name: "IntegerTypeDef", description: "A 32-bit integer type.", type: o.struct({ fields: [] }) },
         // TODO: Add a 64-bit integer ("long") type for integral values such as byte sizes.
         {
             name: "FloatTypeDef",
@@ -474,9 +433,7 @@ export default {
                     {
                         name: "dimensions",
                         displayName: "Dimensions",
-                        type: o.optional({
-                            type: o.ref({ name: "DimensionsConstraint" }),
-                        }),
+                        type: o.optional({ type: o.ref({ name: "DimensionsConstraint" }) }),
                     },
                 ],
             }),
@@ -485,12 +442,7 @@ export default {
             name: "AttachmentContentConstraint",
             description: "Content-specific attachment constraints.",
             type: o.union({
-                variants: [
-                    {
-                        name: "image",
-                        type: o.ref({ name: "ImageAttachmentConstraint" }),
-                    },
-                ],
+                variants: [{ name: "image", type: o.ref({ name: "ImageAttachmentConstraint" }) }],
             }),
         },
         {
@@ -521,9 +473,7 @@ export default {
                     {
                         name: "content",
                         displayName: "Content",
-                        type: o.optional({
-                            type: o.ref({ name: "AttachmentContentConstraint" }),
-                        }),
+                        type: o.optional({ type: o.ref({ name: "AttachmentContentConstraint" }) }),
                     },
                 ],
             }),
@@ -616,11 +566,7 @@ export default {
                         type: o.string({}),
                         description: "Human-readable name.",
                     },
-                    {
-                        name: "pluralDisplayName",
-                        displayName: "Plural display name",
-                        type: o.string({}),
-                    },
+                    { name: "pluralDisplayName", displayName: "Plural display name", type: o.string({}) },
                     {
                         name: "primaryKey",
                         displayName: "Primary key",
@@ -670,21 +616,9 @@ export default {
             name: "LinkTypeSideDef",
             type: o.struct({
                 fields: [
-                    {
-                        name: "objectType",
-                        displayName: "Object type",
-                        type: o.string({}),
-                    },
-                    {
-                        name: "name",
-                        displayName: "Name",
-                        type: o.string({}),
-                    },
-                    {
-                        name: "displayName",
-                        displayName: "Display name",
-                        type: o.string({}),
-                    },
+                    { name: "objectType", displayName: "Object type", type: o.string({}) },
+                    { name: "name", displayName: "Name", type: o.string({}) },
+                    { name: "displayName", displayName: "Display name", type: o.string({}) },
                 ],
             }),
         },
@@ -705,21 +639,9 @@ export default {
             description: "A relationship between two object types.",
             type: o.struct({
                 fields: [
-                    {
-                        name: "id",
-                        displayName: "ID",
-                        type: o.string({}),
-                    },
-                    {
-                        name: "source",
-                        displayName: "Source",
-                        type: o.ref({ name: "LinkTypeSideDef" }),
-                    },
-                    {
-                        name: "target",
-                        displayName: "Target",
-                        type: o.ref({ name: "LinkTypeSideDef" }),
-                    },
+                    { name: "id", displayName: "ID", type: o.string({}) },
+                    { name: "source", displayName: "Source", type: o.ref({ name: "LinkTypeSideDef" }) },
+                    { name: "target", displayName: "Target", type: o.ref({ name: "LinkTypeSideDef" }) },
                     {
                         name: "foreignKey",
                         displayName: "Foreign key",
@@ -788,57 +710,25 @@ export default {
         {
             name: "InputReferenceExpression",
             description: "Reads a named input from the root expression scope.",
-            type: o.struct({
-                fields: [
-                    {
-                        name: "name",
-                        displayName: "Name",
-                        type: o.string({}),
-                    },
-                ],
-            }),
+            type: o.struct({ fields: [{ name: "name", displayName: "Name", type: o.string({}) }] }),
         },
         {
             name: "LocalReferenceExpression",
             description: "Reads a named lexically scoped expression binding.",
-            type: o.struct({
-                fields: [
-                    {
-                        name: "name",
-                        displayName: "Name",
-                        type: o.string({}),
-                    },
-                ],
-            }),
+            type: o.struct({ fields: [{ name: "name", displayName: "Name", type: o.string({}) }] }),
         },
         {
             name: "ContextReferenceExpression",
             description: "Reads a named value from the expression context.",
-            type: o.struct({
-                fields: [
-                    {
-                        name: "name",
-                        displayName: "Name",
-                        type: o.string({}),
-                    },
-                ],
-            }),
+            type: o.struct({ fields: [{ name: "name", displayName: "Name", type: o.string({}) }] }),
         },
         {
             name: "GetAtExpression",
             description: "Reads a structural path from a source expression.",
             type: o.struct({
                 fields: [
-                    {
-                        name: "source",
-                        displayName: "Source",
-                        type: o.ref({ name: "Expression" }),
-                    },
-                    {
-                        name: "path",
-                        displayName: "Path",
-                        type: o.list({ elementType: o.string({}) }),
-                    },
+                    { name: "source", displayName: "Source", type: o.ref({ name: "Expression" }) },
+                    { name: "path", displayName: "Path", type: o.list({ elementType: o.string({}) }) },
                 ],
             }),
         },
@@ -847,11 +737,7 @@ export default {
             description: "Resolves an object reference to its ontology object.",
             type: o.struct({
                 fields: [
-                    {
-                        name: "reference",
-                        displayName: "Reference",
-                        type: o.ref({ name: "Expression" }),
-                    },
+                    { name: "reference", displayName: "Reference", type: o.ref({ name: "Expression" }) },
                 ],
             }),
         },
@@ -860,16 +746,8 @@ export default {
             description: "Follows one named to-one ontology link from a source object.",
             type: o.struct({
                 fields: [
-                    {
-                        name: "source",
-                        displayName: "Source",
-                        type: o.ref({ name: "Expression" }),
-                    },
-                    {
-                        name: "link",
-                        displayName: "Link",
-                        type: o.string({}),
-                    },
+                    { name: "source", displayName: "Source", type: o.ref({ name: "Expression" }) },
+                    { name: "link", displayName: "Link", type: o.string({}) },
                 ],
             }),
         },
@@ -878,16 +756,8 @@ export default {
             description: "A named field constructed by a struct expression.",
             type: o.struct({
                 fields: [
-                    {
-                        name: "name",
-                        displayName: "Name",
-                        type: o.string({}),
-                    },
-                    {
-                        name: "value",
-                        displayName: "Value",
-                        type: o.ref({ name: "Expression" }),
-                    },
+                    { name: "name", displayName: "Name", type: o.string({}) },
+                    { name: "value", displayName: "Value", type: o.ref({ name: "Expression" }) },
                 ],
             }),
         },
@@ -899,11 +769,7 @@ export default {
                     {
                         name: "fields",
                         displayName: "Fields",
-                        type: o.list({
-                            elementType: o.ref({
-                                name: "StructExpressionField",
-                            }),
-                        }),
+                        type: o.list({ elementType: o.ref({ name: "StructExpressionField" }) }),
                     },
                 ],
             }),
@@ -913,37 +779,17 @@ export default {
             description: "Maps each element of a list to a new value.",
             type: o.struct({
                 fields: [
-                    {
-                        name: "source",
-                        displayName: "Source",
-                        type: o.ref({ name: "Expression" }),
-                    },
-                    {
-                        name: "binding",
-                        displayName: "Binding",
-                        type: o.string({}),
-                    },
-                    {
-                        name: "body",
-                        displayName: "Body",
-                        type: o.ref({ name: "Expression" }),
-                    },
+                    { name: "source", displayName: "Source", type: o.ref({ name: "Expression" }) },
+                    { name: "binding", displayName: "Binding", type: o.string({}) },
+                    { name: "body", displayName: "Body", type: o.ref({ name: "Expression" }) },
                 ],
             }),
         },
-        {
-            name: "UuidExpression",
-            description: "Generates a UUID value.",
-            type: o.struct({
-                fields: [],
-            }),
-        },
+        { name: "UuidExpression", description: "Generates a UUID value.", type: o.struct({ fields: [] }) },
         {
             name: "NowExpression",
             description: "Returns the current timestamp.",
-            type: o.struct({
-                fields: [],
-            }),
+            type: o.struct({ fields: [] }),
         },
         {
             name: "LiteralExpression",
@@ -964,50 +810,17 @@ export default {
             description: "An expression that resolves to a value.",
             type: o.union({
                 variants: [
-                    {
-                        name: "inputReference",
-                        type: o.ref({ name: "InputReferenceExpression" }),
-                    },
-                    {
-                        name: "contextReference",
-                        type: o.ref({ name: "ContextReferenceExpression" }),
-                    },
-                    {
-                        name: "localReference",
-                        type: o.ref({ name: "LocalReferenceExpression" }),
-                    },
-                    {
-                        name: "getAt",
-                        type: o.ref({ name: "GetAtExpression" }),
-                    },
-                    {
-                        name: "objectLookup",
-                        type: o.ref({ name: "ObjectLookupExpression" }),
-                    },
-                    {
-                        name: "linkHop",
-                        type: o.ref({ name: "LinkHopExpression" }),
-                    },
-                    {
-                        name: "struct",
-                        type: o.ref({ name: "StructExpression" }),
-                    },
-                    {
-                        name: "map",
-                        type: o.ref({ name: "MapExpression" }),
-                    },
-                    {
-                        name: "uuid",
-                        type: o.ref({ name: "UuidExpression" }),
-                    },
-                    {
-                        name: "now",
-                        type: o.ref({ name: "NowExpression" }),
-                    },
-                    {
-                        name: "literal",
-                        type: o.ref({ name: "LiteralExpression" }),
-                    },
+                    { name: "inputReference", type: o.ref({ name: "InputReferenceExpression" }) },
+                    { name: "contextReference", type: o.ref({ name: "ContextReferenceExpression" }) },
+                    { name: "localReference", type: o.ref({ name: "LocalReferenceExpression" }) },
+                    { name: "getAt", type: o.ref({ name: "GetAtExpression" }) },
+                    { name: "objectLookup", type: o.ref({ name: "ObjectLookupExpression" }) },
+                    { name: "linkHop", type: o.ref({ name: "LinkHopExpression" }) },
+                    { name: "struct", type: o.ref({ name: "StructExpression" }) },
+                    { name: "map", type: o.ref({ name: "MapExpression" }) },
+                    { name: "uuid", type: o.ref({ name: "UuidExpression" }) },
+                    { name: "now", type: o.ref({ name: "NowExpression" }) },
+                    { name: "literal", type: o.ref({ name: "LiteralExpression" }) },
                 ],
             }),
         },
@@ -1021,11 +834,7 @@ export default {
                         displayName: "Property",
                         type: o.list({ elementType: o.string({}) }),
                     },
-                    {
-                        name: "value",
-                        displayName: "Value",
-                        type: o.ref({ name: "Expression" }),
-                    },
+                    { name: "value", displayName: "Value", type: o.ref({ name: "Expression" }) },
                 ],
             }),
         },
@@ -1034,11 +843,7 @@ export default {
             description: "Creates an object and assigns property values.",
             type: o.struct({
                 fields: [
-                    {
-                        name: "objectType",
-                        displayName: "Object type",
-                        type: o.string({}),
-                    },
+                    { name: "objectType", displayName: "Object type", type: o.string({}) },
                     {
                         name: "values",
                         displayName: "Values",
@@ -1083,18 +888,9 @@ export default {
             description: "A logic step performed by an action.",
             type: o.union({
                 variants: [
-                    {
-                        name: "createObject",
-                        type: o.ref({ name: "CreateObjectActionLogicStep" }),
-                    },
-                    {
-                        name: "updateObject",
-                        type: o.ref({ name: "UpdateObjectActionLogicStep" }),
-                    },
-                    {
-                        name: "deleteObject",
-                        type: o.ref({ name: "DeleteObjectActionLogicStep" }),
-                    },
+                    { name: "createObject", type: o.ref({ name: "CreateObjectActionLogicStep" }) },
+                    { name: "updateObject", type: o.ref({ name: "UpdateObjectActionLogicStep" }) },
+                    { name: "deleteObject", type: o.ref({ name: "DeleteObjectActionLogicStep" }) },
                 ],
             }),
         },
@@ -1107,10 +903,7 @@ export default {
                         name: "meta",
                         displayName: "Meta",
                         type: o.optional({
-                            type: o.map({
-                                keyType: o.string({}),
-                                valueType: o.unknown({}),
-                            }),
+                            type: o.map({ keyType: o.string({}), valueType: o.unknown({}) }),
                         }),
                         description: "Provider-specific metadata used to execute this action.",
                     },
@@ -1181,11 +974,7 @@ export default {
                         type: o.string({}),
                         description: "Human-readable name.",
                     },
-                    {
-                        name: "type",
-                        displayName: "Type",
-                        type: o.ref({ name: "TypeDef" }),
-                    },
+                    { name: "type", displayName: "Type", type: o.ref({ name: "TypeDef" }) },
                     {
                         name: "description",
                         displayName: "Description",
@@ -1248,16 +1037,8 @@ export default {
             description: "Moves a property from one path to another.",
             type: o.struct({
                 fields: [
-                    {
-                        name: "from",
-                        displayName: "From",
-                        type: o.list({ elementType: o.string({}) }),
-                    },
-                    {
-                        name: "to",
-                        displayName: "To",
-                        type: o.list({ elementType: o.string({}) }),
-                    },
+                    { name: "from", displayName: "From", type: o.list({ elementType: o.string({}) }) },
+                    { name: "to", displayName: "To", type: o.list({ elementType: o.string({}) }) },
                 ],
             }),
         },

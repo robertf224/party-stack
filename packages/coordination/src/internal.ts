@@ -109,11 +109,7 @@ export function serializeError(reason: unknown): SerializedError {
         error instanceof CoordinationError || error instanceof CoordinationTaskRejectedError
             ? error.code
             : undefined;
-    return {
-        name: error.name,
-        message: error.message,
-        code,
-    };
+    return { name: error.name, message: error.message, code };
 }
 
 const coordinationCodes = new Set<CoordinationErrorCode>([

@@ -16,11 +16,5 @@ export default defineLibraryConfig({
         // https://github.com/cloudflare/workers-sdk/pull/16163
         fsModuleCache: false,
     },
-    plugins: [
-        cloudflareTest({
-            wrangler: {
-                configPath: "./wrangler.jsonc",
-            },
-        }),
-    ],
+    plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } })],
 });

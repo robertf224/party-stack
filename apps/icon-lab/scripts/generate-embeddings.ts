@@ -437,16 +437,9 @@ async function main(): Promise<void> {
                   )
                 : undefined;
             const match = forced
-                ? {
-                      icon: forced,
-                      score: cosineSimilarity(vectors.get(anchor.id)!, vectors.get(forced.id)!),
-                  }
+                ? { icon: forced, score: cosineSimilarity(vectors.get(anchor.id)!, vectors.get(forced.id)!) }
                 : bestMatch(anchor, candidates, vectors, textVectors, gramIndexes.get(provider)!);
-            providers[provider] = {
-                id: match.icon.id,
-                name: match.icon.name,
-                score: match.score,
-            };
+            providers[provider] = { id: match.icon.id, name: match.icon.name, score: match.score };
         }
 
         const scores = Object.values(providers)

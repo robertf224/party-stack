@@ -10,34 +10,16 @@ vi.mock("../installation/createFoundryBackendInstallation.js", () => mocks);
 
 import { createFoundryOntologyPullSource } from "./index.js";
 
-function installation(
-    connections: Array<{
-        userId: string;
-        state: { status: "active" };
-    }> = []
-) {
+function installation(connections: Array<{ userId: string; state: { status: "active" } }> = []) {
     const oauth = vi.fn(() =>
-        Promise.resolve({
-            userId: "oauth-user",
-            state: { status: "active" as const },
-        })
+        Promise.resolve({ userId: "oauth-user", state: { status: "active" as const } })
     );
     const apiToken = vi.fn(() =>
-        Promise.resolve({
-            userId: "token-user",
-            state: { status: "active" as const },
-        })
+        Promise.resolve({ userId: "token-user", state: { status: "active" as const } })
     );
     return {
-        connections: {
-            values: () => connections.values(),
-        },
-        authentication: {
-            signIn: {
-                oauth,
-                apiToken,
-            },
-        },
+        connections: { values: () => connections.values() },
+        authentication: { signIn: { oauth, apiToken } },
         oauth,
         apiToken,
     };
@@ -55,19 +37,12 @@ describe("Foundry connection-backed pull", () => {
         const source = createFoundryOntologyPullSource({
             baseUrl: "https://foundry.example",
             ontologyRid: "ri.ontology.main",
-            connection: {
-                oauth: {
-                    clientId: "client",
-                    redirectUrl: "http://127.0.0.1:9876/callback",
-                },
-            },
+            connection: { oauth: { clientId: "client", redirectUrl: "http://127.0.0.1:9876/callback" } },
         });
 
         await source.createInstallation({ runtime });
 
-        expect(mocks.createFoundryOntologyRoute).toHaveBeenCalledWith({
-            ontologyId: "ri.ontology.main",
-        });
+        expect(mocks.createFoundryOntologyRoute).toHaveBeenCalledWith({ ontologyId: "ri.ontology.main" });
         expect(mocks.createFoundryBackendInstallation).toHaveBeenCalledWith({
             installationId:
                 "foundry-pull:https://foundry.example:ri.ontology.main:api:use-ontologies-read,offline_access,ontology:view-object-type,ontology:view-unredacted-action-type",
@@ -91,21 +66,11 @@ describe("Foundry connection-backed pull", () => {
     });
 
     it("restores the sole active connection", async () => {
-        const backendInstallation = installation([
-            {
-                userId: "restored-user",
-                state: { status: "active" },
-            },
-        ]);
+        const backendInstallation = installation([{ userId: "restored-user", state: { status: "active" } }]);
         const source = createFoundryOntologyPullSource({
             baseUrl: "https://foundry.example",
             ontologyRid: "ri.ontology.main",
-            connection: {
-                oauth: {
-                    clientId: "client",
-                    redirectUrl: "http://127.0.0.1:9876/callback",
-                },
-            },
+            connection: { oauth: { clientId: "client", redirectUrl: "http://127.0.0.1:9876/callback" } },
         });
 
         await expect(source.resolveConnection(backendInstallation as never)).resolves.toMatchObject({
@@ -119,12 +84,7 @@ describe("Foundry connection-backed pull", () => {
         const source = createFoundryOntologyPullSource({
             baseUrl: "https://foundry.example",
             ontologyRid: "ri.ontology.main",
-            connection: {
-                oauth: {
-                    clientId: "client",
-                    redirectUrl: "http://127.0.0.1:9876/callback",
-                },
-            },
+            connection: { oauth: { clientId: "client", redirectUrl: "http://127.0.0.1:9876/callback" } },
         });
 
         await expect(source.resolveConnection(backendInstallation as never)).resolves.toMatchObject({
@@ -138,9 +98,7 @@ describe("Foundry connection-backed pull", () => {
         const source = createFoundryOntologyPullSource({
             baseUrl: "https://foundry.example",
             ontologyRid: "ri.ontology.main",
-            connection: {
-                token: "token",
-            },
+            connection: { token: "token" },
         });
 
         await expect(source.resolveConnection(backendInstallation as never)).resolves.toMatchObject({
@@ -152,24 +110,13 @@ describe("Foundry connection-backed pull", () => {
 
     it("rejects ambiguous restored users", async () => {
         const backendInstallation = installation([
-            {
-                userId: "one",
-                state: { status: "active" },
-            },
-            {
-                userId: "two",
-                state: { status: "active" },
-            },
+            { userId: "one", state: { status: "active" } },
+            { userId: "two", state: { status: "active" } },
         ]);
         const source = createFoundryOntologyPullSource({
             baseUrl: "https://foundry.example",
             ontologyRid: "ri.ontology.main",
-            connection: {
-                oauth: {
-                    clientId: "client",
-                    redirectUrl: "http://127.0.0.1:9876/callback",
-                },
-            },
+            connection: { oauth: { clientId: "client", redirectUrl: "http://127.0.0.1:9876/callback" } },
         });
 
         await expect(source.resolveConnection(backendInstallation as never)).rejects.toThrow(

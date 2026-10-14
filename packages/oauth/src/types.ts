@@ -9,10 +9,7 @@ export interface OAuthAuthorizationServer {
 
 export interface OAuthSession {
     userId: string;
-    expiration?: {
-        expiresAt: number;
-        refreshable: boolean;
-    };
+    expiration?: { expiresAt: number; refreshable: boolean };
 }
 
 export interface PublicOAuthSignInOptions {

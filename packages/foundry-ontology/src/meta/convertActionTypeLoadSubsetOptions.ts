@@ -18,9 +18,9 @@ const LIKE_FIELDS = {
     displayName: FILTER_FIELDS.displayName,
 } as const satisfies Pick<typeof FILTER_FIELDS, "name" | "displayName">;
 
-const ORDER_BY_FIELDS = {
-    displayName: "actionTypeDisplayName",
-} as const satisfies Partial<Record<keyof MetaActionType, ActionTypeSortByV2>>;
+const ORDER_BY_FIELDS = { displayName: "actionTypeDisplayName" } as const satisfies Partial<
+    Record<keyof MetaActionType, ActionTypeSortByV2>
+>;
 
 function getFilterField(field: FieldPath): keyof typeof FILTER_FIELDS {
     const name = field.join(".");
@@ -41,10 +41,7 @@ function getLikeField(field: FieldPath): keyof typeof LIKE_FIELDS {
 function eq(field: FieldPath, value: unknown): ActionTypeSearchJsonQueryV2 {
     const name = getFilterField(field);
     if (name === "id") {
-        return {
-            type: "actionTypeRid",
-            value: value as string,
-        };
+        return { type: "actionTypeRid", value: value as string };
     }
     return {
         type: FILTER_FIELDS[name],
@@ -60,10 +57,7 @@ function like(field: FieldPath, value: string): ActionTypeSearchJsonQueryV2 {
     const terms = value.split("%").filter(Boolean);
     const queries: ActionTypeSearchJsonQueryV2[] = terms.map((term) => ({
         type: LIKE_FIELDS[name],
-        value: {
-            type: "contains",
-            value: name === "name" ? toFoundryActionTypeName(term) : term,
-        },
+        value: { type: "contains", value: name === "name" ? toFoundryActionTypeName(term) : term },
     }));
 
     return queries.length === 1 ? queries[0]! : { type: "and", value: queries };
@@ -75,14 +69,8 @@ export function convertActionTypeLoadSubsetFilter(
     return (
         parseWhereExpression<ActionTypeSearchJsonQueryV2>(filter, {
             handlers: {
-                and: (...filters: ActionTypeSearchJsonQueryV2[]) => ({
-                    type: "and",
-                    value: filters,
-                }),
-                or: (...filters: ActionTypeSearchJsonQueryV2[]) => ({
-                    type: "or",
-                    value: filters,
-                }),
+                and: (...filters: ActionTypeSearchJsonQueryV2[]) => ({ type: "and", value: filters }),
+                or: (...filters: ActionTypeSearchJsonQueryV2[]) => ({ type: "or", value: filters }),
                 eq,
                 in: (field: FieldPath, values: unknown[]) => ({
                     type: "or",
@@ -105,8 +93,5 @@ export function convertActionTypeLoadSubsetOrderBy(
         return undefined;
     }
 
-    return {
-        field: ORDER_BY_FIELDS[name as keyof typeof ORDER_BY_FIELDS],
-        direction,
-    };
+    return { field: ORDER_BY_FIELDS[name as keyof typeof ORDER_BY_FIELDS], direction };
 }

@@ -76,11 +76,7 @@ function configureSalesforceMeta(
     crudActionTypes: readonly SalesforceCrudActionTypeSelection[] | undefined,
     options: ConfigureOntologyOptions
 ): OntologyConfiguration {
-    const client = createConnectionSalesforceClient({
-        instanceUrl,
-        apiVersion,
-        egress: options.egress,
-    });
+    const client = createConnectionSalesforceClient({ instanceUrl, apiVersion, egress: options.egress });
     return createMetaOntologyConfiguration({
         backend: () =>
             createSalesforceMetaOntologyBackendAdapter({
@@ -107,17 +103,11 @@ export function createSalesforceOntologyRoute(options: {
     writes?: LiveOntologyWrites;
 }): SalesforceOntologyRoute {
     return ({ instanceUrl, apiVersion, subscribeToChangeEvents }) => {
-        const route: OntologyRoute = {
-            matches: (ontologyId) => ontologyId === options.ontologyId,
-        };
+        const route: OntologyRoute = { matches: (ontologyId) => ontologyId === options.ontologyId };
         const ir = options.ir;
         if (ir) {
             route.configure = ({ egress, connection }) => {
-                const client = createConnectionSalesforceClient({
-                    instanceUrl,
-                    apiVersion,
-                    egress,
-                });
+                const client = createConnectionSalesforceClient({ instanceUrl, apiVersion, egress });
                 return {
                     ir,
                     backend: createSalesforceOntologyBackend({

@@ -83,11 +83,9 @@ export function linkTypeCollectionOptions(metadata: MetaEntityCollection): Ontol
     }) as unknown as OntologyCollectionOptions;
 }
 
-async function loadFoundryMetaOntology(client: OntologyClient): Promise<{
-    objectTypes: MetaObjectType[];
-    valueTypes: MetaValueType[];
-    linkTypes: MetaLinkType[];
-}> {
+async function loadFoundryMetaOntology(
+    client: OntologyClient
+): Promise<{ objectTypes: MetaObjectType[]; valueTypes: MetaValueType[]; linkTypes: MetaLinkType[] }> {
     const ontology = await OntologiesV2.getFullMetadata(client, client.ontologyRid);
     const objectTypeMetadata = Object.values(ontology.objectTypes);
 
@@ -95,9 +93,5 @@ async function loadFoundryMetaOntology(client: OntologyClient): Promise<{
     const valueTypes = Object.values(ontology.valueTypes).map(convertFoundryMetaValueType);
     const linkTypes = convertFoundryMetaLinkTypes(objectTypeMetadata);
 
-    return {
-        objectTypes,
-        valueTypes,
-        linkTypes,
-    };
+    return { objectTypes, valueTypes, linkTypes };
 }

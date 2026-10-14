@@ -91,9 +91,7 @@ interface PersistenceCoordinationService {
         pullSince(input: PullSinceInput): Promise<PullSinceResponse>;
         relayMessage(input: RelayMessageInput): Promise<void>;
     };
-    events: {
-        message: RelayMessageInput;
-    };
+    events: { message: RelayMessageInput };
 }
 
 type AdapterWithPullSince = PersistenceAdapter & {
@@ -101,12 +99,7 @@ type AdapterWithPullSince = PersistenceAdapter & {
         collectionId: string,
         fromRowVersion: number
     ) => Promise<
-        | {
-              latestRowVersion: number;
-              latestTerm?: number;
-              latestSeq?: number;
-              requiresFullReload: true;
-          }
+        | { latestRowVersion: number; latestTerm?: number; latestSeq?: number; requiresFullReload: true }
         | {
               latestRowVersion: number;
               latestTerm?: number;
@@ -165,11 +158,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     private readonly resumeChecks = new Map<string, Set<(force?: boolean) => Promise<void>>>();
     private readonly localMutationBursts = new Map<
         string,
-        {
-            pending: Set<string>;
-            needsReload: boolean;
-            timer?: ReturnType<typeof setTimeout>;
-        }
+        { pending: Set<string>; needsReload: boolean; timer?: ReturnType<typeof setTimeout> }
     >();
     private stopResumeListeners: (() => void) | undefined;
     private checkingResume = false;
@@ -244,10 +233,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     private readonly acquisitionIds = new WeakMap<LoadSubsetOptions, Map<string, string>>();
     private readonly remoteAcquisitions = new Map<
         string,
-        {
-            collectionId: string;
-            options: LoadSubsetOptions;
-        }
+        { collectionId: string; options: LoadSubsetOptions }
     >();
 
     constructor(
@@ -416,10 +402,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
 
     publish(collectionId: string, message: ProtocolEnvelope<unknown>): void {
         if (this.server && isCoordinationHost(this.coordination) && this.coordination.isLeader) {
-            this.publishMessage({
-                collectionId,
-                message,
-            });
+            this.publishMessage({ collectionId, message });
             return;
         }
         if (this.pendingRelays >= MAX_PENDING_RELAYS) {
@@ -430,10 +413,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
         }
         this.pendingRelays += 1;
         void this.service.methods
-            .relayMessage({
-                collectionId,
-                message,
-            })
+            .relayMessage({ collectionId, message })
             .catch((error: unknown) => {
                 console.warn(`Failed to relay persistence message for "${collectionId}".`, error);
             })
@@ -447,9 +427,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
     }
 
     ensureLeadership(): Promise<void> {
-        return this.service.methods.ensureLeadership({
-            collectionId: "*",
-        });
+        return this.service.methods.ensureLeadership({ collectionId: "*" });
     }
 
     requestEnsureRemoteSubset(collectionId: string, options: LoadSubsetOptions): Promise<void> {
@@ -660,10 +638,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
         const envelopeKey = JSON.stringify([input.collectionId, input.envelopeId]);
         const previous = this.appliedEnvelopes.get(envelopeKey);
         if (previous) {
-            return {
-                ...previous,
-                rpcId: input.rpcId,
-            };
+            return { ...previous, rpcId: input.rpcId };
         }
 
         const position = await this.position(input.collectionId);
@@ -695,10 +670,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
                 requiresFullReload: false,
                 changedRows: input.mutations
                     .filter((mutation) => mutation.type !== "delete")
-                    .map((mutation) => ({
-                        key: mutation.key,
-                        value: mutation.value,
-                    })),
+                    .map((mutation) => ({ key: mutation.key, value: mutation.value })),
                 deletedKeys: input.mutations
                     .filter((mutation) => mutation.type === "delete")
                     .map((mutation) => mutation.key),
@@ -714,10 +686,7 @@ class CoordinationPersistenceShim implements PersistedCollectionCoordinator {
                 ),
             },
         };
-        this.publishMessage({
-            collectionId: input.collectionId,
-            message: committed,
-        });
+        this.publishMessage({ collectionId: input.collectionId, message: committed });
 
         const response: Extract<ApplyLocalMutationsResponse, { ok: true }> = {
             type: "rpc:applyLocalMutations:res",

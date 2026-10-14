@@ -8,26 +8,20 @@ describe("Salesforce object collection invalidation", () => {
         const commit = vi.fn(() => new Promise<void>(() => undefined));
         const options = objectCollectionOptions({
             client: {
-                query: vi.fn().mockResolvedValue({
-                    done: true,
-                    records: [
-                        {
-                            Id: "001",
-                            Name: "Confirmed",
-                        },
-                    ],
-                    totalSize: 1,
-                }),
+                query: vi
+                    .fn()
+                    .mockResolvedValue({
+                        done: true,
+                        records: [{ Id: "001", Name: "Confirmed" }],
+                        totalSize: 1,
+                    }),
             } as never,
             objectType: "Account",
             primaryKeyProperty: "Id",
             selectedProperties: ["Id", "Name"],
         });
         options.sync.sync({
-            collection: {
-                has: vi.fn(() => false),
-                get: vi.fn(),
-            },
+            collection: { has: vi.fn(() => false), get: vi.fn() },
             begin,
             write: vi.fn(),
             commit,
@@ -49,11 +43,7 @@ describe("Salesforce object collection invalidation", () => {
         }) => void;
         const query = vi
             .fn()
-            .mockResolvedValueOnce({
-                done: true,
-                records: [{ Id: "001", Name: "Before" }],
-                totalSize: 1,
-            })
+            .mockResolvedValueOnce({ done: true, records: [{ Id: "001", Name: "Before" }], totalSize: 1 })
             .mockReturnValueOnce(
                 new Promise((resolve) => {
                     resolveReload = resolve;
@@ -101,11 +91,7 @@ describe("Salesforce object collection invalidation", () => {
         await Promise.resolve();
         expect(completed).toBe(false);
 
-        resolveReload({
-            done: true,
-            records: [{ Id: "001", Name: "After" }],
-            totalSize: 1,
-        });
+        resolveReload({ done: true, records: [{ Id: "001", Name: "After" }], totalSize: 1 });
         await invalidation;
 
         expect(query).toHaveBeenCalledTimes(2);
@@ -118,20 +104,12 @@ describe("Salesforce object collection invalidation", () => {
         let listener:
             | ((event: {
                   event: { replayId: number };
-                  payload: {
-                      ChangeEventHeader: {
-                          changeType: "DELETE";
-                          recordIds: string[];
-                      };
-                  };
+                  payload: { ChangeEventHeader: { changeType: "DELETE"; recordIds: string[] } };
               }) => void)
             | undefined;
         const subscribeToChangeEvents = vi.fn((...args: [string, typeof listener]) => {
             listener = args[1];
-            return Promise.resolve({
-                channel: "/data/AccountChangeEvent",
-                unsubscribe: vi.fn(),
-            });
+            return Promise.resolve({ channel: "/data/AccountChangeEvent", unsubscribe: vi.fn() });
         });
         const commit = vi.fn().mockResolvedValue(undefined);
         const options = objectCollectionOptions({
@@ -142,10 +120,7 @@ describe("Salesforce object collection invalidation", () => {
             subscribeToChangeEvents: subscribeToChangeEvents as never,
         });
         options.sync.sync({
-            collection: {
-                has: vi.fn(() => false),
-                get: vi.fn(),
-            },
+            collection: { has: vi.fn(() => false), get: vi.fn() },
             begin: vi.fn(),
             write: vi.fn(),
             commit,
@@ -161,12 +136,7 @@ describe("Salesforce object collection invalidation", () => {
         });
         listener?.({
             event: { replayId: 42 },
-            payload: {
-                ChangeEventHeader: {
-                    changeType: "DELETE",
-                    recordIds: ["001"],
-                },
-            },
+            payload: { ChangeEventHeader: { changeType: "DELETE", recordIds: ["001"] } },
         });
         await vi.waitFor(() => {
             expect(metadata.get("salesforce.cdc.Account.replayId")).toBe(42);
