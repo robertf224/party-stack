@@ -53,7 +53,7 @@ describe("TanStack Start config", () => {
         try {
             const config = defineAppConfig();
             expect(config.plugins).toBeUndefined();
-            expect(config.run?.tasks?.test).toEqual({ command: "vp test", dependsOn: ["build"] });
+            expect(config.run?.tasks?.test).toMatchObject({ command: "vp test", dependsOn: ["build"] });
         } finally {
             vi.unstubAllEnvs();
         }

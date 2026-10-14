@@ -1,12 +1,21 @@
 import { defineConfig } from "vite-plus";
 
+const taskCache = {
+    input: [
+        { auto: true },
+        "pnpm-lock.yaml",
+        // pnpm rewrites installation metadata on fresh runners.
+        "!node_modules/.modules.yaml",
+    ],
+};
+
 export default defineConfig({
     run: {
         tasks: {
             test: { command: "vp run -r test" },
-            "check-versions": { command: "syncpack lint" },
+            "check-versions": { command: "syncpack lint", cache: taskCache },
             // Package check tasks already run formatting through vp check.
-            "check-format": { command: "vp fmt --check . '!{packages,apps,old}/**'" },
+            "check-format": { command: "vp fmt --check . '!{packages,apps,old}/**'", cache: taskCache },
             ci: { command: [], dependsOn: ["test", "check-versions", "check-format"] },
         },
     },

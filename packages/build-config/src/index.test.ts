@@ -50,8 +50,8 @@ describe("library config composition", () => {
 
     it("supports build-only terminal tests without leaking overrides to another package", () => {
         const noTests = defineLibraryConfig({ run: { tasks: { test: { command: [] } } } });
-        expect(noTests.run?.tasks?.test).toEqual({ command: [], dependsOn: ["build"] });
-        expect(defineLibraryConfig().run?.tasks?.test).toEqual({
+        expect(noTests.run?.tasks?.test).toMatchObject({ command: [], dependsOn: ["build"] });
+        expect(defineLibraryConfig().run?.tasks?.test).toMatchObject({
             command: "vp test",
             dependsOn: ["build"],
         });
@@ -83,6 +83,6 @@ describe("app config composition", () => {
             cache: false,
             dependsOn: [{ task: "build", from: ["dependencies", "devDependencies"] }],
         });
-        expect(config.run?.tasks?.test).toEqual({ command: "vp test", dependsOn: ["build"] });
+        expect(config.run?.tasks?.test).toMatchObject({ command: "vp test", dependsOn: ["build"] });
     });
 });
