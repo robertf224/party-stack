@@ -4,7 +4,19 @@ export default defineConfig({
     run: {
         tasks: {
             test: { command: "vp run -r test" },
-            "check-versions": { command: "syncpack lint" },
+            "check-versions": {
+                command: "syncpack lint",
+                // Only manifests and Syncpack configuration affect version consistency.
+                cache: {
+                    input: [
+                        ".syncpackrc.json",
+                        "package.json",
+                        "pnpm-workspace.yaml",
+                        "pnpm-lock.yaml",
+                        "{packages,apps,old}/*/package.json",
+                    ],
+                },
+            },
             // Package check tasks already run formatting through vp check.
             "check-format": { command: "vp fmt --check . '!{packages,apps,old}/**'" },
             ci: { command: [], dependsOn: ["test", "check-versions", "check-format"] },

@@ -10,7 +10,12 @@ export default defineLibraryConfig({
         },
     },
 
-    test: { include: ["test/**/*.test.ts"] },
+    test: {
+        include: ["test/**/*.test.ts"],
+        // workerd cannot read Vitest 5.0.4's host module-cache files yet.
+        // https://github.com/cloudflare/workers-sdk/pull/16163
+        fsModuleCache: false,
+    },
     plugins: [
         cloudflareTest({
             wrangler: {

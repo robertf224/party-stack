@@ -18,6 +18,20 @@ describe.each([
         expect(defineConfig({ resolve: { tsconfigPaths: false } }).resolve?.tsconfigPaths).toBe(false);
         expect(defineConfig().resolve?.tsconfigPaths).toBe(true);
     });
+
+    it("preserves Vite+ cache integration when callers supply plugins", () => {
+        const plugin = { name: "caller-plugin" };
+        const config = defineConfig({ plugins: [plugin] });
+        expect(config.plugins).toContain(plugin);
+        expect(config.plugins).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    name: "vite-plus:vitest-cache-paths",
+                    configureVitest: expect.any(Function),
+                }),
+            ])
+        );
+    });
 });
 
 describe("library config composition", () => {
@@ -50,8 +64,8 @@ describe("library config composition", () => {
 
     it("supports build-only terminal tests without leaking overrides to another package", () => {
         const noTests = defineLibraryConfig({ run: { tasks: { test: { command: [] } } } });
-        expect(noTests.run?.tasks?.test).toEqual({ command: [], dependsOn: ["build"] });
-        expect(defineLibraryConfig().run?.tasks?.test).toEqual({
+        expect(noTests.run?.tasks?.test).toMatchObject({ command: [], dependsOn: ["build"] });
+        expect(defineLibraryConfig().run?.tasks?.test).toMatchObject({
             command: "vp test",
             dependsOn: ["build"],
         });
@@ -72,7 +86,7 @@ describe("app config composition", () => {
             build: { sourcemap: true },
             run: { tasks: { dev: { command: "vp dev --host" } } },
         });
-        expect(config.plugins).toEqual([plugin]);
+        expect(config.plugins).toContain(plugin);
         expect(config.pack).toBeUndefined();
         expect(config.build).toMatchObject({
             target: ["chrome107", "edge107", "firefox104", "safari16"],
@@ -83,6 +97,6 @@ describe("app config composition", () => {
             cache: false,
             dependsOn: [{ task: "build", from: ["dependencies", "devDependencies"] }],
         });
-        expect(config.run?.tasks?.test).toEqual({ command: "vp test", dependsOn: ["build"] });
+        expect(config.run?.tasks?.test).toMatchObject({ command: "vp test", dependsOn: ["build"] });
     });
 });
