@@ -1,6 +1,25 @@
 import { describe, expect, it } from "vite-plus/test";
 import { defineAppConfig, defineLibraryConfig } from "./index.js";
 
+describe.each([
+    ["library", defineLibraryConfig],
+    ["app", defineAppConfig],
+] as const)("%s resolution defaults", (_name, defineConfig) => {
+    it("enables tsconfig paths by default", () => {
+        expect(defineConfig().resolve?.tsconfigPaths).toBe(true);
+    });
+
+    it("preserves tsconfig paths with caller aliases", () => {
+        const alias = { "@app": "/src" };
+        expect(defineConfig({ resolve: { alias } }).resolve).toEqual({ tsconfigPaths: true, alias });
+    });
+
+    it("allows callers to disable tsconfig paths", () => {
+        expect(defineConfig({ resolve: { tsconfigPaths: false } }).resolve?.tsconfigPaths).toBe(false);
+        expect(defineConfig().resolve?.tsconfigPaths).toBe(true);
+    });
+});
+
 describe("library config composition", () => {
     it("keeps prerequisites and packaging when a package overrides its commands", () => {
         const config = defineLibraryConfig({

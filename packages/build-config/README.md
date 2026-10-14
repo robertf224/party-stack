@@ -22,6 +22,7 @@ The preset provides:
 - `check`, `build`, and `test` tasks, ordered after their prerequisites.
 - Unbundled ESM, declarations, and source maps in `lib` through `vp pack`.
 - Vitest discovery under `src`, with package-specific test options.
+- TypeScript path resolution through `resolve.tsconfigPaths` for libraries and apps.
 - Strict TypeScript settings targeting ES2022, with Node and DOM types.
 
 Apps use `defineAppConfig` from the same package. It provides check/build/test/dev
@@ -31,7 +32,7 @@ plugins and app-specific settings in the caller. Apps can extend
 TanStack Start apps use `@party-stack/tanstack-start-build-config` for framework
 plugins, React Compiler, Tailwind, and the app TSConfig together.
 
-Package options override the defaults. Individual task options are merged;
+Package options override the defaults. Resolve and individual task options are merged;
 arrays and task cache options replace their defaults. Lint and formatting remain
 in the workspace root.
 
