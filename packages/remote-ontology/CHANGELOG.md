@@ -1,5 +1,19 @@
 # @party-stack/remote-ontology
 
+## 0.10.2
+
+### Patch Changes
+
+- 4823958: Align Expo runtime dependencies on SDK 57 and provide a required Expo Blob/File polyfill. Hash Expo storage names, and verify idempotent cleanup closes SQLite before deletion.
+
+    Expose optional awaitable collection refresh utilities and implement full Foundry snapshot refresh, preserving subscriptions and propagating failures. Use fresh committed snapshots for operation acknowledgement when edit history is unavailable.
+
+    Upgrade TanStack DB and integrations to their latest releases and adapt persistence adapters and coordination to explicit storage targets.
+
+- Updated dependencies [4823958]
+    - @party-stack/ontology@0.20.0
+    - @party-stack/runtime@0.4.2
+
 ## 0.10.1
 
 ### Patch Changes
