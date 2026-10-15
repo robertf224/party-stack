@@ -1,5 +1,32 @@
 # @party-stack/db-indexeddb-persistence
 
+## 0.3.0
+
+### Minor Changes
+
+- 4823958: Implement managed on-demand cache generations with the same claim, rotation,
+  renewal, expiry, release, and private recovery semantics as upstream SQLite.
+  Validate claims transactionally on storage operations and collect retired data
+  only after its last live claim ends. Upgrade IndexedDB storage to version 4 while
+  preserving existing local-only/eager rows and metadata.
+
+    Derive adapter options from SQLiteCoreAdapterOptions without its driver and add
+    only databaseName. Remove unused notification callback options while retaining
+    automatic connection closing for database upgrades. Direct adapter operations
+    now require explicit eager or managed storage targets, matching upstream.
+
+    Port managed-cache contracts and receiving recovery histories from TanStack DB,
+    including the complete finite retired-storage matrix, and run them against
+    SQLite, fake IndexedDB, and native Chromium IndexedDB.
+
+### Patch Changes
+
+- 4823958: Align Expo runtime dependencies on SDK 57 and provide a required Expo Blob/File polyfill. Hash Expo storage names, and verify idempotent cleanup closes SQLite before deletion.
+
+    Expose optional awaitable collection refresh utilities and implement full Foundry snapshot refresh, preserving subscriptions and propagating failures. Use fresh committed snapshots for operation acknowledgement when edit history is unavailable.
+
+    Upgrade TanStack DB and integrations to their latest releases and adapt persistence adapters and coordination to explicit storage targets.
+
 ## 0.2.1
 
 ### Patch Changes

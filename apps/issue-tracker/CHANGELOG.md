@@ -1,5 +1,19 @@
 # @party-stack/issue-tracker
 
+## 0.2.24
+
+### Patch Changes
+
+- Updated dependencies [4823958]
+    - @party-stack/better-auth@0.3.2
+    - @party-stack/connections@0.3.2
+    - @party-stack/foundry-ontology@0.19.0
+    - @party-stack/ontology@0.20.0
+    - @party-stack/ontology-devtools@0.6.2
+    - @party-stack/remote-ontology@0.10.2
+    - @party-stack/sqlite-ontology@0.7.2
+    - @party-stack/web-runtime@0.4.2
+
 ## 0.2.23
 
 ### Patch Changes
