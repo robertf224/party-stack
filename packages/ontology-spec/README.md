@@ -1,5 +1,10 @@
 # @party-stack/ontology-spec
 
+Relationship traversal uses `o.Expression.related({ source, link })`. Static
+validation derives an object for a to-one direction and an object list for a
+to-many direction; `map` bindings retain the target object type. Execution support
+is context-specific: the current action evaluator supports to-one traversal only.
+
 The complete descriptive model for Party Stack ontologies, shared by live clients,
 owned storage implementations, remote adapters, and tooling. Attachments, object
 references, links, actions, and query functions remain first-class ontology types.

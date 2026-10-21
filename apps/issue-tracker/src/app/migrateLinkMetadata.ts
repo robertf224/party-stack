@@ -4,7 +4,7 @@ import ontology from "../ontology/ontology";
 
 const signature = JSON.stringify(ontology);
 // Exact pre-fix definition: the Foundry importer had reversed the Issue/Project sides.
-// Object schemas and action logic are identical, and this example has no link-hop actions.
+// Object schemas and action logic are identical, and this example has no relationship-traversing actions.
 const previousSignature = JSON.stringify({
     ...ontology,
     linkTypes: ontology.linkTypes.map((link) =>

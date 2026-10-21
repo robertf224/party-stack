@@ -118,8 +118,8 @@ export const Expression = {
     objectLookup: <const Value extends Extract<t.Expression, { kind: "objectLookup" }>["value"]>(
         value: Value
     ) => ({ kind: "objectLookup" as const, value }),
-    linkHop: <const Value extends Extract<t.Expression, { kind: "linkHop" }>["value"]>(value: Value) => ({
-        kind: "linkHop" as const,
+    related: <const Value extends Extract<t.Expression, { kind: "related" }>["value"]>(value: Value) => ({
+        kind: "related" as const,
         value,
     }),
     struct: <const Value extends Extract<t.Expression, { kind: "struct" }>["value"]>(value: Value) => ({

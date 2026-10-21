@@ -397,8 +397,8 @@ export type ObjectLookupExpression = {
     reference: Expression;
 };
 
-/** Follows one named to-one ontology link from a source object. */
-export type LinkHopExpression = {
+/** Reads a named ontology relationship from a source object. A to-one direction returns an optional object; a to-many direction returns a list of objects. Execution support depends on the expression context. */
+export type RelatedExpression = {
     source: Expression;
     link: string;
 };
@@ -440,7 +440,7 @@ export type Expression = v.Union<{
     localReference: LocalReferenceExpression;
     getAt: GetAtExpression;
     objectLookup: ObjectLookupExpression;
-    linkHop: LinkHopExpression;
+    related: RelatedExpression;
     struct: StructExpression;
     map: MapExpression;
     uuid: UuidExpression;

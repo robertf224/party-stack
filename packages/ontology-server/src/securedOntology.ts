@@ -1,4 +1,4 @@
-import { isLinkHopFromForeignKeySource, resolveLinkHop } from "@party-stack/ontology/utils";
+import { isRelatedFromForeignKeySource, resolveRelatedLink } from "@party-stack/ontology/utils";
 import { Temporal } from "temporal-polyfill";
 import type {
     ActionLogicStep,
@@ -144,7 +144,7 @@ function evaluateExpression<Context>(opts: {
             return value;
         }
         case "objectLookup":
-        case "linkHop":
+        case "related":
             throw new Error(`Cannot evaluate ${opts.expression.kind} without ontology object collections.`);
     }
 }
@@ -217,12 +217,12 @@ function getExpressionObjectType(
         }
         return type.kind === "objectReference" ? type.value.objectType : undefined;
     }
-    if (expression.kind === "linkHop") {
+    if (expression.kind === "related") {
         const sourceObjectType = getExpressionObjectType(ir, actionName, expression.value.source);
         if (!sourceObjectType) return undefined;
-        const link = resolveLinkHop(ir, sourceObjectType, expression.value.link);
+        const link = resolveRelatedLink(ir, sourceObjectType, expression.value.link);
         if (!link) return undefined;
-        const foreignKeyOnSource = isLinkHopFromForeignKeySource(
+        const foreignKeyOnSource = isRelatedFromForeignKeySource(
             link,
             sourceObjectType,
             expression.value.link
@@ -296,14 +296,14 @@ function projectExpression<Context>(opts: {
                   }
                 : undefined;
         }
-        case "linkHop": {
+        case "related": {
             const source = projectExpression({
                 ...opts,
                 expression: opts.expression.value.source,
             });
             return source && getExpressionObjectType(opts.ir, opts.actionName, opts.expression)
                 ? {
-                      kind: "linkHop",
+                      kind: "related",
                       value: {
                           source,
                           link: opts.expression.value.link,

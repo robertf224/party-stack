@@ -872,8 +872,9 @@ export default {
             }),
         },
         {
-            name: "LinkHopExpression",
-            description: "Follows one named to-one ontology link from a source object.",
+            name: "RelatedExpression",
+            description:
+                "Reads a named ontology relationship from a source object. A to-one direction returns an optional object; a to-many direction returns a list of objects. Execution support depends on the expression context.",
             type: o.struct({
                 fields: [
                     {
@@ -1001,8 +1002,8 @@ export default {
                         type: o.ref({ name: "ObjectLookupExpression" }),
                     },
                     {
-                        name: "linkHop",
-                        type: o.ref({ name: "LinkHopExpression" }),
+                        name: "related",
+                        type: o.ref({ name: "RelatedExpression" }),
                     },
                     {
                         name: "struct",

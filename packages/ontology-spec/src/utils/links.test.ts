@@ -1,7 +1,8 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { defineOntology } from "../infer.js";
 import { o, type OntologyIR } from "../ir/index.js";
-import { isLinkHopFromForeignKeySource, resolveLinkHop } from "./links.js";
+import { isRelatedFromForeignKeySource, resolveRelatedLink } from "./links.js";
+import type { RelatedName, RelatedTargetObjectType } from "./links.js";
 
 function objectType(name: string, properties: string[]): OntologyIR["objectTypes"][number] {
     return {
@@ -17,7 +18,7 @@ function objectType(name: string, properties: string[]): OntologyIR["objectTypes
     };
 }
 
-describe("resolveLinkHop", () => {
+describe("resolveRelatedLink", () => {
     it("infers link names and returns the matching link", () => {
         const ir = defineOntology({
             types: [],
@@ -43,7 +44,7 @@ describe("resolveLinkHop", () => {
             queryFunctionTypes: [],
         });
 
-        const hop = resolveLinkHop(ir, "Post", "author");
+        const hop = resolveRelatedLink(ir, "Post", "author");
         expectTypeOf(hop?.target.objectType).toEqualTypeOf<"Author" | undefined>();
     });
 
@@ -69,12 +70,15 @@ describe("resolveLinkHop", () => {
             ],
         };
 
-        expect(resolveLinkHop(ir, "Post", "author")).toBe(ir.linkTypes[0]);
-        expect(resolveLinkHop(ir, "Author", "posts")).toBe(ir.linkTypes[0]);
+        expect(resolveRelatedLink(ir, "Post", "author")).toBe(ir.linkTypes[0]);
+        expect(resolveRelatedLink(ir, "Author", "posts")).toBe(ir.linkTypes[0]);
     });
 
     it("distinguishes directions on self-referential links", () => {
-        const ir = {
+        const ir = defineOntology({
+            types: [],
+            actionTypes: [],
+            queryFunctionTypes: [],
             objectTypes: [objectType("Employee", ["id", "managerId"])],
             linkTypes: [
                 {
@@ -93,12 +97,17 @@ describe("resolveLinkHop", () => {
                     cardinality: "many" as const,
                 },
             ],
-        };
+        });
 
         const link = ir.linkTypes[0]!;
-        expect(resolveLinkHop(ir, "Employee", "manager")).toBe(link);
-        expect(isLinkHopFromForeignKeySource(link, "Employee", "manager")).toBe(true);
-        expect(resolveLinkHop(ir, "Employee", "reports")).toBe(link);
-        expect(isLinkHopFromForeignKeySource(link, "Employee", "reports")).toBe(false);
+        expect(resolveRelatedLink(ir, "Employee", "manager")).toBe(link);
+        expect(isRelatedFromForeignKeySource(link, "Employee", "manager")).toBe(true);
+        expect(resolveRelatedLink(ir, "Employee", "reports")).toBe(link);
+        expect(isRelatedFromForeignKeySource(link, "Employee", "reports")).toBe(false);
+        expectTypeOf<RelatedName<typeof ir, "Employee">>().toEqualTypeOf<"manager" | "reports">();
+        expectTypeOf<RelatedTargetObjectType<typeof ir, "Employee", "reports">>().toEqualTypeOf<"Employee">();
+        expectTypeOf(resolveRelatedLink(ir, "Employee", "reports")?.id).toEqualTypeOf<
+            "employeeManager" | undefined
+        >();
     });
 });

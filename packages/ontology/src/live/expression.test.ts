@@ -172,7 +172,7 @@ describe("evaluateExpression", () => {
         ).resolves.toBe("user-1");
     });
 
-    it("follows an explicit to-one link hop", async () => {
+    it("executes to-one related expressions and explicitly rejects unsupported to-many execution", async () => {
         const projectType = {
             name: "Project",
             displayName: "Project",
@@ -208,7 +208,7 @@ describe("evaluateExpression", () => {
                         displayName: "Owner",
                     },
                     foreignKey: "ownerId",
-                    cardinality: "one",
+                    cardinality: "many",
                 },
             ],
             actionTypes: [
@@ -229,7 +229,7 @@ describe("evaluateExpression", () => {
         };
         const users = createCollection(
             localOnlyCollectionOptions<OntologyObject, string | number>({
-                id: "link-hop-users",
+                id: "related-users",
                 getKey: (user) => user.id as string | number,
                 initialData: [
                     {
@@ -241,7 +241,7 @@ describe("evaluateExpression", () => {
         );
         const projects = createCollection(
             localOnlyCollectionOptions<OntologyObject, string | number>({
-                id: "link-hop-projects",
+                id: "related-projects",
                 getKey: (project) => project.id as string | number,
                 initialData: [
                     {
@@ -261,7 +261,7 @@ describe("evaluateExpression", () => {
                 ir: linkIr,
                 actionTypeName: "assign",
                 expression: o.Expression.getAt({
-                    source: o.Expression.linkHop({
+                    source: o.Expression.related({
                         source: o.Expression.objectLookup({
                             reference: o.Expression.inputReference({
                                 name: "project",
@@ -279,6 +279,22 @@ describe("evaluateExpression", () => {
                 }),
             })
         ).resolves.toBe("Ada");
+
+        await expect(
+            evaluateExpression({
+                ir: linkIr,
+                actionTypeName: "assign",
+                expression: o.Expression.related({
+                    source: o.Expression.objectLookup({
+                        reference: o.Expression.inputReference({ name: "user" }),
+                    }),
+                    link: "projects",
+                }),
+                resolveParameter: () => Promise.resolve("user-1"),
+                context: {},
+                tx: createReadTx({ User: users, Project: projects }),
+            })
+        ).rejects.toThrow("not supported in action execution yet");
 
         await Promise.all([users.cleanup(), projects.cleanup()]);
     });

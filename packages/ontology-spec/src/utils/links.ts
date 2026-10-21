@@ -3,94 +3,51 @@ import type { ArrayElement, ObjectTypeName } from "./typeNames.js";
 
 type LinkTypes<IR extends Pick<OntologyIR, "linkTypes">> = ArrayElement<IR["linkTypes"]>;
 
-type LinkHopNameForLink<Link, SourceObjectType extends string> = Link extends {
-    source: {
-        objectType: infer LinkSourceObjectType extends string;
-    };
-    target: {
-        objectType: infer LinkTargetObjectType extends string;
-        name: infer TargetName extends string;
-    };
+type RelatedNameForLink<Link, SourceObjectType extends string> = Link extends {
+    source: { objectType: infer Source extends string; name: infer SourceName extends string };
+    target: { objectType: infer Target extends string; name: infer TargetName extends string };
 }
-    ? SourceObjectType extends LinkSourceObjectType
-        ? TargetName
-        : SourceObjectType extends LinkTargetObjectType
-          ? Link extends {
-                source: {
-                    name: infer SourceName extends string;
-                };
-            }
-              ? SourceName
-              : never
-          : never
+    ?
+          | (SourceObjectType extends Source ? TargetName : never)
+          | (SourceObjectType extends Target ? SourceName : never)
     : never;
 
-export type LinkHopName<
+export type RelatedName<
     IR extends Pick<OntologyIR, "linkTypes">,
     SourceObjectType extends string,
-> = LinkHopNameForLink<LinkTypes<IR>, SourceObjectType>;
+> = RelatedNameForLink<LinkTypes<IR>, SourceObjectType>;
 
-type LinkHopTargetForLink<Link, SourceObjectType extends string, Name extends string> = Link extends {
-    source: {
-        objectType: infer LinkSourceObjectType extends string;
-        name: infer SourceName extends string;
-    };
-    target: {
-        objectType: infer TargetObjectType extends string;
-        name: infer TargetName extends string;
-    };
+type RelatedTargetForLink<Link, SourceObjectType extends string, Name extends string> = Link extends {
+    source: { objectType: infer Source extends string; name: infer SourceName extends string };
+    target: { objectType: infer Target extends string; name: infer TargetName extends string };
 }
-    ? SourceObjectType extends LinkSourceObjectType
-        ? Name extends TargetName
-            ? TargetObjectType
-            : never
-        : Link extends {
-                target: {
-                    objectType: infer LinkTargetObjectType extends string;
-                };
-            }
-          ? SourceObjectType extends LinkTargetObjectType
-              ? Name extends SourceName
-                  ? LinkSourceObjectType
-                  : never
-              : never
-          : never
+    ?
+          | (SourceObjectType extends Source ? (Name extends TargetName ? Target : never) : never)
+          | (SourceObjectType extends Target ? (Name extends SourceName ? Source : never) : never)
     : never;
 
-export type LinkHopTargetObjectType<
+export type RelatedTargetObjectType<
     IR extends Pick<OntologyIR, "linkTypes">,
     SourceObjectType extends string,
     Name extends string,
-> = LinkHopTargetForLink<LinkTypes<IR>, SourceObjectType, Name>;
+> = RelatedTargetForLink<LinkTypes<IR>, SourceObjectType, Name>;
 
-type LinkHopLinkForLink<Link, SourceObjectType extends string, Name extends string> = Link extends {
-    source: {
-        objectType: infer LinkSourceObjectType extends string;
-        name: infer SourceName extends string;
-    };
-    target: {
-        objectType: infer LinkTargetObjectType extends string;
-        name: infer TargetName extends string;
-    };
+type RelatedLinkForLink<Link, SourceObjectType extends string, Name extends string> = Link extends {
+    source: { objectType: infer Source extends string; name: infer SourceName extends string };
+    target: { objectType: infer Target extends string; name: infer TargetName extends string };
 }
-    ? SourceObjectType extends LinkSourceObjectType
-        ? Name extends TargetName
-            ? Link
-            : never
-        : SourceObjectType extends LinkTargetObjectType
-          ? Name extends SourceName
-              ? Link
-              : never
-          : never
+    ?
+          | (SourceObjectType extends Source ? (Name extends TargetName ? Link : never) : never)
+          | (SourceObjectType extends Target ? (Name extends SourceName ? Link : never) : never)
     : never;
 
-export type LinkHopLink<
+export type RelatedLink<
     IR extends Pick<OntologyIR, "linkTypes">,
     SourceObjectType extends string,
     Name extends string,
-> = LinkHopLinkForLink<LinkTypes<IR>, SourceObjectType, Name>;
+> = RelatedLinkForLink<LinkTypes<IR>, SourceObjectType, Name>;
 
-export function isLinkHopFromForeignKeySource(
+export function isRelatedFromForeignKeySource(
     link: LinkTypeDef,
     sourceObjectType: string,
     linkName: string
@@ -98,19 +55,19 @@ export function isLinkHopFromForeignKeySource(
     return link.source.objectType === sourceObjectType && link.target.name === linkName;
 }
 
-export function resolveLinkHop<
+export function resolveRelatedLink<
     const IR extends Pick<OntologyIR, "linkTypes" | "objectTypes">,
     const SourceObjectType extends ObjectTypeName<IR>,
-    const Name extends LinkHopName<IR, SourceObjectType>,
+    const Name extends RelatedName<IR, SourceObjectType>,
 >(
     ir: IR,
     sourceObjectType: SourceObjectType,
     linkName: Name
-): LinkHopLink<IR, SourceObjectType, Name> | undefined {
+): RelatedLink<IR, SourceObjectType, Name> | undefined {
     const matches = ir.linkTypes.flatMap((link) => [
-        ...(isLinkHopFromForeignKeySource(link, sourceObjectType, linkName) ? [link] : []),
+        ...(isRelatedFromForeignKeySource(link, sourceObjectType, linkName) ? [link] : []),
         ...(link.target.objectType === sourceObjectType && link.source.name === linkName ? [link] : []),
     ]);
     if (matches.length !== 1) return undefined;
-    return matches[0] as LinkHopLink<IR, SourceObjectType, Name>;
+    return matches[0] as RelatedLink<IR, SourceObjectType, Name>;
 }

@@ -33,9 +33,12 @@ string. A nested query's order and limit apply per parent. Composite correlation
 and multiple nested projections of the same relationship must remain expressible.
 Projection aliases belong to result shape, not source identity.
 
-The builder can offer a `sub`/includes-style operation for arbitrary child queries
-and a `rel` helper derived from an ontology link definition. Both should lower to
-the same correlation representation. The exact spelling is still open. Explicit
+Use `related` in both ontology expressions and the future ontology query IR. A named
+link supplies the child source, correlation and directional cardinality; explicit
+correlations remain possible when no named link exists. Nested shaping, filtering
+and per-parent windows belong to that related query. Planning lowers it into the
+general correlation machinery; a flat join is one possible execution strategy.
+There is no need to expose a separate `sub` name for the same operation. Explicit
 source handles must also permit cross-ontology joins, such as joining an outbox
 entry to its action-type metadata. Possession of a source name does not authorize
 access to that source.
@@ -57,6 +60,13 @@ expressions can share operators and binding rules; changing a schema version and
 selecting a live related subset remain distinct operations.
 
 ## Current implementation boundary
+
+The former `linkHop` expression is now `related`. Static validation recognizes
+to-one object results and to-many object lists, including typed map bindings and
+nested traversal. The existing action evaluator still executes only to-one
+relationships and reports to-many execution as unsupported. This change does not
+implement the proposed query builder or a scripting language. Query and program
+contexts can share expressions while admitting different read/write capabilities.
 
 The storage predicate IR handles flat subsets. Transaction collections now forward
 TanStack's actual `loadSubset` requests to the persisted snapshot, including lazy

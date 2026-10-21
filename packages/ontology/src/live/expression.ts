@@ -1,4 +1,4 @@
-import { isLinkHopFromForeignKeySource, resolveLinkHop } from "@party-stack/ontology-spec/utils";
+import { isRelatedFromForeignKeySource, resolveRelatedLink } from "@party-stack/ontology-spec/utils";
 import { getAtPath } from "@party-stack/ontology-spec/utils";
 import { resolveType, unwrapType } from "@party-stack/ontology-spec/utils";
 import { eq } from "@tanstack/db";
@@ -162,7 +162,7 @@ async function evaluateExpressionWithLocals(
                   }
                 : undefined;
         }
-        case "linkHop": {
+        case "related": {
             const source = await evaluateExpressionWithLocals(
                 {
                     ...options,
@@ -172,15 +172,15 @@ async function evaluateExpressionWithLocals(
                 locals
             );
             if (!isEvaluatedOntologyObject(source)) {
-                throw new Error("Link hop source must resolve to an ontology object.");
+                throw new Error("Related expression source must resolve to an ontology object.");
             }
-            const link = resolveLinkHop(ir, source.objectType, expression.value.link);
+            const link = resolveRelatedLink(ir, source.objectType, expression.value.link);
             if (!link) {
                 throw new Error(
                     `Unknown link "${expression.value.link}" on object type "${source.objectType}".`
                 );
             }
-            const foreignKeyOnSource = isLinkHopFromForeignKeySource(
+            const foreignKeyOnSource = isRelatedFromForeignKeySource(
                 link,
                 source.objectType,
                 expression.value.link
@@ -188,7 +188,7 @@ async function evaluateExpressionWithLocals(
             const cardinality = foreignKeyOnSource ? "one" : link.cardinality;
             if (cardinality === "many") {
                 throw new Error(
-                    `Link "${expression.value.link}" on object type "${source.objectType}" is to-many.`
+                    `To-many related expression "${expression.value.link}" on object type "${source.objectType}" is not supported in action execution yet.`
                 );
             }
             const sourceType = ir.objectTypes.find((candidate) => candidate.name === source.objectType)!;

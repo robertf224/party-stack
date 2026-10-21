@@ -1,4 +1,4 @@
-import { isLinkHopFromForeignKeySource, resolveLinkHop } from "../utils/links.js";
+import { isRelatedFromForeignKeySource, resolveRelatedLink } from "../utils/links.js";
 import { unwrapType } from "../utils/types.js";
 import { ImageMediaTypeOptions } from "./generated/constants.js";
 import type { ValidationIssue } from "../utils/validation.js";
@@ -314,7 +314,37 @@ type ExpressionValueType =
     | {
           kind: "ontologyObject";
           objectType: string;
+      }
+    | {
+          kind: "expressionList";
+          elementType: ExpressionValueType;
       };
+
+function expressionListElement(
+    type: ExpressionValueType | undefined,
+    valueTypes: ReadonlyMap<string, TypeDef>
+): ExpressionValueType | undefined {
+    if (!type || type.kind === "ontologyObject") return undefined;
+    if (type.kind === "expressionList") return type.elementType;
+    const resolved = unwrapOptionalType(type, valueTypes);
+    return resolved?.kind === "list" ? resolved.value.elementType : undefined;
+}
+
+function expressionValueType(
+    type: ExpressionValueType,
+    objectTypes: ReadonlyMap<string, ObjectTypeDef>
+): TypeDef {
+    if (type.kind === "ontologyObject") {
+        const object = objectTypes.get(type.objectType);
+        return object
+            ? { kind: "struct", value: { fields: object.properties } }
+            : { kind: "unknown", value: {} };
+    }
+    if (type.kind === "expressionList") {
+        return { kind: "list", value: { elementType: expressionValueType(type.elementType, objectTypes) } };
+    }
+    return type;
+}
 
 function resolveExpressionType(
     expression: Expression,
@@ -323,7 +353,7 @@ function resolveExpressionType(
     objectTypes: ReadonlyMap<string, ObjectTypeDef>,
     linkTypes: readonly LinkTypeDef[],
     contextType: TypeDef | undefined,
-    locals: ReadonlyMap<string, TypeDef>
+    locals: ReadonlyMap<string, ExpressionValueType>
 ): ExpressionValueType | undefined {
     switch (expression.kind) {
         case "inputReference":
@@ -354,7 +384,9 @@ function resolveExpressionType(
                     ?.properties.find((candidate) => candidate.name === propertyName);
                 return property ? resolveFieldType(property.type, rest, valueTypes) : undefined;
             }
-            return resolveFieldType(sourceType, expression.value.path, valueTypes);
+            return sourceType.kind === "expressionList"
+                ? undefined
+                : resolveFieldType(sourceType, expression.value.path, valueTypes);
         }
         case "objectLookup": {
             const referenceType = resolveExpressionType(
@@ -367,7 +399,7 @@ function resolveExpressionType(
                 locals
             );
             const resolved =
-                referenceType?.kind === "ontologyObject"
+                referenceType?.kind === "ontologyObject" || referenceType?.kind === "expressionList"
                     ? undefined
                     : referenceType
                       ? unwrapOptionalType(referenceType, valueTypes)
@@ -379,7 +411,7 @@ function resolveExpressionType(
                   }
                 : undefined;
         }
-        case "linkHop": {
+        case "related": {
             const sourceType = resolveExpressionType(
                 expression.value.source,
                 parameters,
@@ -392,7 +424,7 @@ function resolveExpressionType(
             if (sourceType?.kind !== "ontologyObject") {
                 return undefined;
             }
-            const link = resolveLinkHop(
+            const link = resolveRelatedLink(
                 {
                     objectTypes: [...objectTypes.values()],
                     linkTypes: [...linkTypes],
@@ -401,18 +433,18 @@ function resolveExpressionType(
                 expression.value.link
             );
             if (!link) return undefined;
-            const foreignKeyOnSource = isLinkHopFromForeignKeySource(
+            const foreignKeyOnSource = isRelatedFromForeignKeySource(
                 link,
                 sourceType.objectType,
                 expression.value.link
             );
-            if (!foreignKeyOnSource && link.cardinality === "many") {
-                return undefined;
-            }
-            return {
+            const targetType: ExpressionValueType = {
                 kind: "ontologyObject",
                 objectType: foreignKeyOnSource ? link.target.objectType : link.source.objectType,
             };
+            return !foreignKeyOnSource && link.cardinality === "many"
+                ? { kind: "expressionList", elementType: targetType }
+                : targetType;
         }
         case "struct":
             return {
@@ -432,7 +464,7 @@ function resolveExpressionType(
                                 locals
                             );
                             return resolved && resolved.kind !== "ontologyObject"
-                                ? resolved
+                                ? expressionValueType(resolved, objectTypes)
                                 : {
                                       kind: "unknown" as const,
                                       value: {},
@@ -451,15 +483,10 @@ function resolveExpressionType(
                 contextType,
                 locals
             );
-            const listType =
-                sourceType && sourceType.kind !== "ontologyObject"
-                    ? unwrapOptionalType(sourceType, valueTypes)
-                    : undefined;
-            if (listType?.kind !== "list") {
-                return undefined;
-            }
+            const elementType = expressionListElement(sourceType, valueTypes);
+            if (!elementType) return undefined;
             const bodyLocals = new Map(locals);
-            bodyLocals.set(expression.value.binding, listType.value.elementType);
+            bodyLocals.set(expression.value.binding, elementType);
             const bodyType = resolveExpressionType(
                 expression.value.body,
                 parameters,
@@ -469,12 +496,7 @@ function resolveExpressionType(
                 contextType,
                 bodyLocals
             );
-            return bodyType && bodyType.kind !== "ontologyObject"
-                ? {
-                      kind: "list",
-                      value: { elementType: bodyType },
-                  }
-                : undefined;
+            return bodyType ? { kind: "expressionList", elementType: bodyType } : undefined;
         }
         case "literal":
             return { kind: "unknown", value: {} };
@@ -493,7 +515,7 @@ function validateExpression(
     objectTypes: ReadonlyMap<string, ObjectTypeDef>,
     linkTypes: readonly LinkTypeDef[],
     contextType: TypeDef | undefined,
-    locals: ReadonlyMap<string, TypeDef> = new Map()
+    locals: ReadonlyMap<string, ExpressionValueType> = new Map()
 ): ValidationIssue[] {
     switch (expression.kind) {
         case "inputReference": {
@@ -534,7 +556,7 @@ function validateExpression(
         }
         case "getAt":
         case "objectLookup":
-        case "linkHop": {
+        case "related": {
             const childKey = expression.kind === "objectLookup" ? "reference" : "source";
             const child =
                 expression.kind === "objectLookup" ? expression.value.reference : expression.value.source;
@@ -570,7 +592,7 @@ function validateExpression(
                             ? "Get-at expression source and path must resolve structurally."
                             : expression.kind === "objectLookup"
                               ? "Object lookup references must resolve to an object reference."
-                              : "Link hop must resolve to a named to-one link.",
+                              : "Related expression must resolve to a named ontology link.",
                     path,
                 });
             }
@@ -623,11 +645,8 @@ function validateExpression(
                 contextType,
                 locals
             );
-            const listType =
-                sourceType && sourceType.kind !== "ontologyObject"
-                    ? unwrapOptionalType(sourceType, valueTypes)
-                    : undefined;
-            if (sourceType && listType?.kind !== "list") {
+            const elementType = expressionListElement(sourceType, valueTypes);
+            if (sourceType && !elementType) {
                 errors.push({
                     message: "Map expression source must resolve to a list.",
                     path: [...path, "source"],
@@ -640,10 +659,7 @@ function validateExpression(
                 });
             }
             const bodyLocals = new Map(locals);
-            bodyLocals.set(
-                expression.value.binding,
-                listType?.kind === "list" ? listType.value.elementType : { kind: "unknown", value: {} }
-            );
+            bodyLocals.set(expression.value.binding, elementType ?? { kind: "unknown", value: {} });
             errors.push(
                 ...validateExpression(
                     expression.value.body,
@@ -844,7 +860,11 @@ function validateAction(
             if (
                 sourceType &&
                 sourceType.kind !== "ontologyObject" &&
-                !areDefaultTypesCompatible(parameter.type, sourceType, valueTypes)
+                !areDefaultTypesCompatible(
+                    parameter.type,
+                    expressionValueType(sourceType, objectTypes),
+                    valueTypes
+                )
             ) {
                 errors.push({
                     message: `Default value for "${parameter.name}" has an incompatible type.`,
