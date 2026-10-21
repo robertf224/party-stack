@@ -1,6 +1,8 @@
 import { isUnauthenticatedError, unauthenticated, type UnauthenticatedError } from "@party-stack/errors";
 import { createLocalCollection, isCoordinationHost } from "@party-stack/runtime";
-import { createSignal, race, run, sleep, until, type Task } from "effection";
+import { Runtime, runtimeEffects } from "@party-stack/runtime";
+import { queryOnce } from "@tanstack/db";
+import { Effect, Exit, Fiber, Queue, Scope } from "effect";
 import { createDefaultConnectionEgressHandlers } from "./createDefaultConnectionEgressHandlers.js";
 import {
     type BackendConnectionAdapter,
@@ -26,6 +28,7 @@ const REFRESH_WINDOW_MS = 60_000;
 export interface CreateConnectionManagerOptions<AuthenticationClient extends object = object> {
     installationId: string;
     runtime: RuntimeAdapter;
+    scope?: Scope.Scope;
     adapter: BackendConnectionAdapterProvider<AuthenticationClient>;
     egressHandlers?: ConnectionEgressHandlers;
 }
@@ -33,22 +36,41 @@ export interface CreateConnectionManagerOptions<AuthenticationClient extends obj
 export async function createConnectionManager<AuthenticationClient extends object = object>(
     options: CreateConnectionManagerOptions<AuthenticationClient>
 ): Promise<ConnectionManager<AuthenticationClient>> {
+    const managed = runtimeEffects(options.runtime).runtime;
+    const owner = await managed.runPromise(
+        Effect.flatMap(Runtime, (service) => Scope.fork(options.scope ?? service.scope))
+    );
+    const close = () => Effect.runPromise(Scope.close(owner, Exit.void));
     const context = {
         installationId: options.installationId,
         runtime: options.runtime,
+        scope: owner,
     };
-    const adapter: BackendConnectionAdapter<AuthenticationClient> = await options.adapter(context);
+    let adapter: BackendConnectionAdapter<AuthenticationClient>;
+    try {
+        adapter = await options.adapter(context);
+    } catch (error) {
+        await close();
+        throw error;
+    }
     const baseEgressHandlers = options.egressHandlers ?? createDefaultConnectionEgressHandlers();
     const connections = createLocalCollection<Connection, string>({
         name: "connections",
         getKey: (connection) => connection.userId,
         runtime: options.runtime,
         schemaVersion: 2,
+        scope: owner,
     });
     const sessions = new Map<string, ConnectionSession>();
-    const wake = createSignal<void, void>();
-    let refreshTask: Task<void> | undefined;
+    const wake = Effect.runSync(Queue.sliding<void>(1));
+    const notify = () => {
+        Queue.offerUnsafe(wake, undefined);
+    };
+    const lifetime = new AbortController();
+    const sockets = new Map<string, Set<WebSocket>>();
+    let refreshTask: Promise<Fiber.Fiber<void>> | undefined;
     let unsubscribeConnectivity: (() => void) | undefined;
+    let connectionDemand: { unsubscribe(): void } | undefined;
     let disposed = false;
 
     const updateConnection = async (
@@ -61,6 +83,8 @@ export async function createConnectionManager<AuthenticationClient extends objec
         return connections.get(userId);
     };
     const releaseSession = async (userId: string): Promise<void> => {
+        for (const socket of sockets.get(userId) ?? []) socket.close();
+        sockets.delete(userId);
         const session = sessions.get(userId);
         sessions.delete(userId);
         await Promise.resolve(session?.cleanup?.());
@@ -92,6 +116,10 @@ export async function createConnectionManager<AuthenticationClient extends objec
     };
     const applyEstablishedConnection = async (established: EstablishedConnection): Promise<void> => {
         const { connection, session } = established;
+        if (disposed) {
+            await session.cleanup?.();
+            throw new Error("Connection manager is closed.");
+        }
         const userId = connection.userId;
         const previous = sessions.get(userId);
         sessions.set(userId, session);
@@ -107,12 +135,15 @@ export async function createConnectionManager<AuthenticationClient extends objec
             throw error;
         }
         if (previous && previous !== session) {
+            for (const socket of sockets.get(userId) ?? []) socket.close();
+            sockets.delete(userId);
             await Promise.resolve(previous.cleanup?.());
         }
     };
-    const refreshDueConnections = async () => {
+    const refreshDueConnections = async (signal: AbortSignal) => {
         const now = Date.now();
         for (const connection of connections.values()) {
+            signal.throwIfAborted();
             const state = connection.state;
             if (state.status !== "active" || state.expiration === undefined) {
                 continue;
@@ -136,7 +167,12 @@ export async function createConnectionManager<AuthenticationClient extends objec
                     continue;
                 }
                 try {
-                    const refreshed = await session.refresh();
+                    const refreshed = await session.refresh({ signal });
+                    if (signal.aborted || disposed) {
+                        await refreshed.session.cleanup?.();
+                        signal.throwIfAborted();
+                        return;
+                    }
                     if (refreshed.connection.userId !== connection.userId) {
                         throw new Error(
                             `Connection refresh changed user from "${connection.userId}" to "${refreshed.connection.userId}".`
@@ -144,6 +180,7 @@ export async function createConnectionManager<AuthenticationClient extends objec
                     }
                     await applyEstablishedConnection(refreshed);
                 } catch (error) {
+                    if (signal.aborted || disposed) return;
                     if (isUnauthenticatedError(error)) {
                         await reportUnauthenticated(connection.userId, error);
                     }
@@ -163,34 +200,72 @@ export async function createConnectionManager<AuthenticationClient extends objec
     const startRefreshLoop = () => {
         if (!isCoordinationHost(options.runtime.coordination)) return;
         const host = options.runtime.coordination;
-        refreshTask = run(function* () {
-            const wakes = yield* wake;
-            while (!disposed) {
-                yield* race([sleep(REFRESH_POLL_MS), wakes.next()]);
-                if (disposed) return;
-                yield* until(host.runAsLeader(() => refreshDueConnections()));
-            }
-        });
+        const refresh = Effect.tryPromise({
+            try: (signal) => host.runAsLeader(({ signal }) => refreshDueConnections(signal), { signal }),
+            catch: (cause) => cause,
+        }).pipe(
+            Effect.withSpan("Connections.refresh"),
+            Effect.catch(() => Effect.void)
+        );
+        refreshTask = managed.runPromise(
+            Effect.forkIn(
+                Effect.forever(
+                    Effect.andThen(Effect.race(Queue.take(wake), Effect.sleep(REFRESH_POLL_MS)), refresh)
+                ),
+                owner
+            )
+        );
         void refreshTask.catch(() => undefined);
-        unsubscribeConnectivity = options.runtime.connectivity?.subscribe(() => {
-            wake.send();
-        });
+        unsubscribeConnectivity = options.runtime.connectivity?.subscribe(notify);
     };
+
+    await Effect.runPromise(
+        Scope.addFinalizer(
+            owner,
+            Effect.promise(async () => {
+                if (disposed) return;
+                disposed = true;
+                lifetime.abort();
+                unsubscribeConnectivity?.();
+                connectionDemand?.unsubscribe();
+                const results = await Promise.allSettled([
+                    refreshTask?.then((fiber) => Effect.runPromise(Fiber.interrupt(fiber))),
+                    Effect.runPromise(Queue.shutdown(wake)),
+                ]);
+                const users = [...sessions.keys()];
+                const released = await Promise.allSettled(users.map(releaseSession));
+                const remaining = await Promise.allSettled([
+                    Promise.resolve().then(() => adapter.cleanup?.()),
+                    connections.cleanup(),
+                ]);
+                const errors = [...results, ...released, ...remaining].flatMap((result) =>
+                    result.status === "rejected" ? [result.reason] : []
+                );
+                if (errors.length) throw new AggregateError(errors, "Connection cleanup failed.");
+            })
+        )
+    );
 
     const controller: ConnectionController = {
         async connect(connection) {
             await applyEstablishedConnection(connection);
-            wake.send();
+            notify();
         },
         async disconnect(userId) {
             await releaseSession(userId);
             await updateConnection(userId, (connection) => {
                 connection.state = { status: "inactive" };
             });
-            wake.send();
+            notify();
         },
     };
-    const authentication = adapter.createAuthenticationClient(controller);
+    let authentication: AuthenticationClient;
+    try {
+        authentication = adapter.createAuthenticationClient(controller);
+    } catch (error) {
+        await close();
+        throw error;
+    }
 
     const manager: ConnectionManager<AuthenticationClient> = {
         installationId: options.installationId,
@@ -235,7 +310,13 @@ export async function createConnectionManager<AuthenticationClient extends objec
             return {
                 async fetch(input, init) {
                     try {
-                        return await getHandlers().fetch(new Request(input, init));
+                        if (disposed) throw new Error("Connection manager is closed.");
+                        const request = new Request(input, init);
+                        return await getHandlers().fetch(
+                            new Request(request, {
+                                signal: AbortSignal.any([request.signal, lifetime.signal]),
+                            })
+                        );
                     } catch (error) {
                         await handleError(error);
                         throw error;
@@ -243,7 +324,17 @@ export async function createConnectionManager<AuthenticationClient extends objec
                 },
                 async createWebSocket(url, protocols) {
                     try {
-                        return await getHandlers().createWebSocket(url, protocols);
+                        if (disposed) throw new Error("Connection manager is closed.");
+                        const socket = await getHandlers().createWebSocket(url, protocols);
+                        if (disposed || !sessions.has(userId)) {
+                            socket.close();
+                            throw new Error("Connection session is closed.");
+                        }
+                        let open = sockets.get(userId);
+                        if (!open) sockets.set(userId, (open = new Set()));
+                        open.add(socket);
+                        socket.addEventListener("close", () => open.delete(socket), { once: true });
+                        return socket;
                     } catch (error) {
                         await handleError(error);
                         throw error;
@@ -251,23 +342,19 @@ export async function createConnectionManager<AuthenticationClient extends objec
                 },
             };
         },
-        async cleanup() {
-            if (disposed) return;
-            disposed = true;
-            wake.close();
-            unsubscribeConnectivity?.();
-            if (refreshTask) await refreshTask.halt();
-            const live = [...sessions.values()];
-            sessions.clear();
-            await Promise.all(live.map((session) => Promise.resolve(session.cleanup?.())));
-            await Promise.resolve(adapter.cleanup?.());
-            await connections.cleanup();
-        },
+        cleanup: close,
     };
 
     try {
-        await connections.preload();
-        const restored = await adapter.restoreConnections();
+        // This service consumes every private connection record for restoration
+        // and refresh. Keep that local demand alive for the service's scope.
+        connectionDemand = connections.subscribeChanges(() => {}, { includeInitialState: true });
+        await queryOnce((q) => q.from({ row: connections }));
+        const restored = await adapter.restoreConnections({ signal: lifetime.signal });
+        if (disposed) {
+            await Promise.allSettled(restored.map((entry) => Promise.resolve(entry.session.cleanup?.())));
+            throw new Error("Connection manager closed during restoration.");
+        }
         const restoredUserIds = new Set<string>();
         for (const established of restored) {
             restoredUserIds.add(established.connection.userId);
@@ -281,15 +368,10 @@ export async function createConnectionManager<AuthenticationClient extends objec
             }
         }
         startRefreshLoop();
-        wake.send();
+        notify();
         return manager;
     } catch (error) {
-        wake.close();
-        const live = [...sessions.values()];
-        sessions.clear();
-        await Promise.all(live.map((session) => Promise.resolve(session.cleanup?.())));
-        await Promise.resolve(adapter.cleanup?.());
-        await connections.cleanup();
+        await close();
         throw error;
     }
 }

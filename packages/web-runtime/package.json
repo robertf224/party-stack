@@ -15,15 +15,20 @@
         "test:browser": "tsc -p tsconfig.e2e.json && vp test run --config vitest.e2e.config.mjs"
     },
     "dependencies": {
+        "@effect/platform-browser": "^4.0.5",
         "@party-stack/coordination": "workspace:*",
-        "@party-stack/db-indexeddb-persistence": "workspace:*",
+        "@party-stack/indexeddb-ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "effection": "^4.0.2"
+        "effect": "^4.0.5"
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/ontology-backend": "workspace:*",
+        "@party-stack/ontology-replica": "workspace:*",
+        "@party-stack/ontology-server": "workspace:*",
+        "@party-stack/ontology-spec": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
         "@tanstack/db": "0.14.0",
-        "@tanstack/db-sqlite-persistence-core": "0.4.9",
         "playwright": "^1.61.1",
         "typescript": "~7.0.2",
         "vite": "catalog:",

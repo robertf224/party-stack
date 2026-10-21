@@ -4,6 +4,9 @@ import {
     isCoordinationHost,
     type CoordinationServiceServer,
 } from "@party-stack/runtime";
+import { Runtime, runtimeEffects } from "@party-stack/runtime";
+import { eq, lt, queryOnce } from "@tanstack/db";
+import { Effect, Exit, Scope } from "effect";
 import * as oauth from "oauth4webapi";
 import { resolveOAuthSecretStore } from "./storage.js";
 import type { CreatePublicOAuthClientOptions, OAuthSession, PublicOAuthClient } from "./types.js";
@@ -55,7 +58,21 @@ function sessionFromTokens(userId: string, tokens: StoredTokenSet): OAuthSession
 export async function createPublicOAuthClient(
     options: CreatePublicOAuthClientOptions
 ): Promise<PublicOAuthClient> {
-    const secrets = await resolveOAuthSecretStore(options);
+    const managed = runtimeEffects(options.runtime).runtime;
+    const scope = await managed.runPromise(
+        Effect.flatMap(Runtime, (runtime) => Scope.fork(options.scope ?? runtime.scope))
+    );
+    const close = () => Effect.runPromise(Scope.close(scope, Exit.void));
+    const lifetime = new AbortController();
+    const browserSessions = new Set<import("@party-stack/runtime").BrowserAuthenticationSession>();
+    let cleaned = false;
+    let secrets: Awaited<ReturnType<typeof resolveOAuthSecretStore>>;
+    try {
+        secrets = await resolveOAuthSecretStore({ ...options, scope });
+    } catch (error) {
+        await close();
+        throw error;
+    }
     const storagePrefix = `oauth:${encodeURIComponent(options.clientId)}`;
     const refreshCoordination = options.runtime.coordination.service<OAuthCoordinationService>(
         `${storagePrefix}:refresh:v1`
@@ -64,15 +81,30 @@ export async function createPublicOAuthClient(
         name: `${storagePrefix}:pending`,
         getKey: (record) => record.state,
         runtime: options.runtime,
+        scope,
         schemaVersion: 1,
     });
     const sessions = createLocalCollection<SessionRecord, string>({
         name: `${storagePrefix}:sessions`,
         getKey: (record) => record.userId,
         runtime: options.runtime,
+        scope,
         schemaVersion: 1,
     });
-    await Promise.all([pending.preload(), sessions.preload()]);
+    const findSession = (userId: string) =>
+        queryOnce((q) =>
+            q
+                .from({ session: sessions })
+                .where(({ session }) => eq(session.userId, userId))
+                .findOne()
+        );
+    const findPending = (state: string) =>
+        queryOnce((q) =>
+            q
+                .from({ pending })
+                .where(({ pending }) => eq(pending.state, state))
+                .findOne()
+        );
 
     const authorizationServer: oauth.AuthorizationServer = {
         issuer: options.authorizationServer.issuer,
@@ -85,23 +117,31 @@ export async function createPublicOAuthClient(
         token_endpoint_auth_method: "none",
     };
     const clientAuthentication = oauth.None();
+    const fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
     const requestOptions = {
-        [oauth.customFetch]: options.fetch ?? globalThis.fetch.bind(globalThis),
+        [oauth.customFetch]: ((input, init) =>
+            fetchImpl(input, {
+                ...init,
+                signal: AbortSignal.any([
+                    lifetime.signal,
+                    ...(init?.signal ? [init.signal] : input instanceof Request ? [input.signal] : []),
+                ]),
+            })) satisfies typeof globalThis.fetch,
     };
     const accessTokens = new Map<string, StoredTokenSet>();
-    let cleaned = false;
-
     const pendingSecretKey = (state: string) => `${storagePrefix}:pending:${state}`;
     const sessionSecretKey = (userId: string) => `${storagePrefix}:session:${encodeURIComponent(userId)}`;
 
     const writeSession = async (tokens: StoredTokenSet, existingUserId?: string): Promise<OAuthSession> => {
+        lifetime.signal.throwIfAborted();
         const resolvedUserId = await options.resolveUserId(tokens.accessToken);
+        lifetime.signal.throwIfAborted();
         if (existingUserId && resolvedUserId !== existingUserId) {
             throw new Error(`OAuth session changed user from "${existingUserId}" to "${resolvedUserId}".`);
         }
         const userId = existingUserId ?? resolvedUserId;
         const secretKey = sessionSecretKey(userId);
-        const existing = sessions.get(userId);
+        const existing = await findSession(userId);
         if (!existing) {
             const transaction = sessions.insert(
                 {
@@ -128,6 +168,7 @@ export async function createPublicOAuthClient(
     };
 
     const readTokens = async (record: SessionRecord, force = false): Promise<StoredTokenSet | undefined> => {
+        lifetime.signal.throwIfAborted();
         const loaded = accessTokens.get(record.userId);
         if (loaded && !force) return loaded;
         const stored = await secrets.get(record.secretKey);
@@ -137,7 +178,7 @@ export async function createPublicOAuthClient(
         return tokens;
     };
     const forgetSession = async (userId: string): Promise<void> => {
-        const record = sessions.get(userId);
+        const record = await findSession(userId);
         if (!record) return;
         await secrets.delete(record.secretKey);
         await sessions.delete(userId, {
@@ -148,7 +189,7 @@ export async function createPublicOAuthClient(
 
     const removePending = async (state: string, secretKey: string) => {
         await secrets.delete(secretKey);
-        if (!pending.get(state)) return;
+        if (!(await findPending(state))) return;
         const transaction = pending.delete(state, {
             optimistic: false,
         });
@@ -157,9 +198,11 @@ export async function createPublicOAuthClient(
     const cleanupStalePending = async () => {
         const cutoff = Date.now() - PENDING_MAX_AGE_MS;
         await Promise.all(
-            [...pending.values()]
-                .filter((record) => record.createdAt < cutoff)
-                .map((record) => removePending(record.state, record.secretKey))
+            (
+                await queryOnce((q) =>
+                    q.from({ pending }).where(({ pending }) => lt(pending.createdAt, cutoff))
+                )
+            ).map((record) => removePending(record.state, record.secretKey))
         );
     };
 
@@ -169,7 +212,7 @@ export async function createPublicOAuthClient(
         if (!state) {
             throw new Error("OAuth callback did not include state.");
         }
-        const pendingRecord = pending.get(state);
+        const pendingRecord = await findPending(state);
         if (!pendingRecord) {
             throw new Error("OAuth callback state is not recognized.");
         }
@@ -212,7 +255,7 @@ export async function createPublicOAuthClient(
     };
 
     const refreshDirect = async (userId: string): Promise<OAuthSession> => {
-        const record = sessions.get(userId);
+        const record = await findSession(userId);
         if (!record) {
             throw new Error(`OAuth session for user "${userId}" is unavailable.`);
         }
@@ -271,7 +314,7 @@ export async function createPublicOAuthClient(
             throw error;
         }
         accessTokens.delete(userId);
-        const record = sessions.get(userId);
+        const record = await findSession(userId);
         if (record) {
             await readTokens(record, true);
         }
@@ -280,6 +323,7 @@ export async function createPublicOAuthClient(
 
     const clientApi: PublicOAuthClient = {
         async signIn(signInOptions = {}) {
+            lifetime.signal.throwIfAborted();
             const browserAuthentication = options.runtime.browserAuthentication;
             if (!browserAuthentication) {
                 throw new Error("Interactive OAuth requires RuntimeAdapter.browserAuthentication.");
@@ -288,6 +332,7 @@ export async function createPublicOAuthClient(
                 redirectUrl: options.redirectUrl,
                 presentation: signInOptions.browserPresentation,
             });
+            browserSessions.add(browserSession);
             const state = oauth.generateRandomState();
             const secretKey = pendingSecretKey(state);
             try {
@@ -315,16 +360,19 @@ export async function createPublicOAuthClient(
                     code_challenge_method: "S256",
                 }).toString();
                 const { callbackUrl } = await browserSession.open(authorizationUrl.toString());
-                return completeAuthorization(callbackUrl);
+                const authorized = await completeAuthorization(callbackUrl);
+                return authorized;
             } catch (error) {
-                await removePending(state, secretKey);
+                if (!cleaned) await removePending(state, secretKey);
                 await browserSession.close();
                 throw error;
+            } finally {
+                browserSessions.delete(browserSession);
             }
         },
-        completeRedirect(url) {
+        async completeRedirect(url) {
             const state = new URL(url).searchParams.get("state");
-            if (!state || !pending.get(state)) {
+            if (!state || !(await findPending(state))) {
                 return Promise.resolve(undefined);
             }
             return completeAuthorization(url);
@@ -332,7 +380,7 @@ export async function createPublicOAuthClient(
         async restoreSessions() {
             await cleanupStalePending();
             const restored = new Map<string, OAuthSession>();
-            for (const record of sessions.values()) {
+            for (const record of await queryOnce((q) => q.from({ session: sessions }))) {
                 if (restored.has(record.userId)) continue;
                 const tokens = await readTokens(record);
                 if (!tokens) {
@@ -349,7 +397,7 @@ export async function createPublicOAuthClient(
         },
         refresh,
         async getAccessToken(userId) {
-            const record = sessions.get(userId);
+            const record = await findSession(userId);
             if (!record) {
                 throw new Error(`OAuth session for user "${userId}" is unavailable.`);
             }
@@ -367,7 +415,7 @@ export async function createPublicOAuthClient(
             return tokens.accessToken;
         },
         async revoke(userId) {
-            const record = sessions.get(userId);
+            const record = await findSession(userId);
             if (!record) return;
             const tokens = await readTokens(record);
             if (tokens && options.authorizationServer.revocationEndpoint) {
@@ -382,17 +430,30 @@ export async function createPublicOAuthClient(
             }
             await forgetSession(userId);
         },
-        async cleanup() {
-            if (cleaned) return;
-            cleaned = true;
-            accessTokens.clear();
-            await Promise.all([
-                refreshServer?.close(),
-                pending.cleanup(),
-                sessions.cleanup(),
-                secrets.cleanup(),
-            ]);
-        },
+        cleanup: close,
     };
+    await Effect.runPromise(
+        Scope.addFinalizer(
+            scope,
+            Effect.promise(async () => {
+                if (cleaned) return;
+                cleaned = true;
+                lifetime.abort();
+                accessTokens.clear();
+                const results = await Promise.allSettled([
+                    refreshServer?.close(),
+                    ...[...browserSessions].map((session) => Promise.resolve().then(() => session.close())),
+                    pending.cleanup(),
+                    sessions.cleanup(),
+                    secrets.cleanup(),
+                ]);
+                browserSessions.clear();
+                const errors = results.flatMap((result) =>
+                    result.status === "rejected" ? [result.reason] : []
+                );
+                if (errors.length) throw new AggregateError(errors, "OAuth cleanup failed.");
+            })
+        )
+    );
     return clientApi;
 }

@@ -100,6 +100,7 @@ export interface BlobStore {
 
 export interface CreateBlobStoreOptions {
     runtime: RuntimeAdapter;
+    scope?: import("effect").Scope.Scope;
     onCacheChanged?: () => void;
 }
 
@@ -141,12 +142,15 @@ export function createBlobStore(options: CreateBlobStoreOptions): BlobStore {
         getKey: (ref) => ref.id,
         runtime: options.runtime,
         schemaVersion: 2,
+        scope: options.scope,
     });
     // Suppress unhandled rejection if cleanup races persistence startup.
-    const ready = collection.preload().catch((error) => {
-        if (collection.status === "cleaned-up") return;
-        throw error;
-    });
+    const ready = queryOnce((q) => q.from({ metadata: collection }))
+        .then(() => undefined)
+        .catch((error) => {
+            if (collection.status === "cleaned-up") return;
+            throw error;
+        });
     void ready.catch(() => undefined);
     const bytes = options.runtime.blobBytes;
     const activeOperationIds = new Set<string>();

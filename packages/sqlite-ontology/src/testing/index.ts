@@ -6,6 +6,7 @@ import {
     type OntologyQueryFunctionRegistry,
 } from "@party-stack/ontology";
 import { eq, queryOnce, type Collection } from "@tanstack/db";
+import { Effect } from "effect";
 import {
     collectSQLiteAttachmentOrphans,
     createSQLiteOntologyBackendAdapter,
@@ -232,42 +233,28 @@ function resetAttachmentMigration(database: SQLiteDatabase): void {
     `);
 }
 
-function runSchemaCreation(database: SQLiteDatabase): void {
-    createSQLiteOntologyBackendAdapter({
-        ir: conformanceIR,
-        database,
-        name: "sqlite",
-    });
-    createSQLiteOntologyBackendAdapter({
-        ir: conformanceIR,
-        database,
-        name: "sqlite",
-    });
+async function runSchemaCreation(database: SQLiteDatabase): Promise<void> {
+    const open = (name: string) =>
+        Effect.runPromise(
+            Effect.scoped(
+                createSQLiteOntologyBackendAdapter({
+                    ir: conformanceIR,
+                    database,
+                    name,
+                }).open({})
+            )
+        );
+    await open("sqlite");
+    await open("sqlite");
     assert(
         database
-            .prepare(
-                `SELECT name FROM sqlite_master
-                 WHERE type = 'table' AND name = ?`
-            )
-            .get("party_stack_sqlite_Note"),
-        "SQLite object table was not created."
-    );
-    assert(
-        !database
-            .prepare(
-                `SELECT name FROM sqlite_master
-                 WHERE type = 'table' AND name = ?`
-            )
-            .get("party_stack_namespaces"),
-        "SQLite backend unexpectedly created a logical namespace registry."
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .get("party_tables_rows"),
+        "Native Tables rows were not created."
     );
     let secondOntologyRejected = false;
     try {
-        createSQLiteOntologyBackendAdapter({
-            ir: conformanceIR,
-            database,
-            name: "other-ontology",
-        });
+        await open("other-ontology");
     } catch {
         secondOntologyRejected = true;
     }
@@ -416,6 +403,7 @@ async function runLegacyAttachmentMigration(database: SQLiteDatabase): Promise<v
         database,
         name: "sqlite",
     });
+    await Effect.runPromise(Effect.scoped(adapter.open({})));
     const columns = database.prepare(`PRAGMA table_info("party_stack_attachments")`).all() as Array<{
         name: string;
         pk: number;
@@ -426,7 +414,13 @@ async function runLegacyAttachmentMigration(database: SQLiteDatabase): Promise<v
         "Attachment migration did not produce a single-ontology table."
     );
     assertEqual(
-        await (await adapter.attachments!.getAttachmentContent({ id: "legacy" })).text(),
+        await (
+            await Effect.runPromise(
+                Effect.scoped(
+                    Effect.flatMap(adapter.open({}), (backend) => backend.attachments!.read({ id: "legacy" }))
+                )
+            )
+        ).text(),
         "legacy",
         "Explicit legacy attachment migration lost bytes."
     );

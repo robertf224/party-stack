@@ -1,0 +1,89 @@
+{
+    "name": "@party-stack/ontology-spec",
+    "version": "0.1.0",
+    "bin": {
+        "ontology-spec": "./lib/cli/index.js"
+    },
+    "files": [
+        "lib"
+    ],
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./utils": {
+            "types": "./lib/utils/index.d.ts",
+            "default": "./lib/utils/index.js"
+        },
+        "./values": {
+            "types": "./lib/utils/values.d.ts"
+        },
+        "./json": {
+            "types": "./lib/json/index.d.ts",
+            "default": "./lib/json/index.js"
+        },
+        "./generate": {
+            "types": "./lib/generate/index.d.ts",
+            "default": "./lib/generate/index.js"
+        },
+        "./schema": {
+            "types": "./lib/ir/schema.d.ts",
+            "default": "./lib/ir/schema.js"
+        },
+        "./constants": {
+            "types": "./lib/ir/generated/constants.d.ts",
+            "default": "./lib/ir/generated/constants.js"
+        },
+        "./meta": {
+            "types": "./lib/meta/index.d.ts",
+            "default": "./lib/meta/index.js"
+        },
+        "./meta/constants": {
+            "types": "./lib/meta/generated/constants.d.ts",
+            "default": "./lib/meta/generated/constants.js"
+        },
+        "./examples/blog": {
+            "types": "./lib/examples/blog.d.ts",
+            "default": "./lib/examples/blog.js"
+        },
+        "./effect": {
+            "types": "./lib/codecs/index.d.ts",
+            "default": "./lib/codecs/index.js"
+        },
+        "./effect/values": {
+            "types": "./lib/codecs/values.d.ts"
+        }
+    },
+    "scripts": {
+        "bootstrap": "node --import tsx ./src/cli/index.ts generate --ontology ./src/ir/schema.ts --outDir ./src/ir/generated",
+        "generate:meta": "node --import tsx ./src/cli/index.ts generate --ontology ./src/meta/ontology.ts --outDir ./src/meta/generated --namespace Meta --no-live"
+    },
+    "dependencies": {
+        "@bobbyfidz/panic": "^0.1.0",
+        "@party-stack/icons": "workspace:*",
+        "change-case": "^5.4.4",
+        "commander": "^14.0.2",
+        "jiti": "^2.6.1",
+        "oxfmt": "^0.72.0",
+        "temporal-polyfill": "^0.3.0",
+        "ts-morph": "^27.0.2"
+    },
+    "devDependencies": {
+        "@party-stack/build-config": "workspace:*",
+        "effect": "^4.0.5",
+        "tsx": "^4.20.6",
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:",
+        "vitest": "catalog:"
+    },
+    "peerDependencies": {
+        "effect": "^4.0.5"
+    },
+    "peerDependenciesMeta": {
+        "effect": {
+            "optional": true
+        }
+    }
+}

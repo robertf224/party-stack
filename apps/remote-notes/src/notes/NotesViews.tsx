@@ -1,6 +1,6 @@
 import { createOntologyDevtoolsPlugin, ontologyDevtoolsTrigger } from "@party-stack/ontology-devtools";
-import { createRemoteOntologyBackend } from "@party-stack/remote-ontology/client";
-import { createHttpRemoteOntologyTransport } from "@party-stack/remote-ontology/http";
+import { createRemoteOntologyBackend } from "@party-stack/ontology-server/client";
+import { createHttpRemoteOntologyTransport } from "@party-stack/ontology-server/http";
 import { createWebRuntime } from "@party-stack/web-runtime";
 import { ilike, or } from "@tanstack/db";
 import { debounceStrategy, useLiveQuery, usePacedMutations } from "@tanstack/react-db";

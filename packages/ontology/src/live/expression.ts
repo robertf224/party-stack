@@ -1,23 +1,29 @@
+import { isLinkHopFromForeignKeySource, resolveLinkHop } from "@party-stack/ontology-spec/utils";
+import { getAtPath } from "@party-stack/ontology-spec/utils";
+import { resolveType, unwrapType } from "@party-stack/ontology-spec/utils";
 import { eq } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
-import { isLinkHopFromForeignKeySource, resolveLinkHop } from "../utils/links.js";
-import { getAtPath } from "../utils/paths.js";
-import { resolveType, unwrapType } from "../utils/types.js";
+import type { OntologyReadTx } from "./mutators/types.js";
 import type {
     Expression,
     ObjectTypeDef,
     OntologyIR,
     TypeDef,
     InputReferenceExpression,
-} from "../ir/index.js";
-import type { OntologyReadTx } from "./mutators/types.js";
-import type { OntologyObject } from "./objects/OntologyObject.js";
+} from "@party-stack/ontology-spec";
+import type { OntologyObject } from "@party-stack/ontology-spec";
 
 function getActionType(ir: OntologyIR, actionTypeName: string) {
     return ir.actionTypes.find((actionType) => actionType.name === actionTypeName)!;
 }
 
+export interface ExpressionReplay {
+    readonly now: string;
+    readonly seed: string;
+}
 interface EvaluateExpressionOptions {
+    replay?: ExpressionReplay;
+    location?: readonly (string | number)[];
     ir: OntologyIR;
     actionTypeName: string;
     expression: Expression;
@@ -104,6 +110,7 @@ async function evaluateExpressionWithLocals(
                 {
                     ...options,
                     expression: expression.value.source,
+                    location: [...(options.location ?? []), "source"],
                 },
                 locals
             );
@@ -122,6 +129,7 @@ async function evaluateExpressionWithLocals(
                 {
                     ...options,
                     expression: expression.value.reference,
+                    location: [...(options.location ?? []), "reference"],
                 },
                 locals
             );
@@ -159,6 +167,7 @@ async function evaluateExpressionWithLocals(
                 {
                     ...options,
                     expression: expression.value.source,
+                    location: [...(options.location ?? []), "source"],
                 },
                 locals
             );
@@ -222,6 +231,7 @@ async function evaluateExpressionWithLocals(
                                 {
                                     ...options,
                                     expression: field.value,
+                                    location: [...(options.location ?? []), "field", field.name],
                                 },
                                 locals
                             ),
@@ -235,6 +245,7 @@ async function evaluateExpressionWithLocals(
                 {
                     ...options,
                     expression: expression.value.source,
+                    location: [...(options.location ?? []), "source"],
                 },
                 locals
             );
@@ -245,13 +256,14 @@ async function evaluateExpressionWithLocals(
                 throw new Error("Map expression source must resolve to a list.");
             }
             return Promise.all(
-                source.map((item) => {
+                source.map((item, index) => {
                     const itemLocals = new Map(locals);
                     itemLocals.set(expression.value.binding, item);
                     return evaluateExpressionWithLocals(
                         {
                             ...options,
                             expression: expression.value.body,
+                            location: [...(options.location ?? []), "item", index],
                         },
                         itemLocals
                     );
@@ -260,14 +272,27 @@ async function evaluateExpressionWithLocals(
         }
         case "literal":
             return expression.value.value;
-        case "uuid":
-            return globalThis.crypto.randomUUID();
+        case "uuid": {
+            if (!options.replay) return globalThis.crypto.randomUUID();
+            const digest = new Uint8Array(
+                await crypto.subtle.digest(
+                    "SHA-256",
+                    new TextEncoder().encode(JSON.stringify([options.replay.seed, options.location ?? []]))
+                )
+            );
+            const bytes = digest.slice(0, 16);
+            bytes[6] = (bytes[6]! & 0x0f) | 0x80;
+            bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+            const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+            return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+        }
         case "now":
-            return Temporal.Now.instant();
+            return options.replay ? Temporal.Instant.from(options.replay.now) : Temporal.Now.instant();
     }
 }
 
 export async function resolveActionParameters(options: {
+    replay?: ExpressionReplay;
     ir: OntologyIR;
     actionTypeName: string;
     initialParameters: Record<string, unknown>;
@@ -297,6 +322,8 @@ export async function resolveActionParameters(options: {
                 ir: options.ir,
                 actionTypeName: options.actionTypeName,
                 expression: parameter.defaultValue,
+                replay: options.replay,
+                location: ["parameter", parameterName],
                 resolveParameter,
                 context: options.context,
                 tx: options.tx,

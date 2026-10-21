@@ -16,7 +16,7 @@ export interface MetaEntityStoreOpts {
     objectTypeNames?: string[];
 }
 
-async function describeSObjects(
+export async function describeSObjects(
     client: SalesforceClient,
     names: readonly string[]
 ): Promise<SalesforceSObjectDescribe[]> {

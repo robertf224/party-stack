@@ -2,16 +2,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { Menu } from "@base-ui/react/menu";
 import { Tabs } from "@base-ui/react/tabs";
 import { Tooltip } from "@base-ui/react/tooltip";
-import {
-    Graph,
-    layout as layoutGraph,
-    type EdgeLabel,
-    type GraphLabel,
-    type NodeLabel,
-    type Point,
-} from "@dagrejs/dagre";
 import NumberFlow from "@number-flow/react";
-import { LucideIcon } from "@party-stack/icons-lucide/react";
 import { createReactPlugin } from "@tanstack/devtools-utils/react";
 import { useLiveInfiniteQuery, useLiveQuery } from "@tanstack/react-db";
 import {
@@ -33,23 +24,25 @@ import {
     RefreshCw as ArrowPathIcon,
     GripVertical as Bars2Icon,
     CalendarDays as CalendarDaysIcon,
+    Boxes as BoxesIcon,
+    ChartNoAxesGantt as GanttIcon,
     Check as CheckIcon,
     CircleCheck as CheckCircleIcon,
     ChevronDown as ChevronDownIcon,
     ChevronUp as ChevronUpIcon,
     ChevronsUpDown as ChevronUpDownIcon,
-    Database as CircleStackIcon,
     Clock as ClockIcon,
     SquareCode as CodeBracketSquareIcon,
     Hash as HashtagIcon,
-    Inbox as InboxStackIcon,
     Link as LinkIcon,
     List as ListBulletIcon,
     Map as MapIcon,
     MapPin as MapPinIcon,
     Paperclip as PaperClipIcon,
     CircleQuestionMark as QuestionMarkCircleIcon,
-    Share2 as ShareIcon,
+    Search as SearchIcon,
+    Send as SendIcon,
+    Waypoints as WaypointsIcon,
     Grid2X2 as Squares2X2Icon,
     Trash2 as TrashIcon,
     Columns3 as ViewColumnsIcon,
@@ -63,7 +56,16 @@ import {
     type CSSProperties,
     type ReactNode,
 } from "react";
-import type { IconName } from "@party-stack/icons";
+import { DisclosureSummary } from "./DisclosureSummary.js";
+import { ObjectTypeIcon } from "./OntologyIcons.js";
+import { PanelBoundary, usePanelPortal } from "./PanelBoundary.js";
+import { SchemaView } from "./SchemaView.js";
+import { typeDisplayName } from "./typeDisplayName.js";
+export { layoutSchema } from "./schemaLayout.js";
+export { typeDisplayName } from "./typeDisplayName.js";
+import { Queries } from "./Queries.js";
+import { Tracing } from "./Tracing.js";
+export { OntologyIcon } from "./OntologyIcons.js";
 import type {
     AttachmentMetadata,
     LiveOntology,
@@ -76,7 +78,6 @@ import type {
 } from "@party-stack/ontology";
 import type * as v from "@party-stack/ontology/values";
 import type { TanStackDevtoolsReactPlugin } from "@tanstack/react-devtools";
-import "./styles.css";
 
 export interface OntologyDevtoolsPanelProps<
     Ontology extends OntologyDefinition = OntologyDefinition,
@@ -100,35 +101,6 @@ export interface OntologyDevtoolsPluginOptions<
 
 export interface OntologyDevtoolsChromeProps {
     theme: "light" | "dark";
-}
-
-export function OntologyIcon({
-    className,
-    color,
-    name,
-}: {
-    className?: string;
-    color?: string;
-    name: IconName;
-}) {
-    return (
-        <LucideIcon
-            aria-hidden="true"
-            className={className}
-            name={name}
-            style={color ? { color } : undefined}
-        />
-    );
-}
-
-function ObjectTypeIcon({ className, objectType }: { className?: string; objectType: ObjectTypeDef }) {
-    return (
-        <OntologyIcon
-            className={className}
-            color={objectType.color}
-            name={objectType.icon?.name ?? "database"}
-        />
-    );
 }
 
 function PartyStackLogo({ theme }: OntologyDevtoolsChromeProps) {
@@ -354,8 +326,21 @@ function OutboxEntryCard({
                 </span>
             </div>
             <div className="ps-outbox-meta">
-                <span>
-                    <strong>{entry.attempts}</strong> {entry.attempts === 1 ? "attempt" : "attempts"}
+                <span
+                    className="ps-outbox-attempts"
+                    title={
+                        entry.attemptStage === "forwarding"
+                            ? `${entry.attempts} forwarding attempts; upstream execution has not been observed yet.`
+                            : "Attempts to execute at this replica's upstream."
+                    }
+                >
+                    {entry.attemptStage === "forwarding" ? (
+                        "Forwarding"
+                    ) : (
+                        <>
+                            Attempts: <strong>{entry.attempts}</strong>
+                        </>
+                    )}
                 </span>
                 <span aria-hidden="true" className="ps-outbox-meta-divider" />
                 <span className="ps-outbox-time" title={new Date(entry.createdAt).toLocaleString()}>
@@ -365,7 +350,7 @@ function OutboxEntryCard({
             </div>
             {entry.lastError ? <div className="ps-outbox-error">{entry.lastError.message}</div> : null}
             <details className="ps-outbox-details">
-                <summary>Parameters</summary>
+                <DisclosureSummary>Parameters</DisclosureSummary>
                 <pre>{JSON.stringify(entry.request.parameters, null, 2)}</pre>
             </details>
             <div className="ps-outbox-actions">
@@ -432,7 +417,7 @@ function OutboxRows({ outbox, theme }: { outbox: OntologyOutbox; theme: "light" 
     );
 }
 
-type OntologyDevtoolsView = "objects" | "schema" | "outbox" | "meta";
+type OntologyDevtoolsView = "objects" | "schema" | "outbox" | "meta" | "tracing" | "queries";
 type OutboxActivity = "idle" | "draining" | "paused";
 
 export function getOutboxActivity(entries: OntologyOutboxEntry[]): OutboxActivity {
@@ -456,7 +441,7 @@ function outboxActivityLabel(activity: OutboxActivity): string {
 function outboxBadgeClass(activity: OutboxActivity): string {
     switch (activity) {
         case "idle":
-            return "ps:bg-zinc-500/15 ps:text-zinc-400";
+            return "ps:bg-[var(--ps-raised)] ps:text-[var(--ps-muted)]";
         case "draining":
             return "ps:bg-sky-500/20 ps:text-sky-300";
         case "paused":
@@ -473,9 +458,11 @@ const ontologyViews: Array<{
         style?: CSSProperties;
     }>;
 }> = [
-    { id: "outbox", label: "Outbox", icon: InboxStackIcon },
-    { id: "schema", label: "Schema", icon: ShareIcon },
-    { id: "objects", label: "Objects", icon: CircleStackIcon },
+    { id: "objects", label: "Objects", icon: BoxesIcon },
+    { id: "outbox", label: "Outbox", icon: SendIcon },
+    { id: "queries", label: "Queries", icon: SearchIcon },
+    { id: "tracing", label: "Tracing", icon: GanttIcon },
+    { id: "schema", label: "Schema", icon: WaypointsIcon },
 ];
 
 function formatObjectValue(value: unknown): string {
@@ -506,47 +493,6 @@ function resolvedType(ir: OntologyIR, type: TypeDef): TypeDef {
     return referenced ? resolvedType(ir, referenced) : type;
 }
 
-export function typeDisplayName(type: TypeDef): string {
-    switch (type.kind) {
-        case "ref":
-            return type.value.name;
-        case "optional":
-            return `${typeDisplayName(type.value.type)} (optional)`;
-        case "list":
-            return `List of ${typeDisplayName(type.value.elementType)}`;
-        case "map":
-            return `Map of ${typeDisplayName(type.value.valueType)}`;
-        case "objectReference":
-            return `${type.value.objectType} reference`;
-        case "string":
-            return "String";
-        case "boolean":
-            return "Boolean";
-        case "integer":
-            return "Integer";
-        case "float":
-            return "Float";
-        case "double":
-            return "Double";
-        case "date":
-            return "Date";
-        case "timestamp":
-            return "Timestamp";
-        case "geopoint":
-            return "Geopoint";
-        case "struct":
-            return "Struct";
-        case "union":
-            return "Union";
-        case "result":
-            return "Result";
-        case "attachment":
-            return "Attachment";
-        case "unknown":
-            return "Unknown";
-    }
-}
-
 function typeIcon(type: TypeDef): ComponentType<{ "aria-hidden"?: boolean; className?: string }> {
     switch (type.kind) {
         case "ref":
@@ -575,6 +521,8 @@ function typeIcon(type: TypeDef): ComponentType<{ "aria-hidden"?: boolean; class
             return MapPinIcon;
         case "attachment":
             return PaperClipIcon;
+        case "encrypted":
+            return CodeBracketSquareIcon;
         case "struct":
         case "union":
         case "result":
@@ -585,14 +533,15 @@ function typeIcon(type: TypeDef): ComponentType<{ "aria-hidden"?: boolean; class
 }
 
 function DevtoolsTooltip({ children, label }: { children: ReactNode; label: ReactNode }) {
+    const portal = usePanelPortal();
     return (
         <Tooltip.Root>
             <Tooltip.Trigger render={<span className="ps:inline-flex ps:items-center" />}>
                 {children}
             </Tooltip.Trigger>
-            <Tooltip.Portal>
+            <Tooltip.Portal container={portal}>
                 <Tooltip.Positioner className="ps:z-[100001]" sideOffset={6}>
-                    <Tooltip.Popup className="ps:max-w-64 ps:rounded-md ps:border ps:border-zinc-700 ps:bg-zinc-900 ps:px-2.5 ps:py-1.5 ps:text-[11px] ps:text-zinc-200 ps:shadow-xl">
+                    <Tooltip.Popup className="ps:max-w-64 ps:rounded-md ps:border ps:border-[var(--ps-border)] ps:bg-[var(--ps-raised)] ps:px-2.5 ps:py-1.5 ps:text-[11px] ps:text-[var(--ps-text)] ps:shadow-xl">
                         {label}
                     </Tooltip.Popup>
                 </Tooltip.Positioner>
@@ -606,7 +555,7 @@ function TypeIndicator({ type }: { type: TypeDef }) {
     return (
         <DevtoolsTooltip label={typeDisplayName(type)}>
             {/* oxlint-disable-next-line react/static-components -- typeIcon selects an imported static icon; it does not create a component. */}
-            <Icon aria-hidden className="ps:size-3.5 ps:text-zinc-500" />
+            <Icon aria-hidden className="ps:size-3.5 ps:text-[var(--ps-muted)]" />
         </DevtoolsTooltip>
     );
 }
@@ -632,7 +581,7 @@ function GeopointPreview({ value }: { value: v.geopoint }) {
             label={
                 <svg
                     aria-label={`Map preview for ${label}`}
-                    className="ps:block ps:rounded ps:border ps:border-zinc-700"
+                    className="ps:block ps:rounded ps:border ps:border-[var(--ps-border)]"
                     height="72"
                     role="img"
                     viewBox="0 0 360 180"
@@ -697,6 +646,7 @@ function isAttachment(value: unknown): value is v.attachment {
 }
 
 function AttachmentPreview({ attachment, ontology }: { attachment: v.attachment; ontology: LiveOntology }) {
+    const portal = usePanelPortal();
     const [preview, setPreview] = useState<{
         metadata: AttachmentMetadata;
         src?: string;
@@ -726,7 +676,10 @@ function AttachmentPreview({ attachment, ontology }: { attachment: v.attachment;
         return (
             <DevtoolsTooltip label={label}>
                 <span className="ps:inline-flex ps:max-w-40 ps:items-center ps:gap-1.5 ps:truncate">
-                    <PaperClipIcon aria-hidden className="ps:size-3.5 ps:flex-none ps:text-zinc-500" />
+                    <PaperClipIcon
+                        aria-hidden
+                        className="ps:size-3.5 ps:flex-none ps:text-[var(--ps-muted)]"
+                    />
                     <span className="ps:truncate">{label}</span>
                 </span>
             </DevtoolsTooltip>
@@ -737,21 +690,21 @@ function AttachmentPreview({ attachment, ontology }: { attachment: v.attachment;
         <Dialog.Root>
             <Dialog.Trigger
                 aria-label={`Open ${label}`}
-                className="ps:block ps:overflow-hidden ps:rounded-md ps:border ps:border-zinc-700 ps:bg-transparent ps:p-0 ps:hover:border-rose-400"
+                className="ps:block ps:overflow-hidden ps:rounded-md ps:border ps:border-[var(--ps-border)] ps:bg-transparent ps:p-0 ps:hover:border-[var(--ps-accent)]"
             >
-                <img alt={label} className="ps:size-10 ps:object-cover" src={preview.src} />
+                <img alt={label} className="ps:block ps:size-7 ps:object-cover" src={preview.src} />
             </Dialog.Trigger>
-            <Dialog.Portal>
+            <Dialog.Portal container={portal}>
                 <Dialog.Backdrop className="ps:fixed ps:inset-0 ps:z-[100002] ps:bg-black/75 ps:backdrop-blur-sm" />
                 <Dialog.Viewport className="ps:fixed ps:inset-0 ps:z-[100003] ps:grid ps:place-items-center ps:p-8">
-                    <Dialog.Popup className="ps:relative ps:max-h-full ps:max-w-4xl ps:rounded-xl ps:border ps:border-zinc-700 ps:bg-zinc-950 ps:p-3 ps:shadow-2xl">
+                    <Dialog.Popup className="ps:relative ps:max-h-full ps:max-w-4xl ps:rounded-xl ps:border ps:border-[var(--ps-border)] ps:bg-[var(--ps-bg)] ps:p-3 ps:shadow-2xl">
                         <Dialog.Title className="ps:sr-only">{label}</Dialog.Title>
                         <img
                             alt={label}
                             className="ps:max-h-[80vh] ps:max-w-[80vw] ps:rounded-lg ps:object-contain"
                             src={preview.src}
                         />
-                        <Dialog.Close className="ps:absolute ps:top-4 ps:right-4 ps:rounded-md ps:border ps:border-zinc-600 ps:bg-zinc-950/90 ps:px-2.5 ps:py-1.5 ps:text-xs ps:text-white">
+                        <Dialog.Close className="ps:absolute ps:top-4 ps:right-4 ps:rounded-md ps:border ps:border-[var(--ps-border-strong)] ps:bg-[var(--ps-surface)] ps:px-2.5 ps:py-1.5 ps:text-xs ps:text-[var(--ps-text)]">
                             Close
                         </Dialog.Close>
                     </Dialog.Popup>
@@ -805,7 +758,7 @@ function PropertyValuePreview({
                         <AttachmentPreview attachment={attachment} key={attachment.id} ontology={ontology} />
                     ))}
                     {attachments.length > 3 ? (
-                        <span className="ps:text-zinc-500">+{attachments.length - 3}</span>
+                        <span className="ps:text-[var(--ps-muted)]">+{attachments.length - 3}</span>
                     ) : null}
                 </div>
             );
@@ -876,6 +829,7 @@ function ObjectTable({
     ontology: LiveOntology;
     pageSize: number;
 }) {
+    const portal = usePanelPortal();
     const [sorting, setSorting] = useState<SortingState>([]);
     const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
     const [columnVisibility, setColumnVisibility] = useState<ColumnVisibilityState>({});
@@ -885,7 +839,7 @@ function ObjectTable({
     const [draggedColumnId, setDraggedColumnId] = useState<string>();
     const [dragOverColumnId, setDragOverColumnId] = useState<string>();
     const selectedSort = sorting[0];
-    const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useLiveInfiniteQuery(
+    const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading } = useLiveInfiniteQuery(
         (query) => {
             const from = query.from({ row: collection });
             const primaryKey = objectType.primaryKey;
@@ -928,7 +882,7 @@ function ObjectTable({
                             <TypeIndicator type={property.type} />
                             <span>{property.displayName}</span>
                             {property.name === objectType.primaryKey ? (
-                                <span className="ps:ml-1.5 ps:text-[9px] ps:font-bold ps:tracking-wide ps:text-rose-400">
+                                <span className="ps:ml-1.5 ps:text-[9px] ps:font-bold ps:tracking-wide ps:text-[var(--ps-accent)]">
                                     PK
                                 </span>
                             ) : null}
@@ -967,17 +921,17 @@ function ObjectTable({
 
     return (
         <div className="ps:flex ps:min-h-0 ps:min-w-0 ps:flex-1 ps:flex-col ps:overflow-hidden">
-            <div className="ps:flex ps:flex-none ps:items-center ps:border-b ps:border-zinc-500/20 ps:px-4 ps:py-2">
+            <div className="ps:bg-[var(--ps-surface)] ps:flex ps:flex-none ps:items-center ps:border-b ps:border-[var(--ps-border)] ps:px-4 ps:py-2">
                 <h2 className="ps:m-0 ps:flex ps:items-center ps:gap-2 ps:text-lg ps:font-semibold">
                     <ObjectTypeIcon
-                        className="ps:size-5 ps:flex-none ps:text-rose-400"
+                        className="ps:size-5 ps:flex-none ps:text-[var(--ps-accent)]"
                         objectType={objectType}
                     />
                     {objectType.pluralDisplayName}
                 </h2>
                 <div className="ps:ml-auto ps:flex ps:items-center ps:gap-1.5">
                     <button
-                        className="ps:inline-flex ps:items-center ps:gap-1.5 ps:rounded-md ps:border-0 ps:bg-transparent ps:px-2 ps:py-1.5 ps:text-xs ps:text-zinc-400 ps:hover:bg-zinc-500/10 ps:hover:text-current ps:disabled:opacity-40"
+                        className="ps:inline-flex ps:items-center ps:gap-1.5 ps:rounded-md ps:border-0 ps:bg-transparent ps:px-2 ps:py-1.5 ps:text-xs ps:text-[var(--ps-muted)] ps:hover:bg-[var(--ps-hover)] ps:hover:text-current ps:disabled:opacity-40"
                         disabled={Object.keys(columnSizing).length === 0}
                         title="Reset column widths"
                         type="button"
@@ -989,15 +943,15 @@ function ObjectTable({
                         Reset widths
                     </button>
                     <Menu.Root>
-                        <Menu.Trigger className="ps:inline-flex ps:items-center ps:gap-1.5 ps:rounded-md ps:border ps:border-zinc-500/30 ps:bg-zinc-500/10 ps:px-2.5 ps:py-1.5 ps:text-xs ps:text-inherit ps:hover:border-zinc-500/60">
+                        <Menu.Trigger className="ps:inline-flex ps:items-center ps:gap-1.5 ps:rounded-md ps:border ps:border-[var(--ps-border)] ps:bg-[var(--ps-hover)] ps:px-2.5 ps:py-1.5 ps:text-xs ps:text-inherit ps:hover:border-[var(--ps-border-strong)]">
                             <ViewColumnsIcon aria-hidden className="ps:size-3.5" />
                             Columns
                         </Menu.Trigger>
-                        <Menu.Portal>
+                        <Menu.Portal container={portal}>
                             <Menu.Positioner align="end" className="ps:z-[100001]" sideOffset={6}>
-                                <Menu.Popup className="ps:min-w-48 ps:rounded-lg ps:border ps:border-zinc-700 ps:bg-zinc-900 ps:p-1.5 ps:text-xs ps:text-zinc-200 ps:shadow-2xl">
+                                <Menu.Popup className="ps:min-w-48 ps:rounded-lg ps:border ps:border-[var(--ps-border)] ps:bg-[var(--ps-raised)] ps:p-1.5 ps:text-xs ps:text-[var(--ps-text)] ps:shadow-2xl">
                                     <Menu.Group>
-                                        <Menu.GroupLabel className="ps:px-2 ps:py-1.5 ps:text-[10px] ps:font-bold ps:tracking-wider ps:text-zinc-500 ps:uppercase">
+                                        <Menu.GroupLabel className="ps:px-2 ps:py-1.5 ps:text-[10px] ps:font-bold ps:tracking-wider ps:text-[var(--ps-muted)] ps:uppercase">
                                             Columns
                                         </Menu.GroupLabel>
                                         {allColumns.map((column, columnIndex) => (
@@ -1011,8 +965,8 @@ function ObjectTable({
                                                 className={
                                                     dragOverColumnId === column.id &&
                                                     draggedColumnId !== column.id
-                                                        ? "ps:flex ps:cursor-default ps:items-center ps:gap-2 ps:rounded-md ps:bg-rose-500/15 ps:px-2 ps:py-1.5 ps:outline-none"
-                                                        : "ps:flex ps:cursor-default ps:items-center ps:gap-2 ps:rounded-md ps:px-2 ps:py-1.5 ps:outline-none ps:data-[highlighted]:bg-zinc-700/70"
+                                                        ? "ps:flex ps:cursor-default ps:items-center ps:gap-2 ps:rounded-md ps:bg-[var(--ps-selected)] ps:px-2 ps:py-1.5 ps:outline-none"
+                                                        : "ps:flex ps:cursor-default ps:items-center ps:gap-2 ps:rounded-md ps:px-2 ps:py-1.5 ps:outline-none ps:data-[highlighted]:bg-[var(--ps-hover)]"
                                                 }
                                                 draggable
                                                 key={column.id}
@@ -1070,7 +1024,7 @@ function ObjectTable({
                                             >
                                                 <span
                                                     aria-hidden="true"
-                                                    className="ps:cursor-grab ps:text-zinc-500 ps:active:cursor-grabbing"
+                                                    className="ps:cursor-grab ps:text-[var(--ps-muted)] ps:active:cursor-grabbing"
                                                     title="Drag to reorder"
                                                     onClick={(event) => {
                                                         event.stopPropagation();
@@ -1078,11 +1032,11 @@ function ObjectTable({
                                                 >
                                                     <Bars2Icon aria-hidden className="ps:size-3.5" />
                                                 </span>
-                                                <span className="ps:grid ps:size-4 ps:place-items-center ps:rounded ps:border ps:border-zinc-600">
+                                                <span className="ps:grid ps:size-4 ps:place-items-center ps:rounded ps:border ps:border-[var(--ps-border-strong)]">
                                                     {column.getIsVisible() ? (
                                                         <CheckIcon
                                                             aria-hidden
-                                                            className="ps:size-3 ps:text-rose-400"
+                                                            className="ps:size-3 ps:text-[var(--ps-accent)]"
                                                         />
                                                     ) : null}
                                                 </span>
@@ -1093,7 +1047,7 @@ function ObjectTable({
                                                 </span>
                                             </Menu.CheckboxItem>
                                         ))}
-                                        <p className="ps:m-0 ps:px-2 ps:pt-2 ps:pb-1 ps:text-[10px] ps:text-zinc-500">
+                                        <p className="ps:m-0 ps:px-2 ps:pt-2 ps:pb-1 ps:text-[10px] ps:text-[var(--ps-muted)]">
                                             Drag to reorder · Alt+↑/↓ with keyboard
                                         </p>
                                     </Menu.Group>
@@ -1103,175 +1057,178 @@ function ObjectTable({
                     </Menu.Root>
                 </div>
             </div>
-            {rows.length === 0 ? (
-                <div className="ps:m-4 ps:grid ps:min-h-40 ps:place-items-center ps:rounded-xl ps:border ps:border-dashed ps:border-zinc-500/40 ps:text-sm ps:text-zinc-500">
-                    No objects loaded
-                </div>
-            ) : (
-                <div className="ps-object-table-scroll ps:min-h-0 ps:flex-1 ps:overflow-auto">
-                    <div
-                        className="ps:relative ps:min-h-full"
-                        style={{ minWidth: "100%", width: table.getTotalSize() }}
-                    >
-                        <table className="ps:w-full ps:table-fixed ps:border-separate ps:border-spacing-0 ps:text-left ps:text-xs">
-                            <colgroup>
-                                {table.getVisibleLeafColumns().map((column) => (
-                                    <col key={column.id} style={{ width: column.getSize() }} />
-                                ))}
-                            </colgroup>
-                            <thead className="ps-object-table-header">
-                                {table.getHeaderGroups().map((headerGroup) => (
-                                    <tr key={headerGroup.id}>
-                                        {headerGroup.headers.map((header) => {
-                                            const direction = header.column.getIsSorted();
-                                            return (
-                                                <th
-                                                    className="ps:relative ps:border-b ps:border-zinc-500/30 ps:bg-zinc-950/95 ps:px-4 ps:py-3 ps:font-semibold ps:whitespace-nowrap ps:backdrop-blur ps:in-[.ps-theme-light]:bg-stone-50/95"
-                                                    key={header.id}
-                                                >
-                                                    {header.isPlaceholder ? null : (
-                                                        <button
-                                                            className="ps:flex ps:w-full ps:items-center ps:gap-2 ps:border-0 ps:bg-transparent ps:p-0 ps:text-left ps:text-inherit ps:font-inherit ps:hover:text-rose-400"
-                                                            title={`Sort by ${header.column.id}`}
-                                                            type="button"
-                                                            onClick={header.column.getToggleSortingHandler()}
-                                                        >
-                                                            {flexRender(
-                                                                header.column.columnDef.header,
-                                                                header.getContext()
-                                                            )}
-                                                            {direction === "asc" ? (
-                                                                <ChevronUpIcon
-                                                                    aria-hidden
-                                                                    className="ps:size-3.5 ps:flex-none ps:text-rose-400"
-                                                                />
-                                                            ) : direction === "desc" ? (
-                                                                <ChevronDownIcon
-                                                                    aria-hidden
-                                                                    className="ps:size-3.5 ps:flex-none ps:text-rose-400"
-                                                                />
-                                                            ) : (
-                                                                <ChevronUpDownIcon
-                                                                    aria-hidden
-                                                                    className="ps:size-3.5 ps:flex-none ps:text-zinc-600"
-                                                                />
-                                                            )}
-                                                            <span className="ps:sr-only">
-                                                                {direction === "asc"
-                                                                    ? "Sorted ascending"
-                                                                    : direction === "desc"
-                                                                      ? "Sorted descending"
-                                                                      : "Not sorted"}
-                                                            </span>
-                                                        </button>
-                                                    )}
-                                                    {
-                                                        header.column.getCanResize() ? (
-                                                            // oxlint-disable jsx-a11y/prefer-tag-over-role -- This focusable separator adjusts column width; an hr cannot replace it.
-                                                            <button
-                                                                aria-label={`Resize ${header.column.id} column`}
-                                                                aria-orientation="vertical"
-                                                                aria-valuemax={
-                                                                    header.column.columnDef.maxSize
-                                                                }
-                                                                aria-valuemin={
-                                                                    header.column.columnDef.minSize
-                                                                }
-                                                                aria-valuenow={header.column.getSize()}
-                                                                className={
-                                                                    header.column.getIsResizing()
-                                                                        ? "ps:absolute ps:top-0 ps:right-0 ps:z-20 ps:h-full ps:w-1 ps:cursor-col-resize ps:touch-none ps:border-0 ps:bg-transparent ps:p-0"
-                                                                        : resizingColumn
-                                                                          ? "ps:pointer-events-none ps:invisible ps:absolute ps:top-0 ps:right-0 ps:h-full ps:w-1 ps:border-0 ps:bg-transparent ps:p-0"
-                                                                          : "ps:absolute ps:top-0 ps:right-0 ps:h-full ps:w-1 ps:cursor-col-resize ps:touch-none ps:border-0 ps:bg-transparent ps:p-0 ps:hover:bg-rose-400/70 ps:focus-visible:bg-rose-400/70 ps:focus:outline-none"
-                                                                }
-                                                                disabled={
-                                                                    resizingColumn !== undefined &&
-                                                                    !header.column.getIsResizing()
-                                                                }
-                                                                role="separator"
-                                                                tabIndex={0}
-                                                                type="button"
-                                                                onDoubleClick={() => {
-                                                                    header.column.resetSize();
-                                                                }}
-                                                                onKeyDown={(event) => {
-                                                                    if (
-                                                                        event.key !== "ArrowLeft" &&
-                                                                        event.key !== "ArrowRight"
-                                                                    ) {
-                                                                        return;
-                                                                    }
-                                                                    event.preventDefault();
-                                                                    const delta =
-                                                                        event.key === "ArrowRight" ? 10 : -10;
-                                                                    const min =
-                                                                        header.column.columnDef.minSize ?? 20;
-                                                                    const max =
-                                                                        header.column.columnDef.maxSize ??
-                                                                        Number.MAX_SAFE_INTEGER;
-                                                                    setColumnSizing((current) => ({
-                                                                        ...current,
-                                                                        [header.column.id]: Math.min(
-                                                                            max,
-                                                                            Math.max(
-                                                                                min,
-                                                                                header.column.getSize() +
-                                                                                    delta
-                                                                            )
-                                                                        ),
-                                                                    }));
-                                                                }}
-                                                                onMouseDown={header.getResizeHandler()}
-                                                                onTouchStart={header.getResizeHandler()}
-                                                            />
-                                                        ) : null /* oxlint-enable jsx-a11y/prefer-tag-over-role */
-                                                    }
-                                                </th>
-                                            );
-                                        })}
-                                    </tr>
-                                ))}
-                            </thead>
-                            <tbody>
-                                {table.getRowModel().rows.map((row) => (
-                                    <tr className="ps:hover:bg-zinc-500/8" key={row.id}>
-                                        {row.getVisibleCells().map((cell) => (
-                                            <td
-                                                className="ps:max-w-80 ps:border-b ps:border-zinc-500/15 ps:px-4 ps:py-3 ps:text-[11px] ps:whitespace-nowrap"
-                                                key={cell.id}
+            <div className="ps-object-table-scroll ps:min-h-0 ps:flex-1 ps:overflow-auto">
+                <div
+                    className="ps:relative ps:min-h-full"
+                    style={{ minWidth: "100%", width: table.getTotalSize() }}
+                >
+                    <table className="ps:w-full ps:table-fixed ps:border-separate ps:border-spacing-0 ps:text-left ps:text-xs">
+                        <colgroup>
+                            {table.getVisibleLeafColumns().map((column) => (
+                                <col key={column.id} style={{ width: column.getSize() }} />
+                            ))}
+                        </colgroup>
+                        <thead className="ps-object-table-header">
+                            {table.getHeaderGroups().map((headerGroup) => (
+                                <tr key={headerGroup.id}>
+                                    {headerGroup.headers.map((header) => {
+                                        const direction = header.column.getIsSorted();
+                                        return (
+                                            <th
+                                                className="ps:relative ps:border-b ps:border-[var(--ps-border)] ps:bg-[var(--ps-surface)] ps:px-4 ps:py-3 ps:font-semibold ps:whitespace-nowrap ps:backdrop-blur"
+                                                key={header.id}
                                             >
+                                                {header.isPlaceholder ? null : (
+                                                    <button
+                                                        className="ps:flex ps:w-full ps:items-center ps:gap-2 ps:border-0 ps:bg-transparent ps:p-0 ps:text-left ps:text-inherit ps:font-inherit ps:hover:text-[var(--ps-accent)]"
+                                                        title={`Sort by ${header.column.id}`}
+                                                        type="button"
+                                                        onClick={header.column.getToggleSortingHandler()}
+                                                    >
+                                                        {flexRender(
+                                                            header.column.columnDef.header,
+                                                            header.getContext()
+                                                        )}
+                                                        {direction === "asc" ? (
+                                                            <ChevronUpIcon
+                                                                aria-hidden
+                                                                className="ps:size-3.5 ps:flex-none ps:text-[var(--ps-accent)]"
+                                                            />
+                                                        ) : direction === "desc" ? (
+                                                            <ChevronDownIcon
+                                                                aria-hidden
+                                                                className="ps:size-3.5 ps:flex-none ps:text-[var(--ps-accent)]"
+                                                            />
+                                                        ) : (
+                                                            <ChevronUpDownIcon
+                                                                aria-hidden
+                                                                className="ps:size-3.5 ps:flex-none ps:text-[var(--ps-muted)]"
+                                                            />
+                                                        )}
+                                                        <span className="ps:sr-only">
+                                                            {direction === "asc"
+                                                                ? "Sorted ascending"
+                                                                : direction === "desc"
+                                                                  ? "Sorted descending"
+                                                                  : "Not sorted"}
+                                                        </span>
+                                                    </button>
+                                                )}
+                                                {
+                                                    header.column.getCanResize() ? (
+                                                        // oxlint-disable jsx-a11y/prefer-tag-over-role -- This focusable separator adjusts column width; an hr cannot replace it.
+                                                        <button
+                                                            aria-label={`Resize ${header.column.id} column`}
+                                                            aria-orientation="vertical"
+                                                            aria-valuemax={header.column.columnDef.maxSize}
+                                                            aria-valuemin={header.column.columnDef.minSize}
+                                                            aria-valuenow={header.column.getSize()}
+                                                            className={
+                                                                header.column.getIsResizing()
+                                                                    ? "ps:absolute ps:top-0 ps:right-0 ps:z-20 ps:h-full ps:w-1 ps:cursor-col-resize ps:touch-none ps:border-0 ps:bg-transparent ps:p-0"
+                                                                    : resizingColumn
+                                                                      ? "ps:pointer-events-none ps:invisible ps:absolute ps:top-0 ps:right-0 ps:h-full ps:w-1 ps:border-0 ps:bg-transparent ps:p-0"
+                                                                      : "ps:absolute ps:top-0 ps:right-0 ps:h-full ps:w-1 ps:cursor-col-resize ps:touch-none ps:border-0 ps:bg-transparent ps:p-0 ps:hover:bg-rose-400/70 ps:focus-visible:bg-rose-400/70 ps:focus:outline-none"
+                                                            }
+                                                            disabled={
+                                                                resizingColumn !== undefined &&
+                                                                !header.column.getIsResizing()
+                                                            }
+                                                            role="separator"
+                                                            tabIndex={0}
+                                                            type="button"
+                                                            onDoubleClick={() => {
+                                                                header.column.resetSize();
+                                                            }}
+                                                            onKeyDown={(event) => {
+                                                                if (
+                                                                    event.key !== "ArrowLeft" &&
+                                                                    event.key !== "ArrowRight"
+                                                                ) {
+                                                                    return;
+                                                                }
+                                                                event.preventDefault();
+                                                                const delta =
+                                                                    event.key === "ArrowRight" ? 10 : -10;
+                                                                const min =
+                                                                    header.column.columnDef.minSize ?? 20;
+                                                                const max =
+                                                                    header.column.columnDef.maxSize ??
+                                                                    Number.MAX_SAFE_INTEGER;
+                                                                setColumnSizing((current) => ({
+                                                                    ...current,
+                                                                    [header.column.id]: Math.min(
+                                                                        max,
+                                                                        Math.max(
+                                                                            min,
+                                                                            header.column.getSize() + delta
+                                                                        )
+                                                                    ),
+                                                                }));
+                                                            }}
+                                                            onMouseDown={header.getResizeHandler()}
+                                                            onTouchStart={header.getResizeHandler()}
+                                                        />
+                                                    ) : null /* oxlint-enable jsx-a11y/prefer-tag-over-role */
+                                                }
+                                            </th>
+                                        );
+                                    })}
+                                </tr>
+                            ))}
+                        </thead>
+                        <tbody>
+                            {rows.length === 0 && (
+                                <tr>
+                                    <td
+                                        colSpan={table.getVisibleLeafColumns().length}
+                                        className="ps:h-40 ps:px-4 ps:pt-6 ps:align-top ps:text-[var(--ps-muted)]"
+                                    >
+                                        <output>
+                                            {isLoading ? "Loading objects…" : "No objects loaded"}
+                                        </output>
+                                    </td>
+                                </tr>
+                            )}
+                            {table.getRowModel().rows.map((row) => (
+                                <tr className="ps-object-data-row ps:hover:bg-[var(--ps-hover)]" key={row.id}>
+                                    {row.getVisibleCells().map((cell) => (
+                                        <td
+                                            className="ps-object-data-cell ps:max-w-80 ps:border-b ps:border-[var(--ps-border)] ps:px-4 ps:text-[11px] ps:whitespace-nowrap"
+                                            key={cell.id}
+                                        >
+                                            <div className="ps-object-cell-content">
                                                 {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                            </td>
-                                        ))}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                        {hasNextPage ? (
-                            <div className="ps:sticky ps:left-0 ps:flex ps:w-full ps:justify-center ps:border-t ps:border-zinc-500/20 ps:bg-zinc-950/95 ps:p-3 ps:in-[.ps-theme-light]:bg-stone-50/95">
-                                <button
-                                    className="ps:rounded-md ps:border ps:border-zinc-600 ps:bg-zinc-900 ps:px-3 ps:py-1.5 ps:text-xs ps:text-zinc-200 ps:hover:border-rose-400 ps:hover:text-rose-300 ps:disabled:opacity-50"
-                                    disabled={isFetchingNextPage}
-                                    type="button"
-                                    onClick={() => void fetchNextPage()}
-                                >
-                                    {isFetchingNextPage ? "Loading…" : `Load ${pageSize} more`}
-                                </button>
-                            </div>
-                        ) : null}
-                        {resizingColumn ? (
-                            <div
-                                className="ps:pointer-events-none ps:absolute ps:inset-y-0 ps:z-50 ps:w-0.5 ps:bg-rose-400 ps:shadow-[0_0_0_1px_rgba(251,113,133,0.18)] ps:will-change-transform"
-                                style={{
-                                    left: resizingColumn.getStart() + resizingColumn.getSize(),
-                                    transform: `translateX(${table.state.columnResizing.deltaOffset ?? 0}px)`,
-                                }}
-                            />
-                        ) : null}
-                    </div>
+                                            </div>
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {hasNextPage ? (
+                        <div className="ps:sticky ps:left-0 ps:flex ps:w-full ps:justify-center ps:border-t ps:border-[var(--ps-border)] ps:bg-[var(--ps-surface)] ps:p-3">
+                            <button
+                                className="ps:rounded-md ps:border ps:border-[var(--ps-border-strong)] ps:bg-[var(--ps-raised)] ps:px-3 ps:py-1.5 ps:text-xs ps:text-[var(--ps-text)] ps:hover:border-[var(--ps-accent)] ps:hover:text-[var(--ps-accent)] ps:disabled:opacity-50"
+                                disabled={isFetchingNextPage}
+                                type="button"
+                                onClick={() => void fetchNextPage()}
+                            >
+                                {isFetchingNextPage ? "Loading…" : `Load ${pageSize} more`}
+                            </button>
+                        </div>
+                    ) : null}
+                    {resizingColumn ? (
+                        <div
+                            className="ps:pointer-events-none ps:absolute ps:inset-y-0 ps:z-50 ps:w-0.5 ps:bg-rose-400 ps:shadow-[0_0_0_1px_rgba(251,113,133,0.18)] ps:will-change-transform"
+                            style={{
+                                left: resizingColumn.getStart() + resizingColumn.getSize(),
+                                transform: `translateX(${table.state.columnResizing.deltaOffset ?? 0}px)`,
+                            }}
+                        />
+                    ) : null}
                 </div>
-            )}
+            </div>
         </div>
     );
 }
@@ -1280,20 +1237,20 @@ function ObjectsView({ ontology, pageSize = 50 }: { ontology: LiveOntology; page
     const objectTypes = ontology.ir.objectTypes;
     const [selectedName, setSelectedName] = useState(() => objectTypes[0]?.name);
     const selected = objectTypes.find((objectType) => objectType.name === selectedName) ?? objectTypes[0];
-    const collection = selected ? ontology.objects[selected.name] : undefined;
+    const collection = selected ? ontology.persistedObjects?.[selected.name] : undefined;
 
     if (!selected || !collection) {
         return (
-            <div className="ps:grid ps:h-full ps:place-items-center ps:text-sm ps:text-zinc-500">
-                This ontology has no object types.
+            <div className="ps:grid ps:h-full ps:place-items-center ps:text-sm ps:text-[var(--ps-muted)]">
+                Persisted object inspection is unavailable for this ontology runtime.
             </div>
         );
     }
 
     return (
         <div className="ps:flex ps:h-full ps:min-h-0 ps:w-full ps:min-w-0 ps:overflow-hidden">
-            <aside className="ps:w-44 ps:flex-none ps:overflow-y-auto ps:border-r ps:border-zinc-500/20 ps:p-3">
-                <p className="ps:mt-0 ps:mb-2 ps:px-2 ps:text-[10px] ps:font-bold ps:tracking-[0.14em] ps:text-zinc-500 ps:uppercase">
+            <aside className="ps:w-44 ps:flex-none ps:overflow-y-auto ps:border-r ps:border-[var(--ps-border)] ps:p-3">
+                <p className="ps:mt-0 ps:mb-2 ps:px-2 ps:text-[10px] ps:font-bold ps:tracking-[0.14em] ps:text-[var(--ps-muted)] ps:uppercase">
                     Object types
                 </p>
                 <div className="ps:flex ps:flex-col ps:gap-1">
@@ -1301,8 +1258,8 @@ function ObjectsView({ ontology, pageSize = 50 }: { ontology: LiveOntology; page
                         <button
                             className={
                                 objectType.name === selected.name
-                                    ? "ps:flex ps:items-center ps:gap-2 ps:rounded-lg ps:border-0 ps:bg-rose-500/15 ps:px-2.5 ps:py-2 ps:text-left ps:text-xs ps:font-semibold ps:text-rose-400"
-                                    : "ps:flex ps:items-center ps:gap-2 ps:rounded-lg ps:border-0 ps:bg-transparent ps:px-2.5 ps:py-2 ps:text-left ps:text-xs ps:text-inherit ps:hover:bg-zinc-500/10"
+                                    ? "ps:flex ps:items-center ps:gap-2 ps:rounded-lg ps:border-0 ps:bg-[var(--ps-selected)] ps:px-2.5 ps:py-2 ps:text-left ps:text-xs ps:font-semibold ps:text-[var(--ps-accent)]"
+                                    : "ps:flex ps:items-center ps:gap-2 ps:rounded-lg ps:border-0 ps:bg-transparent ps:px-2.5 ps:py-2 ps:text-left ps:text-xs ps:text-inherit ps:hover:bg-[var(--ps-hover)]"
                             }
                             key={objectType.name}
                             type="button"
@@ -1327,253 +1284,18 @@ function ObjectsView({ ontology, pageSize = 50 }: { ontology: LiveOntology; page
     );
 }
 
-interface SchemaNode {
-    objectType: ObjectTypeDef;
-    x: number;
-    y: number;
-}
-
-interface SchemaEdge {
-    id: string;
-    label: string;
-    labelWidth: number;
-    labelX: number;
-    labelY: number;
-    points: Point[];
-}
-
-interface SchemaGraphEdgeLabel extends EdgeLabel {
-    label: string;
-}
-
-const SCHEMA_CARD_WIDTH = 230;
-const SCHEMA_CARD_HEIGHT = 176;
-
-function schemaEdgeLabel(link: OntologyIR["linkTypes"][number]): {
-    label: string;
-    width: number;
-} {
-    const label = `${link.source.displayName} · ${link.cardinality}`;
-    return {
-        label,
-        width: Math.min(180, Math.max(72, label.length * 6 + 16)),
-    };
-}
-
-export function layoutSchema(ir: OntologyIR): {
-    nodes: SchemaNode[];
-    edges: SchemaEdge[];
-    width: number;
-    height: number;
-} {
-    const graph = new Graph<GraphLabel, NodeLabel, SchemaGraphEdgeLabel>({ multigraph: true })
-        .setGraph({
-            marginx: 40,
-            marginy: 40,
-            nodesep: 72,
-            rankdir: "LR",
-            ranksep: 120,
-        })
-        .setDefaultEdgeLabel(() => ({ label: "" }));
-
-    for (const objectType of ir.objectTypes) {
-        graph.setNode(objectType.name, {
-            height: SCHEMA_CARD_HEIGHT,
-            width: SCHEMA_CARD_WIDTH,
-        });
-    }
-    for (const link of ir.linkTypes) {
-        const edgeLabel = schemaEdgeLabel(link);
-        graph.setEdge(
-            link.source.objectType,
-            link.target.objectType,
-            {
-                height: 24,
-                label: edgeLabel.label,
-                width: edgeLabel.width,
-            },
-            link.id
-        );
-    }
-
-    layoutGraph(graph);
-
-    const objectTypeByName = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
-    const nodes = graph
-        .nodes()
-        .map((name) => {
-            const objectType = objectTypeByName.get(name);
-            const node = graph.node(name);
-            if (!objectType || !node) return undefined;
-            return {
-                objectType,
-                x: (node.x ?? 0) - SCHEMA_CARD_WIDTH / 2,
-                y: (node.y ?? 0) - SCHEMA_CARD_HEIGHT / 2,
-            };
-        })
-        .filter((node): node is SchemaNode => node !== undefined);
-    const edges = graph.edges().map((edge) => {
-        const value = graph.edge(edge);
-        return {
-            id: edge.name ?? `${edge.v}-${edge.w}`,
-            label: value.label ?? "",
-            labelWidth: value.width ?? 72,
-            labelX: value.x ?? value.points?.[0]?.x ?? 0,
-            labelY: value.y ?? value.points?.[0]?.y ?? 0,
-            points: value.points ?? [],
-        };
-    });
-    const graphSize = graph.graph();
-
-    return {
-        nodes,
-        edges,
-        width: Math.max(310, graphSize.width ?? 0),
-        height: Math.max(256, graphSize.height ?? 0),
-    };
-}
-
-export function schemaEdgePath(points: Point[], cornerRadius = 12): string {
-    if (points.length === 0) return "";
-    const first = points[0]!;
-    if (points.length === 1) return `M ${first.x} ${first.y}`;
-
-    const path = [`M ${first.x} ${first.y}`];
-    for (let index = 1; index < points.length - 1; index += 1) {
-        const previous = points[index - 1]!;
-        const current = points[index]!;
-        const next = points[index + 1]!;
-        const incoming = Math.hypot(current.x - previous.x, current.y - previous.y);
-        const outgoing = Math.hypot(next.x - current.x, next.y - current.y);
-        if (incoming === 0 || outgoing === 0) {
-            path.push(`L ${current.x} ${current.y}`);
-            continue;
-        }
-        const radius = Math.min(cornerRadius, incoming / 2, outgoing / 2);
-        const before = {
-            x: current.x + ((previous.x - current.x) / incoming) * radius,
-            y: current.y + ((previous.y - current.y) / incoming) * radius,
-        };
-        const after = {
-            x: current.x + ((next.x - current.x) / outgoing) * radius,
-            y: current.y + ((next.y - current.y) / outgoing) * radius,
-        };
-        path.push(`L ${before.x} ${before.y}`, `Q ${current.x} ${current.y} ${after.x} ${after.y}`);
-    }
-    const end = points.at(-1);
-    if (end) path.push(`L ${end.x} ${end.y}`);
-    return path.join(" ");
-}
-
-function SchemaView({ ir }: { ir: OntologyIR }) {
-    const schemaLayout = useMemo(() => layoutSchema(ir), [ir]);
-    const markerId = `ps-schema-arrow-${useId().replaceAll(":", "")}`;
-
-    if (ir.objectTypes.length === 0) {
-        return (
-            <div className="ps:grid ps:h-full ps:place-items-center ps:text-sm ps:text-zinc-500">
-                This ontology has no schema.
-            </div>
-        );
-    }
-
+export function OntologyDevtoolsPanel<
+    Ontology extends OntologyDefinition,
+    MetaOntology extends OntologyDefinition = OntologyDefinition,
+>(props: OntologyDevtoolsPanelProps<Ontology, MetaOntology>) {
     return (
-        <div className="ps:h-full ps:overflow-auto ps:p-5">
-            <div
-                className="ps:relative ps:rounded-2xl ps:border ps:border-zinc-500/20 ps:bg-zinc-950/25 ps:in-[.ps-theme-light]:bg-white/45"
-                style={{ height: schemaLayout.height, width: schemaLayout.width }}
-            >
-                {/* oxlint-disable jsx-a11y/prefer-tag-over-role -- Inline SVG is an image, not an HTML img. */}
-                <svg
-                    aria-label="Ontology relations"
-                    className="ps:absolute ps:inset-0 ps:size-full ps:overflow-visible"
-                    role="img"
-                    viewBox={`0 0 ${schemaLayout.width} ${schemaLayout.height}`}
-                >
-                    <defs>
-                        <marker
-                            id={markerId}
-                            markerHeight="8"
-                            markerWidth="8"
-                            orient="auto"
-                            refX="7"
-                            refY="4"
-                        >
-                            <path className="ps:fill-rose-400" d="M0,0 L8,4 L0,8 Z" />
-                        </marker>
-                    </defs>
-                    {schemaLayout.edges.map((edge) => (
-                        <g key={edge.id}>
-                            <path
-                                className="ps:fill-none ps:stroke-rose-400/80"
-                                d={schemaEdgePath(edge.points)}
-                                markerEnd={`url(#${markerId})`}
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth="2"
-                            />
-                            <rect
-                                className="ps:fill-zinc-900 ps:stroke-zinc-700 ps:in-[.ps-theme-light]:fill-white ps:in-[.ps-theme-light]:stroke-stone-300"
-                                height="22"
-                                rx="7"
-                                width={edge.labelWidth}
-                                x={edge.labelX - edge.labelWidth / 2}
-                                y={edge.labelY - 11}
-                            />
-                            <text
-                                className="ps:fill-zinc-300 ps:text-[10px] ps:font-medium ps:in-[.ps-theme-light]:fill-stone-600"
-                                dominantBaseline="middle"
-                                textAnchor="middle"
-                                x={edge.labelX}
-                                y={edge.labelY}
-                            >
-                                {edge.label}
-                            </text>
-                        </g>
-                    ))}
-                </svg>
-                {/* oxlint-enable jsx-a11y/prefer-tag-over-role */}
-                {schemaLayout.nodes.map(({ objectType, x, y }) => (
-                    <article
-                        className="ps:absolute ps:h-44 ps:w-[230px] ps:overflow-hidden ps:rounded-xl ps:border ps:border-zinc-500/30 ps:bg-zinc-900/95 ps:shadow-xl ps:in-[.ps-theme-light]:bg-white/95"
-                        key={objectType.name}
-                        style={{ left: x, top: y }}
-                    >
-                        <header className="ps:border-b ps:border-zinc-500/20 ps:px-3.5 ps:py-3">
-                            <h3 className="ps:m-0 ps:flex ps:items-center ps:gap-2 ps:text-sm ps:font-semibold">
-                                <ObjectTypeIcon
-                                    className="ps:size-4 ps:flex-none ps:text-rose-400"
-                                    objectType={objectType}
-                                />
-                                {objectType.displayName}
-                            </h3>
-                            <p className="ps:mt-0.5 ps:mb-0 ps:font-mono ps:text-[10px] ps:text-zinc-500">
-                                {objectType.name}
-                            </p>
-                        </header>
-                        <div className="ps:max-h-28 ps:overflow-y-auto ps:px-3.5 ps:py-2">
-                            {objectType.properties.map((property) => (
-                                <div
-                                    className="ps:flex ps:items-center ps:justify-between ps:gap-3 ps:py-1 ps:text-[11px]"
-                                    key={property.name}
-                                >
-                                    <span className="ps:truncate">{property.displayName}</span>
-                                    {property.name === objectType.primaryKey ? (
-                                        <span className="ps:flex-none ps:text-[9px] ps:font-bold ps:text-rose-400">
-                                            PK
-                                        </span>
-                                    ) : null}
-                                </div>
-                            ))}
-                        </div>
-                    </article>
-                ))}
-            </div>
-        </div>
+        <PanelBoundary theme={props.theme ?? "dark"}>
+            <OntologyDevtoolsContent {...props} />
+        </PanelBoundary>
     );
 }
 
-export function OntologyDevtoolsPanel<
+function OntologyDevtoolsContent<
     Ontology extends OntologyDefinition,
     MetaOntology extends OntologyDefinition = OntologyDefinition,
 >({ metaOntology, ontology, theme = "dark" }: OntologyDevtoolsPanelProps<Ontology, MetaOntology>) {
@@ -1585,15 +1307,14 @@ export function OntologyDevtoolsPanel<
     return (
         <Tooltip.Provider>
             <Tabs.Root
-                className={`ps-devtools ps-theme-${theme} ps:flex ps:h-full ps:min-h-0 ps:w-full ps:min-w-0 ps:flex-col ps:overflow-hidden ps:font-sans ps:text-[13px] ${
-                    theme === "dark" ? "ps:bg-zinc-950 ps:text-stone-200" : "ps:bg-stone-50 ps:text-stone-800"
-                }`}
-                defaultValue="outbox"
+                data-ps-devtools
+                className={`ps-devtools ps-theme-${theme} ps:flex ps:h-full ps:min-h-0 ps:w-full ps:min-w-0 ps:flex-col ps:overflow-hidden ps:font-sans ps:text-[13px]`}
+                defaultValue="objects"
                 style={{ contain: "inline-size" }}
             >
                 <Tabs.List
                     aria-label="Ontology devtools views"
-                    className="ps:flex ps:flex-none ps:items-center ps:gap-1 ps:border-b ps:border-zinc-500/20 ps:px-4"
+                    className="ps:bg-[var(--ps-surface)] ps:flex ps:flex-none ps:items-center ps:gap-1 ps:border-b ps:border-[var(--ps-border)] ps:px-4"
                     style={{ height: 40 }}
                 >
                     {[
@@ -1611,7 +1332,7 @@ export function OntologyDevtoolsPanel<
                         const Icon = view.icon;
                         return (
                             <Tabs.Tab
-                                className="ps:group ps:flex ps:h-full ps:items-center ps:gap-1.5 ps:border-x-0 ps:border-t-0 ps:border-b-2 ps:border-transparent ps:bg-transparent ps:px-3 ps:text-xs ps:font-medium ps:text-zinc-500 ps:hover:text-current ps:data-[active]:border-rose-400 ps:data-[active]:font-semibold ps:data-[active]:text-rose-400"
+                                className="ps:group ps:flex ps:h-full ps:items-center ps:gap-1.5 ps:border-x-0 ps:border-t-0 ps:border-b-2 ps:border-transparent ps:bg-transparent ps:px-3 ps:text-xs ps:font-medium ps:text-[var(--ps-muted)] ps:hover:text-current ps:data-[active]:border-[var(--ps-accent)] ps:data-[active]:font-semibold ps:data-[active]:text-[var(--ps-accent)]"
                                 key={view.id}
                                 value={view.id}
                             >
@@ -1647,10 +1368,16 @@ export function OntologyDevtoolsPanel<
                     <OutboxRows outbox={ontology.outbox} theme={theme} />
                 </Tabs.Panel>
                 <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="schema">
-                    <SchemaView ir={ontology.ir} />
+                    <SchemaView ir={ontology.ir} theme={theme} />
                 </Tabs.Panel>
                 <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="objects">
                     <ObjectsView ontology={ontology} />
+                </Tabs.Panel>
+                <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="tracing">
+                    <Tracing ontology={ontology} />
+                </Tabs.Panel>
+                <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="queries">
+                    <Queries ontology={ontology} />
                 </Tabs.Panel>
                 {metaOntology ? (
                     <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="meta">

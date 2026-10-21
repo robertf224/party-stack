@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta
+            http-equiv="Content-Security-Policy"
+            content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+        />
+        <title>Effect Tables · branch review</title>
+        <style>
+            :root {
+                color-scheme: light dark;
+                --bg: light-dark(#fafafa, #141414);
+                --fg: light-dark(#222, #e5e5e5);
+                --muted: light-dark(#666, #aaa);
+                --line: light-dark(#ddd, #3b3b3b);
+                --surface: light-dark(#f0f0f0, #222);
+                --link: light-dark(#1945a0, #9bbcff);
+            }
+            * {
+                box-sizing: border-box;
+            }
+            body {
+                margin: 0;
+                background: var(--bg);
+                color: var(--fg);
+                font:
+                    16px/1.6 system-ui,
+                    sans-serif;
+            }
+            main {
+                max-width: 1080px;
+                margin: auto;
+                padding: 30px 24px 70px;
+            }
+            h1 {
+                font-size: 28px;
+                font-weight: 600;
+                letter-spacing: -0.6px;
+                margin: 0;
+            }
+            h2 {
+                font-size: 23px;
+                font-weight: 600;
+                margin: 0 0 12px;
+            }
+            h3 {
+                font-size: 16px;
+                margin: 22px 0 5px;
+            }
+            p {
+                margin: 6px 0 16px;
+            }
+            small,
+            .muted {
+                color: var(--muted);
+            }
+            a {
+                color: var(--link);
+            }
+            button,
+            input,
+            select,
+            textarea {
+                font: inherit;
+                color: inherit;
+                border: 1px solid var(--line);
+                background: var(--bg);
+                border-radius: 5px;
+                padding: 7px 10px;
+                min-width: 0;
+            }
+            button {
+                cursor: pointer;
+            }
+            button:disabled {
+                opacity: 0.45;
+                cursor: default;
+            }
+            button.primary {
+                color: var(--bg);
+                background: var(--fg);
+                border-color: var(--fg);
+            }
+            button:focus-visible,
+            input:focus-visible,
+            select:focus-visible,
+            textarea:focus-visible {
+                outline: 2px solid var(--link);
+                outline-offset: 3px;
+            }
+            select {
+                max-width: 100%;
+            }
+            label {
+                display: block;
+            }
+            textarea,
+            input[type="text"] {
+                width: 100%;
+            }
+            input[type="checkbox"] {
+                width: 18px;
+                height: 18px;
+                margin: 0 8px 0 0;
+            }
+            .toolbar {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+                align-items: center;
+                margin: 20px 0;
+            }
+            .toolbar select {
+                flex: 1 1 350px;
+            }
+            .grid {
+                display: grid;
+                grid-template-columns: 1.25fr 1fr;
+                gap: 30px;
+            }
+            .row {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 12px;
+            }
+            .reviewed {
+                display: inline-flex;
+                align-items: center;
+            }
+            section {
+                margin-top: 26px;
+                border-top: 1px solid var(--line);
+                padding-top: 26px;
+            }
+            pre {
+                background: var(--surface);
+                padding: 16px;
+                border-radius: 5px;
+                overflow: auto;
+                font:
+                    13px/1.7 ui-monospace,
+                    SFMono-Regular,
+                    Consolas,
+                    monospace;
+                tab-size: 4;
+                max-height: 570px;
+            }
+            pre.wrap {
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+            }
+            code {
+                font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+            }
+            #sources,
+            #docs {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px 14px;
+            }
+            .source-link {
+                padding: 0;
+                border: 0;
+                background: transparent;
+                border-radius: 0;
+                text-align: left;
+                overflow-wrap: anywhere;
+                color: var(--link);
+                font-size: 13px;
+                text-decoration: underline;
+            }
+            #source-file {
+                width: 100%;
+                margin: 10px 0;
+            }
+            #source-title {
+                overflow-wrap: anywhere;
+            }
+            summary {
+                cursor: pointer;
+                font-weight: 600;
+            }
+            #progress {
+                margin-left: auto;
+                font-variant-numeric: tabular-nums;
+            }
+            #runtime-status {
+                display: block;
+                margin-bottom: 12px;
+            }
+            .field {
+                flex: 1 1 240px;
+            }
+            @media (max-width: 700px) {
+                main {
+                    padding: 20px 16px 45px;
+                }
+                .grid {
+                    grid-template-columns: 1fr;
+                    gap: 8px;
+                }
+                h1 {
+                    font-size: 25px;
+                }
+                .toolbar select {
+                    flex-basis: 100%;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <main>
+            <header>
+                <h1>Effect Tables · branch review</h1>
+                <p class="muted">
+                    A guided audit of the storage API, implementation, and the path toward Replica. Snapshot
+                    of this branch’s working changes · October 19, 2026.
+                </p>
+                <p>
+                    Choose a topic, inspect its source, and run examples below. Review marks and notes stay in
+                    this browser; exporting them creates a Markdown file. This review performs no network
+                    requests.
+                </p>
+            </header>
+            <nav class="toolbar" aria-label="Review topics">
+                <select id="chapter-select" aria-label="Topic"></select>
+                <button id="prev" type="button">Previous</button>
+                <button id="next" type="button">Next</button>
+                <span id="progress" aria-live="polite"></span>
+            </nav>
+            <article>
+                <h2 id="chapter-title"></h2>
+                <div class="grid">
+                    <div>
+                        <p id="concept"></p>
+                        <h3>Current design</h3>
+                        <p id="design"></p>
+                    </div>
+                    <div>
+                        <h3>Audit questions</h3>
+                        <p id="audit"></p>
+                        <h3>Limits and follow-ups</h3>
+                        <p id="limits"></p>
+                    </div>
+                </div>
+                <h3>API sketch</h3>
+                <small
+                    >Contextual sketches omit imports/setup. The runnable scenarios below include real setup
+                    and execution.</small
+                >
+                <pre class="wrap"><code id="example"></code></pre>
+                <h3>Inspect the implementation</h3>
+                <div id="sources"></div>
+                <h3>Effect references</h3>
+                <div id="docs"></div>
+                <p class="muted">
+                    <small
+                        >Implementation follows installed Effect 4.0.5 and its local guide. Website
+                        documentation can evolve; linked concepts explain the choices.</small
+                    >
+                </p>
+                <label class="reviewed"><input id="reviewed" type="checkbox" />Reviewed this topic</label>
+                <label for="notes"><h3>Notes and questions</h3></label>
+                <textarea
+                    id="notes"
+                    rows="3"
+                    placeholder="What should change, or what needs a closer look?"
+                ></textarea>
+                <div class="toolbar">
+                    <button id="export-notes" type="button">Export review notes</button>
+                </div>
+            </article>
+            <section aria-labelledby="playground-title">
+                <h2 id="playground-title">Run the implementation</h2>
+                <small id="runtime-status" role="status">Loading bundled implementation…</small>
+                <p>
+                    Each run builds a fresh memory service, inserts five rows, and declares indexes. Results
+                    come from the real Tables implementation. SQL output comes from the real compiler; no SQL
+                    database runs in this review.
+                </p>
+                <div class="toolbar">
+                    <select id="scenario" aria-label="Example scenario"></select>
+                    <button id="run" type="button" class="primary">Run example</button>
+                </div>
+                <pre class="wrap"><code id="scenario-code"></code></pre>
+                <pre class="wrap" id="result" role="status">Choose an example and run it.</pre>
+                <h3>Inspect SQL parameter binding</h3>
+                <div class="row">
+                    <label class="field"
+                        >Dialect<select id="dialect">
+                            <option value="sqlite">SQLite</option>
+                            <option value="pg">PostgreSQL</option>
+                        </select></label
+                    >
+                    <label class="field"
+                        >Literal title value<input
+                            type="text"
+                            id="literal"
+                            value="x'; DROP TABLE app_rows; --"
+                    /></label>
+                </div>
+                <p class="muted">
+                    <small
+                        >The literal changes parameters, never SQL syntax. Index values are encoded to
+                        preserve portable ordering. The compiled object separates WHERE, ORDER BY, pagination,
+                        and parameters; the adapter assembles the final SELECT.</small
+                    >
+                </p>
+                <pre class="wrap"><code id="sql-inspect"></code></pre>
+            </section>
+            <section id="source-view">
+                <details id="source-details">
+                    <summary>Branch source snapshot</summary>
+                    <label for="source-file">File</label
+                    ><select id="source-file"></select>
+                    <small id="source-title"></small>
+                    <pre><code id="source-code"></code></pre>
+                </details>
+            </section>
+            <noscript
+                >This interactive review requires JavaScript. Read the package READMEs and the architecture
+                reference alongside it.</noscript
+            >
+        </main>
+        <!-- REVIEW_SCRIPT -->
+    </body>
+</html>

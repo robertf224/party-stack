@@ -1,3 +1,4 @@
+import { disposeRuntimeEffects } from "../Runtime.js";
 import type { RuntimeAdapter, RuntimeAdapterProvider } from "../types.js";
 
 type SyncRuntimeAdapterProvider = (owner: string, namespace: string) => RuntimeAdapter;
@@ -10,10 +11,23 @@ function manageRuntime(runtime: RuntimeAdapter): RuntimeAdapter {
     let cleanupPromise: Promise<void> | undefined;
     let destroyPromise: Promise<void> | undefined;
 
+    let managed: RuntimeAdapter;
     const cleanup = (): Promise<void> => {
-        cleanupPromise ??= Promise.resolve()
-            .then(() => rawCleanup?.())
-            .then(() => undefined);
+        cleanupPromise ??= (async () => {
+            const errors: unknown[] = [];
+            try {
+                await disposeRuntimeEffects(managed);
+            } catch (cause) {
+                errors.push(cause);
+            }
+            try {
+                await rawCleanup?.();
+            } catch (cause) {
+                errors.push(cause);
+            }
+            if (errors.length === 1) throw errors[0];
+            if (errors.length > 1) throw new AggregateError(errors, "Runtime cleanup failed.");
+        })();
         return cleanupPromise;
     };
     const destroy = rawDestroy
@@ -25,11 +39,12 @@ function manageRuntime(runtime: RuntimeAdapter): RuntimeAdapter {
           }
         : undefined;
 
-    return {
+    managed = {
         ...runtime,
         cleanup,
         destroy,
     };
+    return managed;
 }
 
 export function defineRuntime(provider: SyncRuntimeAdapterProvider): SyncRuntimeAdapterProvider;

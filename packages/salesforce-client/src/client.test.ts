@@ -447,3 +447,27 @@ describe("createSalesforceClient", () => {
         expect(compositeBody).toContain("v61.0/actions/standard/Second_Action");
     });
 });
+
+it("scoped clients abort in-flight requests with their owner signal", async () => {
+    const owner = new AbortController();
+    const fetchMock = vi.fn(
+        (_input: unknown, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+                init?.signal?.addEventListener("abort", () => reject(new Error("Scope closed")), {
+                    once: true,
+                });
+            })
+    );
+    const client = createSalesforceClient({
+        instanceUrl: "https://example.my.salesforce.com",
+        apiVersion: "61.0",
+        tokenProvider: () => "test-token",
+        fetch: fetchMock as typeof fetch,
+    });
+    const query = client.withSignal!(owner.signal).query("SELECT Id FROM Account");
+    const rejected = query.catch((error: unknown) => error);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    owner.abort();
+    expect(await rejected).toMatchObject({ message: "Scope closed" });
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.signal?.aborted).toBe(true);
+});

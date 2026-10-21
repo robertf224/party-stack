@@ -141,3 +141,79 @@ describe("createBetterAuthConnectionAdapter", () => {
         });
     });
 });
+
+it("restores offline session selectors across adapter recreation without storing bearer tokens", async () => {
+    const Memory = await import("@party-stack/ontology-storage/memory/tables");
+    const { Table } = await import("@party-stack/ontology-storage/tables");
+    const { createDefaultRuntime, defineRuntime } = await import("@party-stack/runtime");
+    const { Effect } = await import("effect");
+    const tables = await Effect.runPromise(Memory.make());
+    let online = true;
+    const base = createDefaultRuntime("installation", "offline-better-auth");
+    const runtime = defineRuntime(() => ({
+        ...base,
+        tables: Effect.succeed(tables),
+        connectivity: {
+            get isConnected() {
+                return online;
+            },
+            subscribe: () => () => undefined,
+        },
+    }))("installation", "offline-better-auth");
+    const selected = {
+        session: {
+            id: "public-selector",
+            token: "private-bearer-token",
+            userId: "user",
+            expiresAt: new Date(Date.now() + 60000),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        },
+        user: {
+            id: "user",
+            name: "Local fixture",
+            email: "fixture@example.test",
+            emailVerified: true,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        },
+    };
+    const listDeviceSessions = vi.fn(async () => ({ data: [selected], error: null }));
+    const client = {
+        signIn: {},
+        multiSession: { listDeviceSessions, revoke: vi.fn(async () => ({ data: {} })) },
+        partyStack: { subscribe: () => () => undefined },
+    } satisfies BetterAuthConnectionClient;
+    const provider = createBetterAuthConnectionAdapter({ client });
+    try {
+        const first = await provider({ installationId: "test", runtime });
+        expect((await first.restoreConnections()).map((value) => value.connection.userId)).toEqual(["user"]);
+        await first.cleanup?.();
+        const rows = await Effect.runPromise(
+            tables.loadSubset(
+                Table.make({ name: JSON.stringify(["better-auth", "test", "session-selectors"]) })
+            )
+        );
+        expect(JSON.stringify(rows)).toContain("public-selector");
+        expect(JSON.stringify(rows)).not.toContain("private-bearer-token");
+        expect(JSON.stringify(rows)).not.toContain("fixture@example.test");
+        online = false;
+        listDeviceSessions.mockClear();
+        const restored = await provider({ installationId: "test", runtime });
+        const connections = await restored.restoreConnections();
+        expect(connections.map((value) => value.connection.userId)).toEqual(["user"]);
+        expect(listDeviceSessions).not.toHaveBeenCalled();
+        const fetch = vi.fn(async (_request: Request) => new Response());
+        const egress = connections[0]!.session.egress!({
+            fetch,
+            createWebSocket: async () => ({}) as WebSocket,
+        });
+        await egress.fetch(new Request("https://app.example.test/data"));
+        expect(fetch.mock.calls[0]?.[0].headers.get("x-party-stack-connection-session")).toBe(
+            "public-selector"
+        );
+        await restored.cleanup?.();
+    } finally {
+        await runtime.cleanup?.();
+    }
+});

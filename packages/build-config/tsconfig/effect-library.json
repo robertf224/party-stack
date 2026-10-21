@@ -1,0 +1,11 @@
+{
+    "extends": "./library.json",
+    "compilerOptions": {
+        "plugins": [
+            {
+                "name": "@effect/language-service",
+                "diagnostics": false
+            }
+        ]
+    }
+}

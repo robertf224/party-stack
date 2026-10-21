@@ -1,21 +1,9 @@
-import { createBetterAuthConnectionAdapter } from "@party-stack/better-auth";
 import { type ConnectionState } from "@party-stack/connections";
-import { createFoundryBackendInstallation, createFoundryOntologyRoute } from "@party-stack/foundry-ontology";
-import { createFoundryUsersIntegration } from "@party-stack/foundry-ontology/users";
-import {
-    createOntologyBackendInstallation,
-    type LiveOntology,
-    type OntologyBackendInstallation,
-} from "@party-stack/ontology";
-import { createRemoteOntologyBackend } from "@party-stack/remote-ontology/client";
-import { createHttpRemoteOntologyTransport } from "@party-stack/remote-ontology/http";
-import { createWebRuntime } from "@party-stack/web-runtime";
 import { eq } from "@tanstack/db";
-import ontology from "../ontology/ontology";
-import { foundryUserToUser } from "../ontology/user";
-import { authClient } from "./auth";
+import { createTrackerInstallations, FOUNDRY_ONTOLOGY_RID } from "./installations";
+import { openSharedOntology } from "./sharedOntology";
 import type { IssueTrackerOntology } from "../ontology/generated/types";
-
+import type { LiveOntology, OntologyBackendInstallation } from "@party-stack/ontology";
 export type ProfileKind = "foundry" | "sqlite";
 export type TrackerOntology = LiveOntology<IssueTrackerOntology>;
 
@@ -32,92 +20,10 @@ interface ProfileHandle {
     ontologyId: string;
 }
 
-const writes = {
-    defaultMode: "outbox" as const,
-    defaultVisibility: "optimistic" as const,
-};
-
-function requiredEnv(name: string, value: string | undefined): string {
-    if (!value) {
-        throw new Error(`Missing required environment variable ${name}.`);
-    }
-    return value;
-}
-
-const FOUNDRY_URL = requiredEnv("VITE_FOUNDRY_URL", import.meta.env.VITE_FOUNDRY_URL);
-const FOUNDRY_ONTOLOGY_RID = requiredEnv(
-    "VITE_FOUNDRY_ONTOLOGY_RID",
-    import.meta.env.VITE_FOUNDRY_ONTOLOGY_RID
-);
-const FOUNDRY_CLIENT_ID = requiredEnv("VITE_FOUNDRY_CLIENT_ID", import.meta.env.VITE_FOUNDRY_CLIENT_ID);
-const FOUNDRY_REDIRECT_URL =
-    import.meta.env.VITE_FOUNDRY_REDIRECT_URL ??
-    (typeof window === "undefined"
-        ? "http://localhost:3000/auth/callback"
-        : `${window.location.origin}/auth/callback`);
-
 const handles = new Map<string, ProfileHandle>();
-let foundryOAuthCompletion: Promise<ConnectedProfile | undefined> | undefined;
-
-const foundryUsers = createFoundryUsersIntegration({
-    objectType: "User",
-    lens: foundryUserToUser,
-});
-
-const foundryInstallation = await createFoundryBackendInstallation({
-    baseUrl: FOUNDRY_URL,
-    runtime: createWebRuntime,
-    connections: {
-        oauth: {
-            clientId: FOUNDRY_CLIENT_ID,
-            redirectUrl: FOUNDRY_REDIRECT_URL,
-            // The web runtime does not yet provide a secure
-            // SecretStore. This is acceptable only for the demo.
-            dangerouslyPersistSecrets: true,
-            scopes: [
-                "api:admin-read",
-                "api:use-ontologies-read",
-                "api:use-ontologies-write",
-                "api:use-mediasets-read",
-                "api:use-mediasets-write",
-                "offline_access",
-            ],
-        },
-    },
-    routes: [
-        createFoundryOntologyRoute({
-            ontologyId: FOUNDRY_ONTOLOGY_RID,
-            ir: ontology,
-            users: foundryUsers,
-            persistObjects: true,
-            writes,
-        }),
-    ],
-});
-
-const sqliteInstallation = await createOntologyBackendInstallation<typeof authClient>({
-    installationId: "issue-tracker-sqlite",
-    connections: createBetterAuthConnectionAdapter({
-        client: authClient,
-    }),
-    runtime: createWebRuntime,
-    routes: [
-        {
-            matches: (ontologyId) => ontologyId === "issue-tracker",
-            configure: ({ egress }) => ({
-                ir: ontology,
-                backend: createRemoteOntologyBackend({
-                    transport: createHttpRemoteOntologyTransport({
-                        url: "/api/remote-ontology/",
-                        fetch: egress.fetch,
-                        ir: ontology,
-                    }),
-                }),
-                persistObjects: true,
-                writes,
-            }),
-        },
-    ],
+const foundryOAuthCompletions = new Map<string, Promise<ConnectedProfile | undefined>>();
+const { foundry: foundryInstallation, sqlite: sqliteInstallation } = await createTrackerInstallations({
+    openOntology: openSharedOntology,
 });
 
 async function openProfile(options: {
@@ -219,11 +125,19 @@ async function completeFoundryOAuthRedirectInternal(url: string): Promise<Connec
 }
 
 export function completeFoundryOAuthRedirect(url: string): Promise<ConnectedProfile | undefined> {
-    foundryOAuthCompletion ??= completeFoundryOAuthRedirectInternal(url).catch((error: unknown) => {
-        foundryOAuthCompletion = undefined;
-        throw error;
-    });
-    return foundryOAuthCompletion;
+    const state = new URL(url).searchParams.get("state") ?? "";
+    let completion = foundryOAuthCompletions.get(state);
+    if (!completion) {
+        completion = completeFoundryOAuthRedirectInternal(url).catch((error: unknown) => {
+            foundryOAuthCompletions.delete(state);
+            throw error;
+        });
+        foundryOAuthCompletions.set(state, completion);
+        if (foundryOAuthCompletions.size > 4) {
+            foundryOAuthCompletions.delete(foundryOAuthCompletions.keys().next().value!);
+        }
+    }
+    return completion;
 }
 
 export async function disconnectProfile(profile: ConnectedProfile): Promise<void> {

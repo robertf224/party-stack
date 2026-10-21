@@ -7,6 +7,7 @@ import {
     type ConfigureOntologyOptions,
     type OntologyConfiguration,
     type OntologyRoute,
+    type CreateOntologyBackendInstallationOptions,
 } from "@party-stack/ontology";
 import {
     createFoundryOntologyBackend,
@@ -34,6 +35,7 @@ export interface CreateFoundryBackendInstallationOptions<
     connections: FoundryConnectionOptions | BackendConnectionAdapterProvider<AuthenticationClient>;
     routes: readonly FoundryOntologyRoute[];
     createContext?: (userId: string, ontologyId: string) => Record<string, unknown>;
+    openOntology?: CreateOntologyBackendInstallationOptions["openOntology"];
 }
 
 function createConnectionOntologyClient(baseUrl: string, ontologyId: string, egress: ConnectionEgress) {
@@ -121,5 +123,6 @@ export function createFoundryBackendInstallation<
         runtime: options.runtime,
         routes: options.routes.map((route) => route(options.baseUrl)),
         createContext: options.createContext,
+        openOntology: options.openOntology,
     });
 }

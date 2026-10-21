@@ -1,9 +1,12 @@
+import { o } from "@party-stack/ontology-spec";
 import { createDefaultRuntime, defineRuntime } from "@party-stack/runtime";
+import { queryOnce } from "@tanstack/db";
+import { Effect, Scope, Exit } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { o } from "../ir/generated/builders.js";
+import { makeOntologyBackendInstallation } from "../runtime/installation.js";
 import { createOntologyBackendInstallation } from "./createOntologyBackendInstallation.js";
-import type { OntologyIR } from "../ir/index.js";
 import type { BackendConnectionAdapter, ConnectionEgressHandlers } from "@party-stack/connections";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
     types: [],
@@ -16,11 +19,15 @@ const ir: OntologyIR = {
 function createTestBackend() {
     return {
         name: "test",
-        getCollectionOptions: () => {
-            throw new Error("unexpected collection");
-        },
-        applyAction: () => Promise.reject(new Error("unexpected action")),
-        runQueryFunction: () => Promise.reject(new Error("unexpected query")),
+        open: () =>
+            Effect.succeed({
+                name: "test",
+                sourceId: "test",
+                supportsIdempotency: false,
+                loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                invoke: () => Effect.die("Unexpected action"),
+                queryFunction: () => Effect.die("Unexpected query"),
+            }),
     };
 }
 
@@ -113,11 +120,16 @@ describe("createOntologyBackendInstallation", () => {
                         },
                         backend: () => ({
                             name: "test",
-                            getCollectionOptions: () => {
-                                throw new Error("unexpected collection");
-                            },
-                            applyAction: () => Promise.reject(new Error("unexpected action")),
-                            runQueryFunction: () => Promise.reject(new Error("unexpected query")),
+                            open: () =>
+                                Effect.succeed({
+                                    name: "test",
+                                    sourceId: "test",
+                                    supportsIdempotency: false,
+                                    loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                                    invoke: () => Effect.die("Unexpected action"),
+                                    queryFunction: () => Effect.die("Unexpected query"),
+                                }),
+
                             cleanup: cleanupOntology,
                         }),
                     }),
@@ -232,7 +244,7 @@ describe("createOntologyBackendInstallation", () => {
             userId: connection.userId,
             ontologyId: "ontology",
         });
-        await meta.objects.ValueType.preload();
+        await queryOnce((q) => q.from({ row: meta.objects.ValueType }));
 
         expect(meta.objects.ValueType.get("Priority")).toMatchObject({
             name: "Priority",
@@ -357,4 +369,44 @@ describe("createOntologyBackendInstallation", () => {
             })
         ).rejects.toThrow('Backend installation "concurrent-open" is closed.');
     });
+});
+
+it("a scoped installation releases its live ontologies and connections with its owner", async () => {
+    const scope = Effect.runSync(Scope.make());
+    const cleanup = vi.fn();
+    const installation = await Effect.runPromise(
+        Scope.provide(
+            makeOntologyBackendInstallation({
+                installationId: "scoped-installation",
+                connections: () => createTestConnectionAdapter(),
+                runtime: createDefaultRuntime,
+                routes: [
+                    {
+                        matches: () => true,
+                        configure: () => ({
+                            ir,
+                            backend: () => ({ ...createTestBackend(), cleanup }),
+                        }),
+                    },
+                ],
+            }),
+            scope
+        )
+    );
+    try {
+        const connection = await installation.authentication.signIn();
+        await installation.openOntology({ userId: connection.userId, ontologyId: "ontology" });
+        await Effect.runPromise(Scope.close(scope, Exit.void));
+        expect(installation.connections.status).toBe("cleaned-up");
+        expect(cleanup).toHaveBeenCalledOnce();
+        await expect(
+            installation.openOntology({
+                userId: connection.userId,
+                ontologyId: "ontology",
+            })
+        ).rejects.toThrow("is closed");
+    } finally {
+        await Effect.runPromise(Scope.close(scope, Exit.void));
+    }
+    expect(cleanup).toHaveBeenCalledOnce();
 });

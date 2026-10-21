@@ -1,10 +1,10 @@
-import { createCollection, localOnlyCollectionOptions } from "@tanstack/db";
+import { o } from "@party-stack/ontology-spec";
+import { queryOnce, createCollection, localOnlyCollectionOptions } from "@tanstack/db";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { o } from "../ir/index.js";
 import { evaluateExpression } from "./expression.js";
 import { createReadTx } from "./mutators/createMutatorTx.js";
-import type { OntologyIR } from "../ir/index.js";
-import type { OntologyObject } from "./objects/OntologyObject.js";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { OntologyObject } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
     types: [],
@@ -77,7 +77,7 @@ describe("evaluateExpression", () => {
                 ],
             })
         );
-        await users.preload();
+        await queryOnce((q) => q.from({ row: users }));
 
         await expect(
             evaluateExpression({
@@ -251,7 +251,10 @@ describe("evaluateExpression", () => {
                 ],
             })
         );
-        await Promise.all([users.preload(), projects.preload()]);
+        await Promise.all([
+            queryOnce((q) => q.from({ row: users })),
+            queryOnce((q) => q.from({ row: projects })),
+        ]);
 
         await expect(
             evaluateExpression({
@@ -347,4 +350,40 @@ describe("evaluateExpression", () => {
             })
         ).resolves.toBeUndefined();
     });
+});
+
+it("replay fixes nested body UUIDs and time while keeping map items and expression locations distinct", async () => {
+    const expression = o.Expression.map({
+        source: o.Expression.literal({ type: o.list({ elementType: o.string({}) }), value: ["a", "b"] }),
+        binding: "item",
+        body: o.Expression.struct({
+            fields: [
+                { name: "id", value: o.Expression.uuid({}) },
+                { name: "otherId", value: o.Expression.uuid({}) },
+                { name: "time", value: o.Expression.now({}) },
+            ],
+        }),
+    });
+    const options = {
+        ir,
+        actionTypeName: "assign",
+        expression,
+        context: {},
+        tx: createReadTx({}),
+        resolveParameter: async () => undefined,
+        replay: { now: "2026-10-21T00:00:00Z", seed: "action-one" },
+        location: ["logic", 0],
+    };
+    const first = (await evaluateExpression(options)) as {
+        id: string;
+        otherId: string;
+        time: { toString(): string };
+    }[];
+    const second = await evaluateExpression(options);
+    expect(second).toEqual(first);
+    expect(new Set(first.flatMap((row) => [row.id, row.otherId])).size).toBe(4);
+    expect(first.map((row) => row.time.toString())).toEqual(["2026-10-21T00:00:00Z", "2026-10-21T00:00:00Z"]);
+    expect(
+        await evaluateExpression({ ...options, replay: { ...options.replay, seed: "action-two" } })
+    ).not.toEqual(first);
 });

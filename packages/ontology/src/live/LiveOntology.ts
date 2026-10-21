@@ -1,28 +1,20 @@
-import { createBlobManager, type BlobManager } from "@party-stack/blobs";
+import type { OntologyDefinition } from "@party-stack/ontology-spec";
+export type { OntologyDefinition } from "@party-stack/ontology-spec";
 import { createDefaultRuntime, type RuntimeAdapterProvider } from "@party-stack/runtime";
-import { type Collection } from "@tanstack/db";
+import { createReplicaLiveOntology } from "../runtime/live.js";
 import { provide } from "../utils/provide.js";
-import { createLiveOntologyActions } from "./actions/createLiveOntologyActions.js";
-import {
-    createLiveOntologyAttachments,
-    type LiveOntologyAttachments,
-} from "./attachments/createLiveOntologyAttachments.js";
-import { unsupportedOntologyAttachmentsAdapter } from "./attachments/unsupportedOntologyAttachmentsAdapter.js";
-import { createLiveOntologyObjectCollection } from "./objects/createLiveOntologyObjectCollection.js";
-import { waitForCollectionsReady } from "./waitForCollectionReady.js";
-import type { OntologyIR } from "../ir/index.js";
-import type { attachment } from "../utils/values.js";
 import type { LiveOntologyAction } from "./actions/createLiveOntologyAction.js";
+import type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
 import type { OntologyMutatorRegistry } from "./mutators/types.js";
-import type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
-import type { OntologyObject } from "./objects/OntologyObject.js";
-import type { OntologyBackendAdapter, OntologyBackendAdapterProvider } from "./OntologyBackendAdapter.js";
+import type { OntologyCollection } from "./objects/types.js";
+import type { OntologyBackendAdapterProvider } from "./OntologyBackendAdapter.js";
 import type { OntologyOutbox } from "./outbox/types.js";
 import type { ConnectionMonitor } from "@party-stack/connections";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 
 export type { LiveOntologyAction, LiveOntologyActionOptions } from "./actions/createLiveOntologyAction.js";
 export type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
-export type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
+export type { OntologyCollection } from "./objects/types.js";
 
 export type LiveOntologyWriteMode = "direct" | "outbox";
 
@@ -33,6 +25,7 @@ export type LiveOntologyOutboxFailureStrategy = "pause" | "discard-all";
 export interface LiveOntologyOutboxOptions {
     failureStrategy?: LiveOntologyOutboxFailureStrategy;
     maxRetries?: number;
+    retryDelayMs?: number;
 }
 
 export interface LiveOntologyWrites {
@@ -40,24 +33,6 @@ export interface LiveOntologyWrites {
     defaultVisibility?: LiveOntologyWriteVisibility;
     mutators?: OntologyMutatorRegistry;
     outbox?: LiveOntologyOutboxOptions;
-}
-
-export interface OntologyDefinition {
-    context?: Record<string, unknown>;
-    objectTypes: Record<string, OntologyObject>;
-    actionTypes: Record<
-        string,
-        {
-            parameters: Record<string, unknown>;
-        }
-    >;
-    queryFunctionTypes: Record<
-        string,
-        {
-            parameters: Record<string, unknown>;
-            returnType: unknown;
-        }
-    >;
 }
 
 type OntologyContext<Ontology extends OntologyDefinition> = Ontology extends {
@@ -89,15 +64,29 @@ export type LiveOntologyQueryFunctions<QueryFunctionTypes extends OntologyDefini
         >;
     };
 
+export interface OntologyDiagnostics {
+    readonly label?: string;
+    readonly role?: "host" | "replica";
+    readonly location?: string;
+    readonly replica: import("@party-stack/ontology-replica").ReplicaMonitor;
+    readonly traces?: import("@party-stack/runtime").RuntimeTraceStore;
+    readonly parent?: OntologyDiagnostics;
+}
+
 export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefinition> {
     readonly ir: OntologyIR;
     readonly context: OntologyContext<Ontology>;
     /**
      * Resolves once outbox and blob metadata subsystems have finished starting.
-     * Object collections remain on-demand unless explicitly preloaded.
+     * Object collections load through consuming queries.
      */
     readonly ready: Promise<void>;
     objects: LiveOntologyObjects<Ontology["objectTypes"]>;
+    /** Local inspection/query source. Loading it never acquires remote demand. */
+    persistedObjects?: LiveOntologyObjects<Ontology["objectTypes"]>;
+    traces?: import("@party-stack/runtime").RuntimeTraceStore;
+    diagnostics?: OntologyDiagnostics;
+    storage?: import("@party-stack/ontology-replica").ReplicaService;
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
     queryFunctions: LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>;
     attachments: LiveOntologyAttachments<Ontology>;
@@ -123,13 +112,9 @@ function getContextUserId(context: Record<string, unknown>): string | undefined 
 
 /**
  * Waits for LiveOntology subsystems required before safe use.
- * Starts on-demand object collection sync without loading subsets.
  */
 export async function waitForLiveOntologyReady(ontology: LiveOntology): Promise<void> {
     await ontology.ready;
-    await waitForCollectionsReady(
-        Object.values(ontology.objects) as Collection<Record<string, unknown>, string | number>[]
-    );
 }
 
 export async function createLiveOntology<
@@ -139,118 +124,21 @@ export async function createLiveOntology<
     const ontologyId = opts.id ?? "default";
     const context = (opts.context ?? {}) as Context;
     const owner = getContextUserId(context) ?? "anonymous";
-    // TODO(errors): Decorate backend operations and collection options so
-    // normalized errors (especially UnauthenticatedError) are reported through
-    // the ConnectionMonitor. Promise-based calls can be wrapped directly;
-    // long-running sync handlers need a lifecycle-aware supervisor that pauses
-    // on needs-auth and restarts from a checkpoint after reconnection.
-    const backendAdapter: OntologyBackendAdapter = await provide(opts.backend, opts.ir, context);
+    const backendAdapter = await provide(opts.backend, opts.ir, context);
     const runtime = await provide(opts.runtime ?? createDefaultRuntime, owner, ontologyId);
-    const attachmentsAdapter = backendAdapter.attachments ?? unsupportedOntologyAttachmentsAdapter;
-    const blobManager: BlobManager = createBlobManager({
-        runtime,
-        remote: {
-            read: (id, readOptions) => {
-                const attachmentValue = readOptions?.meta?.attachment as attachment | undefined;
-                return attachmentsAdapter.getAttachmentContent(attachmentValue ?? { id });
-            },
-            metadata: attachmentsAdapter.getAttachmentMetadata
-                ? (id, readOptions) =>
-                      attachmentsAdapter.getAttachmentMetadata!(
-                          (readOptions?.meta?.attachment as attachment | undefined) ?? { id },
-                          readOptions?.select ?? ["size", "type", "name"]
-                      )
-                : undefined,
-        },
-    });
-    const attachments = createLiveOntologyAttachments<Ontology>({
+    if (opts.persistObjects && !runtime.tables) {
+        await Promise.allSettled([
+            Promise.resolve().then(() => backendAdapter.cleanup?.()),
+            Promise.resolve().then(() => runtime.cleanup?.()),
+        ]);
+        throw new Error("Persisted ontology objects require owned Tables storage.");
+    }
+    return createReplicaLiveOntology({
         ir: opts.ir,
-        attachmentsAdapter,
-        blobManager,
-    });
-    const objects = Object.fromEntries(
-        opts.ir.objectTypes.map((objectType) => [
-            objectType.name,
-            createLiveOntologyObjectCollection({
-                ir: opts.ir,
-                objectType,
-                backendAdapter,
-                runtime,
-                persistObjects: opts.persistObjects ?? false,
-            }),
-        ])
-    ) as Record<string, OntologyCollection<OntologyObject>>;
-    const actionsSubsystem = createLiveOntologyActions({
-        ir: opts.ir,
-        backendAdapter,
-        runtime,
         context,
-        objects,
-        blobManager,
+        runtime,
+        backendAdapter,
         writes: opts.writes,
         connection: opts.connection,
-    });
-    const queryFunctions = Object.fromEntries(
-        opts.ir.queryFunctionTypes.map((queryFunctionType) => [
-            queryFunctionType.name,
-            (parameters: Record<string, unknown>) =>
-                backendAdapter.runQueryFunction(queryFunctionType.name, parameters, {
-                    objects: objects,
-                    context,
-                }),
-        ])
-    );
-    const ready = Promise.all([actionsSubsystem.outbox.ready, blobManager.ready]).then(() => undefined);
-    void ready.catch(() => undefined);
-
-    let cleanupPromise: Promise<void> | undefined;
-    const cleanup = (): Promise<void> => {
-        cleanupPromise ??= (async () => {
-            // Settle subsystem startups before tearing down persistence.
-            await Promise.allSettled([ready]);
-            await actionsSubsystem.outbox.cleanup();
-            await Promise.all(
-                Object.values(objects).map(async (collection) => {
-                    const status = collection.status;
-                    if (status === "cleaned-up") {
-                        return;
-                    }
-                    // Settle in-flight startup only; ready/idle need no preload.
-                    if (status === "loading") {
-                        await Promise.allSettled([collection.preload()]);
-                    }
-                    try {
-                        await collection.cleanup();
-                    } catch {
-                        // Idempotent: already cleaned up during preload race.
-                    }
-                })
-            );
-            await Promise.all([blobManager.cleanup(), backendAdapter.cleanup?.()]);
-            await runtime.cleanup?.();
-        })();
-        return cleanupPromise;
-    };
-    let destroyPromise: Promise<void> | undefined;
-    const destroy = (): Promise<void> => {
-        destroyPromise ??= cleanup()
-            .then(() => runtime.destroy?.())
-            .then(() => undefined);
-        return destroyPromise;
-    };
-
-    return {
-        ir: opts.ir,
-        context: context as unknown as OntologyContext<Ontology>,
-        ready,
-        objects: objects as unknown as LiveOntologyObjects<Ontology["objectTypes"]>,
-        actions: actionsSubsystem.actions as unknown as LiveOntologyActions<Ontology["actionTypes"]>,
-        queryFunctions: queryFunctions as unknown as LiveOntologyQueryFunctions<
-            Ontology["queryFunctionTypes"]
-        >,
-        attachments,
-        outbox: actionsSubsystem.outbox,
-        destroy,
-        cleanup,
-    };
+    }) as Promise<LiveOntology<Ontology>>;
 }

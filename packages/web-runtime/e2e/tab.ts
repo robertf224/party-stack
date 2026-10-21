@@ -1,9 +1,7 @@
-import { createIndexedDBPersistence } from "@party-stack/db-indexeddb-persistence";
+import { Table } from "@party-stack/ontology-storage/tables";
 import { createLocalCollection } from "@party-stack/runtime";
-import { createCollection, createLiveQueryCollection } from "@tanstack/db";
-import { eagerStorageTarget } from "@tanstack/db-sqlite-persistence-core";
-import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
-import { BroadcastCollectionCoordinator } from "@tanstack/db-sqlite-persistence-core/broadcast-coordinator";
+import { Runtime, runtimeEffects } from "@party-stack/runtime";
+import { createLiveQueryCollection, queryOnce } from "@tanstack/db";
 import { createWebRuntime } from "../src/createWebRuntime.js";
 
 // Drop only event notifications; RPC, leader election, locks, and storage stay real.
@@ -18,7 +16,7 @@ class LossyBroadcastChannel extends EventTarget {
         this.name = name;
         this.channel = new NativeBroadcastChannel(name);
         this.channel.addEventListener("message", (event: MessageEvent<{ type?: string }>) => {
-            if (dropEvents && event.data.type === "event") return;
+            if (dropEvents && (event.data === null || event.data?.type === "event")) return;
             const message = new MessageEvent("message", { data: event.data });
             this.dispatchEvent(message);
             this.onmessage?.(message);
@@ -40,40 +38,26 @@ interface Item {
     score: number;
 }
 const namespace = new URL(location.href).searchParams.get("scope")!;
-const runtime = createWebRuntime("browser-test", namespace);
-const upstream =
-    new URL(location.href).searchParams.get("coordinator") === "upstream"
-        ? new BroadcastCollectionCoordinator({ dbName: namespace, coordinatorName: "contract-control" })
-        : undefined;
-const upstreamPersistence = upstream
-    ? createIndexedDBPersistence({ databaseName: `upstream-${namespace}`, coordinator: upstream })
-    : undefined;
-const collection = upstreamPersistence
-    ? createCollection(
-          persistedCollectionOptions<Item, string>({
-              id: "items",
-              getKey: (item) => item.id,
-              persistence: upstreamPersistence,
-          })
-      )
-    : createLocalCollection<Item, string>({ name: "items", runtime, getKey: (item) => item.id });
+const runtime = await createWebRuntime("browser-test", namespace);
+const collection = createLocalCollection<Item, string>({ name: "items", runtime, getKey: (item) => item.id });
 const query = createLiveQueryCollection((q) =>
     q.from({ item: collection }).orderBy(({ item }) => item.score)
 );
-await Promise.all([collection.preload(), query.preload()]);
+const subscription = query.subscribeChanges(() => {}, { includeInitialState: true });
+await queryOnce((q) => q.from({ item: query }));
 Object.assign(window, {
     persistenceTest: {
-        durable: async () => ({
-            position: await (upstreamPersistence ?? runtime.persistence)!.adapter.getStreamPosition?.(
-                eagerStorageTarget(collection.id)
-            ),
-            keys: (
-                await (upstreamPersistence ?? runtime.persistence)!.adapter.loadSubset(
-                    eagerStorageTarget(collection.id),
-                    {}
-                )
-            ).map((row) => row.key),
-        }),
+        durable: async () => {
+            const service = await runtimeEffects(runtime).runtime.runPromise(Runtime);
+            const table = Table.make<Item>({
+                name: JSON.stringify(["local", runtime.owner, runtime.namespace, "items"]),
+            });
+            return {
+                keys: (
+                    await runtimeEffects(runtime).runtime.runPromise(service.tables.loadSubset(table))
+                ).map((row) => row.key),
+            };
+        },
         rows: () => [...query.values()].map(({ id, title, score }) => ({ id, title, score })),
         insert: async (item: Item) => {
             await collection.insert(item).isPersisted.promise;
@@ -94,10 +78,9 @@ Object.assign(window, {
         },
         leader: () => "isLeader" in runtime.coordination && runtime.coordination.isLeader,
         cleanup: async () => {
+            subscription.unsubscribe();
             await query.cleanup();
             await collection.cleanup();
-            upstream?.dispose();
-            upstreamPersistence?.close();
             await runtime.cleanup?.();
         },
     },

@@ -83,7 +83,7 @@ export function linkTypeCollectionOptions(metadata: MetaEntityCollection): Ontol
     }) as unknown as OntologyCollectionOptions;
 }
 
-async function loadFoundryMetaOntology(client: OntologyClient): Promise<{
+export async function loadFoundryMetaOntology(client: OntologyClient): Promise<{
     objectTypes: MetaObjectType[];
     valueTypes: MetaValueType[];
     linkTypes: MetaLinkType[];

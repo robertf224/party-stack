@@ -184,6 +184,7 @@ async function createSalesforceConnectionAdapterInstance(
                   revocationEndpoint: `${loginUrl}/services/oauth2/revoke`,
               },
               runtime: context.runtime,
+              scope: context.scope,
               fetch: options.oauth.fetch,
               dangerouslyPersistSecrets: options.oauth.dangerouslyPersistSecrets,
               resolveUserId: (token) =>

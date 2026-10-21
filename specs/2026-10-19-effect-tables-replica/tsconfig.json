@@ -1,0 +1,11 @@
+{
+    "extends": "../../packages/build-config/tsconfig/effect-library.json",
+    "compilerOptions": {
+        "rootDir": "../..",
+        "noEmit": true,
+        "paths": {
+            "temporal-polyfill": ["../../packages/ontology-storage/node_modules/temporal-polyfill/index.d.ts"]
+        }
+    },
+    "include": ["review.ts"]
+}

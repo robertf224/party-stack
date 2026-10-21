@@ -14,10 +14,11 @@
     "dependencies": {
         "@party-stack/errors": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "effection": "^4.0.2"
+        "effect": "^4.0.5"
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
         "@tanstack/db": "0.14.0",
         "typescript": "~7.0.2",
         "vite-plus": "catalog:"

@@ -1,3 +1,34 @@
 # @party-stack/foundry-object-set-watcher
 
-A client implementation for Foundry's [Object Set Watcher endpoint](https://www.palantir.com/docs/foundry/ontology-sdk/websocket-subscriptions), built with [Effection](https://frontside.com/effection/).
+An Effect service for Foundry object-set websocket subscriptions.
+
+```ts
+import { makeObjectSetWatcher } from "@party-stack/foundry-object-set-watcher";
+import { Effect, Stream } from "effect";
+
+const program = Effect.scoped(
+    Effect.gen(function* () {
+        const watcher = yield* makeObjectSetWatcher(client);
+        yield* Stream.runForEach(watcher.subscribe({ type: "base", objectType: "Issue" }), (message) =>
+            Effect.log(message.type)
+        );
+    })
+);
+```
+
+Subscriptions share a socket. Scopes own subscription leases, reconnects,
+heartbeats, acknowledgments, and cancellation. Closing the last consumer releases
+its socket. Bounded queues fail explicitly rather than dropping object updates.
+
+The manager shares logical consumers by object-set definition. The session retains
+desired subscriptions across reconnects; the connection owns one physical socket,
+request acknowledgments, heartbeat and frame decoding. A late logical consumer sees
+the current connection state without forcing a new physical subscription.
+
+The Foundry ontology adapter uses supported subset predicates to filter watched
+object sets. Unsupported predicates broaden the watch, and exact query evaluation
+still happens locally. Watch messages are invalidation hints: a removed object may
+have left a filter rather than been deleted. Reconnection requires a refresh.
+
+The main export retains the callback manager facade for application integration;
+its resources delegate to the same Effect service. Effection exports have been removed.

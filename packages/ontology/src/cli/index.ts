@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import { generateFiles } from "@party-stack/ontology-spec/generate";
 import { pascalCase } from "change-case";
 import { Command } from "commander";
-import { generateFiles } from "./generate.js";
 import {
     ONTOLOGY_PULL_CONFIG_PATH,
     ONTOLOGY_IR_PATH,
@@ -46,6 +46,8 @@ async function main(): Promise<void> {
         .option("--ontology <path>", "Path to the ontology module", ontologyPath)
         .option("--outDir <path>", "Directory to write generated files", generatedDir)
         .option("--namespace <name>", "Namespace for generated ontology types/factories")
+        .option("--effect", "Generate opt-in Effect validators in effect.ts")
+        .option("--no-live", "Generate definitions without live runtime helpers")
         .option("--no-js-extensions", "Omit .js extensions from generated relative imports")
         .action(
             async (options: {
@@ -53,12 +55,17 @@ async function main(): Promise<void> {
                 outDir: string;
                 namespace?: string;
                 jsExtensions?: boolean;
+                live?: boolean;
+                effect?: boolean;
             }) => {
                 await generateFiles({
                     ontology: resolve(cwd, options.ontology),
                     outDir: resolve(cwd, options.outDir),
                     namespace: options.namespace ?? readPackageNamespace(cwd),
                     jsExtensions: options.jsExtensions,
+                    emitLive: options.live,
+                    emitEffectSchemas: options.effect,
+                    valuesImportPath: "@party-stack/ontology/values",
                 });
             }
         );

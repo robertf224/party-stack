@@ -14,7 +14,7 @@ export interface QueryFunctionTypeCollectionOpts {
     queryClient?: QueryClient;
 }
 
-async function listQueryFunctionTypes(opts: QueryFunctionTypeCollectionOpts): Promise<QueryTypeV2[]> {
+export async function listQueryFunctionTypes(opts: QueryFunctionTypeCollectionOpts): Promise<QueryTypeV2[]> {
     return AsyncIterable.toArray(
         AsyncIterable.fromPagination(
             (pageSize, pageToken: string | undefined) =>
@@ -29,7 +29,7 @@ async function listQueryFunctionTypes(opts: QueryFunctionTypeCollectionOpts): Pr
     );
 }
 
-async function getQueryFunctionTypes(
+export async function getQueryFunctionTypes(
     opts: QueryFunctionTypeCollectionOpts,
     names: string[]
 ): Promise<QueryTypeV2[]> {

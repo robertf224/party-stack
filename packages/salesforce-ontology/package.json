@@ -30,8 +30,12 @@
         "@party-stack/icons-salesforce-lightning": "workspace:*",
         "@party-stack/oauth": "workspace:*",
         "@party-stack/ontology": "workspace:*",
+        "@party-stack/ontology-backend": "workspace:*",
+        "@party-stack/ontology-spec": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "@party-stack/salesforce-client": "workspace:*",
+        "effect": "^4.0.5",
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {

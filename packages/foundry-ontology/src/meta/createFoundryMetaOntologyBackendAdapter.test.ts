@@ -1,59 +1,33 @@
-import { queryCollectionOptions } from "@tanstack/query-db-collection";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { Effect } from "effect";
+import { describe, expect, it } from "vite-plus/test";
 import { createFoundryMetaOntologyBackendAdapter } from "./createFoundryMetaOntologyBackendAdapter.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
-
-vi.mock("@tanstack/query-db-collection", async (importOriginal) => {
-    const original = await importOriginal<typeof import("@tanstack/query-db-collection")>();
-    return {
-        ...original,
-        queryCollectionOptions: vi.fn(original.queryCollectionOptions),
-    };
-});
-
 const client: OntologyClient = {
     baseUrl: "https://foundry.example.com",
-    ontologyRid: "ri.ontology.main.ontology.example",
-    tokenProvider: () => Promise.resolve("token"),
+    ontologyRid: "ontology",
+    tokenProvider: async () => "token",
     fetch: globalThis.fetch,
 };
-
-beforeEach(() => {
-    vi.mocked(queryCollectionOptions).mockClear();
-});
-
-describe("Foundry metadata refetch interval", () => {
+describe("native metadata binding", () => {
     it.each([30_000, false, undefined] as const)(
-        "forwards %s to every query collection while sharing the entity snapshot",
+        "declares refresh policy %s without constructing collections",
         async (refetchInterval) => {
-            const adapter = createFoundryMetaOntologyBackendAdapter({
-                client,
-                ...(refetchInterval === undefined ? {} : { refetchInterval }),
-            });
-
-            try {
-                for (const objectType of [
-                    "ObjectType",
-                    "ValueType",
-                    "LinkType",
-                    "ActionType",
-                    "QueryFunctionType",
-                ]) {
-                    adapter.getCollectionOptions(objectType);
-                }
-
-                expect(queryCollectionOptions).toHaveBeenCalledTimes(3);
-                for (const collection of ["metadata", "actionTypes", "queryFunctionTypes"]) {
-                    expect(queryCollectionOptions).toHaveBeenCalledWith(
-                        expect.objectContaining({
-                            queryKey: ["foundry", "ontology", collection],
-                            refetchInterval,
-                        })
-                    );
-                }
-            } finally {
-                await adapter.cleanup?.();
-            }
+            const binding = createFoundryMetaOntologyBackendAdapter({ client, refetchInterval });
+            await Effect.runPromise(
+                Effect.scoped(
+                    Effect.gen(function* () {
+                        const backend = yield* binding.open({});
+                        expect(backend.pollIntervalMs?.({ objectType: "ObjectType" })).toBe(
+                            refetchInterval ?? false
+                        );
+                        expect(
+                            (yield* Effect.result(
+                                backend.invoke({ id: "x", name: "create", parameters: {} })
+                            ))._tag
+                        ).toBe("Failure");
+                    })
+                )
+            );
         }
     );
 });

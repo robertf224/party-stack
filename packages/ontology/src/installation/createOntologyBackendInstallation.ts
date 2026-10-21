@@ -1,16 +1,17 @@
 import { createConnectionManager, createConnectionMonitor } from "@party-stack/connections";
 import { createLocalCollection } from "@party-stack/runtime";
+import { queryOnce } from "@tanstack/db";
 import { createLiveOntology } from "../live/LiveOntology.js";
 import { createMetaOntologyConfiguration } from "./createMetaOntologyConfiguration.js";
 import type { LiveOntology } from "../live/LiveOntology.js";
 import type { OntologyDefinition } from "../live/LiveOntology.js";
-import type { MetaOntology } from "../meta/generated/types.js";
 import type {
     CreateOntologyBackendInstallationOptions,
     OntologyBackendInstallation,
     OntologyRoute,
 } from "./types.js";
 import type { Connection } from "@party-stack/connections";
+import type { MetaOntology } from "@party-stack/ontology-spec/meta";
 
 interface LocalOntologyPartition {
     id: string;
@@ -72,9 +73,11 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
         runtime: installationRuntime,
         schemaVersion: 1,
     });
+    const partitionDemand = partitions.subscribeChanges(() => {}, { includeInitialState: true });
     try {
-        await partitions.preload();
+        await queryOnce((q) => q.from({ row: partitions }));
     } catch (error) {
+        partitionDemand.unsubscribe();
         await partitions.cleanup();
         await connectionManager.cleanup();
         await installationRuntime.cleanup?.();
@@ -230,7 +233,11 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
                 ontologyId,
                 meta: meta ? true : undefined,
             });
-            const ontology = await createLiveOntology({
+            const openLive = !meta && options.openOntology ? options.openOntology : createLiveOntology;
+            const ontology = await openLive({
+                installationId: options.installationId,
+                userId,
+                ontologyId,
                 id: runtimeNamespace,
                 ir: configured.ir,
                 backend: configured.backend,
@@ -321,6 +328,7 @@ export async function createOntologyBackendInstallation<AuthenticationClient ext
                     await Promise.all([...live.values()].map((ontology) => ontology.cleanup()));
                 } finally {
                     live.clear();
+                    partitionDemand.unsubscribe();
                     try {
                         await Promise.all([connectionManager.cleanup(), partitions.cleanup()]);
                     } finally {

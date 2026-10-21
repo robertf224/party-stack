@@ -21,6 +21,8 @@ export interface SalesforceClient {
     apiVersion: string;
     tokenProvider?: () => Promise<string> | string;
     fetch: SalesforceFetch;
+    /** Create a transport view whose requests are cancelled with the owning scope. */
+    withSignal?: (signal: AbortSignal) => SalesforceClient;
     request: <T>(
         path: string,
         init?: {
@@ -390,6 +392,22 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
         apiVersion,
         tokenProvider,
         fetch: fetchImpl,
+        withSignal: (signal) =>
+            createSalesforceClient({
+                ...options,
+                fetch: (input, init) =>
+                    fetchImpl(input, {
+                        ...init,
+                        signal: AbortSignal.any([
+                            signal,
+                            ...(init?.signal
+                                ? [init.signal]
+                                : input instanceof Request
+                                  ? [input.signal]
+                                  : []),
+                        ]),
+                    }),
+            }),
         request,
         describeGlobal: () => request<DescribeGlobalResult>(dataApiPath(apiVersion, "/sobjects")),
         describeSObject: (sObjectName) =>

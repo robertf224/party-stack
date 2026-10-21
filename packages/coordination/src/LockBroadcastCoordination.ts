@@ -1,18 +1,4 @@
-import {
-    each,
-    race,
-    run,
-    sleep,
-    spawn,
-    suspend,
-    until,
-    useAbortSignal,
-    useScope,
-    type Operation,
-    type Scope,
-    type Stream,
-    type Task,
-} from "effection";
+import { Effect, Exit, Scope, Stream } from "effect";
 import { BaseCoordination, type InvocationContext } from "./base.js";
 import {
     COORDINATION_PROTOCOL_VERSION,
@@ -26,8 +12,6 @@ import {
     type CoordinationServiceServer,
     type LockBroadcastCoordinationOptions,
 } from "./contracts.js";
-import { useBroadcastChannel, useWebLock, type BroadcastChannelResource } from "./effection/index.js";
-import { runInScope } from "./effection/runInScope.js";
 import { HostCore } from "./host-core.js";
 import {
     abortError,
@@ -50,6 +34,9 @@ import {
     type CoordinationLeaderMessage,
     type CoordinationResponseMessage,
 } from "./protocol.js";
+import { broadcastChannel, type BroadcastChannelResource } from "./resources/broadcastChannel.js";
+import { runInEffectScope } from "./resources/runInScope.js";
+import { webLock } from "./resources/webLock.js";
 import { encodeCoordinationMessage, decodeCoordinationMessage } from "./valueCodec.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 2_000;
@@ -75,7 +62,7 @@ interface LeaderRoute {
 
 interface LeadershipTerm {
     readonly id: string;
-    readonly scope: Scope;
+    readonly scope: Scope.Scope;
     readonly signal: AbortSignal;
 }
 
@@ -89,7 +76,8 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
     private readonly responseCacheMs: number;
     private readonly core: HostCore;
     private readonly ready = deferred<void>();
-    private readonly rootScope = deferred<Scope>();
+    private readonly rootScope = deferred<Scope.Scope>();
+    private readonly lifetimeScope = Effect.runSync(Scope.make());
     private readonly pending = new Map<string, Deferred<unknown>>();
     private readonly routes = new Map<string, Deferred<LeaderRoute>>();
     private readonly pendingSenders = new Map<string, string>();
@@ -97,7 +85,6 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
     private readonly responses = new Map<string, CachedResponse>();
     private responsePruneTimer: ReturnType<typeof setTimeout> | undefined;
     private readonly leadershipWaiters = new Set<Deferred<LeadershipTerm>>();
-    private readonly task: Task<void>;
 
     private channel: BroadcastChannelResource<unknown> | undefined;
     private term: LeadershipTerm | undefined;
@@ -115,8 +102,7 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
             contextClient: (path, signal) => this.createContextClient({ path, signal }),
             publishEvent: (service, event, payload) => this.publishEvent(service, event, payload),
         });
-        this.task = run(() => this.useLifetime());
-        void this.task.catch((error: unknown) => {
+        void runInEffectScope(this.lifetimeScope, this.useLifetime()).catch((error: unknown) => {
             this.fail(normalizeError(error));
         });
     }
@@ -141,12 +127,12 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
         this.throwTerminalError();
         const term = await this.waitForLeadership(options?.signal);
         try {
-            return await runInScope(
+            return await runInEffectScope(
                 term.scope,
-                function* () {
-                    const signal = yield* useAbortSignal();
-                    return yield* until(Promise.resolve(callback({ signal })));
-                },
+                Effect.tryPromise({
+                    try: (signal) => Promise.resolve(callback({ signal })),
+                    catch: normalizeError,
+                }),
                 [options?.signal]
             );
         } catch (error) {
@@ -165,7 +151,7 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
     close(): Promise<void> {
         if (this.closePromise) return this.closePromise;
         this.closed = true;
-        this.closePromise = this.task.halt().then(() => undefined);
+        this.closePromise = Effect.runPromise(Scope.close(this.lifetimeScope, Exit.void));
         return this.closePromise;
     }
 
@@ -181,7 +167,7 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
         }
         return this.rootScope.promise
             .then((scope) =>
-                runInScope(scope, () => this.invokeOperation(namespace, method, input, context.path), [
+                runInEffectScope(scope, this.invokeOperation(namespace, method, input, context.path), [
                     context.signal,
                     options?.signal,
                 ])
@@ -194,56 +180,47 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
             });
     }
 
-    private *useLifetime(): Operation<void> {
-        const channelName = `party-stack.coordination:${this.scope}`;
-        const rootScope = yield* useScope();
-        const channel = yield* useBroadcastChannel<unknown>(channelName);
+    private useLifetime = Effect.fnUntraced(function* (this: LockBroadcastCoordination) {
+        const channel = yield* broadcastChannel<unknown>(`party-stack.coordination:${this.scope}`);
         this.channel = channel;
-        this.rootScope.resolve(rootScope);
+        this.rootScope.resolve(yield* Effect.scope);
+        yield* Effect.addFinalizer(() =>
+            Effect.promise(async () => {
+                const closeError = new CoordinationClosedError();
+                await this.stopTerm(this.term, closeError);
+                await this.core.close();
+                this.channel = undefined;
+                this.clearResponses();
+                this.clearEventListeners();
+                this.rejectPending(closeError);
+                this.rejectLeadershipWaiters(closeError);
+                this.rootScope.reject(closeError);
+            })
+        );
+        this.ready.resolve();
+        yield* Effect.all(
+            [
+                Stream.runForEach(channel.messages, (event) =>
+                    Effect.sync(() => this.onMessage(decodeCoordinationMessage(event.data)))
+                ),
+                Effect.scoped(this.useLeadership()),
+            ],
+            { concurrency: "unbounded" }
+        );
+    });
 
-        try {
-            void (yield* spawn(() => this.processMessages(channel)));
-            void (yield* spawn(() => this.useLeadership()));
-            this.ready.resolve();
-            yield* suspend();
-        } finally {
-            const closeError = new CoordinationClosedError();
-            yield* until(this.stopTerm(this.term, closeError));
-            yield* until(this.core.close());
-            this.channel = undefined;
-            this.clearResponses();
-            this.clearEventListeners();
-            this.rejectPending(closeError);
-            this.rejectLeadershipWaiters(closeError);
-            this.rootScope.reject(closeError);
-        }
-    }
-
-    private *processMessages(messages: Stream<MessageEvent<unknown>, void>): Operation<void> {
-        for (const event of yield* each(messages)) {
-            this.onMessage(decodeCoordinationMessage(event.data));
-            yield* each.next();
-        }
-    }
-
-    private *useLeadership(): Operation<void> {
-        yield* useWebLock(`party-stack.coordination:${this.scope}:leader`);
-        const scope = yield* useScope();
-        const signal = yield* useAbortSignal();
+    private useLeadership = Effect.fnUntraced(function* (this: LockBroadcastCoordination) {
+        yield* webLock(`party-stack.coordination:${this.scope}:leader`);
         const term: LeadershipTerm = {
             id: randomId(),
-            scope,
-            signal,
+            scope: yield* Effect.scope,
+            signal: yield* Effect.abortSignal,
         };
         this.term = term;
-        for (const waiter of this.leadershipWaiters) {
-            waiter.resolve(term);
-        }
+        for (const waiter of this.leadershipWaiters) waiter.resolve(term);
         this.leadershipWaiters.clear();
-        try {
-            yield* suspend();
-        } finally {
-            yield* until(
+        yield* Effect.addFinalizer(() =>
+            Effect.promise(() =>
                 this.stopTerm(
                     term,
                     this.closed
@@ -253,122 +230,124 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
                               "TRANSPORT_ERROR"
                           )
                 )
-            );
-        }
-    }
+            )
+        );
+        yield* Effect.never;
+    });
 
-    private *invokeOperation(
+    private invokeOperation = Effect.fnUntraced(function* (
+        this: LockBroadcastCoordination,
         namespace: string,
         method: string,
         input: unknown,
         path: readonly string[]
-    ): Operation<unknown> {
-        const signal = yield* useAbortSignal();
-        yield* until(this.ready.promise);
+    ) {
+        const signal = yield* Effect.abortSignal;
+        yield* Effect.tryPromise({ try: () => this.ready.promise, catch: normalizeError });
         this.throwTerminalError();
-        if (this.closed) throw new CoordinationClosedError();
+        if (this.closed) return yield* Effect.fail(new CoordinationClosedError());
         const term = this.term;
-        if (term) {
-            return yield* until(
-                this.core.invoke(namespace, method, input, {
-                    signal,
-                    inheritedSignal: term.signal,
-                    senderId: this.nodeId,
-                    path,
-                })
-            );
-        }
+        if (term)
+            return yield* Effect.tryPromise({
+                try: () =>
+                    this.core.invoke(namespace, method, input, {
+                        signal,
+                        inheritedSignal: term.signal,
+                        senderId: this.nodeId,
+                        path,
+                    }),
+                catch: normalizeError,
+            });
         return yield* this.requestRemote(namespace, method, input);
-    }
+    });
 
-    private *requestRemote(service: string, method: string, payload: unknown): Operation<unknown> {
-        const signal = yield* useAbortSignal();
+    private requestRemote = Effect.fnUntraced(function* (
+        this: LockBroadcastCoordination,
+        service: string,
+        method: string,
+        payload: unknown
+    ): Effect.fn.Return<unknown, Error, Scope.Scope> {
+        const signal = yield* Effect.abortSignal;
         const requestId = randomId();
         const response = deferred<unknown>();
         void response.promise.catch(() => undefined);
         this.pending.set(requestId, response);
-        const cancel = () => {
-            this.publish({
-                v: COORDINATION_PROTOCOL_VERSION,
-                scope: this.scope,
-                type: "cancel",
-                requestId,
-                senderId: this.nodeId,
-            } satisfies CoordinationCancelMessage);
-        };
-        try {
-            const route = yield* this.findLeader(service, method);
-            const localTerm = this.currentTerm();
-            if (route.nodeId === this.nodeId && localTerm?.id === route.termId) {
-                return yield* until(
+        yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+                if (!response.settled)
+                    this.publish({
+                        v: COORDINATION_PROTOCOL_VERSION,
+                        scope: this.scope,
+                        type: "cancel",
+                        requestId,
+                        senderId: this.nodeId,
+                    } satisfies CoordinationCancelMessage);
+                if (this.pending.get(requestId) === response) this.pending.delete(requestId);
+                this.pendingSenders.delete(requestId);
+            })
+        );
+        const awaitResponse = Effect.tryPromise({ try: () => response.promise, catch: normalizeError });
+        const route = yield* this.findLeader(service, method);
+        const localTerm = this.currentTerm();
+        if (route.nodeId === this.nodeId && localTerm?.id === route.termId)
+            return yield* Effect.tryPromise({
+                try: () =>
                     this.core.invoke(service, method, payload, {
                         signal,
                         inheritedSignal: localTerm.signal,
                         senderId: this.nodeId,
                         path: [],
-                    })
-                );
+                    }),
+                catch: normalizeError,
+            });
+        this.pendingSenders.set(requestId, route.nodeId);
+        const request: CoordinationRequestMessage = {
+            v: COORDINATION_PROTOCOL_VERSION,
+            scope: this.scope,
+            type: "request",
+            requestId,
+            senderId: this.nodeId,
+            service,
+            method,
+            payload,
+            recipientId: route.nodeId,
+            termId: route.termId,
+            expiresAt: Date.now() + this.requestTimeoutMs * this.requestAttempts ** 2,
+        };
+        for (let attempt = 0; attempt < this.requestAttempts; attempt++) {
+            if (signal.aborted) return yield* Effect.fail(abortError(signal));
+            if (response.settled) return yield* awaitResponse;
+            if (attempt > 0) {
+                const current = yield* Effect.result(this.findLeader(service, method));
+                if (response.settled) return yield* awaitResponse;
+                if (current._tag === "Failure")
+                    return yield* Effect.fail(
+                        signal.aborted || this.closed || this.terminalError
+                            ? current.failure
+                            : this.indeterminate(service, method)
+                    );
+                if (current.success.nodeId !== route.nodeId || current.success.termId !== route.termId)
+                    return yield* Effect.fail(this.indeterminate(service, method));
             }
-            this.pendingSenders.set(requestId, route.nodeId);
-            const request: CoordinationRequestMessage = {
-                v: COORDINATION_PROTOCOL_VERSION,
-                scope: this.scope,
-                type: "request",
-                requestId,
-                senderId: this.nodeId,
-                service,
-                method,
-                payload,
-                recipientId: route.nodeId,
-                termId: route.termId,
-                expiresAt: Date.now() + this.requestTimeoutMs * this.requestAttempts ** 2,
-            };
-            for (let attempt = 0; attempt < this.requestAttempts; attempt++) {
-                if (signal.aborted) throw abortError(signal);
-                if (response.settled) return yield* until(response.promise);
-                if (attempt > 0) {
-                    let current: LeaderRoute;
-                    try {
-                        current = yield* this.findLeader(service, method);
-                    } catch (error) {
-                        if (response.settled) return yield* until(response.promise);
-                        if (signal.aborted || this.closed || this.terminalError) throw error;
-                        throw this.indeterminate(service, method);
-                    }
-                    if (response.settled) return yield* until(response.promise);
-                    if (current.nodeId !== route.nodeId || current.termId !== route.termId) {
-                        throw this.indeterminate(service, method);
-                    }
-                }
-                if (Date.now() >= request.expiresAt) throw this.indeterminate(service, method);
-                this.publish(request);
-                try {
-                    return yield* this.waitForResponseAttempt(response.promise, service, method);
-                } catch (error) {
-                    if (
-                        !(error instanceof CoordinationTransportError) ||
-                        error.code !== "TIMEOUT" ||
-                        attempt === this.requestAttempts - 1
-                    ) {
-                        if (error instanceof CoordinationTransportError && error.code === "TIMEOUT") {
-                            throw this.indeterminate(service, method);
-                        }
-                        throw error;
-                    }
-                }
-            }
-            throw new CoordinationTransportError(
+            if (Date.now() >= request.expiresAt)
+                return yield* Effect.fail(this.indeterminate(service, method));
+            this.publish(request);
+            const result = yield* Effect.result(
+                this.waitForResponseAttempt(response.promise, service, method)
+            );
+            if (result._tag === "Success") return result.success;
+            if (!(result.failure instanceof CoordinationTransportError) || result.failure.code !== "TIMEOUT")
+                return yield* Effect.fail(result.failure);
+            if (attempt === this.requestAttempts - 1)
+                return yield* Effect.fail(this.indeterminate(service, method));
+        }
+        return yield* Effect.fail(
+            new CoordinationTransportError(
                 `Coordination request "${service}.${method}" timed out.`,
                 "TIMEOUT"
-            );
-        } finally {
-            if (!response.settled) cancel();
-            if (this.pending.get(requestId) === response) {
-                this.pending.delete(requestId);
-            }
-            this.pendingSenders.delete(requestId);
-        }
-    }
+            )
+        );
+    });
 
     private indeterminate(service: string, method: string): CoordinationTransportError {
         return new CoordinationTransportError(
@@ -381,12 +360,17 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
         return this.term;
     }
 
-    private *findLeader(service: string, method: string): Operation<LeaderRoute> {
+    private findLeader = Effect.fnUntraced(function* (
+        this: LockBroadcastCoordination,
+        service: string,
+        method: string
+    ): Effect.fn.Return<LeaderRoute, Error> {
         if (this.term) return { nodeId: this.nodeId, termId: this.term.id };
         const requestId = randomId();
         const route = deferred<LeaderRoute>();
-        this.routes.set(requestId, route);
-        try {
+        void route.promise.catch(() => undefined);
+        const lookup = Effect.fnUntraced(function* (this: LockBroadcastCoordination) {
+            this.routes.set(requestId, route);
             for (let attempt = 0; attempt < this.requestAttempts; attempt++) {
                 const term = this.currentTerm();
                 if (term) return { nodeId: this.nodeId, termId: term.id };
@@ -397,50 +381,43 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
                     requestId,
                     senderId: this.nodeId,
                 } satisfies CoordinationLeaderQueryMessage);
-                try {
-                    return yield* this.waitForResponseAttempt(route.promise, service, method);
-                } catch (error) {
-                    if (
-                        !(error instanceof CoordinationTransportError) ||
-                        error.code !== "TIMEOUT" ||
-                        attempt === this.requestAttempts - 1
-                    )
-                        throw error;
-                }
+                const result = yield* Effect.result(
+                    this.waitForResponseAttempt(route.promise, service, method)
+                );
+                if (result._tag === "Success") return result.success;
+                if (
+                    !(result.failure instanceof CoordinationTransportError) ||
+                    result.failure.code !== "TIMEOUT" ||
+                    attempt === this.requestAttempts - 1
+                )
+                    return yield* Effect.fail(result.failure);
             }
-            throw new CoordinationTransportError("No coordination leader answered.", "TIMEOUT");
-        } finally {
-            this.routes.delete(requestId);
-        }
-    }
+            return yield* Effect.fail(
+                new CoordinationTransportError("No coordination leader answered.", "TIMEOUT")
+            );
+        });
+        return yield* lookup
+            .call(this)
+            .pipe(Effect.ensuring(Effect.sync(() => this.routes.delete(requestId))));
+    });
 
-    private *waitForResponseAttempt<Result>(
+    private waitForResponseAttempt<Result>(
         response: Promise<Result>,
         service: string,
         method: string
-    ): Operation<Result> {
-        const timeout = this.requestTimeoutMs;
-        const result = yield* race([
-            (function* () {
-                return {
-                    type: "response" as const,
-                    value: yield* until(response),
-                };
-            })(),
-            (function* () {
-                yield* sleep(timeout);
-                return {
-                    type: "timeout" as const,
-                };
-            })(),
-        ]);
-        if (result.type === "timeout") {
-            throw new CoordinationTransportError(
-                `Coordination request "${service}.${method}" timed out.`,
-                "TIMEOUT"
-            );
-        }
-        return result.value;
+    ): Effect.Effect<Result, Error> {
+        return Effect.tryPromise({ try: () => response, catch: normalizeError }).pipe(
+            Effect.timeoutOrElse({
+                duration: this.requestTimeoutMs,
+                orElse: () =>
+                    Effect.fail(
+                        new CoordinationTransportError(
+                            `Coordination request "${service}.${method}" timed out.`,
+                            "TIMEOUT"
+                        )
+                    ),
+            })
+        );
     }
 
     private onMessage(message: unknown): void {
@@ -729,7 +706,7 @@ export class LockBroadcastCoordination extends BaseCoordination implements Coord
         this.ready.reject(error);
         this.rejectPending(error);
         this.rejectLeadershipWaiters(error);
-        void this.task.halt().catch(() => undefined);
+        void Effect.runPromise(Scope.close(this.lifetimeScope, Exit.void)).catch(() => undefined);
     }
 
     private throwTerminalError(): void {

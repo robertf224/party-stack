@@ -1,11 +1,5 @@
-import { notImplemented } from "@bobbyfidz/panic";
-import { actionTypeCollectionOptions } from "./actionTypeCollectionOptions.js";
-import {
-    linkTypeCollectionOptions,
-    objectTypeCollectionOptions,
-    valueTypeCollectionOptions,
-} from "./entityCollectionOptions.js";
-import { queryFunctionTypeCollectionOptions } from "./queryFunctionTypeCollectionOptions.js";
+import { Effect } from "effect";
+import { makeSalesforceMetadataBackend } from "./backend.js";
 import type { SalesforceCrudActionTypeSelection } from "../crud.js";
 import type { OntologyBackendAdapter } from "@party-stack/ontology";
 import type { SalesforceClient } from "@party-stack/salesforce-client";
@@ -30,42 +24,5 @@ export interface CreateSalesforceMetaOntologyBackendAdapterOpts {
 export function createSalesforceMetaOntologyBackendAdapter(
     opts: CreateSalesforceMetaOntologyBackendAdapterOpts
 ): OntologyBackendAdapter {
-    const entityOptions = {
-        client: opts.client,
-        objectTypeNames: opts.objectTypeNames,
-    };
-
-    return {
-        name: "salesforce-metadata",
-        getCollectionOptions: (objectType: string) => {
-            switch (objectType) {
-                case "ObjectType":
-                    return objectTypeCollectionOptions(entityOptions);
-                case "ValueType":
-                    return valueTypeCollectionOptions();
-                case "LinkType":
-                    return linkTypeCollectionOptions(entityOptions);
-                case "ActionType":
-                    return actionTypeCollectionOptions({
-                        client: opts.client,
-                        flowActionTypeNames: opts.flowActionTypeNames,
-                        standardActionTypeNames: opts.standardActionTypeNames,
-                        crudActionTypes: opts.crudActionTypes,
-                    });
-                case "QueryFunctionType":
-                    return queryFunctionTypeCollectionOptions({
-                        client: opts.client,
-                        standardQueryFunctionTypeNames: opts.standardQueryFunctionTypeNames,
-                    });
-                default:
-                    throw new Error(`Unsupported Salesforce metadata object type "${objectType}".`);
-            }
-        },
-        applyAction: () => {
-            notImplemented();
-        },
-        runQueryFunction: () => {
-            notImplemented();
-        },
-    };
+    return { name: "salesforce-metadata", open: () => Effect.succeed(makeSalesforceMetadataBackend(opts)) };
 }

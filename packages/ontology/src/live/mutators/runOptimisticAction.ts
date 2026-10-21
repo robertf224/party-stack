@@ -1,9 +1,9 @@
 import { createMutatorTx } from "./createMutatorTx.js";
 import { applyActionLogicToMutatorTx } from "./OntologyEdits.js";
-import type { OntologyIR } from "../../ir/index.js";
-import type { OntologyCollection } from "../objects/createLiveOntologyObjectCollection.js";
-import type { OntologyObject } from "../objects/OntologyObject.js";
-import type { OntologyMutatorRegistry } from "./types.js";
+import type { OntologyCollection } from "../objects/types.js";
+import type { OntologyMutatorRegistry, PrepareTransactionSources } from "./types.js";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { OntologyObject } from "@party-stack/ontology-spec";
 import type { Transaction } from "@tanstack/db";
 
 export async function runOptimisticAction(options: {
@@ -13,12 +13,15 @@ export async function runOptimisticAction(options: {
     parameters: Record<string, unknown>;
     context: Record<string, unknown>;
     idempotencyKey: string;
+    replay?: import("../expression.js").ExpressionReplay;
     objects: Record<string, OntologyCollection<OntologyObject>>;
     mutators?: OntologyMutatorRegistry;
+    ensureLoaded?: PrepareTransactionSources;
 }): Promise<void> {
     const tx = createMutatorTx({
         transaction: options.transaction,
         objects: options.objects,
+        ensureLoaded: options.ensureLoaded,
         primaryKeys: Object.fromEntries(
             options.ir.objectTypes.map((objectType) => [objectType.name, objectType.primaryKey])
         ),
@@ -29,6 +32,7 @@ export async function runOptimisticAction(options: {
         parameters: options.parameters,
         context: options.context,
         idempotencyKey: options.idempotencyKey,
+        replay: options.replay,
         objects: options.objects,
         tx,
     });

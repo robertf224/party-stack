@@ -1,8 +1,8 @@
 import { Users } from "@osdk/foundry.admin";
 import { decodeFoundryUserProfilePictureAttachment } from "./foundryUser.js";
-import { userCollectionOptions } from "./userCollectionOptions.js";
+import { loadUserSubset } from "./loadUserSubset.js";
 import type { FoundryUsersIntegration } from "../adapter/createFoundryOntologyBackendAdapter.js";
-import type { Lens, OntologyCollectionOptions } from "@party-stack/ontology";
+import type { Lens } from "@party-stack/ontology";
 
 export function createFoundryUsersIntegration(options: {
     objectType: string;
@@ -10,12 +10,7 @@ export function createFoundryUsersIntegration(options: {
 }): FoundryUsersIntegration {
     return {
         objectType: options.objectType,
-        getCollectionOptions: (client) =>
-            // oxlint-disable-next-line typescript/no-unnecessary-type-assertion -- TypeScript 5 needs this variance boundary.
-            userCollectionOptions({
-                client: client,
-                lens: options.lens,
-            }) as unknown as OntologyCollectionOptions,
+        loadSubset: (client, query, signal) => loadUserSubset(client, options.lens, query, signal),
         async getAttachmentContent(client, attachment) {
             const userId = decodeFoundryUserProfilePictureAttachment(attachment.id);
             if (!userId) return;

@@ -23,6 +23,14 @@ export function TypeDefLabel({ type }: { type: TypeDef }) {
             return <span className="text-zinc-400">Attachment</span>;
         case "unknown":
             return <span className="text-zinc-500">Unknown</span>;
+        case "encrypted":
+            return (
+                <span className="text-zinc-400">
+                    Encrypted&lt;
+                    <TypeDefLabel type={type.value.type} />
+                    &gt;
+                </span>
+            );
         case "list":
             return (
                 <span>
@@ -99,6 +107,8 @@ export function typeDefToString(type: TypeDef): string {
             return "Attachment";
         case "unknown":
             return "Unknown";
+        case "encrypted":
+            return `Encrypted<${typeDefToString(type.value.type)}>`;
         case "list":
             return `List<${typeDefToString(type.value.elementType)}>`;
         case "map":

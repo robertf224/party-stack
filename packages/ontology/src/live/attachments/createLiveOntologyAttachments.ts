@@ -1,12 +1,12 @@
 import { invariant } from "@bobbyfidz/panic";
-import { ImageMediaTypeOptions } from "../../ir/generated/constants.js";
-import { getTargetValueType } from "../../utils/types.js";
-import * as v from "../../utils/values.js";
-import type { OntologyIR } from "../../ir/index.js";
-import type { OntologyAttachmentCreateTarget } from "../../utils/targets.js";
+import { ImageMediaTypeOptions } from "@party-stack/ontology-spec/constants";
+import { getTargetValueType } from "@party-stack/ontology-spec/utils";
+import * as v from "@party-stack/ontology-spec/values";
 import type { OntologyAttachmentsAdapter } from "../OntologyBackendAdapter.js";
 import type { AttachmentMetadata, AttachmentMetadataSelection, PartialAttachmentMetadata } from "./types.js";
 import type { BlobManager } from "@party-stack/blobs";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { OntologyAttachmentCreateTarget } from "@party-stack/ontology-spec/utils";
 
 export interface LiveOntologyEagerAttachmentCreation {
     attachment: v.attachment;

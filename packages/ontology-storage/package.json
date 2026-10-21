@@ -1,0 +1,65 @@
+{
+    "name": "@party-stack/ontology-storage",
+    "version": "0.1.0",
+    "files": [
+        "lib"
+    ],
+    "type": "module",
+    "exports": {
+        "./blobs": {
+            "types": "./lib/blobs/index.d.ts",
+            "default": "./lib/blobs/index.js"
+        },
+        "./encrypted": {
+            "types": "./lib/encrypted/index.d.ts",
+            "default": "./lib/encrypted/index.js"
+        },
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./driver": {
+            "types": "./lib/driver/index.d.ts",
+            "default": "./lib/driver/index.js"
+        },
+        "./overlay": {
+            "types": "./lib/overlay/index.d.ts",
+            "default": "./lib/overlay/index.js"
+        },
+        "./testing": {
+            "types": "./lib/testing/index.d.ts",
+            "default": "./lib/testing/index.js"
+        },
+        "./memory": {
+            "types": "./lib/memory/index.d.ts",
+            "default": "./lib/memory/index.js"
+        },
+        "./planner": {
+            "types": "./lib/planner/index.d.ts",
+            "default": "./lib/planner/index.js"
+        },
+        "./tables": {
+            "types": "./lib/table-api.d.ts",
+            "default": "./lib/table-api.js"
+        },
+        "./memory/tables": {
+            "types": "./lib/memory/tables.d.ts",
+            "default": "./lib/memory/tables.js"
+        }
+    },
+    "dependencies": {
+        "@party-stack/ontology-spec": "workspace:*",
+        "temporal-polyfill": "^0.3.0"
+    },
+    "devDependencies": {
+        "@effect/vitest": "^4.0.5",
+        "@party-stack/build-config": "workspace:*",
+        "effect": "^4.0.5",
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:",
+        "vitest": "catalog:"
+    },
+    "peerDependencies": {
+        "effect": "^4.0.5"
+    }
+}

@@ -1,4 +1,5 @@
 import { o } from "@party-stack/ontology";
+import { Effect, Stream } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
@@ -131,7 +132,7 @@ describe("Foundry action execution time overrides", () => {
             },
         });
 
-        await adapter.applyAction("setTimestamp", { __now: value }, { objects: {} });
+        await applyNative(adapter, "setTimestamp", { __now: value }, { objects: {} });
 
         expect(ontologyMocks.applyWithOverrides.mock.calls[0]?.[3]).toMatchObject({
             overrides: {
@@ -142,7 +143,7 @@ describe("Foundry action execution time overrides", () => {
 
     it("rejects an invalid execution time before making a Foundry request", async () => {
         await expect(
-            adapter.applyAction("setTimestamp", { __now: "not an ISO instant" }, { objects: {} })
+            applyNative(adapter, "setTimestamp", { __now: "not an ISO instant" }, { objects: {} })
         ).rejects.toThrow("Invalid action execution time: expected a Date or Temporal-like ISO instant.");
         expect(ontologyMocks.applyWithOverrides).not.toHaveBeenCalled();
     });
@@ -185,7 +186,7 @@ describe("Foundry action API names", () => {
             live: false,
         });
 
-        await adapter.applyAction(name, {}, { objects: {} });
+        await applyNative(adapter, name, {}, { objects: {} });
 
         expect(ontologyMocks.applyWithOverrides.mock.calls[0]?.[2]).toBe(apiName);
     });
@@ -237,30 +238,96 @@ describe("Foundry live behavior", () => {
         });
     });
 
-    it("waits for edited collections by default", async () => {
-        const awaitOperationId = vi.fn(() => Promise.resolve());
+    it("keeps the existing physical watcher across native actions without history or collection loads", async () => {
+        const socket = new EventTarget() as EventTarget & {
+            readyState: number;
+            send: ReturnType<typeof vi.fn>;
+            close: ReturnType<typeof vi.fn>;
+        };
+        socket.readyState = 1;
+        socket.send = vi.fn();
+        socket.close = vi.fn(() => {
+            socket.readyState = 3;
+            socket.dispatchEvent(new Event("close"));
+        });
+        const createWebSocket = vi.fn(async () => socket as unknown as WebSocket);
+        const fetch = vi.fn<typeof globalThis.fetch>(() => {
+            throw new Error("Unexpected history or collection read");
+        });
         const adapter = createFoundryOntologyBackendAdapter({
             client: {
-                ontologyRid: "ri.ontology.main.1",
-            } as OntologyClient,
+                baseUrl: "https://foundry.example",
+                ontologyRid: "ontology",
+                fetch,
+                createWebSocket,
+            } as unknown as OntologyClient,
             ir,
         });
-
-        expect(adapter.live).toBe(true);
-        await adapter.applyAction(
-            "updateTask",
-            {},
-            {
-                objects: {
-                    Task: {
-                        utils: { awaitOperationId },
-                    } as never,
-                },
-            }
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const backend = yield* adapter.open!({});
+                    yield* Effect.forkScoped(Stream.runDrain(backend.watchSubset!({ objectType: "Task" })!), {
+                        startImmediately: true,
+                    });
+                    yield* Effect.promise(() =>
+                        vi.waitFor(() => expect(createWebSocket).toHaveBeenCalledTimes(1))
+                    );
+                    for (const id of ["first", "second"]) {
+                        expect(
+                            (yield* backend.invoke({ id, name: "updateTask", parameters: {} })).operationId
+                        ).toBe("operation-1");
+                    }
+                    expect(createWebSocket).toHaveBeenCalledTimes(1);
+                    expect(socket.close).not.toHaveBeenCalled();
+                    expect(fetch).not.toHaveBeenCalled();
+                    expect(ontologyMocks.applyWithOverrides).toHaveBeenCalledTimes(2);
+                })
+            )
         );
-
-        expect(awaitOperationId).toHaveBeenCalledWith("operation-1");
+        expect(socket.close).toHaveBeenCalledOnce();
     });
+
+    it.each(["edits", "largeScaleEdits"])(
+        "returns native edit receipts without waiting on UI collections (%s)",
+        async (type) => {
+            if (type === "largeScaleEdits")
+                ontologyMocks.applyWithOverrides.mockResolvedValue({
+                    operationId: "operation-1",
+                    validation: { result: "VALID" },
+                    edits: { type: "largeScaleEdits", editedObjectTypes: ["Task"] },
+                });
+            const awaitOperationId = vi.fn(() => Promise.resolve());
+            const adapter = createFoundryOntologyBackendAdapter({
+                client: {
+                    ontologyRid: "ri.ontology.main.1",
+                } as OntologyClient,
+                ir,
+            });
+
+            expect(adapter.live).toBe(true);
+            const result = await applyNative(
+                adapter,
+                "updateTask",
+                {},
+                {
+                    idempotencyKey: "local-invocation",
+                    objects: {
+                        Task: {
+                            utils: { awaitOperationId },
+                        } as never,
+                    },
+                }
+            );
+
+            expect(awaitOperationId).not.toHaveBeenCalled();
+            expect(result?.receipt).toMatchObject({
+                invocationId: "local-invocation",
+                outcome: "committed",
+                operationId: "operation-1",
+            });
+        }
+    );
 
     it("returns after backend acceptance when live is false", async () => {
         const awaitOperationId = vi.fn(() => Promise.resolve());
@@ -273,7 +340,8 @@ describe("Foundry live behavior", () => {
         });
 
         expect(adapter.live).toBe(false);
-        await adapter.applyAction(
+        await applyNative(
+            adapter,
             "updateTask",
             {},
             {
@@ -501,7 +569,8 @@ describe("Foundry media attachments", () => {
         };
 
         await expect(
-            adapter.applyAction(
+            applyNative(
+                adapter,
                 "createMedia",
                 { media: attachment, caption: null },
                 {
@@ -515,7 +584,7 @@ describe("Foundry media attachments", () => {
                     ],
                 }
             )
-        ).resolves.toEqual({
+        ).resolves.toMatchObject({
             attachmentIdMappings: [
                 {
                     localId: "local-id",
@@ -773,3 +842,28 @@ describe("Foundry media attachments", () => {
         expect(ontologyMocks.getMediaMetadata).not.toHaveBeenCalled();
     });
 });
+
+function applyNative(
+    adapter: import("@party-stack/ontology").OntologyBackendAdapter,
+    name: string,
+    parameters: Record<string, unknown>,
+    options: {
+        context?: Record<string, unknown>;
+        idempotencyKey?: string;
+        objects?: unknown;
+        attachmentUploads?: import("@party-stack/ontology").OntologyAttachmentUpload[];
+    }
+) {
+    return Effect.runPromise(
+        Effect.scoped(
+            Effect.flatMap(adapter.open(options.context ?? {}), (backend) =>
+                backend.invoke({
+                    id: options.idempotencyKey ?? "test-invocation",
+                    name,
+                    parameters,
+                    attachmentUploads: options.attachmentUploads,
+                })
+            )
+        )
+    ).then((receipt) => ({ receipt, attachmentIdMappings: receipt.attachmentIdMappings }));
+}

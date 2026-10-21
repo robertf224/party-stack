@@ -128,6 +128,7 @@ async function createFoundryConnectionAdapterInstance(
                   ).toString(),
               },
               runtime: context.runtime,
+              scope: context.scope,
               fetch: options.oauth.fetch,
               dangerouslyPersistSecrets: options.oauth.dangerouslyPersistSecrets,
               resolveUserId: (token) => getTokenDetails(token).userId,

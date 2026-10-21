@@ -28,33 +28,35 @@ function convertFoundryMetaLinkType(id: string, sides: LinkTypeSideV2[]): MetaLi
         return null;
     }
 
-    const source = sides.find((side) => side.foreignKeyPropertyApiName);
-    if (!source) {
+    // Foundry sides describe outgoing traversal: objectTypeApiName and cardinality
+    // describe the destination, while the FK lives on the enclosing object type.
+    const forward = sides.find((side) => side.foreignKeyPropertyApiName);
+    if (!forward) {
         return null;
     }
 
-    const target = sides.find((side) => side !== source);
-    if (!target) {
+    const reverse = sides.find((side) => side !== forward);
+    if (!reverse) {
         return null;
     }
 
     return {
         id,
         source: {
-            objectType: source.objectTypeApiName,
-            name: source.apiName,
-            displayName: source.displayName,
+            objectType: reverse.objectTypeApiName,
+            name: reverse.apiName,
+            displayName: reverse.displayName,
         },
         target: {
-            objectType: target.objectTypeApiName,
-            name: target.apiName,
-            displayName: target.displayName,
+            objectType: forward.objectTypeApiName,
+            name: forward.apiName,
+            displayName: forward.displayName,
         },
         foreignKey: (() => {
-            invariant(source.foreignKeyPropertyApiName, "Expected Foundry link foreign key.");
-            return source.foreignKeyPropertyApiName;
+            invariant(forward.foreignKeyPropertyApiName, "Expected Foundry link foreign key.");
+            return forward.foreignKeyPropertyApiName;
         })(),
-        cardinality: convertFoundryLinkCardinality(source.cardinality),
+        cardinality: convertFoundryLinkCardinality(reverse.cardinality),
     };
 }
 

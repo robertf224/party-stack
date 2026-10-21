@@ -33,13 +33,13 @@ async function run(page: Page, method: string, ...args: unknown[]) {
         { method, args }
     );
 }
-async function tabs(test: (writer: Page, reader: Page) => Promise<void>, coordinator = "party") {
+async function tabs(test: (writer: Page, reader: Page) => Promise<void>) {
     const context = await browser.newContext();
     const writer = await context.newPage();
     const reader = await context.newPage();
     const errors: string[] = [];
     for (const page of [writer, reader]) page.on("pageerror", (error) => errors.push(error.message));
-    const url = `${origin}e2e/tab.html?scope=${crypto.randomUUID()}&coordinator=${coordinator}`;
+    const url = `${origin}e2e/tab.html?scope=${crypto.randomUUID()}`;
     try {
         await writer.goto(url);
         await writer.waitForFunction(() => Reflect.has(window, "persistenceTest"), null, { timeout: 10_000 });
@@ -64,7 +64,7 @@ describe("real IndexedDB / Web Locks / BroadcastChannel tabs", () => {
             await expect.poll(() => run(reader, "rows")).toEqual([]);
         });
     });
-    it("recovers a missed middle commit when a later sequence arrives", async () => {
+    it("rereads missed commits after a later storage notification", async () => {
         await tabs(async (writer, reader) => {
             await run(writer, "insert", one);
             await expect.poll(() => run(reader, "rows")).toEqual([one]);
@@ -125,7 +125,6 @@ describe("real IndexedDB / Web Locks / BroadcastChannel tabs", () => {
             }));
             await Promise.all(items.map((item, index) => run(index % 2 ? reader : writer, "insert", item)));
             expect(await run(writer, "durable")).toMatchObject({
-                position: { latestSeq: 20, latestRowVersion: 20 },
                 keys: expect.arrayContaining(items.map((item) => item.id)),
             });
             await expect.poll(() => run(reader, "rows")).toEqual(items);
@@ -152,21 +151,5 @@ describe("real IndexedDB / Web Locks / BroadcastChannel tabs", () => {
                 await session.detach();
             }
         });
-    });
-
-    it.fails("upstream reference: local acknowledgements can skip concurrent remote commits", async () => {
-        await tabs(async (writer, reader) => {
-            const items = Array.from({ length: 20 }, (_, score) => ({
-                id: String(score),
-                title: `Task ${score}`,
-                score,
-            }));
-            await Promise.all(items.map((item, index) => run(index % 2 ? reader : writer, "insert", item)));
-            expect(await run(writer, "durable")).toMatchObject({
-                position: { latestSeq: 20, latestRowVersion: 20 },
-                keys: expect.arrayContaining(items.map((item) => item.id)),
-            });
-            await expect.poll(() => run(reader, "rows"), { timeout: 1000 }).toEqual(items);
-        }, "upstream");
     });
 });

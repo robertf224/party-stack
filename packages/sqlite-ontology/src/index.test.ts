@@ -7,6 +7,7 @@ import {
     type OntologyQueryFunctionRegistry,
 } from "@party-stack/ontology";
 import { eq, inArray, queryOnce } from "@tanstack/db";
+import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { createSQLiteOntologyBackendAdapter } from "./index.js";
 
@@ -421,7 +422,10 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         ontologies.push(reloadedOntology);
         await reloadedOntology.ready;
 
-        const note = reloadedOntology.objects.Note!.get("note-1");
+        const note = (await readObjectById(reloadedOntology.objects.Note!, "id", "note-1")) as Record<
+            string,
+            unknown
+        >;
         expect(note?.title).toBe("Hello");
         expect(note?.tags).toEqual(["reload"]);
         expect(note?.meta).toEqual({ priority: 1, source: "persist" });
@@ -473,6 +477,10 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         await ontology.actions.createNote!({
             id: "note-1",
             title: "Before",
+            ownerEmail: "alice@example.com",
+            author: "author-1",
+            tags: [],
+            meta: { priority: 1, source: "test" },
         });
         await ontology.actions.renameNote!({
             note: "note-1",
@@ -484,7 +492,9 @@ describe("SQLite LiveOntology MVP acceptance", () => {
                 note: "note-1",
             })
         ).resolves.toBe("After");
-        expect(ontology.objects.Note!.get("note-1")?.title).toBe("After");
+        expect(
+            ((await readObjectById(ontology.objects.Note!, "id", "note-1")) as Record<string, unknown>)?.title
+        ).toBe("After");
         await ontology.cleanup();
     });
 
@@ -505,9 +515,7 @@ describe("SQLite LiveOntology MVP acceptance", () => {
                 note: "note-1",
                 title: "After",
             })
-        ).rejects.toThrow(
-            'SQLite ontology adapter cannot apply non-declarative action type "renameNote" without a registered mutator.'
-        );
+        ).rejects.toMatchObject({ _tag: "BackendError", kind: "Unsupported" });
         await ontology.cleanup();
     });
 
@@ -581,7 +589,13 @@ describe("SQLite LiveOntology MVP acceptance", () => {
             }
             return statement;
         };
-        const blob = await backend.attachments!.getAttachmentContent({ id: "shared", type: "text/plain" });
+        const blob = await Effect.runPromise(
+            Effect.scoped(
+                Effect.flatMap(backend.open({}), (service) =>
+                    service.attachments!.read({ id: "shared", type: "text/plain" })
+                )
+            )
+        );
         bytes.fill(0);
         expect(await blob.text()).toBe("test");
     });

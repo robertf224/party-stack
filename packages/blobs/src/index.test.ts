@@ -1,11 +1,14 @@
 import {
     MemoryBlobBytesStore,
+    createDefaultRuntime,
+    defineRuntime,
     SingleProcessCoordination,
     type BlobBytesStore,
     type Coordination,
     type CoordinationService,
     type RuntimeAdapter,
 } from "@party-stack/runtime";
+import { eq, queryOnce } from "@tanstack/db";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { BLOB_COORDINATION_SERVICE, type BlobCoordinationService } from "./store/createBlobStore.js";
 import { createBlobManager } from "./index.js";
@@ -86,7 +89,14 @@ describe("createBlobManager", () => {
             })
         );
 
-        expect(manager.collection.get("attachment-1")).toMatchObject({
+        expect(
+            await queryOnce((q) =>
+                q
+                    .from({ blob: manager.collection })
+                    .where(({ blob }) => eq(blob.id, "attachment-1"))
+                    .findOne()
+            )
+        ).toMatchObject({
             id: "attachment-1",
             name: "hello.txt",
             size: 5,
@@ -196,7 +206,14 @@ describe("createBlobManager", () => {
             name: null,
             dimensions: null,
         });
-        expect(manager.collection.get("image-1")).toMatchObject({
+        expect(
+            await queryOnce((q) =>
+                q
+                    .from({ blob: manager.collection })
+                    .where(({ blob }) => eq(blob.id, "image-1"))
+                    .findOne()
+            )
+        ).toMatchObject({
             name: null,
             dimensions: null,
         });
@@ -456,4 +473,43 @@ describe("createBlobManager", () => {
         });
         await coordination.close();
     });
+});
+
+it("runtime cleanup cancels remote blob reads and fences a late response from caching bytes", async () => {
+    const runtime = defineRuntime(createDefaultRuntime)("blob-lifetime", "remote-read");
+    const write = vi.spyOn(runtime.blobBytes, "write");
+    let signal: AbortSignal | undefined;
+    let finish: ((value: Blob) => void) | undefined;
+    const manager = createBlobManager({
+        runtime,
+        gcTime: Number.POSITIVE_INFINITY,
+        remote: {
+            read: (_id, options) => {
+                signal = options?.signal;
+                return new Promise<Blob>((resolve) => {
+                    finish = resolve;
+                });
+            },
+        },
+    });
+    try {
+        await manager.ready;
+        const failed = manager.read("remote-only").then(
+            () => undefined,
+            (cause: unknown) => cause
+        );
+        await vi.waitFor(() => expect(signal).toBeDefined());
+        await runtime.cleanup?.();
+        expect(signal?.aborted).toBe(true);
+        expect(await failed).toBeDefined();
+        finish!(new Blob(["late response"]));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(write).not.toHaveBeenCalled();
+        expect(manager.collection.status).toBe("cleaned-up");
+        await expect(manager.stage("closed", new Blob())).rejects.toThrow("is closed");
+    } finally {
+        finish?.(new Blob());
+        await manager.cleanup();
+        await runtime.cleanup?.();
+    }
 });

@@ -40,7 +40,7 @@ export interface ConnectionMonitor {
 }
 
 export interface ConnectionSession {
-    refresh?(): Promise<EstablishedConnection>;
+    refresh?(options?: { signal?: AbortSignal }): Promise<EstablishedConnection>;
     disconnect(): Promise<void>;
     egress?(handlers: ConnectionEgressHandlers): ConnectionEgressHandlers;
     cleanup?(): void | Promise<void>;
@@ -59,12 +59,13 @@ export interface ConnectionController {
 export interface BackendConnectionAdapterContext {
     installationId: string;
     runtime: RuntimeAdapter;
+    scope?: import("effect").Scope.Scope;
 }
 
 export interface BackendConnectionAdapter<AuthenticationClient extends object = object> {
     readonly name: string;
     createAuthenticationClient(controller: ConnectionController): AuthenticationClient;
-    restoreConnections(): Promise<readonly EstablishedConnection[]>;
+    restoreConnections(options?: { signal?: AbortSignal }): Promise<readonly EstablishedConnection[]>;
     cleanup?(): void | Promise<void>;
 }
 

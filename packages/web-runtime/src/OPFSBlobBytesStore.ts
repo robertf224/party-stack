@@ -1,4 +1,4 @@
-import type { BlobBytesStore } from "@party-stack/runtime";
+import { BlobBytesNotFoundError, type BlobBytesStore } from "@party-stack/runtime";
 
 export interface OPFSBlobBytesStoreOptions {
     directoryName: string;
@@ -29,9 +29,15 @@ export class OPFSBlobBytesStore implements BlobBytesStore {
     }
 
     async read(id: string): Promise<Blob> {
-        const directory = await this.#directory();
-        const fileHandle = await directory.getFileHandle(encodeFileName(id));
-        return fileHandle.getFile();
+        try {
+            const directory = await this.#directory();
+            const fileHandle = await directory.getFileHandle(encodeFileName(id));
+            return await fileHandle.getFile();
+        } catch (cause) {
+            if (cause instanceof DOMException && cause.name === "NotFoundError")
+                throw new BlobBytesNotFoundError(id, { cause });
+            throw cause;
+        }
     }
 
     async delete(id: string): Promise<void> {

@@ -1,5 +1,5 @@
+import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { o, type OntologyIR } from "../../ir/index.js";
 import { applyActionLogicToMutatorTx } from "./OntologyEdits.js";
 
 describe("applyActionLogicToMutatorTx", () => {

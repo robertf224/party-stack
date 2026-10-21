@@ -15,17 +15,18 @@ import {
     type OntologyAttachmentIdMapping,
     type OntologyBackendAdapter,
     type OntologyBackendAdapterProvider,
-    type OntologyCollectionOptions,
     type OntologyAttachmentsAdapter,
     type OntologyIR,
     type ValidateActionDraftLiveOpts,
 } from "@party-stack/ontology";
+import { BackendError } from "@party-stack/ontology-backend";
 import { resolveType, unwrapType } from "@party-stack/ontology/utils";
-import { Collection } from "@tanstack/db";
+import { Effect } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { getFoundryAttachmentKind } from "../meta/foundryAttachmentMetadata.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
+import { makeFoundryBackend } from "./backend.js";
 import {
     getFoundryValidationIssues,
     loadFoundrySubmissionCriteria,
@@ -33,8 +34,9 @@ import {
 } from "./foundryActionValidation.js";
 import { createFoundryCodec } from "./foundryCodec.js";
 import { decodeFoundryMediaId, mediaReferenceToFoundryMediaId } from "./foundryMediaId.js";
-import { objectCollectionOptions, type ObjectCollectionUtils } from "./objectCollectionOptions.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
+import type { BackendSnapshot } from "@party-stack/ontology-backend";
+import type { Query } from "@party-stack/ontology-storage";
 import type { attachment } from "@party-stack/ontology/values";
 
 function isFoundryAttachmentRid(value: string): value is AttachmentRid {
@@ -54,7 +56,7 @@ export function isFoundryNotFoundError(error: unknown): boolean {
 
 export interface FoundryUsersIntegration {
     objectType: string;
-    getCollectionOptions(client: OntologyClient): OntologyCollectionOptions;
+    loadSubset(client: OntologyClient, query: Query, signal: AbortSignal): Promise<BackendSnapshot>;
     getAttachmentContent?(client: OntologyClient, attachment: attachment): Promise<Blob | undefined>;
     getAttachmentMetadata?(
         client: OntologyClient,
@@ -63,7 +65,6 @@ export interface FoundryUsersIntegration {
     ): Promise<PartialAttachmentMetadata | undefined>;
 }
 
-type CollectionWithUtils = Collection<Record<string, unknown>, string | number, ObjectCollectionUtils>;
 type ApplyActionResult = Awaited<ReturnType<typeof Actions.applyWithOverrides>> & {
     operationId?: string;
 };
@@ -98,14 +99,6 @@ function serializeActionExecutionTime(value: unknown): string {
     }
 }
 
-function getApplyActionOperationId(result: ApplyActionResult): string {
-    const operationId = result.operationId;
-    if (typeof operationId !== "string" || operationId.length === 0) {
-        throw new Error("Foundry apply action response did not include an operationId.");
-    }
-    return operationId;
-}
-
 function getAttachmentName(attachment: unknown): string | undefined {
     if (typeof attachment !== "object" || attachment === null || Array.isArray(attachment)) {
         return undefined;
@@ -118,23 +111,6 @@ function getAttachmentProviderType(
     target: { meta?: Record<string, unknown> } | undefined
 ): "attachment" | "media" {
     return getFoundryAttachmentKind(target?.meta);
-}
-
-function getEditedObjectTypes(
-    edits: Awaited<ReturnType<typeof Actions.applyWithOverrides>>["edits"]
-): Set<string> {
-    const objectTypes = new Set<string>();
-    if (!edits || edits.type !== "edits") {
-        return objectTypes;
-    }
-
-    for (const edit of edits.edits) {
-        if (edit.type === "addObject" || edit.type === "modifyObject" || edit.type === "deleteObject") {
-            objectTypes.add(edit.objectType);
-        }
-    }
-
-    return objectTypes;
 }
 
 function prepareFoundryActionInvocation(options: {
@@ -199,6 +175,19 @@ export interface CreateFoundryOntologyBackendAdapterOptions {
     live?: boolean;
 }
 
+function withRequestSignal(client: OntologyClient, signal?: AbortSignal): OntologyClient {
+    return signal
+        ? {
+              ...client,
+              fetch: (input, init) =>
+                  client.fetch(input, {
+                      ...init,
+                      signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+                  }),
+          }
+        : client;
+}
+
 export function createFoundryOntologyBackendAdapter(
     opts: CreateFoundryOntologyBackendAdapterOptions
 ): OntologyBackendAdapter {
@@ -245,8 +234,9 @@ export function createFoundryOntologyBackendAdapter(
                 preview: true,
             });
         },
-        getAttachmentContent: async (attachment) => {
-            const userContent = await opts.users?.getAttachmentContent?.(opts.client, attachment);
+        getAttachmentContent: async (attachment, readOptions) => {
+            const client = withRequestSignal(opts.client, readOptions?.signal);
+            const userContent = await opts.users?.getAttachmentContent?.(client, attachment);
             if (userContent) return userContent;
             const media = decodeFoundryMediaId(attachment.id);
             if (media) {
@@ -256,8 +246,8 @@ export function createFoundryOntologyBackendAdapter(
                     `Foundry media attachment "${attachment.id}" is missing its object property source.`
                 );
                 const response = await MediaReferenceProperties.getMediaContent(
-                    opts.client,
-                    opts.client.ontologyRid,
+                    client,
+                    client.ontologyRid,
                     source.objectType,
                     String(source.primaryKey),
                     source.property,
@@ -265,15 +255,12 @@ export function createFoundryOntologyBackendAdapter(
                 );
                 return response.blob();
             }
-            const contents = await Attachments.read(opts.client, attachment.id);
+            const contents = await Attachments.read(client, attachment.id);
             return contents.blob();
         },
-        getAttachmentMetadata: async (attachment, selection) => {
-            const userMetadata = await opts.users?.getAttachmentMetadata?.(
-                opts.client,
-                attachment,
-                selection
-            );
+        getAttachmentMetadata: async (attachment, selection, readOptions) => {
+            const client = withRequestSignal(opts.client, readOptions?.signal);
+            const userMetadata = await opts.users?.getAttachmentMetadata?.(client, attachment, selection);
             if (userMetadata) return userMetadata;
             const media = decodeFoundryMediaId(attachment.id);
             if (media) {
@@ -282,11 +269,7 @@ export function createFoundryOntologyBackendAdapter(
                     result.type = attachment.type;
                 }
                 if (selection.includes("dimensions")) {
-                    const detailed = await MediaSets.metadata(
-                        opts.client,
-                        media.mediaSetRid,
-                        media.mediaItemRid
-                    );
+                    const detailed = await MediaSets.metadata(client, media.mediaSetRid, media.mediaItemRid);
                     result.size = detailed.sizeBytes;
                     if (detailed.type === "imagery" && detailed.dimensions) {
                         result.dimensions = {
@@ -305,8 +288,8 @@ export function createFoundryOntologyBackendAdapter(
                     `Foundry media attachment "${attachment.id}" is missing its object property source.`
                 );
                 const info = await MediaReferenceProperties.getMediaMetadata(
-                    opts.client,
-                    opts.client.ontologyRid,
+                    client,
+                    client.ontologyRid,
                     source.objectType,
                     String(source.primaryKey),
                     source.property,
@@ -319,7 +302,7 @@ export function createFoundryOntologyBackendAdapter(
                     name: info.path,
                 };
             }
-            const metadata = await Attachments.get(opts.client, attachment.id);
+            const metadata = await Attachments.get(client, attachment.id);
             return {
                 id: attachment.id,
                 size: Number(metadata.sizeBytes),
@@ -329,24 +312,212 @@ export function createFoundryOntologyBackendAdapter(
         },
     };
 
+    // Submission only calls provider APIs; Replica owns read-back and confirmation.
+    const submitAction = async (
+        name: string,
+        parameters: Record<string, unknown>,
+        context: import("@party-stack/ontology").ApplyActionLiveOpts,
+        client = opts.client
+    ) => {
+        const mediaReferences = new Map<string, Awaited<ReturnType<typeof MediaSets.uploadMedia>>>();
+        const attachmentIdMappings: OntologyAttachmentIdMapping[] = [];
+        await Promise.all(
+            [
+                ...new Map(
+                    (context.attachmentUploads ?? []).map((upload) => [upload.attachment.id, upload])
+                ).values(),
+            ].map(async (upload) => {
+                invariant(
+                    getAttachmentProviderType(upload.target) === "media",
+                    `Foundry attachment "${upload.attachment.id}" was not materialized before action execution.`
+                );
+                const reference = await MediaSets.uploadMedia(client, upload.blob, {
+                    filename: getAttachmentName(upload.blob) ?? upload.attachment.id,
+                });
+                mediaReferences.set(upload.attachment.id, reference);
+                attachmentIdMappings.push({
+                    localId: upload.attachment.id,
+                    remoteId: mediaReferenceToFoundryMediaId(reference),
+                });
+            })
+        );
+        const actionCodec = createFoundryCodec(opts.ir, {
+            resolveMediaReference: (id) => mediaReferences.get(id),
+        });
+        let invocation: ReturnType<typeof prepareFoundryActionInvocation>;
+        try {
+            invocation = prepareFoundryActionInvocation({
+                ir: opts.ir,
+                name,
+                parameters,
+                codec: actionCodec,
+            });
+        } catch (cause) {
+            throw new BackendError({
+                operation: "foundry.prepare",
+                kind: "Rejected",
+                retryable: false,
+                invocationOutcome: "not-committed",
+                message: cause instanceof Error ? cause.message : "Invalid action parameters.",
+                cause,
+            });
+        }
+
+        let result: ApplyActionResult;
+        try {
+            result = await Actions.applyWithOverrides(
+                client,
+                client.ontologyRid,
+                toFoundryActionTypeName(name),
+                {
+                    request: {
+                        options: {
+                            mode: "VALIDATE_AND_EXECUTE",
+                            returnEdits: "ALL_V2_WITH_DELETIONS",
+                        },
+                        parameters: invocation.parameters,
+                    },
+                    overrides: invocation.overrides,
+                },
+                // oxlint-disable-next-line typescript/no-unsafe-argument
+                {
+                    preview: true,
+                    // oxlint-disable-next-line typescript/no-explicit-any
+                }
+            );
+        } catch (error) {
+            if (isFoundryNotFoundError(error)) {
+                throw new NonRetryableError(
+                    error instanceof Error ? error.message : "Foundry action target was not found.",
+                    { cause: error }
+                );
+            }
+            throw error;
+        }
+        if (result.validation?.result === "INVALID") {
+            throw new NonRetryableError("Invalid Action arguments.");
+        }
+        return { result, attachmentIdMappings };
+    };
+
+    const runQueryFunction = async (
+        name: string,
+        parameters: Record<string, unknown>,
+        client = opts.client
+    ) => {
+        const queryFunctionType = opts.ir.queryFunctionTypes.find((candidate) => candidate.name === name);
+        if (!queryFunctionType) {
+            throw new Error(`Unknown Foundry query function type "${name}".`);
+        }
+
+        const parameterTypes = new Map(
+            queryFunctionType.parameters.map((parameter) => [parameter.name, parameter.type])
+        );
+        const requestParameters: Record<string, unknown> = {};
+        for (const [parameterName, value] of Object.entries(parameters)) {
+            if (value === undefined) continue;
+            const parameterType = parameterTypes.get(parameterName);
+            requestParameters[parameterName] = parameterType
+                ? codec.encodeValue(parameterType, value)
+                : value;
+        }
+
+        const result = await Queries.execute(client, client.ontologyRid, name, {
+            parameters: requestParameters,
+        });
+
+        return codec.decodeValue(queryFunctionType.returnType, result.value);
+    };
+    const attempt = <A>(operation: string, run: (signal: AbortSignal) => Promise<A>) =>
+        Effect.tryPromise({
+            try: run,
+            catch: (cause) =>
+                new BackendError({
+                    operation,
+                    kind: "Unavailable",
+                    message: "Foundry helper request failed.",
+                    retryable: true,
+                    cause,
+                }),
+        });
     const adapter: OntologyBackendAdapter = {
         name: "foundry",
-        live: opts.live !== false,
-        getCollectionOptions: (objectType: string) => {
-            if (opts.users?.objectType === objectType) {
-                return opts.users.getCollectionOptions(opts.client);
-            }
-            const objectTypeDef = opts.ir.objectTypes.find((ot) => ot.name === objectType)!;
-            return objectCollectionOptions({
+        open: (context) =>
+            makeFoundryBackend({
                 client: opts.client,
-                objectType,
-                primaryKeyProperty: objectTypeDef.primaryKey,
-                selectedProperties: objectTypeDef.properties.map((property) => property.name),
+                ir: opts.ir,
+                context,
                 live: opts.live,
-                decodeObject: (object) => codec.decodeObject(objectType, object),
-                decodeEditObject: (object) => codec.decodeEditObject(objectType, object),
-            });
-        },
+                users: opts.users && {
+                    objectType: opts.users.objectType,
+                    loadSubset: (query, signal) => opts.users!.loadSubset(opts.client, query, signal),
+                },
+                submitAction: (invocation, signal) =>
+                    submitAction(
+                        invocation.name,
+                        invocation.parameters,
+                        {
+                            objects: {},
+                            context,
+                            attachmentUploads: invocation.attachmentUploads
+                                ? [...invocation.attachmentUploads]
+                                : undefined,
+                        },
+                        withRequestSignal(opts.client, signal)
+                    ),
+                decodeObject: (objectType, value) => codec.decodeObject(objectType, value),
+                queryFunction: (name, parameters, signal) =>
+                    runQueryFunction(name, parameters, withRequestSignal(opts.client, signal)),
+                attachments: {
+                    read: (value, range) =>
+                        Effect.gen(function* () {
+                            if (
+                                range &&
+                                (!Number.isSafeInteger(range.offset ?? 0) ||
+                                    (range.offset ?? 0) < 0 ||
+                                    (range.length !== undefined &&
+                                        (!Number.isSafeInteger(range.length) || range.length < 0)))
+                            )
+                                return yield* new BackendError({
+                                    operation: "attachment.read",
+                                    kind: "Rejected",
+                                    message: "Invalid byte range.",
+                                    retryable: false,
+                                });
+                            const blob = yield* attempt("attachment.read", (signal) =>
+                                attachments.getAttachmentContent(value, { signal })
+                            );
+                            return range
+                                ? blob.slice(
+                                      range.offset ?? 0,
+                                      range.length === undefined
+                                          ? undefined
+                                          : (range.offset ?? 0) + range.length,
+                                      blob.type
+                                  )
+                                : blob;
+                        }),
+                    metadata: (value) =>
+                        Effect.gen(function* () {
+                            const meta = yield* attempt(
+                                "attachment.metadata",
+                                async (signal) =>
+                                    (await attachments.getAttachmentMetadata?.(
+                                        value,
+                                        ["size", "type", "name"],
+                                        { signal }
+                                    )) ?? {}
+                            );
+                            if (meta.size !== undefined && meta.type !== undefined)
+                                return { size: meta.size, type: meta.type, name: meta.name };
+                            const blob = yield* attempt("attachment.read", (signal) =>
+                                attachments.getAttachmentContent(value, { signal })
+                            );
+                            return { size: blob.size, type: blob.type, name: meta.name };
+                        }),
+                },
+            }),
+        live: opts.live !== false,
         validateAction: async (name: string, parameters: Record<string, unknown>) => {
             const invocation = prepareFoundryActionInvocation({
                 ir: opts.ir,
@@ -457,117 +628,6 @@ export function createFoundryOntologyBackendAdapter(
                 parameters,
                 knownParameters,
             });
-        },
-        applyAction: async (name, parameters, context) => {
-            const mediaReferences = new Map<string, Awaited<ReturnType<typeof MediaSets.uploadMedia>>>();
-            const attachmentIdMappings: OntologyAttachmentIdMapping[] = [];
-            await Promise.all(
-                [
-                    ...new Map(
-                        (context.attachmentUploads ?? []).map((upload) => [upload.attachment.id, upload])
-                    ).values(),
-                ].map(async (upload) => {
-                    invariant(
-                        getAttachmentProviderType(upload.target) === "media",
-                        `Foundry attachment "${upload.attachment.id}" was not materialized before action execution.`
-                    );
-                    const reference = await MediaSets.uploadMedia(opts.client, upload.blob, {
-                        filename: getAttachmentName(upload.blob) ?? upload.attachment.id,
-                    });
-                    mediaReferences.set(upload.attachment.id, reference);
-                    attachmentIdMappings.push({
-                        localId: upload.attachment.id,
-                        remoteId: mediaReferenceToFoundryMediaId(reference),
-                    });
-                })
-            );
-            const actionCodec = createFoundryCodec(opts.ir, {
-                resolveMediaReference: (id) => mediaReferences.get(id),
-            });
-            const invocation = prepareFoundryActionInvocation({
-                ir: opts.ir,
-                name,
-                parameters,
-                codec: actionCodec,
-            });
-
-            let result: ApplyActionResult;
-            try {
-                result = await Actions.applyWithOverrides(
-                    opts.client,
-                    opts.client.ontologyRid,
-                    toFoundryActionTypeName(name),
-                    {
-                        request: {
-                            options: {
-                                mode: "VALIDATE_AND_EXECUTE",
-                                returnEdits: "ALL_V2_WITH_DELETIONS",
-                            },
-                            parameters: invocation.parameters,
-                        },
-                        overrides: invocation.overrides,
-                    },
-                    // oxlint-disable-next-line typescript/no-unsafe-argument
-                    {
-                        preview: true,
-                        // oxlint-disable-next-line typescript/no-explicit-any
-                    }
-                );
-            } catch (error) {
-                if (isFoundryNotFoundError(error)) {
-                    throw new NonRetryableError(
-                        error instanceof Error ? error.message : "Foundry action target was not found.",
-                        { cause: error }
-                    );
-                }
-                throw error;
-            }
-            if (result.validation?.result === "INVALID") {
-                throw new NonRetryableError("Invalid Action arguments.");
-            }
-            if (opts.live !== false && context) {
-                const operationId = getApplyActionOperationId(result);
-                const editedObjectTypes = Array.from(getEditedObjectTypes(result.edits));
-                const targetCollections = editedObjectTypes
-                    .map((objectType) => context.objects[objectType] as CollectionWithUtils | undefined)
-                    .filter((collection): collection is CollectionWithUtils =>
-                        Boolean(collection?.utils?.awaitOperationId)
-                    );
-
-                await Promise.all(
-                    targetCollections.map((collection) => collection.utils.awaitOperationId(operationId))
-                );
-            }
-            if (attachmentIdMappings.length === 0) {
-                return undefined;
-            }
-            return {
-                attachmentIdMappings,
-            };
-        },
-        runQueryFunction: async (name, parameters) => {
-            const queryFunctionType = opts.ir.queryFunctionTypes.find((candidate) => candidate.name === name);
-            if (!queryFunctionType) {
-                throw new Error(`Unknown Foundry query function type "${name}".`);
-            }
-
-            const parameterTypes = new Map(
-                queryFunctionType.parameters.map((parameter) => [parameter.name, parameter.type])
-            );
-            const requestParameters: Record<string, unknown> = {};
-            for (const [parameterName, value] of Object.entries(parameters)) {
-                if (value === undefined) continue;
-                const parameterType = parameterTypes.get(parameterName);
-                requestParameters[parameterName] = parameterType
-                    ? codec.encodeValue(parameterType, value)
-                    : value;
-            }
-
-            const result = await Queries.execute(opts.client, opts.client.ontologyRid, name, {
-                parameters: requestParameters,
-            });
-
-            return codec.decodeValue(queryFunctionType.returnType, result.value);
         },
         attachments,
     };

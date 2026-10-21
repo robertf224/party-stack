@@ -422,16 +422,17 @@ function UserAvatar({
     );
 }
 
-function useProfileUser(profile: ConnectedProfile): User | undefined {
-    const ontology = profile.ontology;
-    const { data: users } = useLiveQuery({ query: (q) => q.from({ User: ontology.objects.User }) });
-    return users.find((user) => user.id === ontology.context.user);
-}
-
 function ProfileIdentity({ profile }: { profile: ConnectedProfile }) {
-    const user = useProfileUser(profile);
+    const ontology = profile.ontology;
+    const { data: user } = useLiveQuery({
+        query: (q) =>
+            q
+                .from({ User: ontology.objects.User })
+                .where(({ User }) => eq(User.id, ontology.context.user))
+                .findOne(),
+    });
     return (
-        <>
+        <span className="flex min-w-0 flex-1 items-center gap-2">
             <UserAvatar className="size-6" ontology={profile.ontology} user={user} />
             <span className="min-w-0 flex-1">
                 <span className="block truncate">{user ? userName(user) : profile.label}</span>
@@ -439,7 +440,7 @@ function ProfileIdentity({ profile }: { profile: ConnectedProfile }) {
                     {user?.email ?? profile.label}
                 </span>
             </span>
-        </>
+        </span>
     );
 }
 
@@ -1875,7 +1876,7 @@ function ConnectedIssueTracker({
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, []);
 
-    const devtoolsPlugin = useMemo(() => createOntologyDevtoolsPlugin({ ontology }), [ontology]);
+    const devtoolsPlugins = useMemo(() => [createOntologyDevtoolsPlugin({ ontology })], [ontology]);
 
     const { data: projects, isLoading: projectsLoading } = useLiveQuery({
         query: (q) =>
@@ -1897,22 +1898,16 @@ function ConnectedIssueTracker({
     });
 
     const { data: issues, isLoading: issuesLoading } = useLiveQuery({
-        query: (q) =>
-            q
-                .from({ Issue: ontology.objects.Issue })
-                .where(({ Issue }) =>
-                    search
-                        ? or(ilike(Issue.issueTitle, `${search}%`), inArray(search, Issue.issueLabels))
-                        : ilike(Issue.issueTitle, "%")
-                )
-                .where(({ Issue }) =>
-                    selectedProjectId ? eq(Issue.projectId, selectedProjectId) : ilike(Issue.issueTitle, "%")
-                )
-                .where(({ Issue }) =>
-                    statusFilter !== "All"
-                        ? eq(Issue.issueStatus, statusFilter)
-                        : ilike(Issue.issueStatus, "%")
-                )
+        query: (q) => {
+            let query = q.from({ Issue: ontology.objects.Issue });
+            if (search)
+                query = query.where(({ Issue }) =>
+                    or(ilike(Issue.issueTitle, `${search}%`), inArray(search, Issue.issueLabels))
+                );
+            if (selectedProjectId) query = query.where(({ Issue }) => eq(Issue.projectId, selectedProjectId));
+            if (statusFilter !== "All")
+                query = query.where(({ Issue }) => eq(Issue.issueStatus, statusFilter));
+            return query
                 .leftJoin({ Project: ontology.objects.Project }, ({ Issue, Project }) =>
                     eq(Issue.projectId, Project.projectId)
                 )
@@ -1932,7 +1927,8 @@ function ConnectedIssueTracker({
                     projectTitle: Project.projectTitle,
                     projectColor: Project.projectColor,
                 }))
-                .orderBy(({ Issue }) => Issue.issueUpdatedAt, "desc"),
+                .orderBy(({ Issue }) => Issue.issueUpdatedAt, "desc");
+        },
     });
 
     // Persistence publishes cached rows while the remote subset is loading.
@@ -2176,15 +2172,7 @@ function ConnectedIssueTracker({
                                 className="flex w-full items-center gap-2 rounded-lg p-2 text-left outline-none hover:bg-slate-200/30 focus-visible:ring-2 focus-visible:ring-indigo-500"
                                 onClick={() => setProfileMenuOpen(true)}
                             >
-                                <UserAvatar ontology={ontology} user={currentUser} />
-                                <span className="min-w-0 flex-1">
-                                    <span className="block truncate text-xs font-semibold text-slate-700">
-                                        {userName(currentUser)}
-                                    </span>
-                                    <span className="block truncate text-[11px] text-slate-400">
-                                        {currentUser?.email ?? activeProfile.label}
-                                    </span>
-                                </span>
+                                <ProfileIdentity profile={activeProfile} />
                                 <Icon className="size-3 text-slate-400" name="chevron" />
                             </Menu.Trigger>
                             <Menu.Portal>
@@ -2613,7 +2601,7 @@ function ConnectedIssueTracker({
 
                 <TanStackDevtools
                     config={{ customTrigger: ontologyDevtoolsTrigger }}
-                    plugins={[devtoolsPlugin]}
+                    plugins={devtoolsPlugins}
                 />
             </div>
         </Tooltip.Provider>

@@ -14,8 +14,9 @@ or application-defined ontology migrations.
 
 ## Backend construction
 
-Create the backend inside `blockConcurrencyWhile` or another exclusively gated
-initialization path:
+Acquire the ontology inside `blockConcurrencyWhile` or another exclusively gated
+initialization path. Backend factories are lazy; schema initialization happens
+when their scoped `open` Effect is acquired by the ontology:
 
 ```ts
 const backend = createDurableObjectOntologyBackend({

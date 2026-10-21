@@ -1,0 +1,282 @@
+import { makeReplicaMonitor } from "@party-stack/ontology-replica";
+import {
+    Runtime,
+    makeReplicatedCollection,
+    persistedCollectionOptions,
+    scopedCollection,
+} from "@party-stack/runtime";
+import { DbClient } from "@tanstack/db";
+import { Effect, Scope, Fiber } from "effect";
+import { createLiveOntologyAction } from "../live/actions/createLiveOntologyAction.js";
+import { decorateObjectAttachmentSources } from "../live/attachments/attachmentSources.js";
+import type { LiveOntologyAttachments } from "../live/attachments/createLiveOntologyAttachments.js";
+import type { LiveOntology, LiveOntologyWrites } from "../live/LiveOntology.js";
+import type { OntologyApplyActionResult } from "../live/OntologyBackendAdapter.js";
+import type { OntologyOutbox, OntologyOutboxEntry, OntologyActionRequest } from "../live/outbox/types.js";
+import type { BackendError, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { ActionInvocation, ActionReceipt } from "@party-stack/ontology-backend";
+import type { PendingAction, ReplicaService } from "@party-stack/ontology-replica";
+import type { OntologyIR, OntologyObject } from "@party-stack/ontology-spec";
+import type { RuntimeTraceStore } from "@party-stack/runtime";
+import type { Collection } from "@tanstack/db";
+const toEntry = (entry: PendingAction, forwarding = false): OntologyOutboxEntry => ({
+    id: entry.invocation.id,
+    sequence: entry.sequence,
+    request: {
+        actionTypeName: entry.invocation.name,
+        parameters: entry.invocation.parameters,
+        idempotencyKey: entry.invocation.id,
+    },
+    visibility: entry.optimistic ? "optimistic" : "confirmed",
+    status:
+        entry.state === "blocked" || entry.state === "uncertain"
+            ? "failed"
+            : !forwarding && (entry.state === "sending" || entry.state === "acknowledged")
+              ? "executing"
+              : "queued",
+    createdAt: entry.createdAt,
+    updatedAt: entry.createdAt,
+    attempts: entry.attempts,
+    attemptStage: forwarding ? "forwarding" : "execution",
+    retryable: entry.state !== "uncertain" && (entry.failureRetryable ?? true),
+    nextAttemptAt: entry.nextAttemptAt ?? 0,
+    lastError: entry.failure
+        ? {
+              name: entry.state === "uncertain" ? "AmbiguousInvocation" : entry.failure,
+              message:
+                  entry.failureMessage ??
+                  (entry.state === "uncertain"
+                      ? "The remote outcome is unknown. Check it before retrying."
+                      : "Action is waiting for retry or reconciliation."),
+          }
+        : undefined,
+});
+const actionResult = (receipt: ActionReceipt): OntologyApplyActionResult => ({
+    receipt,
+    attachmentIdMappings: receipt.attachmentIdMappings ? [...receipt.attachmentIdMappings] : undefined,
+});
+
+export interface ReplicaViewOptions {
+    readonly ir: OntologyIR;
+    readonly context: Record<string, unknown>;
+    readonly writes?: LiveOntologyWrites;
+    readonly replica: ReplicaService;
+    readonly attachments: LiveOntologyAttachments;
+    readonly queryFunction: OntologyBackendService["queryFunction"];
+    readonly traces?: RuntimeTraceStore;
+    readonly parentDiagnostics?: LiveOntology["diagnostics"];
+    readonly diagnosticLabel?: string;
+    /** Memory children resolve enqueue only after their durable owner accepts the action. */
+    readonly awaitParentAcceptance?: boolean;
+    readonly parentOutbox?: Pick<ReplicaService, "remove" | "retry" | "edit" | "reconcile">;
+    readonly validate?: (
+        name: string,
+        parameters: Record<string, unknown>,
+        objects: LiveOntology["objects"]
+    ) => ReturnType<LiveOntology["actions"][string]["validate"]>;
+    readonly validateDraft?: (
+        name: string,
+        parameters: Record<string, unknown>,
+        knownParameters: readonly string[],
+        objects: LiveOntology["objects"]
+    ) => ReturnType<LiveOntology["actions"][string]["validate"]>;
+}
+
+/** Materialize a scoped UI view over an existing replica; engine ownership is independent. */
+export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
+    options: ReplicaViewOptions
+): Effect.fn.Return<Omit<LiveOntology, "cleanup" | "destroy">, BackendError, Runtime | Scope.Scope> {
+    const services = yield* Runtime;
+    const runtime = services.adapter;
+    const { ir, context, replica } = options;
+    const visiblePending = replica.pendingActions;
+    const replicaMonitor = yield* makeReplicaMonitor(replica.statuses);
+    const outboxEntries = Effect.map(visiblePending, (entries) =>
+        entries.map((entry) => toEntry(entry, entry.forwarding))
+    );
+    const control = (id: string) =>
+        Effect.map(replica.pending, (pending) =>
+            pending.some((entry) => entry.invocation.id === id) ? replica : (options.parentOutbox ?? replica)
+        );
+    const command = (
+        id: string,
+        work: (
+            target: Pick<ReplicaService, "remove" | "retry" | "edit" | "reconcile">
+        ) => Effect.Effect<void, BackendError>
+    ) =>
+        control(id).pipe(
+            Effect.flatMap((target) =>
+                work(target).pipe(Effect.andThen(target === replica ? Effect.void : replica.syncOnce))
+            )
+        );
+    const dbClient = yield* Effect.acquireRelease(
+        Effect.sync(() => new DbClient()),
+        (client) => Effect.promise(() => client.cleanup())
+    );
+    const objects: Record<string, Collection<OntologyObject>> = {};
+    const persistedObjects: Record<string, Collection<OntologyObject>> = {};
+    for (const object of ir.objectTypes) {
+        const opts = {
+            replica,
+            objectType: object.name,
+            map: (row: OntologyObject) =>
+                decorateObjectAttachmentSources({ ir, objectType: object, object: row }),
+            getKey: (row: OntologyObject) => row[object.primaryKey] as string | number,
+        };
+        objects[object.name] = yield* makeReplicatedCollection(
+            {
+                ...opts,
+                id: `${runtime.owner}:${runtime.namespace}:objects:${object.name}`,
+            },
+            dbClient
+        );
+        persistedObjects[object.name] = yield* makeReplicatedCollection(
+            {
+                ...opts,
+                id: `${runtime.owner}:${runtime.namespace}:persisted:${object.name}`,
+                persistedOnly: true,
+            },
+            dbClient
+        );
+    }
+    const pendingCollection = yield* scopedCollection(
+        yield* persistedCollectionOptions<OntologyOutboxEntry, string>({
+            id: `${runtime.namespace}:outbox`,
+            getKey: (entry) => entry.id,
+            changes: yield* replica.subscribeChanges,
+            acquireDemand: replica.retainActions(),
+            load: Effect.map(outboxEntries, (entries) =>
+                entries.map((entry) => ({ key: entry.id, value: entry }))
+            ),
+        }),
+        dbClient
+    );
+    const owner = yield* Effect.scope;
+    const captured = yield* Effect.context<Runtime>();
+    const run = <A, E>(work: Effect.Effect<A, E, Scope.Scope>, signal?: AbortSignal) =>
+        Effect.runPromiseWith(captured)(
+            Effect.flatMap(Effect.forkIn(Scope.provide(work, owner), owner), (fiber) =>
+                Fiber.join(fiber).pipe(Effect.ensuring(Fiber.interrupt(fiber)))
+            ),
+            { signal }
+        );
+    const wait = (id: string, until: "accepted" | "confirmed" = "confirmed") =>
+        replica
+            .awaitAction(id, { until })
+            .pipe(Effect.map((receipt) => (receipt ? actionResult(receipt) : undefined)));
+    const enqueue = async (
+        request: Omit<OntologyActionRequest, "idempotencyKey"> & { idempotencyKey?: string },
+        visibility?: "confirmed" | "optimistic"
+    ) => {
+        const invocation: ActionInvocation = {
+            id: request.idempotencyKey ?? crypto.randomUUID(),
+            name: request.actionTypeName,
+            parameters: request.parameters,
+            replay: request.replay,
+        };
+        const entry = await run(
+            replica.enqueue(invocation, {
+                optimistic: (visibility ?? options.writes?.defaultVisibility) === "optimistic",
+            })
+        );
+        const accepted = run(wait(entry.invocation.id, "accepted")).then(() => undefined);
+        void accepted.catch(() => undefined);
+        const completed = run(wait(entry.invocation.id));
+        void completed.catch(() => undefined);
+        if (options.awaitParentAcceptance) await accepted;
+        return { entry: toEntry(entry, replica.mode === "protocol"), accepted, completed };
+    };
+    const outbox: OntologyOutbox = {
+        collection: pendingCollection,
+        ready: Promise.resolve(),
+        enqueue: async <A>(
+            request: Omit<OntologyActionRequest, "idempotencyKey"> & { idempotencyKey?: string },
+            settings?: { visibility?: "confirmed" | "optimistic" }
+        ) => {
+            const result = await enqueue(request, settings?.visibility);
+            return { ...result, completed: result.completed as Promise<A> };
+        },
+        remove: (id) => run(command(id, (target) => target.remove(id))),
+        reconcile: (id, receipt) => run(command(id, (target) => target.reconcile(id, receipt))),
+        retry: (id, settings) => run(command(id, (target) => target.retry(id, settings))),
+        wait: <A>(id: string, settings?: { until?: "accepted" | "confirmed"; signal?: AbortSignal }) =>
+            run(wait(id, settings?.until), settings?.signal) as Promise<A | void>,
+        edit: async (id, update) => {
+            const entry = (await run(visiblePending)).find((entry) => entry.invocation.id === id);
+            if (!entry) throw new Error("Outbox entry is unavailable.");
+            const request = structuredClone(toEntry(entry).request);
+            update(request);
+            const invocation = { id, name: request.actionTypeName, parameters: request.parameters };
+            await run(command(id, (target) => target.edit(id, invocation)));
+            const updated = (await run(visiblePending)).find((entry) => entry.invocation.id === id);
+            return toEntry(
+                updated ?? { ...entry, invocation, state: "queued", failure: undefined },
+                updated?.forwarding ?? entry.forwarding
+            );
+        },
+        cleanup: () => Promise.resolve(),
+    };
+    const actions = Object.fromEntries(
+        ir.actionTypes.map((action) => [
+            action.name,
+            createLiveOntologyAction({
+                ir,
+                action,
+                context,
+                objects,
+                submit: async (request, settings) => {
+                    const visibility =
+                        settings?.visibility ?? options.writes?.defaultVisibility ?? "confirmed";
+                    const mode = settings?.mode ?? options.writes?.defaultMode ?? "direct";
+                    if (mode === "direct" && !(await run(services.online)))
+                        throw new Error(
+                            "Direct actions require connectivity. Use outbox mode to queue offline."
+                        );
+                    const queued = await enqueue(request, visibility);
+                    // Outbox submission completes when its intent and projection are durable.
+                    // Call outbox.enqueue directly when the caller needs the remote completion promise.
+                    if (mode === "outbox") return;
+                    return queued.completed;
+                },
+                validate: options.validate
+                    ? (name, parameters) => options.validate!(name, parameters, persistedObjects)
+                    : async () => ({ certain: false as const }),
+                validateDraft: options.validateDraft
+                    ? (name, parameters, settings) =>
+                          options.validateDraft!(
+                              name,
+                              parameters,
+                              settings?.knownParameters ?? [],
+                              persistedObjects
+                          )
+                    : async () => ({ certain: false as const }),
+            }),
+        ])
+    );
+    return {
+        ir,
+        context,
+        objects,
+        persistedObjects,
+        actions,
+        outbox,
+        attachments: options.attachments,
+        queryFunctions: Object.fromEntries(
+            ir.queryFunctionTypes.map((query) => [
+                query.name,
+                (parameters: Record<string, unknown>) => run(options.queryFunction(query.name, parameters)),
+            ])
+        ),
+        ready: Promise.resolve(),
+        traces: options.traces,
+        diagnostics: {
+            label: options.diagnosticLabel,
+            role: replica.mode === "adapter" ? "host" : "replica",
+            location: "In process",
+            replica: replicaMonitor,
+            traces: options.traces,
+            parent: options.parentDiagnostics,
+        },
+        storage: replica,
+    };
+});

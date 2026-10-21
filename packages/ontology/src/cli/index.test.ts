@@ -25,7 +25,7 @@ describe("ontology CLI", () => {
         const cwd = await mkdtemp(resolve(tmpdir(), "ontology-generate-"));
         directories.push(cwd);
         const cliPath = fileURLToPath(new URL("../../lib/cli/index.js", import.meta.url));
-        const schemaPath = fileURLToPath(new URL("../ir/schema.ts", import.meta.url));
+        const schemaPath = fileURLToPath(new URL("../../../ontology-spec/src/ir/schema.ts", import.meta.url));
         const generate = () =>
             execFileAsync(
                 process.execPath,

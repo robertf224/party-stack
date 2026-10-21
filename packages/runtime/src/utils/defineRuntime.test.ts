@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { runtimeEffects } from "../Runtime.js";
 import { defineRuntime } from "./defineRuntime.js";
 
 describe("defineRuntime", () => {
@@ -30,11 +31,12 @@ describe("defineRuntime", () => {
 
         expect(firstCleanup).toBe(secondCleanup);
         expect(firstDestroy).toBe(secondDestroy);
-        expect(cleanup).toHaveBeenCalledOnce();
+        await vi.waitFor(() => expect(cleanup).toHaveBeenCalledOnce());
         expect(destroy).not.toHaveBeenCalled();
 
         resolveCleanup?.();
         await Promise.all([firstCleanup, firstDestroy]);
         expect(destroy).toHaveBeenCalledOnce();
+        expect(() => runtimeEffects(runtime)).toThrow("Runtime is closed.");
     });
 });

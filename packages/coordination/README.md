@@ -24,8 +24,23 @@ requests keep their replay protection. The default completed-response retention 
 30 seconds, so sustained remote throughput can encounter this limit. Local calls
 do not occupy it.
 
-The wire protocol is version 3. Coordinating tabs and workers must use the same
-version.
+The protocol identity is version 4. Coordinating tabs and workers must use the same
+version; the SharedWorker wire format now uses Effect RPC.
+
+## Effect ownership and SharedWorker RPC
+
+Coordination request, leadership, connection, and native resource lifetimes use
+Effect scopes. The existing Promise classes remain compatibility facades.
+SharedWorker calls and events run through `effect/rpc` and Effect's browser worker
+transport. Schema-derived intermediate codecs preserve structured-clone values;
+the JSON codec would reject undefined and bigint. Closing a client cancels its
+requests and event stream without closing the shared host. An event queue overflow
+disconnects the affected client rather than silently dropping results.
+
+The generic namespaced call interface and the fenced broadcast fallback remain
+transitional. The target is one owned runtime host with typed ontology operations
+and scoped demand streams, with election beneath that ownership interface. See the
+[runtime host proposal](../../specs/2026-10-19-effect-tables-replica/runtime-host.md).
 
 ## Value transport
 

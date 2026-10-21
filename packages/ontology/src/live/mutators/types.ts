@@ -1,4 +1,4 @@
-import type { OntologyObject } from "../objects/OntologyObject.js";
+import type { OntologyObject } from "@party-stack/ontology-spec";
 import type { Collection, InitialQueryBuilder } from "@tanstack/db";
 
 export interface OntologyPropertyChange {
@@ -7,6 +7,12 @@ export interface OntologyPropertyChange {
 }
 
 export type OntologyMutatorObjects = Record<string, Collection<OntologyObject>>;
+
+/** Prepare only the local sources required by a transaction query or keyed edit. */
+export type PrepareTransactionSources = (
+    types: readonly string[],
+    request?: { readonly key?: string | number; readonly plan?: unknown }
+) => Promise<void>;
 
 export interface OntologyReadTx {
     query<T>(build: (query: InitialQueryBuilder, objects: OntologyMutatorObjects) => unknown): Promise<T>;

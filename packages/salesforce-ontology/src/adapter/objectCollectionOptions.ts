@@ -8,7 +8,6 @@ import {
     SyncConfig,
     UtilsRecord,
 } from "@tanstack/db";
-import * as AsyncIterable from "../utils/AsyncIterable.js";
 import {
     buildSoqlQuery,
     convertLoadSubsetFilter,
@@ -16,6 +15,7 @@ import {
     isAlwaysFalseFilter,
     serializeSoqlLiteral,
 } from "./convertLoadSubsetOptions.js";
+import { searchSalesforceObjects } from "./salesforceObjectSearch.js";
 import type {
     SalesforceChangeEvent,
     SalesforceChangeEventSubscription,
@@ -72,51 +72,13 @@ async function fetchSalesforceObjects(
         }
     }
 
-    // Salesforce OFFSET max is 2000. Prefer locator pagination for deep reads and
-    // only push OFFSET when the caller requested a small local window.
-    const canPushOffset = offset > 0 && offset <= 2000 && (limit === undefined || offset + limit <= 2000);
-    const orderBy = convertLoadSubsetOrderBy(opts.orderBy);
-    const soql = buildSoqlQuery({
+    return searchSalesforceObjects(
+        client,
         objectType,
         selectedProperties,
-        where,
-        orderBy,
-        limit: canPushOffset
-            ? limit === undefined
-                ? undefined
-                : offset + limit
-            : limit === undefined
-              ? undefined
-              : offset + limit,
-        offset: canPushOffset ? offset : undefined,
-    });
-
-    const results = await AsyncIterable.toArray(
-        AsyncIterable.fromPagination(
-            async (_pageSize, pageToken: string | undefined) => {
-                if (pageToken) {
-                    return client.queryMore<SalesforceObject>(pageToken);
-                }
-                return client.query<SalesforceObject>(soql);
-            },
-            (page) => (page.done ? undefined : page.nextRecordsUrl),
-            (page) => page.records,
-            2_000,
-            canPushOffset
-                ? limit === undefined
-                    ? undefined
-                    : limit
-                : limit === undefined
-                  ? undefined
-                  : offset + limit
-        )
+        { where, orderBy: convertLoadSubsetOrderBy(opts.orderBy), offset, limit, signal: opts.signal },
+        decodeObject
     );
-
-    const sliced = canPushOffset
-        ? results
-        : results.slice(offset, limit === undefined ? undefined : offset + limit);
-
-    return sliced.map(decodeObject);
 }
 
 function createSyncConfig(

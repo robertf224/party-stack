@@ -26,9 +26,9 @@
         }
     },
     "scripts": {
-        "bootstrap": "tsx ./src/cli/index.ts generate --ontology ./src/ir/schema.ts --outDir ./src/ir/generated",
+        "bootstrap": "pnpm --filter @party-stack/ontology-spec bootstrap",
         "generate:examples": "tsx ./src/cli/index.ts generate --ontology ./src/examples/blog.ts --outDir ./src/examples/generated --namespace Blog",
-        "generate:meta": "tsx ./src/cli/index.ts generate --ontology ./src/meta/ontology.ts --outDir ./src/meta/generated --namespace Meta",
+        "generate:meta": "pnpm --filter @party-stack/ontology-spec generate:meta",
         "ontology": "tsx ./src/cli/index.ts"
     },
     "dependencies": {
@@ -38,17 +38,17 @@
         "@party-stack/connections": "workspace:*",
         "@party-stack/coordination": "workspace:*",
         "@party-stack/errors": "workspace:*",
-        "@party-stack/icons": "workspace:*",
         "@party-stack/node-runtime": "workspace:*",
+        "@party-stack/ontology-backend": "workspace:*",
+        "@party-stack/ontology-replica": "workspace:*",
+        "@party-stack/ontology-spec": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "@tanstack/db-sqlite-persistence-core": "0.4.9",
         "change-case": "^5.4.4",
         "commander": "^14.0.2",
-        "effection": "^4.0.2",
+        "effect": "^4.0.5",
         "jiti": "^2.6.1",
-        "oxfmt": "^0.72.0",
         "temporal-polyfill": "^0.3.0",
-        "ts-morph": "^27.0.2",
         "zod": "^4.4.3"
     },
     "devDependencies": {

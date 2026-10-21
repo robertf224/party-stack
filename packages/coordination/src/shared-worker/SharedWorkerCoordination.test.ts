@@ -19,6 +19,8 @@ class TestMessagePort implements CoordinationMessagePort {
     peer?: TestMessagePort;
     private readonly listeners = new Map<string, Set<(event: CoordinationPortEvent) => void>>();
     private closed = false;
+    private started = false;
+    private readonly buffered: CoordinationPortEvent[] = [];
 
     postMessage(message: unknown): void {
         if (this.closed) throw new Error("Port is closed.");
@@ -27,7 +29,8 @@ class TestMessagePort implements CoordinationMessagePort {
         const cloned = structuredClone(message);
         queueMicrotask(() => {
             if (!peer.closed) {
-                peer.dispatch("message", { data: cloned });
+                if (peer.started) peer.dispatch("message", { data: cloned });
+                else peer.buffered.push({ data: cloned });
             }
         });
     }
@@ -48,7 +51,10 @@ class TestMessagePort implements CoordinationMessagePort {
         this.listeners.get(type)?.delete(listener);
     }
 
-    start(): void {}
+    start(): void {
+        this.started = true;
+        for (const event of this.buffered.splice(0)) this.dispatch("message", event);
+    }
 
     close(): void {
         if (this.closed) return;
@@ -91,54 +97,57 @@ function serve(host: SharedWorkerCoordinationHost) {
 }
 
 describe("SharedWorker coordination", () => {
-    it("preserves Temporal and bigint requests, responses, and events across structured clone", async () => {
-        type TemporalPayload = { instant: Temporal.Instant; dates: Temporal.PlainDate[]; bigint: bigint };
-        type TemporalService = {
-            methods: { echo(value: TemporalPayload): Promise<TemporalPayload> };
-            events: { changed: TemporalPayload };
-        };
-        const host = new SharedWorkerCoordinationHost({ scope: "temporal" });
-        const channel = messageChannel();
-        host.connect(channel.port1);
-        const client = new SharedWorkerCoordinationClient({
-            scope: "temporal",
-            worker: { port: channel.port2 },
-        });
-        const server = host.serve<TemporalService>("temporal", {
-            echo: (value) => {
-                expect(value.instant).toBeInstanceOf(Temporal.Instant);
-                expect(value.dates[0]).toBeInstanceOf(Temporal.PlainDate);
-                expect(value.bigint).toBe(2n ** 100n);
-                return value;
-            },
-        });
-        const service = client.service<TemporalService>("temporal");
-        const payload = {
-            instant: Temporal.Instant.from("2026-10-07T12:00:00.123456789Z"),
-            dates: [Temporal.PlainDate.from("2026-10-07")],
-            bigint: 2n ** 100n,
-        };
-        const listener = vi.fn();
-        service.events.subscribe("changed", listener);
-        try {
-            const result = await service.methods.echo(payload);
-            expect(result.instant).toBeInstanceOf(Temporal.Instant);
-            expect(result.instant.epochNanoseconds).toBe(payload.instant.epochNanoseconds);
-            expect(result.dates[0]).toBeInstanceOf(Temporal.PlainDate);
-            expect(result.dates[0]?.toString()).toBe("2026-10-07");
-            expect(result.bigint).toBe(payload.bigint);
-            server.events.publish("changed", payload);
-            await vi.waitFor(() => expect(listener).toHaveBeenCalled());
-            const event = listener.mock.calls[0]?.[0] as TemporalPayload;
-            expect(event.instant).toBeInstanceOf(Temporal.Instant);
-            expect(event.instant.epochNanoseconds).toBe(payload.instant.epochNanoseconds);
-            expect(event.dates[0]).toBeInstanceOf(Temporal.PlainDate);
-            expect(event.bigint).toBe(payload.bigint);
-        } finally {
-            await client.close();
-            await host.close();
+    it.each(["buffered test port", "native MessageChannel"] as const)(
+        "preserves Temporal and bigint across %s",
+        async (transport) => {
+            type TemporalPayload = { instant: Temporal.Instant; dates: Temporal.PlainDate[]; bigint: bigint };
+            type TemporalService = {
+                methods: { echo(value: TemporalPayload): Promise<TemporalPayload> };
+                events: { changed: TemporalPayload };
+            };
+            const host = new SharedWorkerCoordinationHost({ scope: "temporal" });
+            const channel = transport === "native MessageChannel" ? new MessageChannel() : messageChannel();
+            host.connect(channel.port1);
+            const client = new SharedWorkerCoordinationClient({
+                scope: "temporal",
+                worker: { port: channel.port2 },
+            });
+            const server = host.serve<TemporalService>("temporal", {
+                echo: (value) => {
+                    expect(value.instant).toBeInstanceOf(Temporal.Instant);
+                    expect(value.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+                    expect(value.bigint).toBe(2n ** 100n);
+                    return value;
+                },
+            });
+            const service = client.service<TemporalService>("temporal");
+            const payload = {
+                instant: Temporal.Instant.from("2026-10-07T12:00:00.123456789Z"),
+                dates: [Temporal.PlainDate.from("2026-10-07")],
+                bigint: 2n ** 100n,
+            };
+            const listener = vi.fn();
+            service.events.subscribe("changed", listener);
+            try {
+                const result = await service.methods.echo(payload);
+                expect(result.instant).toBeInstanceOf(Temporal.Instant);
+                expect(result.instant.epochNanoseconds).toBe(payload.instant.epochNanoseconds);
+                expect(result.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+                expect(result.dates[0]?.toString()).toBe("2026-10-07");
+                expect(result.bigint).toBe(payload.bigint);
+                server.events.publish("changed", payload);
+                await vi.waitFor(() => expect(listener).toHaveBeenCalled());
+                const event = listener.mock.calls[0]?.[0] as TemporalPayload;
+                expect(event.instant).toBeInstanceOf(Temporal.Instant);
+                expect(event.instant.epochNanoseconds).toBe(payload.instant.epochNanoseconds);
+                expect(event.dates[0]).toBeInstanceOf(Temporal.PlainDate);
+                expect(event.bigint).toBe(payload.bigint);
+            } finally {
+                await client.close();
+                await host.close();
+            }
         }
-    });
+    );
 
     it("handshakes, invokes typed services, and fans out events", async () => {
         const host = new SharedWorkerCoordinationHost({
@@ -285,6 +294,94 @@ describe("SharedWorker coordination", () => {
         await expect(aborted.promise).resolves.toBeUndefined();
         await client.close();
         await host.close();
+    });
+
+    it("cancels timed-out RPCs and keeps the shared host usable for other clients", async () => {
+        const host = new SharedWorkerCoordinationHost({ scope: "native-cancel" });
+        const started = promiseWithResolvers<void>();
+        const aborted = promiseWithResolvers<void>();
+        host.serve<TestService>("test.v1", {
+            echo: ({ value }) => value,
+            fail: () => undefined,
+            wait: async (_input, { signal }) => {
+                started.resolve();
+                await new Promise<void>((resolve) =>
+                    signal.addEventListener(
+                        "abort",
+                        () => {
+                            aborted.resolve();
+                            resolve();
+                        },
+                        { once: true }
+                    )
+                );
+            },
+        });
+        const firstChannel = new MessageChannel();
+        const secondChannel = new MessageChannel();
+        host.connect(firstChannel.port1);
+        host.connect(secondChannel.port1);
+        const first = new SharedWorkerCoordinationClient({
+            scope: "native-cancel",
+            worker: firstChannel.port2,
+            requestTimeoutMs: 100,
+        });
+        const second = new SharedWorkerCoordinationClient({
+            scope: "native-cancel",
+            worker: secondChannel.port2,
+        });
+        try {
+            const pending = first.service<TestService>("test.v1").methods.wait(undefined);
+            void pending.catch(() => undefined);
+            await started.promise;
+            await expect(pending).rejects.toMatchObject({ code: "TIMEOUT" });
+            await aborted.promise;
+            await first.close();
+            await expect(
+                second.service<TestService>("test.v1").methods.echo({ value: "still connected" })
+            ).resolves.toBe("still connected");
+        } finally {
+            await first.close();
+            await second.close();
+            await host.close();
+        }
+    });
+
+    it("aborts native-port handlers when the host closes", async () => {
+        const host = new SharedWorkerCoordinationHost({ scope: "native-close" });
+        const started = promiseWithResolvers<void>();
+        const aborted = promiseWithResolvers<void>();
+        host.serve<TestService>("test.v1", {
+            echo: ({ value }) => value,
+            fail: () => undefined,
+            wait: async (_input, { signal }) => {
+                started.resolve();
+                await new Promise<void>((resolve) =>
+                    signal.addEventListener(
+                        "abort",
+                        () => {
+                            aborted.resolve();
+                            resolve();
+                        },
+                        { once: true }
+                    )
+                );
+            },
+        });
+        const channel = new MessageChannel();
+        host.connect(channel.port1);
+        const client = new SharedWorkerCoordinationClient({ scope: "native-close", worker: channel.port2 });
+        try {
+            const pending = client.service<TestService>("test.v1").methods.wait(undefined);
+            void pending.catch(() => undefined);
+            await started.promise;
+            await host.close();
+            await expect(pending).rejects.toBeInstanceOf(Error);
+            await aborted.promise;
+        } finally {
+            await client.close();
+            await host.close();
+        }
     });
 });
 

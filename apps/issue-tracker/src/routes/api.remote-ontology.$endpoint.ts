@@ -1,33 +1,59 @@
+import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { createRemoteOntologyServer } from "@party-stack/remote-ontology/server";
+import { createRemoteOntologyServer } from "@party-stack/ontology-server/server";
 import {
     createSQLiteOntologyBackendAdapter,
     type CreateSQLiteOntologyBackendAdapterOptions,
 } from "@party-stack/sqlite-ontology";
+import { eq } from "@tanstack/db";
 import { createFileRoute } from "@tanstack/react-router";
 import Database from "better-sqlite3";
+import { Effect } from "effect";
 import ontology from "../ontology/ontology";
 import { auth, issueTrackerUsers } from "../server/auth";
 import type { IssueTrackerOntology } from "../ontology/generated/types";
+import type { OntologyIR } from "@party-stack/ontology";
 
 mkdirSync("temp", { recursive: true });
 
 const database = new Database("temp/issue-tracker.sqlite");
+const seedAction = "_seedAuthenticatedUser";
+const serverIR: OntologyIR = {
+    ...ontology,
+    actionTypes: [
+        ...ontology.actionTypes,
+        {
+            name: seedAction,
+            displayName: "Update authenticated profile",
+            logic: [],
+            parameters: ontology.objectTypes.find((object) => object.name === "User")!.properties,
+        },
+    ],
+};
 const backendAdapter = createSQLiteOntologyBackendAdapter({
-    ir: ontology,
+    ir: serverIR,
+    mutators: {
+        [seedAction]: async ({ tx, args, context }) => {
+            if (args.id !== context.user)
+                throw new Error("Profile identity does not match the authenticated user.");
+            const existing = await tx.query<Record<string, unknown> | undefined>((q, objects) =>
+                q
+                    .from({ user: objects.User! })
+                    .where(({ user }) => eq(user.id, args.id))
+                    .findOne()
+            );
+            if (existing) await tx.mutate.User!.update(args.id as string, args);
+            else await tx.mutate.User!.create(args);
+        },
+    },
     database: database as unknown as CreateSQLiteOntologyBackendAdapterOptions["database"],
     name: "issue-tracker-sqlite-users",
 });
 
-const seedUser = database.prepare(`
-    INSERT INTO "party_stack_issue_x2d_tracker_x2d_sqlite_x2d_users_User" ("id", "data")
-    VALUES (?, ?)
-    ON CONFLICT("id") DO UPDATE SET "data" = excluded."data"
-`);
 const contexts = new WeakMap<Request, { user: string }>();
 
 const remoteServer = createRemoteOntologyServer<{ user: string }, IssueTrackerOntology>({
-    ir: ontology,
+    ir: serverIR,
     backendAdapter,
     getContext: (request) => {
         const context = contexts.get(request);
@@ -37,6 +63,9 @@ const remoteServer = createRemoteOntologyServer<{ user: string }, IssueTrackerOn
         return context;
     },
     policy: {
+        // This demo is a shared workspace: every authenticated user can read every row/property.
+        authorizeFullReplica: () => true,
+        visibleActionTypes: ontology.actionTypes.map((action) => action.name),
         baseObjectTypeQueries: {
             Issue: ({ q, collection }) => q.from({ object: collection }),
             Project: ({ q, collection }) => q.from({ object: collection }),
@@ -68,7 +97,7 @@ const remoteServer = createRemoteOntologyServer<{ user: string }, IssueTrackerOn
             User: ["id", "givenName", "familyName", "email", "avatar"],
         },
         clientContext: "forward",
-        canApplyAction: () => true,
+        canApplyAction: (_context, request) => String(request.actionType) !== seedAction,
     },
 });
 
@@ -86,14 +115,22 @@ async function handleRequest(request: Request): Promise<Response> {
     }
     const seeded = issueTrackerUsers.find((user) => user.email === selected.user.email);
     const [givenName, ...familyName] = selected.user.name.split(" ");
-    seedUser.run(
-        selected.user.id,
-        JSON.stringify({
-            id: selected.user.id,
-            givenName: seeded?.givenName ?? givenName ?? selected.user.name,
-            familyName: seeded?.familyName ?? familyName.join(" "),
-            email: selected.user.email,
-        })
+    const profile = {
+        id: selected.user.id,
+        givenName: seeded?.givenName ?? givenName ?? selected.user.name,
+        familyName: seeded?.familyName ?? familyName.join(" "),
+        email: selected.user.email,
+    };
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.flatMap(backendAdapter.open({ user: selected.user.id }), (backend) =>
+                backend.invoke({
+                    name: seedAction,
+                    parameters: profile,
+                    id: `profile:${seedAction}:${createHash("sha256").update(JSON.stringify(profile)).digest("hex")}`,
+                })
+            )
+        )
     );
     contexts.set(request, {
         user: selected.user.id,

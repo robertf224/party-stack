@@ -1,0 +1,61 @@
+{
+    "name": "@party-stack/ontology-server",
+    "version": "0.10.2",
+    "files": [
+        "lib"
+    ],
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./client": {
+            "types": "./lib/client.d.ts",
+            "default": "./lib/client.js"
+        },
+        "./http": {
+            "types": "./lib/http.d.ts",
+            "default": "./lib/http.js"
+        },
+        "./server": {
+            "types": "./lib/server.d.ts",
+            "default": "./lib/server.js"
+        },
+        "./rpc": {
+            "types": "./lib/rpc.d.ts",
+            "default": "./lib/rpc.js"
+        },
+        "./rpc/http": {
+            "types": "./lib/rpcHttp.d.ts",
+            "default": "./lib/rpcHttp.js"
+        },
+        "./rpc/worker": {
+            "types": "./lib/rpcWorker.d.ts",
+            "default": "./lib/rpcWorker.js"
+        }
+    },
+    "dependencies": {
+        "@party-stack/ontology": "workspace:*",
+        "@party-stack/ontology-backend": "workspace:*",
+        "@party-stack/ontology-replica": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
+        "@tanstack/query-core": "^5.102.8",
+        "@tanstack/query-db-collection": "1.4.4",
+        "effect": "^4.0.5",
+        "temporal-polyfill": "^0.3.0",
+        "zod": "^4.4.3"
+    },
+    "devDependencies": {
+        "@effect/platform-browser": "^4.0.5",
+        "@party-stack/build-config": "workspace:*",
+        "@tanstack/db": "0.14.0",
+        "@types/node": "^24.10.1",
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
+    },
+    "peerDependencies": {
+        "@tanstack/db": "0.14.0"
+    }
+}

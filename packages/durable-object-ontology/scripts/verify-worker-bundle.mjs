@@ -22,8 +22,15 @@ const result = await build({
 const forbiddenInputs = Object.keys(result.metafile.inputs).filter(
     (input) => input.includes("better-sqlite3") || input.startsWith("node:")
 );
-const output = result.outputFiles.map((file) => file.text).join("\n");
-if (forbiddenInputs.length > 0 || output.includes("better-sqlite3") || /["']node:[^"']+["']/.test(output)) {
-    throw new Error(`Worker bundle contains Node-only inputs: ${forbiddenInputs.join(", ")}`);
+// Inspect module dependencies, not arbitrary strings. Effect safely probes for an
+// optional Node AsyncResource through globalThis.process?.getBuiltinModule?.(...).
+const forbiddenImports = Object.values(result.metafile.outputs)
+    .flatMap((output) => output.imports)
+    .filter((entry) => entry.path.startsWith("node:") || entry.path.includes("better-sqlite3"))
+    .map((entry) => entry.path);
+if (forbiddenInputs.length > 0 || forbiddenImports.length > 0) {
+    throw new Error(
+        `Worker bundle contains Node-only dependencies: ${[...forbiddenInputs, ...forbiddenImports].join(", ")}`
+    );
 }
 console.log("Durable Object ontology bundle is Worker-safe.");

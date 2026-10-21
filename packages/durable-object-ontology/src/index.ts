@@ -25,6 +25,7 @@ export interface DurableObjectSqlStorage {
 export interface DurableObjectSQLiteStorage {
     readonly sql: DurableObjectSqlStorage;
     transactionSync<Result>(callback: () => Result): Result;
+    transaction?<Result>(callback: () => Promise<Result>): Promise<Result>;
     deleteAll(): Promise<void>;
 }
 
@@ -65,6 +66,9 @@ export function createDurableObjectSQLiteDatabase(
         transaction: (callback) => () => {
             storage.transactionSync(callback);
         },
+        ...(storage.transaction
+            ? { transactionAsync: <A>(callback: () => Promise<A>) => storage.transaction!(callback) }
+            : {}),
         destroy: () => storage.deleteAll(),
     };
 }

@@ -6,20 +6,32 @@
     ],
     "type": "module",
     "exports": {
+        "./vite": {
+            "types": "./lib/vite/index.d.ts",
+            "default": "./lib/vite/index.js"
+        },
+        "./attribution": {
+            "types": "./lib/attribution/index.d.ts",
+            "default": "./lib/attribution/index.js"
+        },
         ".": {
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
         }
     },
     "dependencies": {
+        "@babel/core": "^7.29.7",
         "@base-ui/react": "^1.8.0",
         "@dagrejs/dagre": "^3.1.1",
         "@number-flow/react": "^0.6.2",
         "@party-stack/icons": "workspace:*",
         "@party-stack/icons-lucide": "workspace:*",
         "@party-stack/ontology": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
         "@tanstack/devtools-utils": "^0.6.0",
         "@tanstack/react-table": "^9.2.8",
+        "@xyflow/react": "^12.12.0",
+        "highlight.js": "^11.12.0",
         "lucide-react": "^1.31.0"
     },
     "devDependencies": {
@@ -28,8 +40,10 @@
         "@tanstack/db": "0.14.0",
         "@tanstack/react-db": "0.5.9",
         "@tanstack/react-devtools": "^0.10.9",
+        "@types/babel__core": "^7.20.5",
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
+        "effect": "^4.0.5",
         "postcss-import": "^17.0.0",
         "react": "^19.3.0",
         "react-dom": "^19.3.0",

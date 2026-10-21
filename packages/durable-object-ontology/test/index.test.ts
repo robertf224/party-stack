@@ -29,13 +29,13 @@ describe("Durable Object ontology", () => {
                 .exec(
                     `SELECT name FROM sqlite_master
                          WHERE type = 'table' AND name = ?`,
-                    "party_stack_sqlite_Note"
+                    "party_tables_rows"
                 )
                 .toArray()
         );
         expect(rows).toEqual([
             {
-                name: "party_stack_sqlite_Note",
+                name: "party_tables_rows",
             },
         ]);
     });

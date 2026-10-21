@@ -17,6 +17,9 @@
     },
     "dependencies": {
         "@party-stack/ontology": "workspace:*",
+        "@party-stack/ontology-backend": "workspace:*",
+        "@party-stack/sql-ontology-storage": "workspace:*",
+        "effect": "^4.0.5",
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {

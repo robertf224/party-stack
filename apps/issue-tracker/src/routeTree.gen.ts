@@ -9,21 +9,21 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as ProjectProjectIdRouteImport } from './routes/project.$projectId'
+import { Route as TrackerRouteImport } from './routes/_tracker'
+import { Route as TrackerIndexRouteImport } from './routes/_tracker.index'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as ApiRemoteOntologyEndpointRouteImport } from './routes/api.remote-ontology.$endpoint'
 import { Route as ApiAuthSplatRouteImport } from './routes/api.auth.$'
+import { Route as TrackerProjectProjectIdRouteImport } from './routes/_tracker.project.$projectId'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const TrackerRoute = TrackerRouteImport.update({
+  id: '/_tracker',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ProjectProjectIdRoute = ProjectProjectIdRouteImport.update({
-  id: '/project/$projectId',
-  path: '/project/$projectId',
-  getParentRoute: () => rootRouteImport,
+const TrackerIndexRoute = TrackerIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => TrackerRoute,
 } as any)
 const AuthCallbackRoute = AuthCallbackRouteImport.update({
   id: '/auth/callback',
@@ -41,26 +41,32 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TrackerProjectProjectIdRoute = TrackerProjectProjectIdRouteImport.update({
+  id: '/project/$projectId',
+  path: '/project/$projectId',
+  getParentRoute: () => TrackerRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof TrackerIndexRoute
   '/auth/callback': typeof AuthCallbackRoute
-  '/project/$projectId': typeof ProjectProjectIdRoute
+  '/project/$projectId': typeof TrackerProjectProjectIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/remote-ontology/$endpoint': typeof ApiRemoteOntologyEndpointRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
   '/auth/callback': typeof AuthCallbackRoute
-  '/project/$projectId': typeof ProjectProjectIdRoute
+  '/': typeof TrackerIndexRoute
+  '/project/$projectId': typeof TrackerProjectProjectIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/remote-ontology/$endpoint': typeof ApiRemoteOntologyEndpointRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_tracker': typeof TrackerRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
-  '/project/$projectId': typeof ProjectProjectIdRoute
+  '/_tracker/': typeof TrackerIndexRoute
+  '/_tracker/project/$projectId': typeof TrackerProjectProjectIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/remote-ontology/$endpoint': typeof ApiRemoteOntologyEndpointRoute
 }
@@ -74,43 +80,43 @@ export interface FileRouteTypes {
     | '/api/remote-ontology/$endpoint'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/'
     | '/auth/callback'
+    | '/'
     | '/project/$projectId'
     | '/api/auth/$'
     | '/api/remote-ontology/$endpoint'
   id:
     | '__root__'
-    | '/'
+    | '/_tracker'
     | '/auth/callback'
-    | '/project/$projectId'
+    | '/_tracker/'
+    | '/_tracker/project/$projectId'
     | '/api/auth/$'
     | '/api/remote-ontology/$endpoint'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  TrackerRoute: typeof TrackerRouteWithChildren
   AuthCallbackRoute: typeof AuthCallbackRoute
-  ProjectProjectIdRoute: typeof ProjectProjectIdRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiRemoteOntologyEndpointRoute: typeof ApiRemoteOntologyEndpointRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
+    '/_tracker': {
+      id: '/_tracker'
+      path: ''
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+      preLoaderRoute: typeof TrackerRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/project/$projectId': {
-      id: '/project/$projectId'
-      path: '/project/$projectId'
-      fullPath: '/project/$projectId'
-      preLoaderRoute: typeof ProjectProjectIdRouteImport
-      parentRoute: typeof rootRouteImport
+    '/_tracker/': {
+      id: '/_tracker/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof TrackerIndexRouteImport
+      parentRoute: typeof TrackerRoute
     }
     '/auth/callback': {
       id: '/auth/callback'
@@ -133,13 +139,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_tracker/project/$projectId': {
+      id: '/_tracker/project/$projectId'
+      path: '/project/$projectId'
+      fullPath: '/project/$projectId'
+      preLoaderRoute: typeof TrackerProjectProjectIdRouteImport
+      parentRoute: typeof TrackerRoute
+    }
   }
 }
 
+interface TrackerRouteChildren {
+  TrackerIndexRoute: typeof TrackerIndexRoute
+  TrackerProjectProjectIdRoute: typeof TrackerProjectProjectIdRoute
+}
+
+const TrackerRouteChildren: TrackerRouteChildren = {
+  TrackerIndexRoute: TrackerIndexRoute,
+  TrackerProjectProjectIdRoute: TrackerProjectProjectIdRoute,
+}
+
+const TrackerRouteWithChildren =
+  TrackerRoute._addFileChildren(TrackerRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  TrackerRoute: TrackerRouteWithChildren,
   AuthCallbackRoute: AuthCallbackRoute,
-  ProjectProjectIdRoute: ProjectProjectIdRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiRemoteOntologyEndpointRoute: ApiRemoteOntologyEndpointRoute,
 }

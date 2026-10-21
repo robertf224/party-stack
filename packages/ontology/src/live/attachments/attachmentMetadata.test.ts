@@ -1,11 +1,11 @@
 import { describe, expect, expectTypeOf, it, vi } from "vite-plus/test";
 import { createLiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
-import type { OntologyIR } from "../../ir/index.js";
-import type * as v from "../../utils/values.js";
 import type { OntologyAttachmentsAdapter } from "../OntologyBackendAdapter.js";
 import type { LiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
 import type { AttachmentMetadataField } from "./types.js";
 import type { BlobManager } from "@party-stack/blobs";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+import type * as v from "@party-stack/ontology-spec/values";
 
 describe("attachment metadata", () => {
     it("only exposes dimensions for image selections", () => {

@@ -1,6 +1,6 @@
+import { BlobBytesNotFoundError, type BlobBytesStore } from "@party-stack/runtime";
 import { Directory, File, Paths } from "expo-file-system";
 import { hashStorageName } from "./hashStorageName.js";
-import type { BlobBytesStore } from "@party-stack/runtime";
 
 export interface ExpoFileSystemBlobBytesStoreOptions {
     directoryName: string;
@@ -24,7 +24,7 @@ export class ExpoFileSystemBlobBytesStore implements BlobBytesStore {
         return Promise.resolve().then(async () => {
             const file = await this.#file(id);
             if (!file.exists) {
-                throw new Error(`Blob bytes not found for "${id}".`);
+                throw new BlobBytesNotFoundError(id);
             }
             return file;
         });

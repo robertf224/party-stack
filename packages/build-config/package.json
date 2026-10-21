@@ -13,10 +13,18 @@
         },
         "./tsconfig.json": "./tsconfig/library.json",
         "./react/tsconfig.json": "./tsconfig/react.json",
-        "./app/tsconfig.json": "./tsconfig/app.json"
+        "./app/tsconfig.json": "./tsconfig/app.json",
+        "./effect": {
+            "types": "./lib/effect.d.ts",
+            "default": "./lib/effect.js"
+        },
+        "./effect/tsconfig.json": "./tsconfig/effect-library.json"
     },
     "scripts": {
         "prepare": "vp pack"
+    },
+    "dependencies": {
+        "@effect/tsgo": "^0.53.4"
     },
     "devDependencies": {
         "@types/node": "^24.10.1",

@@ -1,95 +1,15 @@
 import { FieldPath, LoadSubsetOptions, parseOrderByExpression, parseWhereExpression } from "@tanstack/db";
-import { Temporal } from "temporal-polyfill";
+import { quoteSoqlIdentifier, serializeSoqlLiteral, type CompiledSoqlFilter } from "./soql.js";
+export { buildSoqlQuery, serializeSoqlLiteral } from "./soql.js";
+export type { CompiledSoqlFilter } from "./soql.js";
 
 const ALWAYS_FALSE = "__ALWAYS_FALSE__";
-
-export type CompiledSoqlFilter = {
-    clause?: string;
-    alwaysFalse: boolean;
-};
-
-function quoteIdentifier(identifier: string): string {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
-        throw new Error(`Invalid Salesforce identifier "${identifier}".`);
-    }
-    return identifier;
-}
 
 function fieldPathToSoql(fieldPath: FieldPath): string {
     if (fieldPath.length === 0) {
         throw new Error("Empty field path.");
     }
-    return fieldPath.map((segment) => quoteIdentifier(String(segment))).join(".");
-}
-
-function escapeSoqlString(value: string): string {
-    let escaped = "";
-    for (const character of value) {
-        switch (character) {
-            case "\\":
-                escaped += "\\\\";
-                break;
-            case "'":
-                escaped += "\\'";
-                break;
-            case "\b":
-                escaped += "\\b";
-                break;
-            case "\f":
-                escaped += "\\f";
-                break;
-            case "\n":
-                escaped += "\\n";
-                break;
-            case "\r":
-                escaped += "\\r";
-                break;
-            case "\t":
-                escaped += "\\t";
-                break;
-            default: {
-                const codePoint = character.codePointAt(0)!;
-                if (codePoint < 0x20 || codePoint === 0x7f) {
-                    throw new Error(
-                        `Cannot serialize control character U+${codePoint.toString(16).padStart(4, "0")} to SOQL.`
-                    );
-                }
-                escaped += character;
-            }
-        }
-    }
-    return escaped;
-}
-
-export function serializeSoqlLiteral(value: unknown): string {
-    if (value === null || value === undefined) {
-        return "null";
-    }
-    if (typeof value === "boolean") {
-        return value ? "true" : "false";
-    }
-    if (typeof value === "number") {
-        if (!Number.isFinite(value)) {
-            throw new Error(`Cannot serialize non-finite number ${value} to SOQL.`);
-        }
-        return String(value);
-    }
-    if (typeof value === "bigint") {
-        return String(value);
-    }
-    if (value instanceof Date) {
-        return value.toISOString();
-    }
-    if (value instanceof Temporal.Instant) {
-        return value.toString();
-    }
-    if (value instanceof Temporal.PlainDate || value instanceof Temporal.PlainDateTime) {
-        return value.toString();
-    }
-    if (typeof value === "string") {
-        return `'${escapeSoqlString(value)}'`;
-    }
-    throw new Error(`Unsupported SOQL literal type: ${typeof value}`);
+    return fieldPath.map((segment) => quoteSoqlIdentifier(String(segment))).join(".");
 }
 
 export function isAlwaysFalseFilter(filter: CompiledSoqlFilter | undefined): boolean {
@@ -183,31 +103,4 @@ export function convertLoadSubsetOrderBy(orderBy: LoadSubsetOptions["orderBy"]):
         return `${field} ${ordering.direction.toUpperCase()}`;
     });
     return fields.length > 0 ? fields.join(", ") : undefined;
-}
-
-export function buildSoqlQuery(opts: {
-    objectType: string;
-    selectedProperties: string[];
-    where?: CompiledSoqlFilter;
-    orderBy?: string;
-    limit?: number;
-    offset?: number;
-}): string {
-    const objectType = quoteIdentifier(opts.objectType);
-    const select = opts.selectedProperties.map(quoteIdentifier).join(", ");
-    const clauses = [`SELECT ${select} FROM ${objectType}`];
-
-    if (opts.where?.clause) {
-        clauses.push(`WHERE ${opts.where.clause}`);
-    }
-    if (opts.orderBy) {
-        clauses.push(`ORDER BY ${opts.orderBy}`);
-    }
-    if (opts.limit !== undefined) {
-        clauses.push(`LIMIT ${Math.max(0, Math.trunc(opts.limit))}`);
-    }
-    if (opts.offset !== undefined && opts.offset > 0) {
-        clauses.push(`OFFSET ${Math.max(0, Math.trunc(opts.offset))}`);
-    }
-    return clauses.join(" ");
 }

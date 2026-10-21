@@ -16,7 +16,8 @@
         }
     },
     "dependencies": {
-        "effection": "^4.0.2",
+        "@effect/platform-browser": "^4.0.5",
+        "effect": "^4.0.5",
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {

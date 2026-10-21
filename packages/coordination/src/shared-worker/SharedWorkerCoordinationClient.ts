@@ -1,43 +1,26 @@
-import {
-    each,
-    race,
-    run,
-    sleep,
-    spawn,
-    until,
-    useScope,
-    type Operation,
-    type Scope,
-    type Task,
-} from "effection";
+import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
+import { Effect, Exit, Layer, Scope, Stream } from "effect";
+import { RpcClient } from "effect/rpc";
+import { RpcClientError } from "effect/rpc/RpcClientError";
 import { BaseCoordination, type InvocationContext } from "../base.js";
 import {
     COORDINATION_PROTOCOL_VERSION,
     CoordinationClosedError,
-    CoordinationProtocolError,
     CoordinationTransportError,
     type CoordinationCallOptions,
 } from "../contracts.js";
-import { useMessagePort } from "../effection/index.js";
-import { runInScope } from "../effection/runInScope.js";
-import { deferred, deserializeError, normalizeError, randomId, type Deferred } from "../internal.js";
-import { isRecord } from "../protocol.js";
-import { encodeCoordinationMessage, decodeCoordinationMessage } from "../valueCodec.js";
+import { deferred, deserializeError, normalizeError, randomId } from "../internal.js";
+import { runInEffectScope } from "../resources/runInScope.js";
+import { encodeCoordinationValue, decodeCoordinationValue } from "../valueCodec.js";
+import { CoordinationRpcs, withStructuredCloneCodec } from "./rpc.js";
 import type {
     CoordinationMessagePort,
     SharedWorkerCoordinationClientOptions,
-    SharedWorkerLike,
     SharedWorkerSource,
 } from "./contracts.js";
-import type {
-    WorkerCancel,
-    WorkerDisconnect,
-    WorkerEvent,
-    WorkerHello,
-    WorkerRequest,
-    WorkerResponse,
-    WorkerWelcome,
-} from "./protocol.js";
+
+const makeClient = () => RpcClient.make(CoordinationRpcs);
+type Client = Effect.Success<ReturnType<typeof makeClient>>;
 
 const DEFAULT_CONNECTION_TIMEOUT_MS = 5_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
@@ -47,12 +30,9 @@ export class SharedWorkerCoordinationClient extends BaseCoordination {
     readonly scope: string;
 
     private readonly connectionId = randomId();
-    private readonly ready = deferred<void>();
-    private readonly pending = new Map<string, Deferred<unknown>>();
+    private readonly ready = deferred<Client>();
     private readonly requestTimeoutMs: number;
-    private readonly rootScope = deferred<Scope>();
-    private readonly task: Task<void>;
-    private port: CoordinationMessagePort | undefined;
+    private readonly lifetimeScope = Effect.runSync(Scope.make());
     private terminalError: Error | undefined;
     private closePromise: Promise<void> | undefined;
 
@@ -61,26 +41,17 @@ export class SharedWorkerCoordinationClient extends BaseCoordination {
         this.scope = options.scope;
         this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
         void this.ready.promise.catch(() => undefined);
-        this.task = run(() => this.useLifetime(options));
-        void this.task.catch((error: unknown) => {
-            this.fail(normalizeError(error));
-        });
+        void runInEffectScope(this.lifetimeScope, this.useLifetime(options)).catch((error: unknown) =>
+            this.fail(normalizeError(error))
+        );
     }
 
     close(): Promise<void> {
         if (this.closePromise) return this.closePromise;
         this.closed = true;
-        try {
-            this.send({
-                v: COORDINATION_PROTOCOL_VERSION,
-                scope: this.scope,
-                type: "disconnect",
-                connectionId: this.connectionId,
-            } satisfies WorkerDisconnect);
-        } catch {
-            // The peer may already be gone.
-        }
-        this.closePromise = this.task.halt().then(() => undefined);
+        this.ready.reject(new CoordinationClosedError());
+        this.clearEventListeners();
+        this.closePromise = Effect.runPromise(Scope.close(this.lifetimeScope, Exit.void));
         return this.closePromise;
     }
 
@@ -91,249 +62,150 @@ export class SharedWorkerCoordinationClient extends BaseCoordination {
         options: CoordinationCallOptions | undefined,
         context: InvocationContext
     ): Promise<unknown> {
-        if (this.closed) {
-            return Promise.reject(new CoordinationClosedError());
-        }
-        return this.rootScope.promise
-            .then((scope) =>
-                runInScope(scope, () => this.requestWhenReady(namespace, method, input), [
-                    context.signal,
-                    options?.signal,
-                ])
+        if (this.closed) return Promise.reject(new CoordinationClosedError());
+        return runInEffectScope(
+            this.lifetimeScope,
+            Effect.tryPromise({
+                try: () => this.ready.promise,
+                catch: normalizeError,
+            }).pipe(
+                Effect.flatMap((client) =>
+                    client.Call({
+                        ...this.identity(),
+                        service: namespace,
+                        method,
+                        payload: encodeCoordinationValue(input),
+                    })
+                ),
+                Effect.map(decodeCoordinationValue),
+                Effect.mapError(decodeRpcError),
+                Effect.timeoutOrElse({
+                    duration: this.requestTimeoutMs,
+                    orElse: () =>
+                        Effect.fail(
+                            new CoordinationTransportError(
+                                `SharedWorker request "${namespace}.${method}" timed out.`,
+                                "TIMEOUT"
+                            )
+                        ),
+                })
+            ),
+            [context.signal, options?.signal]
+        ).catch((error: unknown) => {
+            if (this.terminalError) throw this.terminalError;
+            if (this.closed) throw new CoordinationClosedError();
+            throw normalizeError(error);
+        });
+    }
+
+    private useLifetime = Effect.fnUntraced(function* (
+        this: SharedWorkerCoordinationClient,
+        options: SharedWorkerCoordinationClientOptions
+    ) {
+        const port = yield* Effect.try({ try: () => resolvePort(options.worker), catch: normalizeError });
+        const disconnected = () =>
+            this.fail(
+                new CoordinationTransportError("SharedWorker coordination disconnected.", "DISCONNECTED")
+            );
+        yield* Effect.acquireRelease(
+            Effect.sync(() => {
+                port.addEventListener("close", disconnected);
+                port.addEventListener("messageerror", disconnected);
+            }),
+            () =>
+                Effect.sync(() => {
+                    port.removeEventListener("close", disconnected);
+                    port.removeEventListener("messageerror", disconnected);
+                    port.close?.();
+                })
+        );
+        const transport = Layer.effect(
+            RpcClient.Protocol,
+            RpcClient.makeProtocolWorker({ size: 1, concurrency: 64 }).pipe(
+                Effect.map(withStructuredCloneCodec)
             )
-            .catch((error: unknown) => {
-                if (this.terminalError) {
-                    throw this.terminalError;
-                }
-                if (this.closed) {
-                    throw new CoordinationClosedError();
-                }
-                throw normalizeError(error);
-            });
-    }
-
-    private *requestWhenReady(service: string, method: string, payload: unknown): Operation<unknown> {
-        yield* until(this.ready.promise);
-        if (this.terminalError) throw this.terminalError;
-        if (this.closed) throw new CoordinationClosedError();
-
-        const requestId = randomId();
-        const response = deferred<unknown>();
-        this.pending.set(requestId, response);
-        const cancel = () => {
-            try {
-                this.send({
-                    v: COORDINATION_PROTOCOL_VERSION,
-                    scope: this.scope,
-                    type: "cancel",
-                    connectionId: this.connectionId,
-                    requestId,
-                } satisfies WorkerCancel);
-            } catch {
-                // Cancellation already settles the caller.
-            }
-        };
-        try {
-            this.send({
-                v: COORDINATION_PROTOCOL_VERSION,
-                scope: this.scope,
-                type: "request",
-                connectionId: this.connectionId,
-                requestId,
-                service,
-                method,
-                payload,
-            } satisfies WorkerRequest);
-            return yield* this.waitForResponse(response.promise, service, method);
-        } finally {
-            if (!response.settled) cancel();
-            if (this.pending.get(requestId) === response) {
-                this.pending.delete(requestId);
-            }
-        }
-    }
-
-    private *waitForResponse(
-        response: Promise<unknown>,
-        service: string,
-        method: string
-    ): Operation<unknown> {
-        const timeout = this.requestTimeoutMs;
-        const result = yield* race([
-            (function* () {
-                return {
-                    type: "response" as const,
-                    value: yield* until(response),
-                };
-            })(),
-            (function* () {
-                yield* sleep(timeout);
-                return {
-                    type: "timeout" as const,
-                };
-            })(),
-        ]);
-        if (result.type === "timeout") {
-            throw new CoordinationTransportError(
-                `SharedWorker request "${service}.${method}" timed out.`,
-                "TIMEOUT"
-            );
-        }
-        return result.value;
-    }
-
-    private *useLifetime(options: SharedWorkerCoordinationClientOptions): Operation<void> {
-        const scope = yield* useScope();
-        this.rootScope.resolve(scope);
-        const port = resolvePort(options.worker);
-        this.port = port;
-        try {
-            const resource = yield* useMessagePort(port);
-            this.send({
-                v: COORDINATION_PROTOCOL_VERSION,
-                scope: this.scope,
-                type: "hello",
-                connectionId: this.connectionId,
-            } satisfies WorkerHello);
-            void (yield* spawn(() =>
-                this.waitForHandshake(options.connectionTimeoutMs ?? DEFAULT_CONNECTION_TIMEOUT_MS)
-            ));
-            for (const event of yield* each(resource)) {
-                this.onMessage(decodeCoordinationMessage(event.data));
-                yield* each.next();
-            }
-            throw new CoordinationTransportError("SharedWorker coordination disconnected.", "DISCONNECTED");
-        } catch (error) {
-            this.terminalError ??= normalizeError(error);
-            throw error;
-        } finally {
-            const error = this.terminalError ?? new CoordinationClosedError();
-            this.ready.reject(error);
-            this.rejectPending(error);
-            this.clearEventListeners();
-            this.rootScope.reject(error);
-            this.port = undefined;
-        }
-    }
-
-    private *waitForHandshake(timeout: number): Operation<void> {
-        const ready = this.ready.promise;
-        const result = yield* race([
-            (function* () {
-                yield* until(ready);
-                return "ready" as const;
-            })(),
-            (function* () {
-                yield* sleep(timeout);
-                return "timeout" as const;
-            })(),
-        ]);
-        if (result === "timeout") {
-            throw new CoordinationTransportError("SharedWorker coordination handshake timed out.", "TIMEOUT");
-        }
-    }
-
-    private onMessage(message: unknown): void {
-        if (this.closed || !isRecord(message) || message.connectionId !== this.connectionId) {
-            return;
-        }
-        const type = message.type;
-        if (type === "welcome") {
-            this.onWelcome(message as unknown as WorkerWelcome);
-            return;
-        }
-        if (message.v !== COORDINATION_PROTOCOL_VERSION || message.scope !== this.scope) {
-            this.fail(new CoordinationProtocolError("SharedWorker coordination protocol or scope mismatch."));
-            return;
-        }
-        if (type === "response") {
-            const response = message as unknown as WorkerResponse;
-            const pending = this.pending.get(response.requestId);
-            if (!pending) return;
-            if (response.ok) {
-                pending.resolve(response.result);
-            } else {
-                pending.reject(
-                    response.error
-                        ? deserializeError(response.error)
-                        : new CoordinationTransportError(
-                              "SharedWorker returned an invalid error response.",
-                              "TRANSPORT_ERROR"
-                          )
+        ).pipe(Layer.provide(BrowserWorker.layer(() => port as MessagePort)));
+        yield* Effect.gen(
+            function* (this: SharedWorkerCoordinationClient) {
+                const client = yield* RpcClient.make(CoordinationRpcs);
+                yield* client.Hello(this.identity()).pipe(
+                    Effect.mapError(decodeRpcError),
+                    Effect.timeoutOrElse({
+                        duration: options.connectionTimeoutMs ?? DEFAULT_CONNECTION_TIMEOUT_MS,
+                        orElse: () =>
+                            Effect.fail(
+                                new CoordinationTransportError(
+                                    "SharedWorker coordination handshake timed out.",
+                                    "TIMEOUT"
+                                )
+                            ),
+                    }),
+                    Effect.tapError((error) =>
+                        Effect.sync(() => {
+                            // Preserve the rejected handshake before transport finalization closes the port.
+                            this.terminalError ??= error;
+                            this.ready.reject(error);
+                        })
+                    )
                 );
-            }
-        } else if (type === "event") {
-            const event = message as unknown as WorkerEvent;
-            this.emitEvent(event.service, event.event, event.payload);
-        } else if (type === "disconnect") {
-            const disconnect = message as unknown as WorkerDisconnect;
-            this.fail(
-                disconnect.error
-                    ? deserializeError(disconnect.error)
-                    : new CoordinationTransportError(
-                          "SharedWorker coordination disconnected.",
-                          "DISCONNECTED"
-                      )
-            );
-        }
-    }
+                yield* client.Events(this.identity()).pipe(
+                    Stream.runForEach(({ service, event, payload }) =>
+                        Effect.sync(() => this.emitEvent(service, event, decodeCoordinationValue(payload)))
+                    ),
+                    Effect.mapError(decodeRpcError),
+                    Effect.andThen(
+                        Effect.fail(
+                            new CoordinationTransportError(
+                                "SharedWorker coordination disconnected.",
+                                "DISCONNECTED"
+                            )
+                        )
+                    ),
+                    Effect.catch((error) => Effect.sync(() => this.fail(error))),
+                    Effect.onExit(() =>
+                        Effect.sync(() =>
+                            this.fail(
+                                new CoordinationTransportError(
+                                    "SharedWorker coordination disconnected.",
+                                    "DISCONNECTED"
+                                )
+                            )
+                        )
+                    ),
+                    Effect.forkScoped({ startImmediately: true })
+                );
+                this.ready.resolve(client);
+                yield* Effect.never;
+            }.bind(this)
+        ).pipe(Effect.provide(transport));
+    });
 
-    private onWelcome(message: WorkerWelcome): void {
-        if (message.v !== COORDINATION_PROTOCOL_VERSION || message.scope !== this.scope) {
-            this.fail(new CoordinationProtocolError("SharedWorker coordination protocol or scope mismatch."));
-            return;
-        }
-        if (!message.accepted) {
-            this.fail(
-                message.error
-                    ? deserializeError(message.error)
-                    : new CoordinationProtocolError("SharedWorker rejected the coordination connection.")
-            );
-            return;
-        }
-        this.ready.resolve(undefined);
-    }
-
-    private send(message: WorkerHello | WorkerRequest | WorkerCancel | WorkerDisconnect): void {
-        if (this.terminalError) throw this.terminalError;
-        if (!this.port) {
-            throw new CoordinationTransportError(
-                "SharedWorker coordination did not create a message port.",
-                "TRANSPORT_ERROR"
-            );
-        }
-        try {
-            this.port.postMessage(encodeCoordinationMessage(message));
-        } catch (error) {
-            throw new CoordinationTransportError(
-                "Failed to send a SharedWorker coordination message.",
-                "TRANSPORT_ERROR",
-                { cause: error }
-            );
-        }
+    private identity() {
+        return { version: COORDINATION_PROTOCOL_VERSION, scope: this.scope, connectionId: this.connectionId };
     }
 
     private fail(error: Error): void {
-        if (this.terminalError || this.closed) return;
-        this.terminalError = error;
-        this.ready.reject(error);
-        this.rejectPending(error);
-        void this.task.halt().catch(() => undefined);
-    }
-
-    private rejectPending(error: Error): void {
-        for (const pending of this.pending.values()) {
-            pending.reject(error);
-        }
-        this.pending.clear();
+        if (this.closed) return;
+        this.terminalError ??= error;
+        this.ready.reject(this.terminalError);
+        this.clearEventListeners();
+        // Scope closure must run outside the fiber being interrupted.
+        void Effect.runPromise(Scope.close(this.lifetimeScope, Exit.void)).catch(() => undefined);
     }
 }
 
 function resolvePort(source: SharedWorkerSource): CoordinationMessagePort {
     const value = typeof source === "function" ? source() : source;
-    return isWorkerLike(value) ? value.port : value;
+    return "port" in value ? value.port : value;
 }
 
-function isWorkerLike(value: CoordinationMessagePort | SharedWorkerLike): value is SharedWorkerLike {
-    return "port" in value;
+function decodeRpcError(
+    error:
+        | { readonly name: string; readonly message: string; readonly code?: string }
+        | RpcClientError
+        | Error
+): Error {
+    if (error instanceof RpcClientError)
+        return new CoordinationTransportError(error.message, "TRANSPORT_ERROR", { cause: error });
+    return error instanceof Error ? error : deserializeError(error);
 }

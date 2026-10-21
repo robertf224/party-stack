@@ -132,7 +132,7 @@ Higher layers own timers, retries, and workflows.
 
 ## Effection integration
 
-`@party-stack/runtime/effection` exposes scoped resources for:
+`@party-stack/runtimeion` exposes scoped resources for:
 
 - Acquiring and disposing runtime resources.
 - Subscribing to runtime connectivity changes.

@@ -27,11 +27,16 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
         super(state, environment);
         this.database = createDurableObjectSQLiteDatabase(state.storage);
         this.initialized = state.blockConcurrencyWhile(async () => {
-            createSQLiteOntologyBackendAdapter({
+            const binding = createSQLiteOntologyBackendAdapter({
                 ir: sqliteOntologyConformanceIR,
                 database: this.database,
                 name: "sqlite",
             });
+            const ontology = await createLiveOntology({
+                ir: sqliteOntologyConformanceIR,
+                backend: () => binding,
+            });
+            await ontology.cleanup();
         });
     }
 
@@ -51,6 +56,7 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
                     ontologyId: "ontology",
                     attachmentStorage: "sqlite",
                 }),
+            context: { user: "fixture" },
         });
         try {
             if (id && title) {

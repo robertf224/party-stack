@@ -13,7 +13,10 @@
     },
     "dependencies": {
         "@party-stack/connections": "workspace:*",
-        "@party-stack/errors": "workspace:*"
+        "@party-stack/errors": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
+        "effect": "^4.0.5"
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",

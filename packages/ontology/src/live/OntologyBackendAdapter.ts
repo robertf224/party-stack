@@ -1,8 +1,8 @@
-import * as v from "../utils/values.js";
-import type { AttachmentTypeDef, OntologyIR } from "../ir/index.js";
-import type { Uncertain } from "../utils/uncertain.js";
-import type { ValidationIssue } from "../utils/validation.js";
+import * as v from "@party-stack/ontology-spec/values";
 import type { PartialAttachmentMetadata } from "./attachments/types.js";
+import type { AttachmentTypeDef, OntologyIR } from "@party-stack/ontology-spec";
+import type { Uncertain } from "@party-stack/ontology-spec/utils";
+import type { ValidationIssue } from "@party-stack/ontology-spec/utils";
 import type { Collection, CollectionConfig, UtilsRecord } from "@tanstack/db";
 
 export interface OntologyCollectionUtils extends UtilsRecord {
@@ -33,6 +33,7 @@ export interface OntologyAttachmentIdMapping {
 }
 
 export interface OntologyApplyActionResult {
+    receipt?: import("@party-stack/ontology-backend").ActionReceipt;
     /**
      * Mappings for uploaded attachments whose canonical backend IDs differ from
      * the local IDs supplied in `ApplyActionLiveOpts.attachmentUploads`.
@@ -100,15 +101,24 @@ export interface OntologyAttachmentsAdapter {
             target?: AttachmentTypeDef;
         }
     ) => Promise<v.attachment | void>;
-    getAttachmentContent: (attachment: v.attachment) => Promise<Blob>;
+    getAttachmentContent: (attachment: v.attachment, options?: { signal?: AbortSignal }) => Promise<Blob>;
     getAttachmentMetadata?: (
         attachment: v.attachment,
-        selection: readonly (keyof PartialAttachmentMetadata)[]
+        selection: readonly (keyof PartialAttachmentMetadata)[],
+        options?: { signal?: AbortSignal }
     ) => Promise<PartialAttachmentMetadata>;
 }
 
 export interface OntologyBackendAdapter {
     name: string;
+    /** Acquire the native backend in the caller's Effect scope. */
+    open: (
+        context: Record<string, unknown>
+    ) => import("effect").Effect.Effect<
+        import("@party-stack/ontology-backend").OntologyBackendService,
+        import("@party-stack/ontology-backend").BackendError,
+        import("effect").Scope.Scope
+    >;
     /**
      * Whether this adapter participates in long-lived synchronization.
      *
@@ -116,12 +126,6 @@ export interface OntologyBackendAdapter {
      * operations but cannot safely back optimistic actions.
      */
     live?: boolean;
-    getCollectionOptions: (objectType: string) => OntologyCollectionOptions;
-    applyAction: (
-        name: string,
-        parameters: Record<string, unknown>,
-        live: ApplyActionLiveOpts
-    ) => Promise<OntologyApplyActionResult | void>;
     validateAction?: (
         name: string,
         parameters: Record<string, unknown>,
@@ -132,11 +136,6 @@ export interface OntologyBackendAdapter {
         parameters: Record<string, unknown>,
         live: ValidateActionDraftLiveOpts
     ) => Promise<Uncertain<v.Result<void, readonly ValidationIssue[]>>>;
-    runQueryFunction: (
-        name: string,
-        parameters: Record<string, unknown>,
-        live: RunQueryLiveOpts
-    ) => Promise<unknown>;
     attachments?: OntologyAttachmentsAdapter;
     cleanup?: () => void | Promise<void>;
     // TODO: install/destroy

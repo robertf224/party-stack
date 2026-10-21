@@ -1,0 +1,211 @@
+{
+    "date": "2026-10-19",
+    "environment": "macOS arm64, headless Chromium via Playwright 1.61.1; Node 24.14.0, Effect 4.0.5",
+    "rowCount": 10000,
+    "benchmark": {
+        "iterations": 5,
+        "timeMs": 300,
+        "warmupTimeMs": 50,
+        "warmupIterations": 2
+    },
+    "results": {
+        "equality / 100 matches": {
+            "memory indexed": {
+                "meanMs": 0.7963,
+                "rme": "\u00b11.17%",
+                "samples": 377
+            },
+            "tables indexed": {
+                "meanMs": 2.4826,
+                "rme": "\u00b14.81%",
+                "samples": 121
+            },
+            "tables full scan": {
+                "meanMs": 95.86,
+                "rme": "\u00b11.99%",
+                "samples": 5
+            },
+            "existing persistence adapter": {
+                "meanMs": 1.7828,
+                "rme": "\u00b15.36%",
+                "samples": 169
+            }
+        },
+        "selective AND / 10 matches": {
+            "memory indexed": {
+                "meanMs": 0.5169,
+                "rme": "\u00b11.16%",
+                "samples": 581
+            },
+            "tables indexed": {
+                "meanMs": 3.1979,
+                "rme": "\u00b13.37%",
+                "samples": 94
+            },
+            "tables full scan": {
+                "meanMs": 98.44,
+                "rme": "\u00b12.64%",
+                "samples": 5
+            },
+            "existing persistence adapter": {
+                "meanMs": 13.2609,
+                "rme": "\u00b10.69%",
+                "samples": 23
+            }
+        },
+        "empty AND": {
+            "memory indexed": {
+                "meanMs": 0.0258,
+                "rme": "\u00b15.34%",
+                "samples": 11621
+            },
+            "tables indexed": {
+                "meanMs": 1.2733,
+                "rme": "\u00b10.99%",
+                "samples": 236
+            },
+            "tables full scan": {
+                "meanMs": 101.4,
+                "rme": "\u00b13.98%",
+                "samples": 5
+            },
+            "existing persistence adapter": {
+                "meanMs": 5.1288,
+                "rme": "\u00b10.76%",
+                "samples": 59
+            }
+        },
+        "OR / 1090 matches": {
+            "memory indexed": {
+                "meanMs": 12.168,
+                "rme": "\u00b10.86%",
+                "samples": 25
+            },
+            "tables indexed": {
+                "meanMs": 27.6364,
+                "rme": "\u00b14.90%",
+                "samples": 11
+            },
+            "tables full scan": {
+                "meanMs": 119.18,
+                "rme": "\u00b13.08%",
+                "samples": 5
+            },
+            "existing persistence adapter": {
+                "meanMs": 18.4059,
+                "rme": "\u00b17.81%",
+                "samples": 17
+            }
+        },
+        "IN / 300 matches": {
+            "memory indexed": {
+                "meanMs": 3.2538,
+                "rme": "\u00b11.32%",
+                "samples": 93
+            },
+            "tables indexed": {
+                "meanMs": 8.0421,
+                "rme": "\u00b15.40%",
+                "samples": 38
+            },
+            "tables full scan": {
+                "meanMs": 131.78,
+                "rme": "\u00b11.58%",
+                "samples": 5
+            },
+            "existing persistence adapter": {
+                "meanMs": 5.1966,
+                "rme": "\u00b16.33%",
+                "samples": 58
+            }
+        },
+        "LIKE / 111 candidates": {
+            "memory indexed": {
+                "meanMs": 0.4117,
+                "rme": "\u00b11.31%",
+                "samples": 729
+            },
+            "tables indexed": {
+                "meanMs": 2.1042,
+                "rme": "\u00b14.89%",
+                "samples": 143
+            },
+            "tables full scan": {
+                "meanMs": 89.14,
+                "rme": "\u00b111.92%",
+                "samples": 5
+            },
+            "existing persistence adapter": {
+                "meanMs": 1.9737,
+                "rme": "\u00b17.02%",
+                "samples": 152
+            }
+        },
+        "ILIKE / 111 matches": {
+            "memory indexed": {
+                "meanMs": 0.9134,
+                "rme": "\u00b11.25%",
+                "samples": 329
+            },
+            "tables indexed": {
+                "meanMs": 2.7198,
+                "rme": "\u00b15.29%",
+                "samples": 111
+            },
+            "tables full scan": {
+                "meanMs": 87.78,
+                "rme": "\u00b11.45%",
+                "samples": 5
+            },
+            "existing persistence adapter": {
+                "meanMs": 2.1775,
+                "rme": "\u00b17.20%",
+                "samples": 138
+            }
+        },
+        "ascending page / 10 rows": {
+            "memory indexed": {
+                "meanMs": 0.1336,
+                "rme": "\u00b12.28%",
+                "samples": 2246
+            },
+            "tables indexed": {
+                "meanMs": 1.0683,
+                "rme": "\u00b14.43%",
+                "samples": 281
+            },
+            "tables full scan": {
+                "meanMs": 102.42,
+                "rme": "\u00b10.78%",
+                "samples": 5
+            },
+            "existing persistence adapter": {
+                "meanMs": 1.0663,
+                "rme": "\u00b112.63%",
+                "samples": 282
+            }
+        },
+        "descending page / tied keys": {
+            "memory indexed": {
+                "meanMs": 0.1555,
+                "rme": "\u00b11.90%",
+                "samples": 1930
+            },
+            "tables indexed": {
+                "meanMs": 1.3192,
+                "rme": "\u00b11.38%",
+                "samples": 229
+            },
+            "tables full scan": {
+                "meanMs": 148.38,
+                "rme": "\u00b11.15%",
+                "samples": 5
+            },
+            "existing persistence adapter": {
+                "meanMs": 0.9604,
+                "rme": "\u00b14.46%",
+                "samples": 313
+            }
+        }
+    }
+}

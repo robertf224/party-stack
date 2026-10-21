@@ -1,0 +1,40 @@
+{
+    "name": "@party-stack/ontology-backend",
+    "version": "0.1.0",
+    "files": [
+        "lib"
+    ],
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./clients": {
+            "types": "./lib/clients.d.ts",
+            "default": "./lib/clients.js"
+        },
+        "./protocol": {
+            "types": "./lib/protocol.d.ts",
+            "default": "./lib/protocol.js"
+        },
+        "./owned": {
+            "types": "./lib/owned.d.ts",
+            "default": "./lib/owned.js"
+        }
+    },
+    "dependencies": {
+        "@party-stack/ontology-spec": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*"
+    },
+    "devDependencies": {
+        "@party-stack/build-config": "workspace:*",
+        "effect": "^4.0.5",
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:",
+        "vitest": "catalog:"
+    },
+    "peerDependencies": {
+        "effect": "^4.0.5"
+    }
+}

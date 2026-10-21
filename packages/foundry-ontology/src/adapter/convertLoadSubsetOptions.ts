@@ -22,7 +22,7 @@ function pushdown(query: SearchJsonQueryV2, safeToNegate = true): PushdownFilter
     return { query, safeToNegate };
 }
 
-function parseLikePattern(pattern: string): LikePatternPart[] {
+function parseLikePattern(pattern: string, literalBackslashes = false): LikePatternPart[] {
     const parts: LikePatternPart[] = [];
     let literal = "";
 
@@ -35,7 +35,7 @@ function parseLikePattern(pattern: string): LikePatternPart[] {
 
     for (let index = 0; index < pattern.length; index++) {
         const character = pattern[index]!;
-        if (character === "\\") {
+        if (character === "\\" && !literalBackslashes) {
             const escaped = pattern[index + 1];
             if (escaped === "%" || escaped === "_" || escaped === "\\") {
                 literal += escaped;
@@ -62,8 +62,12 @@ function escapeFoundryWildcardLiteral(value: string): string {
     return value.replace(/[\\*?]/g, "\\$&");
 }
 
-function convertLikeFilter(field: FieldPath, value: string): PushdownFilter {
-    const parts = parseLikePattern(value.toLowerCase());
+export function convertLikeFilter(
+    field: FieldPath,
+    value: string,
+    literalBackslashes = false
+): PushdownFilter {
+    const parts = parseLikePattern(value.toLowerCase(), literalBackslashes);
     const hasLeadingWildcard = parts[0]?.type === "many";
     const hasTrailingWildcard = parts.at(-1)?.type === "many";
     const propertyIdentifier = fieldPathToPropertyIdentifier(field);

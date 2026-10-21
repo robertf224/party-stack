@@ -1,4 +1,6 @@
 import { createLocalCollection, type RuntimeAdapter, type SecretStore } from "@party-stack/runtime";
+import { createEncryptedSecretStore } from "@party-stack/runtime";
+import { eq, queryOnce } from "@tanstack/db";
 
 interface StoredSecret {
     key: string;
@@ -11,9 +13,13 @@ export interface OAuthSecretStore extends SecretStore {
 
 export async function resolveOAuthSecretStore(options: {
     runtime: RuntimeAdapter;
+    scope?: import("effect").Scope.Scope;
     clientId: string;
     dangerouslyPersistSecrets?: boolean;
 }): Promise<OAuthSecretStore> {
+    if (options.runtime.encryptionKeyring) {
+        return { ...createEncryptedSecretStore(options.runtime), cleanup: async () => {} };
+    }
     if (options.runtime.secrets) {
         return {
             get: (key) => options.runtime.secrets!.get(key),
@@ -27,20 +33,27 @@ export async function resolveOAuthSecretStore(options: {
             "OAuth requires RuntimeAdapter.secrets. Set dangerouslyPersistSecrets to store OAuth secrets in ordinary local persistence."
         );
     }
-    if (!options.runtime.persistence) {
-        throw new Error("The OAuth secret fallback requires runtime persistence.");
+    if (!options.runtime.tables) {
+        throw new Error("The OAuth secret fallback requires owned Tables storage.");
     }
     const records = createLocalCollection<StoredSecret, string>({
         name: `oauth:${encodeURIComponent(options.clientId)}:secrets`,
         getKey: (record) => record.key,
         runtime: options.runtime,
+        scope: options.scope,
         schemaVersion: 1,
     });
-    await records.preload();
+    const find = (key: string) =>
+        queryOnce((q) =>
+            q
+                .from({ secret: records })
+                .where(({ secret }) => eq(secret.key, key))
+                .findOne()
+        );
     return {
-        get: (key) => Promise.resolve(records.get(key)?.value),
+        get: async (key) => (await find(key))?.value,
         async set(key, value) {
-            const transaction = records.get(key)
+            const transaction = (await find(key))
                 ? records.update(key, { optimistic: false }, (record) => {
                       record.value = value;
                   })
@@ -48,7 +61,7 @@ export async function resolveOAuthSecretStore(options: {
             await transaction.isPersisted.promise;
         },
         async delete(key) {
-            if (!records.get(key)) return;
+            if (!(await find(key))) return;
             const transaction = records.delete(key, {
                 optimistic: false,
             });

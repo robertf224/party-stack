@@ -1,10 +1,11 @@
 import { createBlobManager } from "@party-stack/blobs";
+import { o } from "@party-stack/ontology-spec";
 import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
+import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-import { o } from "../../ir/index.js";
 import { prepareActionParameters } from "./prepareActionParameters.js";
-import type { OntologyIR } from "../../ir/index.js";
 import type { OntologyBackendAdapter } from "../OntologyBackendAdapter.js";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
     types: [],
@@ -29,16 +30,16 @@ const ir: OntologyIR = {
 
 const backendAdapter: OntologyBackendAdapter = {
     name: "test",
-    getCollectionOptions: () => ({
-        syncMode: "eager",
-        sync: {
-            sync: ({ markReady }) => {
-                markReady();
-            },
-        },
-    }),
-    applyAction: () => Promise.resolve(),
-    runQueryFunction: () => Promise.reject(new Error("unexpected query run")),
+    open: () =>
+        Effect.succeed({
+            name: "test",
+            sourceId: "test",
+            supportsIdempotency: false,
+            loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+            invoke: () => Effect.die("Unexpected action"),
+            queryFunction: () => Effect.die("Unexpected query"),
+        }),
+
     attachments: {
         getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
         getAttachmentMetadata: () => Promise.reject(new Error("unexpected metadata read")),

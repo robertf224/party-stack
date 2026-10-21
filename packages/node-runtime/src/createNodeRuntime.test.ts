@@ -1,9 +1,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Table } from "@party-stack/ontology-storage/tables";
 import { createLocalCollection } from "@party-stack/runtime";
-import { eagerStorageTarget } from "@tanstack/db-sqlite-persistence-core";
-import { SQLiteCorePersistenceAdapter } from "@tanstack/db-sqlite-persistence-core";
+import { Runtime, runtimeEffects } from "@party-stack/runtime";
+import { queryOnce } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { createNodeRuntimeWithOptions } from "./createNodeRuntime.js";
@@ -36,7 +37,7 @@ function createItems(runtime: Awaited<ReturnType<ReturnType<typeof createNodeRun
 }
 
 describe("createNodeRuntime", () => {
-    it("reopens raw Temporal rows, metadata, and replay without an application codec", async () => {
+    it("reopens nested Temporal rows and private metadata through owned storage", async () => {
         const directory = await mkdtemp(join(tmpdir(), "party-stack-temporal-"));
         directories.push(directory);
         const provider = createNodeRuntimeWithOptions({ dataDirectory: directory });
@@ -54,22 +55,17 @@ describe("createNodeRuntime", () => {
             });
         const firstRuntime = await provider("owner", "temporal");
         const first = open(firstRuntime);
-        const collectionId = first.id;
+        const metadata = Table.make<{ cursor: Temporal.Instant; date: Temporal.PlainDate }>({
+            name: "test-runtime-metadata",
+        });
         try {
-            await first.preload();
+            await queryOnce((q) => q.from({ row: first }));
             await first.insert({ id: "one", instant, nested: { dates: [date] } }).isPersisted.promise;
             await first.cleanup();
-            const adapter = firstRuntime.persistence!.adapter;
-            const position = await adapter.loadResumeSnapshot(eagerStorageTarget(collectionId));
-            await adapter.applyCommittedTx(eagerStorageTarget(collectionId), {
-                txId: "temporal-metadata",
-                term: position.latestTerm,
-                seq: position.latestSeq + 1,
-                rowVersion: position.latestRowVersion + 1,
-                mutations: [],
-                rowMetadataMutations: [{ type: "set", key: "one", value: { date } }],
-                collectionMetadataMutations: [{ type: "set", key: "cursor", value: { instant } }],
-            });
+            const storage = await runtimeEffects(firstRuntime).runtime.runPromise(Runtime);
+            await runtimeEffects(firstRuntime).runtime.runPromise(
+                storage.tables.put(metadata, "head", { cursor: instant, date })
+            );
         } finally {
             await first.cleanup();
             await firstRuntime.cleanup?.();
@@ -78,47 +74,17 @@ describe("createNodeRuntime", () => {
         const secondRuntime = await provider("owner", "temporal");
         const second = open(secondRuntime);
         try {
-            await second.preload();
+            await queryOnce((q) => q.from({ row: second }));
             expect(second.get("one")?.instant).toBeInstanceOf(Temporal.Instant);
             expect(second.get("one")?.instant.epochNanoseconds).toBe(instant.epochNanoseconds);
             expect(second.get("one")?.nested.dates[0]).toBeInstanceOf(Temporal.PlainDate);
             expect(second.get("one")?.nested.dates[0]?.toString()).toBe(date.toString());
-            const adapter = secondRuntime.persistence!.adapter;
-            const snapshot = await adapter.loadResumeSnapshot(eagerStorageTarget(collectionId));
-            const rowMetadata = snapshot.rows[0]?.metadata as { date: unknown };
-            expect(rowMetadata.date).toBeInstanceOf(Temporal.PlainDate);
-            expect(String(rowMetadata.date)).toBe(date.toString());
-            const cursor = snapshot.collectionMetadata.find((entry) => entry.key === "cursor")?.value as {
-                instant: unknown;
-            };
-            expect(cursor.instant).toBeInstanceOf(Temporal.Instant);
-            expect(String(cursor.instant)).toBe(instant.toString());
-            if (!(adapter instanceof SQLiteCorePersistenceAdapter))
-                throw new Error("Expected SQLite persistence");
-            const replay = await adapter.pullSince(eagerStorageTarget(collectionId), 0);
-            expect(replay.requiresFullReload).toBe(false);
-            if (replay.requiresFullReload) throw new Error("Expected incremental replay");
-            {
-                const row = replay.deltas?.flatMap((delta) => delta.changedRows)[0];
-                expect(row?.value.instant).toBeInstanceOf(Temporal.Instant);
-                expect(String(row?.value.instant)).toBe(instant.toString());
-                const rowMetadataDelta = replay.deltas
-                    ?.flatMap((delta) => delta.rowMetadataMutations)
-                    .find((mutation) => mutation.type === "set" && mutation.key === "one");
-                const metadata =
-                    rowMetadataDelta?.type === "set"
-                        ? (rowMetadataDelta.value as { date: unknown })
-                        : undefined;
-                expect(metadata?.date).toBeInstanceOf(Temporal.PlainDate);
-                expect(String(metadata?.date)).toBe(date.toString());
-                const cursorDelta = replay.deltas
-                    ?.flatMap((delta) => delta.collectionMetadataMutations)
-                    .find((mutation) => mutation.type === "set" && mutation.key === "cursor");
-                const replayCursor =
-                    cursorDelta?.type === "set" ? (cursorDelta.value as { instant: unknown }) : undefined;
-                expect(replayCursor?.instant).toBeInstanceOf(Temporal.Instant);
-                expect(String(replayCursor?.instant)).toBe(instant.toString());
-            }
+            const storage = await runtimeEffects(secondRuntime).runtime.runPromise(Runtime);
+            const restored = await runtimeEffects(secondRuntime).runtime.runPromise(
+                storage.tables.get(metadata, "head")
+            );
+            expect(restored?.cursor.epochNanoseconds).toBe(instant.epochNanoseconds);
+            expect(restored?.date.toString()).toBe(date.toString());
         } finally {
             await second.cleanup();
             await secondRuntime.cleanup?.();
@@ -133,7 +99,7 @@ describe("createNodeRuntime", () => {
         });
         const firstRuntime = await provider("owner", "namespace");
         const first = createItems(firstRuntime);
-        await first.preload();
+        await queryOnce((q) => q.from({ row: first }));
         await first.insert({
             id: "one",
             title: "Persisted",
@@ -143,7 +109,7 @@ describe("createNodeRuntime", () => {
 
         const secondRuntime = await provider("owner", "namespace");
         const second = createItems(secondRuntime);
-        await second.preload();
+        await queryOnce((q) => q.from({ row: second }));
 
         expect(second.get("one")).toMatchObject({
             id: "one",
@@ -167,29 +133,26 @@ describe("createNodeRuntime", () => {
         const tasks = open("tasks", 2);
         const settings = open("settings", 7);
         try {
-            await Promise.all([tasks.preload(), settings.preload()]);
+            await Promise.all([
+                queryOnce((q) => q.from({ row: tasks })),
+                queryOnce((q) => q.from({ row: settings })),
+            ]);
             await tasks.insert({ id: "task", title: "Task" }).isPersisted.promise;
             await settings.insert({ id: "setting", title: "Setting" }).isPersisted.promise;
-            const resolve = runtime.persistence!.resolvePersistenceForCollection!;
-            const current = resolve({
-                collectionId: tasks.id,
-                mode: "sync-absent",
-                schemaVersion: 2,
-            }).adapter;
-            const incompatible = resolve({
-                collectionId: tasks.id,
-                mode: "sync-absent",
-                schemaVersion: 3,
-            }).adapter;
             await tasks.cleanup();
-            await expect(incompatible.loadResumeSnapshot(eagerStorageTarget(tasks.id))).rejects.toThrow(
-                "Schema version mismatch"
-            );
-            expect((await current.loadResumeSnapshot(eagerStorageTarget(tasks.id))).rows).toHaveLength(1);
+            const incompatible = open("tasks", 3);
+            try {
+                await expect(queryOnce((q) => q.from({ row: incompatible }))).rejects.toMatchObject({
+                    _tag: "OntologyStorageError",
+                    reason: { _tag: "SchemaMismatch" },
+                });
+            } finally {
+                await incompatible.cleanup();
+            }
             await settings.insert({ id: "other", title: "Still active" }).isPersisted.promise;
             const reopened = open("tasks", 2);
             try {
-                await reopened.preload();
+                await queryOnce((q) => q.from({ row: reopened }));
                 expect(reopened.get("task")?.title).toBe("Task");
             } finally {
                 await reopened.cleanup();

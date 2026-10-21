@@ -1,17 +1,19 @@
 import { resolveActionParameters } from "../expression.js";
 import { createReadTx } from "../mutators/createMutatorTx.js";
-import type { OntologyIR } from "../../ir/index.js";
-import type { Uncertain } from "../../utils/uncertain.js";
-import type { ValidationIssue } from "../../utils/validation.js";
-import type { Result } from "../../utils/values.js";
 import type { LiveOntologyWriteMode, LiveOntologyWriteVisibility } from "../LiveOntology.js";
-import type { OntologyCollection } from "../objects/createLiveOntologyObjectCollection.js";
-import type { OntologyObject } from "../objects/OntologyObject.js";
+import type { OntologyCollection } from "../objects/types.js";
 import type { OntologyApplyActionResult } from "../OntologyBackendAdapter.js";
 import type { OntologyActionRequest } from "../outbox/types.js";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { OntologyObject } from "@party-stack/ontology-spec";
+import type { Uncertain } from "@party-stack/ontology-spec/utils";
+import type { ValidationIssue } from "@party-stack/ontology-spec/utils";
+import type { Result } from "@party-stack/ontology-spec/values";
 
 export interface LiveOntologyActionOptions {
     idempotencyKey?: string;
+    /** Portable inputs supplied by a forwarding ontology. */
+    replay?: import("../expression.js").ExpressionReplay;
     mode?: LiveOntologyWriteMode;
     visibility?: LiveOntologyWriteVisibility;
 }
@@ -64,6 +66,7 @@ export function createLiveOntologyAction(options: {
                 actionTypeName: options.action.name,
                 parameters: providedParameters,
                 idempotencyKey,
+                replay: executionOptions?.replay,
             },
             executionOptions
         );

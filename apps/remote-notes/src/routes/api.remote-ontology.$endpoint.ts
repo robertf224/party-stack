@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { createRemoteOntologyServer } from "@party-stack/remote-ontology/server";
+import { createRemoteOntologyServer } from "@party-stack/ontology-server/server";
 import { createSQLiteOntologyBackendAdapter } from "@party-stack/sqlite-ontology";
 import { eq, queryOnce, type Collection } from "@tanstack/db";
 import { createFileRoute } from "@tanstack/react-router";

@@ -1,13 +1,4 @@
-import {
-    run,
-    suspend,
-    until,
-    useAbortSignal,
-    useScope,
-    type Operation,
-    type Scope,
-    type Task,
-} from "effection";
+import { Effect, Exit, Scope } from "effect";
 import { BaseCoordination, type InvocationContext } from "./base.js";
 import {
     CoordinationClosedError,
@@ -18,9 +9,9 @@ import {
     type CoordinationServiceHandlers,
     type CoordinationServiceServer,
 } from "./contracts.js";
-import { runInScope } from "./effection/runInScope.js";
 import { HostCore } from "./host-core.js";
-import { deferred, normalizeError, randomId } from "./internal.js";
+import { normalizeError, randomId } from "./internal.js";
+import { runInEffectScope } from "./resources/runInScope.js";
 
 export class SingleProcessCoordination extends BaseCoordination implements CoordinationHost {
     readonly role = "host" as const;
@@ -29,8 +20,7 @@ export class SingleProcessCoordination extends BaseCoordination implements Coord
 
     private readonly nodeId = randomId();
     private readonly core: HostCore;
-    private readonly rootScope = deferred<Scope>();
-    private readonly task: Task<void>;
+    private readonly lifetimeScope = Effect.runSync(Scope.make());
     private closePromise?: Promise<void>;
 
     constructor(options: CoordinationOptions) {
@@ -40,10 +30,12 @@ export class SingleProcessCoordination extends BaseCoordination implements Coord
             contextClient: (path, signal) => this.createContextClient({ path, signal }),
             publishEvent: (namespace, event, payload) => this.emitEvent(namespace, event, payload),
         });
-        this.task = run(() => this.useLifetime());
-        void this.task.catch((error: unknown) => {
-            this.rootScope.reject(normalizeError(error));
-        });
+        Effect.runSync(
+            Scope.addFinalizer(
+                this.lifetimeScope,
+                Effect.promise(() => this.core.close())
+            )
+        );
     }
 
     serve<Service extends CoordinationService>(
@@ -64,25 +56,21 @@ export class SingleProcessCoordination extends BaseCoordination implements Coord
             return Promise.reject(normalizeError(error));
         }
 
-        return this.rootScope.promise
-            .then((scope) =>
-                runInScope(
-                    scope,
-                    function* () {
-                        const signal = yield* useAbortSignal();
-                        return yield* until(Promise.resolve(callback({ signal })));
-                    },
-                    [options?.signal]
-                )
-            )
-            .catch((error: unknown) => this.rethrowScopedError(error));
+        return runInEffectScope(
+            this.lifetimeScope,
+            Effect.tryPromise({
+                try: (signal) => Promise.resolve(callback({ signal })),
+                catch: normalizeError,
+            }),
+            [options?.signal]
+        ).catch((error: unknown) => this.rethrowScopedError(error));
     }
 
     close(): Promise<void> {
         if (this.closePromise) return this.closePromise;
         this.closed = true;
         this.clearEventListeners();
-        this.closePromise = this.task.halt().then(() => undefined);
+        this.closePromise = Effect.runPromise(Scope.close(this.lifetimeScope, Exit.void));
         return this.closePromise;
     }
 
@@ -96,42 +84,19 @@ export class SingleProcessCoordination extends BaseCoordination implements Coord
         if (this.closed) {
             return Promise.reject(new CoordinationClosedError());
         }
-        return this.rootScope.promise
-            .then((scope) =>
-                runInScope(scope, () => this.invokeOperation(namespace, method, input, context.path), [
-                    context.signal,
-                    options?.signal,
-                ])
-            )
-            .catch((error: unknown) => this.rethrowScopedError(error));
-    }
-
-    private *invokeOperation(
-        namespace: string,
-        method: string,
-        input: unknown,
-        path: readonly string[]
-    ): Operation<unknown> {
-        const signal = yield* useAbortSignal();
-        return yield* until(
-            this.core.invoke(namespace, method, input, {
-                inheritedSignal: signal,
-                senderId: this.nodeId,
-                path,
-            })
-        );
-    }
-
-    private *useLifetime(): Operation<void> {
-        const scope = yield* useScope();
-        this.rootScope.resolve(scope);
-        try {
-            yield* suspend();
-        } finally {
-            yield* until(this.core.close());
-            this.clearEventListeners();
-            this.rootScope.reject(new CoordinationClosedError());
-        }
+        return runInEffectScope(
+            this.lifetimeScope,
+            Effect.tryPromise({
+                try: (signal) =>
+                    this.core.invoke(namespace, method, input, {
+                        inheritedSignal: signal,
+                        senderId: this.nodeId,
+                        path: context.path,
+                    }),
+                catch: normalizeError,
+            }),
+            [context.signal, options?.signal]
+        ).catch((error: unknown) => this.rethrowScopedError(error));
     }
 
     private rethrowScopedError(error: unknown): never {

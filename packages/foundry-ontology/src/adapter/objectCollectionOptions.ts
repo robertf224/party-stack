@@ -1,5 +1,4 @@
 import {
-    OntologyObjectsV2,
     OntologyObjectV2,
     type ObjectEditHistoryEntry,
     type ObjectSetUpdate,
@@ -24,6 +23,7 @@ import {
     convertLoadSubsetOrderBy,
     isAlwaysFalseFilter,
 } from "./convertLoadSubsetOptions.js";
+import { searchFoundryObjects } from "./foundryObjectSearch.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
 
 // ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 // Foundry object fetching
 // ---------------------------------------------------------------------------
 
-async function fetchFoundryObjects(
+export async function fetchFoundryObjects(
     client: OntologyClient,
     objectType: string,
     selectedProperties: string[],
@@ -214,40 +214,19 @@ async function fetchFoundryObjects(
         }
     }
 
-    const requestClient = opts.signal
-        ? {
-              ...client,
-              fetch: (input: RequestInfo | URL, init?: RequestInit) =>
-                  client.fetch(input, {
-                      ...init,
-                      signal: opts.signal,
-                  }),
-          }
-        : client;
-    const results = await AsyncIterable.toArray(
-        AsyncIterable.fromPagination(
-            (pageSize, pageToken: string | undefined) =>
-                OntologyObjectsV2.search(requestClient, client.ontologyRid, objectType, {
-                    snapshot: true,
-                    where,
-                    excludeRid: true,
-                    select: selectedProperties,
-                    selectV2: [],
-                    pageSize,
-                    pageToken,
-                    orderBy: convertLoadSubsetOrderBy(opts.orderBy),
-                }),
-            (page) => page.nextPageToken,
-            (page) => page.data,
-            10_000,
-            limit === undefined ? undefined : offset + limit
-        )
+    return searchFoundryObjects(
+        client,
+        objectType,
+        selectedProperties,
+        {
+            where,
+            orderBy: convertLoadSubsetOrderBy(opts.orderBy),
+            offset,
+            limit,
+            signal: opts.signal,
+        },
+        decodeObject
     );
-    opts.signal?.throwIfAborted();
-
-    return (results as FoundryObject[])
-        .slice(offset, limit === undefined ? undefined : offset + limit)
-        .map(decodeObject);
 }
 
 function createSyncConfig(

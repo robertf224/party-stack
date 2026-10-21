@@ -1,10 +1,10 @@
-import { createCollection, localOnlyCollectionOptions } from "@tanstack/db";
+import { o, type OntologyIR } from "@party-stack/ontology-spec";
+import { queryOnce, createCollection, localOnlyCollectionOptions } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
 import { afterAll, describe, expect, it, vi } from "vite-plus/test";
-import { o, type OntologyIR } from "../../ir/index.js";
 import { createLiveOntologyAction } from "./createLiveOntologyAction.js";
-import type { OntologyObject } from "../objects/OntologyObject.js";
 import type { OntologyActionRequest } from "../outbox/types.js";
+import type { OntologyObject } from "@party-stack/ontology-spec";
 
 const users = createCollection(
     localOnlyCollectionOptions<OntologyObject, string | number>({
@@ -183,7 +183,7 @@ describe("LiveOntologyAction.resolveParameters", () => {
     });
 
     it("resolves defaults from partial parameters", async () => {
-        await users.preload();
+        await queryOnce((q) => q.from({ row: users }));
 
         const resolved = await liveAction.resolveParameters({
             entries: [{ code: "alpha" }],

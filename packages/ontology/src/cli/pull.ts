@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import nextEnv from "@next/env";
+import { generateOntology } from "@party-stack/ontology-spec/generate";
+import { formatGeneratedFile } from "@party-stack/ontology-spec/generate";
 import { createJiti } from "jiti";
-import { generateOntology } from "../generate/ontology.js";
 import { pull } from "../meta/pull.js";
-import { formatGeneratedFile } from "./format.js";
 import type { OntologyPullContext, OntologyPullSource, OntologyPullConfig } from "../OntologyPullConfig.js";
 
 const { loadEnvConfig } = nextEnv;

@@ -1,0 +1,284 @@
+import {
+    BlobStorageError,
+    makeBlobStorage,
+    type BlobStorageService,
+    type BlobRecord,
+} from "@party-stack/ontology-storage/blobs";
+import { isCoordinationHost } from "@party-stack/runtime";
+import { Runtime, runtimeEffects, persistedCollectionOptions, storageSubset } from "@party-stack/runtime";
+import { createCollection, type CollectionConfig } from "@tanstack/db";
+import { Effect, Exit, Fiber, Scope, Stream } from "effect";
+import { measureBlobDimensions } from "./metadata/measureBlobDimensions.js";
+import type {
+    BlobManager,
+    BlobManagerOptions,
+    BlobMetadataRecord,
+    BlobMetadataOptions,
+    PartialBlobMetadata,
+} from "./types.js";
+
+/** Promise/TanStack application facade over the storage-owned Effect service. */
+export function createStorageBlobManager(options: BlobManagerOptions): BlobManager {
+    // Hosts enable cache collection after wiring transactional outbox retention.
+    const gcTime = options.gcTime ?? Infinity;
+    if (Number.isNaN(gcTime) || gcTime < 0)
+        throw new RangeError("BlobManager gcTime must be a non-negative number.");
+    const managed = runtimeEffects(options.runtime).runtime;
+    const owner = Effect.runSync(options.scope ? Scope.fork(options.scope) : Scope.make());
+    let closed = false;
+    let collection: BlobManager["collection"];
+    const namespace = JSON.stringify([options.runtime.owner, options.runtime.namespace]);
+    const initialized = managed.runPromise(
+        Effect.gen(function* () {
+            const runtime = yield* Runtime;
+            if (!options.scope) yield* Scope.addFinalizer(runtime.scope, Scope.close(owner, Exit.void));
+            return yield* Scope.provide(
+                Effect.gen(function* () {
+                    const storage = yield* makeBlobStorage({
+                        namespace,
+                        tables: runtime.tables,
+                        bytes: runtime.bytes,
+                        registerOwner: options.runtime.actorLiveness
+                            ? (id) =>
+                                  options.runtime.actorLiveness!.acquire(id).pipe(
+                                      Effect.mapError(
+                                          (cause) =>
+                                              new BlobStorageError({
+                                                  kind: "Bytes",
+                                                  message: "Blob owner registration failed.",
+                                                  cause,
+                                              })
+                                      )
+                                  )
+                            : undefined,
+                        isOwnerAlive: options.runtime.actorLiveness
+                            ? (id) =>
+                                  options.runtime.actorLiveness!.isAlive(id).pipe(
+                                      Effect.mapError(
+                                          (cause) =>
+                                              new BlobStorageError({
+                                                  kind: "Bytes",
+                                                  message: "Blob owner lookup failed.",
+                                                  cause,
+                                              })
+                                      )
+                                  )
+                            : undefined,
+                    });
+                    const config = yield* persistedCollectionOptions<BlobMetadataRecord, string>({
+                        id: `party-stack:${namespace}:blob-metadata`,
+                        getKey: (record) => record.id,
+                        load: (subset) => storage.records(storageSubset(subset)),
+                        changes: yield* runtime.subscribeChanges,
+                    });
+                    yield* Effect.addFinalizer(() =>
+                        Effect.promise(async () => {
+                            closed = true;
+                            if (collection.status !== "cleaned-up") await collection.cleanup();
+                        })
+                    );
+                    const context = yield* Effect.context<never>();
+                    const collect = Effect.gen(function* () {
+                        if (gcTime !== Infinity) yield* storage.collectGarbage({ olderThanMs: gcTime });
+                    }).pipe(
+                        Effect.catch((error) =>
+                            Effect.logWarning("Blob cache maintenance failed.", error._tag)
+                        )
+                    );
+                    const maintenance = Effect.gen(function* () {
+                        yield* storage.recover.pipe(
+                            Effect.catch((error) => Effect.logWarning("Blob recovery failed.", error._tag))
+                        );
+                        yield* collect;
+                        if (gcTime === Infinity) return yield* Effect.never;
+                        yield* Effect.forkScoped(Stream.runForEach(runtime.changes, () => collect));
+                        for (;;) {
+                            yield* Effect.sleep(Math.max(10, gcTime));
+                            yield* storage.recover.pipe(
+                                Effect.catch((error) =>
+                                    Effect.logWarning("Blob recovery failed.", error._tag)
+                                )
+                            );
+                            yield* collect;
+                        }
+                    });
+                    const coordination = options.runtime.coordination;
+                    if (isCoordinationHost(coordination))
+                        yield* Effect.forkIn(
+                            Effect.tryPromise({
+                                try: (signal) =>
+                                    coordination.runAsLeader(
+                                        ({ signal }) =>
+                                            Effect.runPromiseWith(context)(Effect.scoped(maintenance), {
+                                                signal,
+                                            }),
+                                        { signal }
+                                    ),
+                                catch: (cause) => cause,
+                            }).pipe(Effect.catch(() => Effect.void)),
+                            owner
+                        );
+                    return { storage, config, notify: runtime.notify };
+                }),
+                owner
+            );
+        })
+    );
+    void initialized.catch(() => undefined);
+    const config: CollectionConfig<BlobMetadataRecord, string> = {
+        id: `party-stack:${namespace}:blob-metadata`,
+        getKey: (record) => record.id,
+        syncMode: "on-demand",
+        startSync: true,
+        sync: {
+            sync: (args) => {
+                const started = initialized.then(({ config }) =>
+                    closed ? undefined : config.sync.sync(args)
+                );
+                void started.catch(args.markError);
+                return {
+                    loadSubset: async (subset) => {
+                        const sync = await started;
+                        if (sync && typeof sync === "object") await sync.loadSubset?.(subset);
+                    },
+                    unloadSubset: (subset) => {
+                        void started.then((sync) => {
+                            if (sync && typeof sync === "object") sync.unloadSubset?.(subset);
+                        });
+                    },
+                    cleanup: async () => {
+                        const sync = await started;
+                        if (typeof sync === "function") sync();
+                        else await sync?.cleanup?.();
+                    },
+                };
+            },
+        },
+    };
+    collection = createCollection(config);
+    const run = async <A>(
+        work: (storage: BlobStorageService) => Effect.Effect<A, unknown>,
+        signal?: AbortSignal
+    ) => {
+        if (closed) throw new Error("Blob manager is closed.");
+        const { storage } = await initialized;
+        if (closed) throw new Error("Blob manager is closed.");
+        return managed.runPromise(
+            Effect.acquireUseRelease(Effect.forkIn(work(storage), owner), Fiber.join, Fiber.interrupt),
+            {
+                signal,
+            }
+        );
+    };
+    const notify = () => initialized.then(({ notify }) => managed.runPromise(notify));
+    const reads = new Map<string, Promise<Blob>>();
+    const read = async (id: string, readOptions: Parameters<BlobManager["read"]>[1]): Promise<Blob> => {
+        const local = await run((storage) => storage.read(id), readOptions?.signal);
+        if (local) return local;
+        const record = await run((storage) => storage.metadata(id), readOptions?.signal);
+        if (record?.state === "staged") throw new Error("Staged blob bytes are unavailable locally.");
+        // Keep cancellation isolated per caller; shared remote reads would let one
+        // observer cancel another observer's independently owned demand.
+        const fetch = async () => {
+            const blob = await run(
+                () =>
+                    Effect.tryPromise({
+                        try: (signal) =>
+                            options.remote.read(record?.remoteId ?? id, {
+                                ...readOptions,
+                                signal: readOptions?.signal
+                                    ? AbortSignal.any([readOptions.signal, signal])
+                                    : signal,
+                            }),
+                        catch: (cause) => cause,
+                    }),
+                readOptions?.signal
+            );
+            await run((storage) => storage.cache(record?.id ?? id, blob), readOptions?.signal);
+            await notify();
+            return blob;
+        };
+        if (readOptions?.signal) return fetch();
+        let pending = reads.get(id);
+        if (!pending) {
+            pending = fetch().finally(() => {
+                reads.delete(id);
+            });
+            reads.set(id, pending);
+        }
+        return pending;
+    };
+    const metadata = async (id: string, settings: BlobMetadataOptions = {}) => {
+        const select = settings.select ?? ["size", "type", "name"];
+        let record = await run((storage) => storage.metadata(id), settings.signal);
+        let missing = select.filter((field) => record?.[field] === undefined);
+        if (missing.length && record?.state !== "staged" && options.remote.metadata) {
+            try {
+                const remote = await run(
+                    () =>
+                        Effect.tryPromise({
+                            try: (signal) =>
+                                options.remote.metadata!(record?.remoteId ?? id, {
+                                    ...settings,
+                                    select: missing,
+                                    signal: settings.signal
+                                        ? AbortSignal.any([settings.signal, signal])
+                                        : signal,
+                                }),
+                            catch: (cause) => cause,
+                        }),
+                    settings.signal
+                );
+                record = await run((storage) => storage.updateMetadata(id, remote), settings.signal);
+            } catch (cause) {
+                if (settings.signal?.aborted) throw cause;
+                // Bytes can supply metadata when a provider has no usable metadata endpoint.
+            }
+        }
+        missing = select.filter((field) => record?.[field] === undefined);
+        if (missing.length) {
+            const blob = await read(id, settings);
+            const patch: PartialBlobMetadata = {
+                size: blob.size,
+                type: blob.type,
+                name: "name" in blob && typeof blob.name === "string" ? blob.name : null,
+            };
+            if (missing.includes("dimensions"))
+                patch.dimensions = await measureBlobDimensions(blob).catch(() => null);
+            record = await run((storage) => storage.updateMetadata(id, patch), settings.signal);
+        }
+        return { id, ...pickMetadata(record) };
+    };
+    const ready = initialized.then(() => undefined);
+    const storage = initialized.then(({ storage }) => storage);
+    void ready.catch(() => undefined);
+    void storage.catch(() => undefined);
+    let cleanupPromise: Promise<void> | undefined;
+    return {
+        collection,
+        ready,
+        storage,
+        stage: async (id, blob) => {
+            await run((storage) => storage.stage(id, blob));
+            await notify();
+        },
+        bindRemoteId: async (id, remoteId) => {
+            await run((storage) => storage.bindRemoteId(id, remoteId));
+            await notify();
+        },
+        read,
+        metadata,
+        cleanup: () =>
+            (cleanupPromise ??= (async () => {
+                closed = true;
+                await Promise.allSettled([initialized]);
+                await Effect.runPromise(Scope.close(owner, Exit.void));
+            })()),
+    };
+}
+
+function pickMetadata(record: BlobRecord | undefined): PartialBlobMetadata {
+    return record
+        ? { size: record.size, type: record.type, name: record.name, dimensions: record.dimensions }
+        : {};
+}

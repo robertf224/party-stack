@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { BlobBytesStore } from "@party-stack/runtime";
+import { BlobBytesNotFoundError, type BlobBytesStore } from "@party-stack/runtime";
 
 export interface NodeFileSystemBlobBytesStoreOptions {
     directory: string;
@@ -35,7 +35,7 @@ export class NodeFileSystemBlobBytesStore implements BlobBytesStore {
             return new Blob([await readFile(this.#path(id))]);
         } catch (error) {
             if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-                throw new Error(`Blob bytes not found for "${id}".`, {
+                throw new BlobBytesNotFoundError(id, {
                     cause: error,
                 });
             }

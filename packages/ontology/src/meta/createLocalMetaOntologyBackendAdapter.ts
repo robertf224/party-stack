@@ -1,20 +1,13 @@
-import { localOnlyCollectionOptions } from "@tanstack/db";
-import type { OntologyIR } from "../ir/index.js";
-import type { OntologyBackendAdapter, OntologyCollectionOptions } from "../live/OntologyBackendAdapter.js";
-import type { ActionType, ObjectType } from "./generated/types.js";
+import { BackendError } from "@party-stack/ontology-backend";
+import metaOntology from "@party-stack/ontology-spec/meta";
+import { evaluateQuery } from "@party-stack/ontology-storage";
+import { Effect } from "effect";
+import type { OntologyBackendAdapter } from "../live/OntologyBackendAdapter.js";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { ActionType, ObjectType } from "@party-stack/ontology-spec/meta";
 
 function localId(kind: "ActionType" | "ObjectType" | "Property", name: string): string {
     return `local:${kind}:${encodeURIComponent(name)}`;
-}
-
-function collectionOptions<T extends object>(
-    rows: T[],
-    getKey: (row: T) => string
-): OntologyCollectionOptions {
-    return localOnlyCollectionOptions({
-        getKey,
-        initialData: rows,
-    }) as unknown as OntologyCollectionOptions;
 }
 
 export function createLocalMetaOntologyBackendAdapter(ir: OntologyIR): OntologyBackendAdapter {
@@ -33,23 +26,59 @@ export function createLocalMetaOntologyBackendAdapter(ir: OntologyIR): OntologyB
 
     return {
         name: "local-metadata",
-        getCollectionOptions(objectType) {
-            switch (objectType) {
-                case "ObjectType":
-                    return collectionOptions(objectTypes, (row) => row.name);
-                case "ValueType":
-                    return collectionOptions(ir.types, (row) => row.name);
-                case "LinkType":
-                    return collectionOptions(ir.linkTypes, (row) => row.id);
-                case "ActionType":
-                    return collectionOptions(actionTypes, (row) => row.name);
-                case "QueryFunctionType":
-                    return collectionOptions(ir.queryFunctionTypes, (row) => row.name);
-                default:
-                    throw new Error(`Unsupported local metadata object type "${objectType}".`);
-            }
-        },
-        applyAction: () => Promise.reject(new Error("Local metadata is read-only.")),
-        runQueryFunction: () => Promise.reject(new Error("Local metadata has no query functions.")),
+        open: () =>
+            Effect.succeed({
+                name: "local-metadata",
+                sourceId: "local-metadata",
+                supportsIdempotency: false,
+                loadSubset: (subset) =>
+                    Effect.suspend(() => {
+                        const rows: Record<string, readonly object[]> = {
+                            ObjectType: objectTypes,
+                            ValueType: ir.types,
+                            LinkType: ir.linkTypes,
+                            ActionType: actionTypes,
+                            QueryFunctionType: ir.queryFunctionTypes,
+                        };
+                        const type = metaOntology.objectTypes.find((type) => type.name === subset.objectType);
+                        if (!type)
+                            return Effect.fail(
+                                new BackendError({
+                                    operation: "loadSubset",
+                                    kind: "Rejected",
+                                    message: "Unknown metadata object type.",
+                                    retryable: false,
+                                })
+                            );
+                        return Effect.succeed({
+                            rows: evaluateQuery(
+                                rows[subset.objectType]!.map((row) => ({
+                                    key: (row as Record<string, unknown>)[type.primaryKey] as string,
+                                    value: row as Record<string, unknown>,
+                                })),
+                                subset.query ?? {}
+                            ),
+                            complete: true,
+                        });
+                    }),
+                invoke: () =>
+                    Effect.fail(
+                        new BackendError({
+                            operation: "invoke",
+                            kind: "Unsupported",
+                            message: "Metadata is read-only.",
+                            retryable: false,
+                        })
+                    ),
+                queryFunction: () =>
+                    Effect.fail(
+                        new BackendError({
+                            operation: "queryFunction",
+                            kind: "Unsupported",
+                            message: "Local metadata has no query functions.",
+                            retryable: false,
+                        })
+                    ),
+            }),
     };
 }

@@ -1,6 +1,6 @@
-import type { ImageMediaType as GeneratedImageMediaType } from "../../ir/generated/types.js";
-import type { attachment } from "../../utils/values.js";
 import type { BlobDimensions } from "@party-stack/blobs";
+import type { ImageMediaType as GeneratedImageMediaType } from "@party-stack/ontology-spec";
+import type { attachment } from "@party-stack/ontology-spec/values";
 
 type AttachmentMetadataValues<Type extends string> = {
     size: number;

@@ -1,7 +1,7 @@
-import { createCollection, createTransaction, eq, localOnlyCollectionOptions } from "@tanstack/db";
+import { queryOnce, createCollection, createTransaction, eq, localOnlyCollectionOptions } from "@tanstack/db";
 import { describe, expect, it } from "vite-plus/test";
 import { createMutatorTx } from "./createMutatorTx.js";
-import type { OntologyObject } from "../objects/OntologyObject.js";
+import type { OntologyObject } from "@party-stack/ontology-spec";
 
 describe("createMutatorTx", () => {
     it("queries local data and observes earlier writes", async () => {
@@ -17,7 +17,7 @@ describe("createMutatorTx", () => {
                 ],
             })
         );
-        await tasks.preload();
+        await queryOnce((q) => q.from({ row: tasks }));
         const transaction = createTransaction({
             autoCommit: false,
             mutationFn: () => Promise.resolve(),
@@ -103,7 +103,7 @@ describe("createMutatorTx", () => {
                 initialData: [{ id: "task-1" }],
             })
         );
-        await tasks.preload();
+        await queryOnce((q) => q.from({ row: tasks }));
         const transaction = createTransaction({
             autoCommit: false,
             mutationFn: () => Promise.resolve(),
@@ -138,7 +138,7 @@ describe("createMutatorTx", () => {
                 initialData: [{ id: "task-1" }],
             })
         );
-        await tasks.preload();
+        await queryOnce((q) => q.from({ row: tasks }));
         const transaction = createTransaction({
             autoCommit: false,
             mutationFn: () => Promise.resolve(),
@@ -181,7 +181,7 @@ describe("createMutatorTx", () => {
                 ],
             })
         );
-        await tasks.preload();
+        await queryOnce((q) => q.from({ row: tasks }));
         const transaction = createTransaction({
             autoCommit: false,
             mutationFn: () => Promise.resolve(),

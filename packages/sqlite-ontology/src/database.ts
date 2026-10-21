@@ -9,12 +9,14 @@ export interface SQLiteStatement {
     all(...parameters: unknown[]): unknown[];
     get(...parameters: unknown[]): unknown;
     run(...parameters: unknown[]): unknown;
+    readonly reader?: boolean;
 }
 
 export interface SQLiteDatabase {
     exec(sql: string): unknown;
     prepare(sql: string): SQLiteStatement;
     transaction(callback: () => void): () => void;
+    transactionAsync?<A>(callback: () => Promise<A>): Promise<A>;
 }
 
 export type SQLiteDatabaseProvider = (ontologyId: string) => SQLiteDatabase | Promise<SQLiteDatabase>;

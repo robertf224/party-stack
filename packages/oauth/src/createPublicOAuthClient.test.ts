@@ -1,91 +1,102 @@
 import { isUnauthenticatedError } from "@party-stack/errors";
-import { createDefaultRuntime } from "@party-stack/runtime";
+import * as Memory from "@party-stack/ontology-storage/memory/tables";
+import { createDefaultRuntime, defineRuntime } from "@party-stack/runtime";
+import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createPublicOAuthClient } from "./createPublicOAuthClient.js";
 
 describe("createPublicOAuthClient", () => {
-    it("stores PKCE and token state through RuntimeAdapter.secrets", async () => {
-        const values = new Map<string, string>();
-        let authorizationUrl: string | undefined;
-        const runtime = {
-            ...createDefaultRuntime("installation", `oauth-${crypto.randomUUID()}`),
-            secrets: {
-                get: (key: string) => Promise.resolve(values.get(key)),
-                set: (key: string, value: string) => {
-                    values.set(key, value);
-                    return Promise.resolve();
+    it.each([false, true])(
+        "restores redirect PKCE state after client restart (owned tables: %s)",
+        async (ownedTables) => {
+            const values = new Map<string, string>();
+            let authorizationUrl: string | undefined;
+            const runtime = defineRuntime(() => ({
+                ...createDefaultRuntime("installation", `oauth-${crypto.randomUUID()}`),
+                tables: ownedTables ? Memory.make() : undefined,
+                secrets: {
+                    get: (key: string) => Promise.resolve(values.get(key)),
+                    set: (key: string, value: string) => {
+                        values.set(key, value);
+                        return Promise.resolve();
+                    },
+                    delete: (key: string) => {
+                        values.delete(key);
+                        return Promise.resolve();
+                    },
                 },
-                delete: (key: string) => {
-                    values.delete(key);
-                    return Promise.resolve();
+                browserAuthentication: {
+                    start() {
+                        return {
+                            open(candidateAuthorizationUrl: string) {
+                                authorizationUrl = candidateAuthorizationUrl;
+                                return new Promise<never>(() => undefined);
+                            },
+                            close() {},
+                        };
+                    },
                 },
-            },
-            browserAuthentication: {
-                start() {
-                    return {
-                        open(candidateAuthorizationUrl: string) {
-                            authorizationUrl = candidateAuthorizationUrl;
-                            return new Promise<never>(() => undefined);
-                        },
-                        close() {},
-                    };
-                },
-            },
-        };
-        const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
-            const request = new Request(input, init);
-            const body = new URLSearchParams(await request.text());
-            if (request.url.endsWith("/revoke")) {
-                return new Response(null, {
-                    status: 200,
+            }))("installation", "oauth");
+            const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+                const request = new Request(input, init);
+                const body = new URLSearchParams(await request.text());
+                if (request.url.endsWith("/revoke")) {
+                    return new Response(null, {
+                        status: 200,
+                    });
+                }
+                const refresh = body.get("grant_type") === "refresh_token";
+                return Response.json({
+                    access_token: refresh ? "access-refreshed" : "access-initial",
+                    refresh_token: refresh ? "refresh-rotated" : "refresh-initial",
+                    token_type: "Bearer",
+                    expires_in: 3600,
+                    scope: "offline_access data",
                 });
-            }
-            const refresh = body.get("grant_type") === "refresh_token";
-            return Response.json({
-                access_token: refresh ? "access-refreshed" : "access-initial",
-                refresh_token: refresh ? "refresh-rotated" : "refresh-initial",
-                token_type: "Bearer",
-                expires_in: 3600,
-                scope: "offline_access data",
             });
-        });
-        const client = await createPublicOAuthClient({
-            clientId: "client",
-            redirectUrl: "https://app.example/callback",
-            scopes: ["offline_access", "data"],
-            authorizationServer: {
-                issuer: "https://auth.example",
-                authorizationEndpoint: "https://auth.example/authorize",
-                tokenEndpoint: "https://auth.example/token",
-                revocationEndpoint: "https://auth.example/revoke",
-            },
-            runtime,
-            fetch,
-            resolveUserId: () => "user-1",
-        });
+            const options = {
+                clientId: "client",
+                redirectUrl: "https://app.example/callback",
+                scopes: ["offline_access", "data"],
+                authorizationServer: {
+                    issuer: "https://auth.example",
+                    authorizationEndpoint: "https://auth.example/authorize",
+                    tokenEndpoint: "https://auth.example/token",
+                    revocationEndpoint: "https://auth.example/revoke",
+                },
+                runtime,
+                fetch,
+                resolveUserId: () => "user-1",
+            };
+            let client = await createPublicOAuthClient(options);
 
-        void client.signIn();
-        await vi.waitFor(() => {
-            expect(authorizationUrl).toBeDefined();
-        });
-        const state = new URL(authorizationUrl!).searchParams.get("state");
-        const session = await client.completeRedirect(
-            `https://app.example/callback?code=code&state=${state}`
-        );
+            void client.signIn();
+            await vi.waitFor(() => {
+                expect(authorizationUrl).toBeDefined();
+            });
+            const state = new URL(authorizationUrl!).searchParams.get("state");
+            if (ownedTables) {
+                await client.cleanup();
+                client = await createPublicOAuthClient(options);
+            }
+            const session = await client.completeRedirect(
+                `https://app.example/callback?code=code&state=${state}`
+            );
 
-        expect(session?.userId).toBe("user-1");
-        await expect(client.getAccessToken("user-1")).resolves.toBe("access-initial");
-        expect([...values.values()].some((value) => value.includes("refresh-initial"))).toBe(true);
+            expect(session?.userId).toBe("user-1");
+            await expect(client.getAccessToken("user-1")).resolves.toBe("access-initial");
+            expect([...values.values()].some((value) => value.includes("refresh-initial"))).toBe(true);
 
-        await client.refresh("user-1");
-        await expect(client.getAccessToken("user-1")).resolves.toBe("access-refreshed");
+            await client.refresh("user-1");
+            await expect(client.getAccessToken("user-1")).resolves.toBe("access-refreshed");
 
-        await client.revoke("user-1");
-        await expect(client.getAccessToken("user-1")).rejects.toThrow(/unavailable/);
+            await client.revoke("user-1");
+            await expect(client.getAccessToken("user-1")).rejects.toThrow(/unavailable/);
 
-        await client.cleanup();
-        await runtime.cleanup?.();
-    });
+            await client.cleanup();
+            await runtime.cleanup?.();
+        }
+    );
 
     it("requires explicit consent for ordinary persisted secret storage", async () => {
         const runtime = createDefaultRuntime("installation", `oauth-${crypto.randomUUID()}`);
@@ -186,4 +197,81 @@ describe("createPublicOAuthClient", () => {
         await client.cleanup();
         await runtime.cleanup?.();
     });
+});
+
+it("runtime shutdown aborts token refresh and closes the OAuth owner without discarding persisted credentials", async () => {
+    const tables = await Effect.runPromise(Memory.make());
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
+        "encrypt",
+        "decrypt",
+    ]);
+    const namespace = `oauth-cancel-${crypto.randomUUID()}`;
+    const provider = defineRuntime((owner, namespace) => ({
+        ...createDefaultRuntime(owner, namespace),
+        tables: Effect.succeed(tables),
+        encryptionKeyring: Effect.succeed({
+            active: Effect.succeed({ id: "key", key }),
+            get: () => Effect.succeed(key),
+        }),
+        browserAuthentication: {
+            start: ({ redirectUrl }: { redirectUrl: string }) => ({
+                open: async (authorizationUrl: string) => ({
+                    callbackUrl: `${redirectUrl}?code=fixture&state=${new URL(authorizationUrl).searchParams.get("state")}`,
+                }),
+                close: () => {},
+            }),
+        },
+    }));
+    const runtime = provider("installation", namespace);
+    let refreshSignal: AbortSignal | null | undefined;
+    let requests = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>((_input, init) => {
+        if (++requests === 1)
+            return Promise.resolve(
+                Response.json({
+                    access_token: "fixture-access",
+                    refresh_token: "fixture-refresh",
+                    token_type: "Bearer",
+                    expires_in: 3600,
+                })
+            );
+        refreshSignal = init?.signal;
+        return new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new Error("OAuth owner closed")), {
+                once: true,
+            });
+        });
+    });
+    const options = {
+        runtime,
+        fetch,
+        clientId: "client",
+        redirectUrl: "https://app.example/callback",
+        scopes: ["offline_access"],
+        authorizationServer: {
+            issuer: "https://auth.example",
+            authorizationEndpoint: "https://auth.example/authorize",
+            tokenEndpoint: "https://auth.example/token",
+        },
+        resolveUserId: () => "user",
+    };
+    const client = await createPublicOAuthClient(options);
+    await client.signIn();
+    expect(await client.getAccessToken("user")).toBe("fixture-access");
+    const refreshed = client.refresh("user").catch((error: unknown) => error);
+    await vi.waitFor(() => expect(refreshSignal).toBeDefined());
+    await runtime.cleanup?.();
+    expect(refreshSignal?.aborted).toBe(true);
+    expect(await refreshed).toBeInstanceOf(Error);
+    await client.cleanup();
+    const reopenedRuntime = provider("installation", namespace);
+    const reopened = await createPublicOAuthClient({ ...options, runtime: reopenedRuntime });
+    try {
+        expect((await reopened.restoreSessions()).map((session) => session.userId)).toEqual(["user"]);
+        expect(await reopened.getAccessToken("user")).toBe("fixture-access");
+        expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+        await reopened.cleanup();
+        await reopenedRuntime.cleanup?.();
+    }
 });

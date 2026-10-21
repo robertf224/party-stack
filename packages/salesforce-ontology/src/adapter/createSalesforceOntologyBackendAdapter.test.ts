@@ -1,10 +1,14 @@
-import { NonRetryableError, o, type OntologyIR } from "@party-stack/ontology";
+import { o, type OntologyIR } from "@party-stack/ontology";
+import { eq, field, inArray, like } from "@party-stack/ontology-storage";
 import { SalesforceApiError } from "@party-stack/salesforce-client";
+import { Effect, Fiber } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
     createSalesforceOntologyBackend,
     createSalesforceOntologyBackendAdapter,
 } from "./createSalesforceOntologyBackendAdapter.js";
+import type { BackendError, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { SalesforceClient } from "@party-stack/salesforce-client";
 
 describe("createSalesforceOntologyBackendAdapter", () => {
     const ir: OntologyIR = {
@@ -172,6 +176,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
     function createAdapter(
         options: {
             live?: boolean;
+            client?: Partial<SalesforceClient>;
             subscribeToChangeEvents?: Parameters<
                 typeof createSalesforceOntologyBackendAdapter
             >[0]["subscribeToChangeEvents"];
@@ -204,6 +209,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
                 describeStandardAction: vi.fn(),
                 describeStandardActions: vi.fn(),
                 invokeStandardAction,
+                ...options.client,
             },
         });
     }
@@ -217,7 +223,8 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         ]);
         const adapter = createAdapter();
 
-        await adapter.applyAction(
+        await applyNative(
+            adapter,
             "Create_Account",
             { accountName: "Acme" },
             {
@@ -230,7 +237,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         );
 
         expect(invokeFlowAction).toHaveBeenCalledWith("Create_Account", [{ accountName: "Acme" }]);
-        expect(invalidate).toHaveBeenCalledOnce();
+        expect(invalidate).not.toHaveBeenCalled();
     });
 
     it("does not subscribe or reconcile actions when live is false", async () => {
@@ -245,20 +252,8 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             live: false,
             subscribeToChangeEvents,
         });
-        const collectionOptions = adapter.getCollectionOptions("Account");
-        collectionOptions.sync.sync({
-            collection: {
-                has: vi.fn(() => false),
-                get: vi.fn(),
-            },
-            begin: vi.fn(),
-            write: vi.fn(),
-            commit: vi.fn(() => true),
-            markError: vi.fn(),
-            markReady: vi.fn(),
-        } as never);
-
-        await adapter.applyAction(
+        await applyNative(
+            adapter,
             "Create_Account",
             { accountName: "Acme" },
             {
@@ -284,9 +279,9 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         );
         const adapter = createAdapter();
 
-        await expect(adapter.applyAction("Create_Account", {}, { objects: {} })).rejects.toBeInstanceOf(
-            NonRetryableError
-        );
+        await expect(applyNative(adapter, "Create_Account", {}, { objects: {} })).rejects.toMatchObject({
+            kind: "Rejected",
+        });
     });
 
     it("routes generated CRUD actions through sObject record APIs", async () => {
@@ -320,8 +315,9 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             },
         };
 
-        await adapter.applyAction("createAccount", { Name: "Acme" }, live);
-        await adapter.applyAction(
+        await applyNative(adapter, "createAccount", { Name: "Acme" }, live);
+        await applyNative(
+            adapter,
             "updateAccount",
             {
                 recordId: "001000000000001",
@@ -329,15 +325,15 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             },
             live
         );
-        await adapter.applyAction("deleteAccount", { recordId: "001000000000001" }, live);
+        await applyNative(adapter, "deleteAccount", { recordId: "001000000000001" }, live);
 
         expect(createRecord).toHaveBeenCalledWith("Account", { Name: "Acme" });
         expect(updateRecord).toHaveBeenCalledWith("Account", "001000000000001", { Name: "Acme 2" });
         expect(deleteRecord).toHaveBeenCalledWith("Account", "001000000000001");
-        expect(refreshByKey).toHaveBeenNthCalledWith(1, "001000000000001");
-        expect(refreshByKey).toHaveBeenNthCalledWith(2, "001000000000001");
+        expect(refreshByKey).not.toHaveBeenCalled();
+        expect(refreshByKey).not.toHaveBeenCalled();
         expect(invalidate).not.toHaveBeenCalled();
-        expect(deleteByKey).toHaveBeenCalledWith("001000000000001");
+        expect(deleteByKey).not.toHaveBeenCalled();
         expect(invokeFlowAction).not.toHaveBeenCalled();
     });
 
@@ -361,8 +357,9 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             ]);
         const adapter = createAdapter();
 
-        await adapter.applyAction("confirmSalesMeeting", { meetingRequestId: "request-1" }, { objects: {} });
-        const result = await adapter.runQueryFunction(
+        await applyNative(adapter, "confirmSalesMeeting", { meetingRequestId: "request-1" }, { objects: {} });
+        const result = await queryNative(
+            adapter,
             "getAvailableMeetingTimes",
             {
                 attendeeEmailAddresses: ["a@example.com", "b@example.com"],
@@ -393,10 +390,10 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         const adapter = createAdapter();
 
         await expect(
-            adapter.applyAction("Create_Account", { accountName: "Acme" }, { objects: {} })
+            applyNative(adapter, "Create_Account", { accountName: "Acme" }, { objects: {} })
         ).rejects.toEqual(
             expect.objectContaining({
-                name: "NonRetryableError",
+                kind: "Rejected",
                 message: "Flow failed validation",
             })
         );
@@ -404,7 +401,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
 
     it("rejects unknown query functions", async () => {
         const adapter = createAdapter();
-        await expect(adapter.runQueryFunction("currentUser", {}, { objects: {} })).rejects.toThrow(
+        await expect(queryNative(adapter, "currentUser", {}, { objects: {} })).rejects.toThrow(
             /Unknown Salesforce query function/
         );
     });
@@ -440,6 +437,243 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         const adapter = await provider(ir, {});
         expect(adapter.name).toBe("salesforce");
         expect(adapter.live).toBe(false);
-        expect(adapter.getCollectionOptions("Account").syncMode).toBe("on-demand");
+        expect(adapter.open).toBeTypeOf("function");
+    });
+    function runNative<A>(
+        adapter: ReturnType<typeof createAdapter>,
+        use: (backend: OntologyBackendService) => Effect.Effect<A, BackendError>
+    ): Promise<A> {
+        return Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const backend = yield* adapter.open!({});
+                    return yield* use(backend);
+                })
+            )
+        );
+    }
+
+    it("synthesizes native CRUD receipts without collection reads, reconciliation, or CDC subscriptions", async () => {
+        createRecord.mockResolvedValue({ success: true, id: "new", errors: [] });
+        updateRecord.mockResolvedValue({ success: true, errors: [] });
+        deleteRecord.mockResolvedValue({ success: true, errors: [] });
+        const subscribeToChangeEvents = vi.fn();
+        const adapter = createAdapter({ subscribeToChangeEvents });
+        await runNative(adapter, (backend) =>
+            Effect.gen(function* () {
+                expect(backend.supportsIdempotency).toBe(false);
+                expect(backend.changes).toBeUndefined();
+                for (const [name, key, parameters] of [
+                    ["createAccount", "new", { Name: "Acme" }],
+                    ["updateAccount", "existing", { recordId: "existing", Name: "Changed" }],
+                    ["deleteAccount", "existing", { recordId: "existing" }],
+                ] as const) {
+                    expect(yield* backend.invoke({ id: name, name, parameters })).toEqual({
+                        invocationId: name,
+                        outcome: "committed",
+                        affected: [{ objectType: "Account", keys: [key] }],
+                        affectedComplete: false,
+                    });
+                }
+            })
+        );
+        expect(createRecord).toHaveBeenCalledExactlyOnceWith("Account", { Name: "Acme" });
+        expect(updateRecord).toHaveBeenCalledExactlyOnceWith("Account", "existing", { Name: "Changed" });
+        expect(deleteRecord).toHaveBeenCalledExactlyOnceWith("Account", "existing");
+        expect(query).not.toHaveBeenCalled();
+        expect(subscribeToChangeEvents).not.toHaveBeenCalled();
+        expect(invalidate).not.toHaveBeenCalled();
+    });
+
+    it("invokes native flows and query functions directly with codec parameters and results", async () => {
+        invokeFlowAction.mockResolvedValue([{ isSuccess: true }]);
+        invokeStandardAction.mockResolvedValue([
+            { isSuccess: true, outputValues: { timeSlots: "10:00 AM" } },
+        ]);
+        await runNative(createAdapter(), (backend) =>
+            Effect.gen(function* () {
+                expect(
+                    yield* backend.invoke({
+                        id: "flow",
+                        name: "Create_Account",
+                        parameters: { accountName: "Acme" },
+                    })
+                ).toEqual({
+                    invocationId: "flow",
+                    outcome: "committed",
+                    affected: [{ objectType: "Account" }],
+                });
+                expect(
+                    yield* backend.queryFunction("getAvailableMeetingTimes", {
+                        attendeeEmailAddresses: ["a@example.com"],
+                    })
+                ).toEqual({ timeSlots: "10:00 AM" });
+            })
+        );
+        expect(invokeFlowAction).toHaveBeenCalledExactlyOnceWith("Create_Account", [{ accountName: "Acme" }]);
+        expect(invokeStandardAction).toHaveBeenCalledExactlyOnceWith("getAvailableMeetingTimes", [
+            { attendeeEmailAddresses: ["a@example.com"] },
+        ]);
+        expect(query).not.toHaveBeenCalled();
+    });
+
+    it("loads all SOQL pages before local filtering, ordering and windowing", async () => {
+        query.mockResolvedValue({
+            done: false,
+            nextRecordsUrl: "/next",
+            records: [
+                { Id: "one", Name: "other" },
+                { Id: "two", Name: "match Z", attributes: { type: "Account" } },
+            ],
+        });
+        queryMore.mockResolvedValue({ done: true, records: [{ Id: "three", Name: "match A" }] });
+        const snapshot = await runNative(createAdapter(), (backend) =>
+            backend.loadSubset({
+                objectType: "Account",
+                query: {
+                    where: like(field("Name"), "match%"),
+                    orderBy: [{ field: field("Name"), direction: "asc" }],
+                    offset: 1,
+                    limit: 1,
+                },
+            })
+        );
+        expect(snapshot).toEqual({
+            complete: true,
+            fetchedRows: 3,
+            rows: [{ key: "two", value: { Id: "two", Name: "match Z" } }],
+        });
+        expect(query).toHaveBeenCalledExactlyOnceWith("SELECT Id, Name FROM Account");
+        expect(queryMore).toHaveBeenCalledExactlyOnceWith("/next");
+    });
+
+    it("pushes primary-key batches into shared SOQL reads and escapes literal values", async () => {
+        const key = "one' OR Name != '";
+        query.mockResolvedValue({ done: true, records: [{ Id: key, Name: "Acme" }] });
+        const snapshot = await runNative(createAdapter(), (backend) =>
+            backend.loadSubset({
+                objectType: "Account",
+                query: { where: inArray(field("Id"), [key, key]) },
+            })
+        );
+        expect(snapshot.rows.map((row) => row.key)).toEqual([key]);
+        expect(query).toHaveBeenCalledExactlyOnceWith(
+            "SELECT Id, Name FROM Account WHERE Id IN ('one\\' OR Name != \\'')"
+        );
+        query.mockClear();
+        await runNative(createAdapter(), (backend) =>
+            backend.loadSubset({ objectType: "Account", query: { where: eq(field("Id"), "one") } })
+        );
+        expect(query).toHaveBeenCalledExactlyOnceWith("SELECT Id, Name FROM Account WHERE Id IN ('one')");
+    });
+
+    it("does not issue SOQL for empty key demand", async () => {
+        expect(
+            await runNative(createAdapter(), (backend) =>
+                backend.loadSubset({ objectType: "Account", query: { where: inArray(field("Id"), []) } })
+            )
+        ).toEqual({ rows: [], fetchedRows: 0, complete: true });
+        expect(query).not.toHaveBeenCalled();
+    });
+
+    it("fails incomplete pages and malformed row identities rather than publishing complete snapshots", async () => {
+        for (const response of [
+            { done: false, records: [{ Id: "one", Name: "Acme" }] },
+            { done: true, records: [{ Name: "No identity" }] },
+        ]) {
+            query.mockResolvedValue(response);
+            const result = await runNative(createAdapter(), (backend) =>
+                Effect.result(backend.loadSubset({ objectType: "Account" }))
+            );
+            expect(result).toMatchObject({
+                _tag: "Failure",
+                failure: { kind: "Unavailable", retryable: true },
+            });
+        }
+    });
+
+    it("distinguishes rejected writes from unknown transport outcomes without retrying submission", async () => {
+        for (const [cause, kind] of [
+            [new SalesforceApiError("Rejected", { statusCode: 400 }), "Rejected"],
+            [new Error("Lost response"), "Unavailable"],
+        ] as const) {
+            createRecord.mockRejectedValue(cause);
+            const result = await runNative(createAdapter(), (backend) =>
+                Effect.result(
+                    backend.invoke({ id: "once", name: "createAccount", parameters: { Name: "Acme" } })
+                )
+            );
+            expect(result).toMatchObject({
+                _tag: "Failure",
+                failure: { kind, retryable: kind === "Unavailable" },
+            });
+        }
+        expect(createRecord).toHaveBeenCalledTimes(2);
+        expect(query).not.toHaveBeenCalled();
+    });
+
+    it("cancels bound SOQL requests with their Effect fiber", async () => {
+        let signal: AbortSignal | undefined;
+        const transport = { query: vi.fn(() => new Promise<never>(() => {})) };
+        const withSignal = vi.fn((value: AbortSignal) => {
+            signal = value;
+            return transport as unknown as SalesforceClient;
+        });
+        const adapter = createAdapter({ client: { withSignal } });
+        const fiber = Effect.runFork(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const backend = yield* adapter.open!({});
+                    yield* backend.loadSubset({ objectType: "Account" });
+                })
+            )
+        );
+        try {
+            await vi.waitFor(() => expect(transport.query).toHaveBeenCalledOnce());
+        } finally {
+            await Effect.runPromise(Fiber.interrupt(fiber));
+        }
+        expect(signal?.aborted).toBe(true);
+        expect(queryMore).not.toHaveBeenCalled();
     });
 });
+
+function applyNative(
+    adapter: import("@party-stack/ontology").OntologyBackendAdapter,
+    name: string,
+    parameters: Record<string, unknown>,
+    options: {
+        context?: Record<string, unknown>;
+        idempotencyKey?: string;
+        objects?: unknown;
+        attachmentUploads?: import("@party-stack/ontology").OntologyAttachmentUpload[];
+    }
+) {
+    return Effect.runPromise(
+        Effect.scoped(
+            Effect.flatMap(adapter.open(options.context ?? {}), (backend) =>
+                backend.invoke({
+                    id: options.idempotencyKey ?? "test-invocation",
+                    name,
+                    parameters,
+                    attachmentUploads: options.attachmentUploads,
+                })
+            )
+        )
+    ).then((receipt) => ({ receipt, attachmentIdMappings: receipt.attachmentIdMappings }));
+}
+
+function queryNative(
+    adapter: import("@party-stack/ontology").OntologyBackendAdapter,
+    name: string,
+    parameters: Record<string, unknown>,
+    options: { context?: Record<string, unknown>; objects?: unknown }
+) {
+    return Effect.runPromise(
+        Effect.scoped(
+            Effect.flatMap(adapter.open(options.context ?? {}), (backend) =>
+                backend.queryFunction(name, parameters)
+            )
+        )
+    );
+}

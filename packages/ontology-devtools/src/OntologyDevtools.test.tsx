@@ -11,7 +11,6 @@ import {
     OntologyDevtoolsPluginName,
     ontologyDevtoolsTrigger,
     OntologyDevtoolsTrigger,
-    schemaEdgePath,
     timestampPreview,
     typeDisplayName,
     type OntologyDevtoolsPanelProps,
@@ -128,12 +127,12 @@ describe("layoutSchema", () => {
                 {
                     id: "project-tasks",
                     source: {
-                        objectType: "Project",
+                        objectType: "Task",
                         name: "tasks",
                         displayName: "Tasks",
                     },
                     target: {
-                        objectType: "Task",
+                        objectType: "Project",
                         name: "project",
                         displayName: "Project",
                     },
@@ -160,7 +159,7 @@ describe("layoutSchema", () => {
         expect(layout.height).toBeGreaterThan(0);
         expect(project?.x).toBeLessThan(task?.x ?? 0);
         expect(layout.edges).toHaveLength(1);
-        expect(layout.edges[0]!.label).toBe("Tasks · many");
+        expect(layout.edges[0]!.label).toBe("one-to-many");
     });
 
     it("routes relationship arrows to the object card boundaries", () => {
@@ -177,8 +176,8 @@ describe("layoutSchema", () => {
             linkTypes: [
                 {
                     id: "project-tasks",
-                    source: { objectType: "Project", name: "tasks", displayName: "Tasks" },
-                    target: { objectType: "Task", name: "project", displayName: "Project" },
+                    source: { objectType: "Task", name: "tasks", displayName: "Tasks" },
+                    target: { objectType: "Project", name: "project", displayName: "Project" },
                     foreignKey: "projectId",
                     cardinality: "many",
                 },
@@ -211,16 +210,6 @@ describe("layoutSchema", () => {
             x: target!.x + 115,
             y: target!.y + 88,
         });
-    });
-
-    it("turns routed points into a rounded SVG path", () => {
-        expect(
-            schemaEdgePath([
-                { x: 0, y: 0 },
-                { x: 20, y: 0 },
-                { x: 20, y: 20 },
-            ])
-        ).toBe("M 0 0 L 10 0 Q 20 0 20 10 L 20 20");
     });
 });
 

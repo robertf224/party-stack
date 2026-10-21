@@ -1,29 +1,15 @@
-import { BasicIndex, createCollection, localOnlyCollectionOptions, type Collection } from "@tanstack/db";
-import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
-import { createCollectionPersistence } from "./createCollectionPersistence.js";
+import { createEffectLocalCollection } from "../collections/localCollection.js";
 import type { RuntimeAdapter } from "../types.js";
+import type { Collection } from "@tanstack/db";
+import type { Scope } from "effect";
 
 export function createLocalCollection<T extends object, TKey extends string | number>(options: {
     name: string;
     getKey: (value: T) => TKey;
     runtime: RuntimeAdapter;
     schemaVersion?: number;
+    /** Optional owner for the collection's Effect resources. */
+    scope?: Scope.Scope;
 }): Collection<T, TKey> {
-    const collectionOptions = {
-        id: `party-stack:${options.runtime.owner}:${options.runtime.namespace}:${options.name}`,
-        getKey: options.getKey,
-        defaultIndexType: BasicIndex,
-        autoIndex: "eager" as const,
-    };
-    const persistence = options.runtime.persistence;
-
-    return createCollection(
-        persistence
-            ? persistedCollectionOptions<T, TKey>({
-                  ...collectionOptions,
-                  schemaVersion: options.schemaVersion,
-                  persistence: createCollectionPersistence(options.runtime.coordination, persistence),
-              })
-            : localOnlyCollectionOptions<T, TKey>(collectionOptions)
-    );
+    return createEffectLocalCollection(options);
 }

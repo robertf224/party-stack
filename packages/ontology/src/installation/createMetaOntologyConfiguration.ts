@@ -1,7 +1,7 @@
+import metaOntology from "@party-stack/ontology-spec/meta";
 import { createLocalMetaOntologyBackendAdapter } from "../meta/createLocalMetaOntologyBackendAdapter.js";
-import metaOntology from "../meta/ontology.js";
-import type { OntologyIR } from "../ir/index.js";
 import type { OntologyConfiguration } from "./types.js";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 
 export type MetaOntologyConfigurationOptions = Omit<OntologyConfiguration, "ir"> | { ir: OntologyIR };
 

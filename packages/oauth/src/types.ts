@@ -25,6 +25,7 @@ export interface CreatePublicOAuthClientOptions {
     scopes: readonly string[];
     authorizationServer: OAuthAuthorizationServer;
     runtime: RuntimeAdapter;
+    scope?: import("effect").Scope.Scope;
     dangerouslyPersistSecrets?: boolean;
     resolveUserId(accessToken: string): string | Promise<string>;
     fetch?: typeof globalThis.fetch;

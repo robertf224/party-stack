@@ -1,14 +1,15 @@
-import { setAtPath } from "../../utils/paths.js";
-import { unwrapValueType } from "../../utils/types.js";
+import { setAtPath } from "@party-stack/ontology-spec/utils";
+import { resolveType, unwrapValueType } from "@party-stack/ontology-spec/utils";
 import { decorateObjectAttachmentSources } from "../attachments/attachmentSources.js";
 import { evaluateExpression, getObjectReferenceObjectType } from "../expression.js";
-import type { ObjectTypeDef, OntologyIR, PropertyAssignment } from "../../ir/index.js";
+import type { ExpressionReplay } from "../expression.js";
 import type {
     OntologyMutatorObjects,
     OntologyMutatorTx,
     OntologyPropertyChange,
     OntologyReadTx,
 } from "./types.js";
+import type { ObjectTypeDef, OntologyIR, PropertyAssignment, TypeDef } from "@party-stack/ontology-spec";
 
 function objectType(ir: OntologyIR, name: string): ObjectTypeDef {
     const type = ir.objectTypes.find((candidate) => candidate.name === name);
@@ -20,6 +21,9 @@ async function propertyChanges(options: {
     ir: OntologyIR;
     actionTypeName: string;
     assignments: PropertyAssignment[];
+    replay?: ExpressionReplay;
+    stepIndex: number;
+    objectType: ObjectTypeDef;
     parameters: Record<string, unknown>;
     context: Record<string, unknown>;
     tx: OntologyReadTx;
@@ -30,14 +34,36 @@ async function propertyChanges(options: {
             ir: options.ir,
             actionTypeName: options.actionTypeName,
             expression: assignment.value,
+            replay: options.replay,
+            location: ["logic", options.stepIndex, ...assignment.property],
             resolveParameter: (name) => Promise.resolve(options.parameters[name]),
             context: options.context,
             tx: options.tx,
         });
         if (value !== undefined) {
+            let target: TypeDef | undefined = {
+                kind: "struct",
+                value: { fields: options.objectType.properties },
+            };
+            for (const segment of assignment.property) {
+                if (!target) break;
+                target = resolveType(options.ir, target);
+                while (target.kind === "optional") target = resolveType(options.ir, target.value.type);
+                target =
+                    target.kind === "struct"
+                        ? target.value.fields.find((field) => field.name === segment)?.type
+                        : target.kind === "map"
+                          ? target.value.valueType
+                          : target.kind === "list"
+                            ? target.value.elementType
+                            : undefined;
+            }
+            // Null is the action protocol's explicit clear instruction. Stored optional values
+            // use undefined; leaving an input undefined still means do not change that property.
+            const clear = value === null && target && resolveType(options.ir, target).kind === "optional";
             changes.push({
                 path: assignment.property,
-                value,
+                value: clear ? undefined : value,
             });
         }
     }
@@ -50,6 +76,7 @@ export async function applyActionLogicToMutatorTx(options: {
     parameters: Record<string, unknown>;
     context: Record<string, unknown>;
     idempotencyKey?: string;
+    replay?: ExpressionReplay;
     objects: OntologyMutatorObjects;
     tx: OntologyMutatorTx;
 }): Promise<void> {
@@ -64,7 +91,9 @@ export async function applyActionLogicToMutatorTx(options: {
             let object: Record<string, unknown> = {};
             for (const change of await propertyChanges({
                 ...options,
+                stepIndex,
                 assignments: step.value.values,
+                objectType: type,
             })) {
                 object = setAtPath(object, change.path, change.value);
             }
@@ -98,7 +127,9 @@ export async function applyActionLogicToMutatorTx(options: {
                 key,
                 await propertyChanges({
                     ...options,
+                    stepIndex,
                     assignments: step.value.values,
+                    objectType: type,
                 })
             );
         } else {

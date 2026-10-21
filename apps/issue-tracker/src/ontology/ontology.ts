@@ -259,17 +259,17 @@ export default defineOntology({
         {
             id: "ri.ontology.main.relation.0a932a4d-9f7d-4874-980c-ef326adbc825",
             source: {
-                objectType: "Project",
-                name: "project",
-                displayName: "Project",
-            },
-            target: {
                 objectType: "Issue",
                 name: "issues",
                 displayName: "Issue",
             },
+            target: {
+                objectType: "Project",
+                name: "project",
+                displayName: "Project",
+            },
             foreignKey: "projectId",
-            cardinality: "one",
+            cardinality: "many",
         },
     ],
     actionTypes: [

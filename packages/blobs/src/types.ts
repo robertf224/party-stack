@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "@party-stack/runtime";
 import type { Collection } from "@tanstack/db";
+import type { Scope } from "effect";
 
 export type BlobState = "staged" | "persisted" | "cached";
 
@@ -46,6 +47,7 @@ export interface BlobDimensions {
 }
 
 export interface BlobReadOptions {
+    signal?: AbortSignal;
     meta?: Record<string, unknown>;
 }
 
@@ -61,6 +63,8 @@ export interface BlobRemoteSource {
 }
 
 export interface BlobManager {
+    /** Native transactional storage for composition with a replica outbox. */
+    readonly storage?: Promise<import("@party-stack/ontology-storage/blobs").BlobStorageService>;
     readonly collection: Collection<BlobMetadataRecord, string>;
     /** Resolves once blob metadata persistence has finished starting. */
     readonly ready: Promise<void>;
@@ -73,6 +77,7 @@ export interface BlobManager {
 
 export interface BlobManagerOptions {
     runtime: RuntimeAdapter;
+    scope?: Scope.Scope;
     remote: BlobRemoteSource;
     gcTime?: number;
 }

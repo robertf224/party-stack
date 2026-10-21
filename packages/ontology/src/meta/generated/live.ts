@@ -1,8 +1,8 @@
 // Auto-generated file - do not edit manually
 
+import ontology from "@party-stack/ontology-spec/meta";
 import { createLiveOntology, type CreateLiveOntologyOpts, type LiveOntology } from "../../index.js";
-import ontology from "../ontology.js";
-import type { MetaOntology, MetaOntologyContext } from "./types.js";
+import type { MetaOntology, MetaOntologyContext } from "@party-stack/ontology-spec/meta";
 
 export async function createMetaLiveOntology(
     opts: Omit<CreateLiveOntologyOpts<MetaOntologyContext>, "ir">

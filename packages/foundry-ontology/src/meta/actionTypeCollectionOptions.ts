@@ -28,7 +28,7 @@ export function isNotDeclarativeActionType(actionType: ActionTypeV2): boolean {
     return actionType.operations.length === 0;
 }
 
-async function searchActionTypes(
+export async function searchActionTypes(
     client: OntologyClient,
     options?: LoadSubsetOptions
 ): Promise<ActionTypeV2[]> {
@@ -63,7 +63,7 @@ async function searchActionTypes(
     return results.slice(offset, limit === undefined ? undefined : offset + limit);
 }
 
-async function loadActionTypesFullMetadata(
+export async function loadActionTypesFullMetadata(
     client: OntologyClient,
     actionTypes: ActionTypeV2[]
 ): Promise<ActionTypeFullMetadata[]> {

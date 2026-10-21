@@ -14,7 +14,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../meta/pull.js", () => ({
     pull: mocks.pull,
 }));
-vi.mock("../generate/ontology.js", () => ({
+vi.mock("@party-stack/ontology-spec/generate", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@party-stack/ontology-spec/generate")>()),
     generateOntology: mocks.generateOntology,
 }));
 

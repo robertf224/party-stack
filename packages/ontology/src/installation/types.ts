@@ -1,12 +1,12 @@
-import type { OntologyIR } from "../ir/index.js";
 import type { CreateLiveOntologyOpts, LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 import type { OntologyBackendAdapterProvider } from "../live/OntologyBackendAdapter.js";
-import type { MetaOntology } from "../meta/generated/types.js";
 import type {
     BackendConnectionAdapterProvider,
     Connection,
     ConnectionEgress,
 } from "@party-stack/connections";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { MetaOntology } from "@party-stack/ontology-spec/meta";
 import type { RuntimeAdapterProvider } from "@party-stack/runtime";
 import type { Collection } from "@tanstack/db";
 
@@ -41,6 +41,10 @@ export interface CreateOntologyBackendInstallationOptions<AuthenticationClient e
     runtime: RuntimeAdapterProvider;
     routes: readonly OntologyRoute[];
     createContext?: (userId: string, ontologyId: string) => Record<string, unknown>;
+    /** Application placement boundary. Metadata keeps its normal local construction. */
+    openOntology?: (
+        options: CreateLiveOntologyOpts & { installationId: string; userId: string; ontologyId: string }
+    ) => Promise<LiveOntology>;
 }
 
 export interface OntologyBackendInstallation<AuthenticationClient extends object = object> {
