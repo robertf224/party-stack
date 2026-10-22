@@ -1,9 +1,12 @@
 import { mkdirSync } from "node:fs";
+import { makeStorageOntologyBackend } from "@party-stack/ontology";
+import { BackendError } from "@party-stack/ontology-backend";
 import { createRemoteOntologyServer } from "@party-stack/ontology-server/server";
-import { createSQLiteOntologyBackendAdapter } from "@party-stack/sqlite-ontology";
+import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import { eq, queryOnce, type Collection } from "@tanstack/db";
 import { createFileRoute } from "@tanstack/react-router";
 import Database from "better-sqlite3";
+import { Effect } from "effect";
 import { notesOntology } from "../ontology/ontology";
 import type { Note, RemoteNotesOntology } from "../ontology/generated/types";
 
@@ -12,6 +15,8 @@ interface NotesContext {
 }
 
 mkdirSync("temp", { recursive: true });
+const database = new Database("temp/remote-notes.sqlite");
+const namespace = "remote-notes-sqlite";
 
 async function userOwnsNote(opts: {
     email: string;
@@ -37,11 +42,31 @@ function getDemoEmail(request: Request): string {
 
 const remoteServer = createRemoteOntologyServer<NotesContext, RemoteNotesOntology>({
     ir: notesOntology,
-    backendAdapter: createSQLiteOntologyBackendAdapter({
-        ir: notesOntology,
-        database: new Database("temp/remote-notes.sqlite"),
-        name: "remote-notes-sqlite",
-    }),
+    backendAdapter: {
+        name: namespace,
+        open: (context) =>
+            Effect.gen(function* () {
+                const storage = yield* SQLite.makeStorage(database, { namespace, mode: "authoritative" });
+                return yield* makeStorageOntologyBackend({
+                    ir: notesOntology,
+                    namespace,
+                    context,
+                    ...storage,
+                });
+            }).pipe(
+                Effect.mapError((cause) =>
+                    cause instanceof BackendError
+                        ? cause
+                        : new BackendError({
+                              operation: "sqlite.open",
+                              kind: "Unavailable",
+                              message: "SQLite storage failed.",
+                              retryable: false,
+                              cause,
+                          })
+                )
+            ),
+    },
     getContext: (request) => ({
         user: getDemoEmail(request),
     }),

@@ -33,7 +33,10 @@ const increment: ReplicaOptions["execute"] = (tx) =>
         const row = yield* tx.get("Counter", "one");
         yield* tx.put("Counter", { id: "one", count: Number(row?.count ?? 0) + 1 });
     });
-const openPort = Effect.fnUntraced(function* (source: OntologySource) {
+const openPort = Effect.fnUntraced(function* (
+    source: OntologySource,
+    backend?: import("@party-stack/ontology-backend").OntologyBackendService
+) {
     const channel = new MessageChannel();
     yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
@@ -41,7 +44,7 @@ const openPort = Effect.fnUntraced(function* (source: OntologySource) {
             channel.port2.close();
         })
     );
-    yield* serveOntologyWorker({ source, authorize: () => Effect.void }).pipe(
+    yield* serveOntologyWorker({ source, backend, authorize: () => Effect.void }).pipe(
         Effect.provide(BrowserWorkerRunner.layerMessagePort(channel.port1))
     );
     return yield* connectOntologyWorker().pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)));
@@ -222,6 +225,51 @@ test("bootstrap failures reach the worker handshake as typed errors", async () =
                     _tag: "Failure",
                     failure: { kind: "Rejected", message: "Principal partition is unavailable." },
                 });
+            })
+        )
+    );
+});
+
+test("streams attachment transfers over MessagePorts into a source-only backend", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* makeOwnedBackend({
+                    namespace: "bytes-port",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: {},
+                });
+                const bytes = new Map<string, Blob>();
+                const backend = {
+                    ...owned,
+                    attachments: {
+                        stage: (attachment: { id: string }, blob: Blob) =>
+                            Effect.sync(() => {
+                                bytes.set(attachment.id, blob);
+                                return attachment;
+                            }),
+                        read: (attachment: { id: string }) => Effect.succeed(bytes.get(attachment.id)!),
+                        metadata: (attachment: { id: string }) =>
+                            Effect.succeed({
+                                size: bytes.get(attachment.id)!.size,
+                                type: bytes.get(attachment.id)!.type,
+                                name: attachment.id,
+                            }),
+                    },
+                };
+                const connection = yield* openPort(owned.protocol, backend);
+                const data = new Uint8Array(170_000).map((_, index) => index % 251);
+                const { attachment } = yield* Effect.promise(() =>
+                    connection.operations.attachments.create(new Blob([data], { type: "image/png" }), {
+                        id: "port-file",
+                    })
+                );
+                const blob = yield* Effect.promise(() => connection.operations.attachments.blob(attachment));
+                expect(new Uint8Array(yield* Effect.promise(() => blob.arrayBuffer()))).toEqual(data);
+                expect(
+                    yield* Effect.promise(() => connection.operations.attachments.metadata(attachment))
+                ).toMatchObject({ size: data.length, type: "image/png" });
             })
         )
     );

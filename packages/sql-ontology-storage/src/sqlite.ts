@@ -1,8 +1,15 @@
+import {
+    makeBlobStorage,
+    type BlobBytesService,
+    type BlobStorageOptions,
+} from "@party-stack/ontology-storage/blobs";
 import { Effect, Exit, Layer, Semaphore, Stream, Scheduler } from "effect";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as SqlClient from "effect/sql/SqlClient";
 import { classifySqliteError, SqlError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
+import { makeBytes } from "./sqlite-bytes.js";
+import * as SqlTables from "./tables.js";
 import type { Cause } from "effect";
 import type { Connection } from "effect/sql/SqlConnection";
 
@@ -113,3 +120,29 @@ export const makeClient = Effect.fnUntraced(function* (database: SQLiteDatabase)
 
 export const layer = (database: SQLiteDatabase) =>
     Layer.effect(SqlClient.SqlClient, makeClient(database)).pipe(Layer.provide(Reactivity.layer));
+
+/** SQLite byte storage is replaceable independently of Tables. */
+export { makeBytes } from "./sqlite-bytes.js";
+
+/** Convenience composition; clients can also supply SqlClient, Tables and BlobBytes Layers separately. */
+export const makeStorage = Effect.fn("SQLiteStorage.make")(function* (
+    database: SQLiteDatabase,
+    options: {
+        readonly namespace: string;
+        readonly bytes?: BlobBytesService;
+        readonly mode?: "replica" | "authoritative";
+        readonly ownerLiveness?: Pick<BlobStorageOptions, "registerOwner" | "isOwnerAlive">;
+    }
+) {
+    const sql = yield* makeClient(database).pipe(Effect.provide(Reactivity.layer));
+    const tables = yield* SqlTables.make().pipe(Effect.provideService(SqlClient.SqlClient, sql));
+    const bytes = options.bytes ?? (yield* makeBytes(sql));
+    const blobs = yield* makeBlobStorage({
+        namespace: options.namespace,
+        mode: options.mode,
+        tables,
+        bytes,
+        ...options.ownerLiveness,
+    });
+    return { tables, blobs };
+});

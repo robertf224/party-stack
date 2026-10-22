@@ -154,6 +154,8 @@ export const BackendChangePageSchema = Schema.Struct({
 });
 
 export interface BackendAttachments {
+    /** Optional authoritative staging before a subsequent action references the handle. */
+    readonly stage?: (value: attachment, bytes: Blob) => Effect.Effect<attachment, BackendError>;
     readonly read: (
         value: attachment,
         options?: { readonly offset?: number; readonly length?: number }

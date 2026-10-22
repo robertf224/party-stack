@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { makeStorageOntologyBackend, type OntologyBackendAdapter } from "@party-stack/ontology";
+import { BackendError } from "@party-stack/ontology-backend";
 import { createRemoteOntologyServer } from "@party-stack/ontology-server/server";
-import {
-    createSQLiteOntologyBackendAdapter,
-    type CreateSQLiteOntologyBackendAdapterOptions,
-} from "@party-stack/sqlite-ontology";
+import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import { eq } from "@tanstack/db";
 import { createFileRoute } from "@tanstack/react-router";
 import Database from "better-sqlite3";
@@ -30,25 +29,46 @@ const serverIR: OntologyIR = {
         },
     ],
 };
-const backendAdapter = createSQLiteOntologyBackendAdapter({
-    ir: serverIR,
-    mutators: {
-        [seedAction]: async ({ tx, args, context }) => {
-            if (args.id !== context.user)
-                throw new Error("Profile identity does not match the authenticated user.");
-            const existing = await tx.query<Record<string, unknown> | undefined>((q, objects) =>
-                q
-                    .from({ user: objects.User! })
-                    .where(({ user }) => eq(user.id, args.id))
-                    .findOne()
-            );
-            if (existing) await tx.mutate.User!.update(args.id as string, args);
-            else await tx.mutate.User!.create(args);
-        },
-    },
-    database: database as unknown as CreateSQLiteOntologyBackendAdapterOptions["database"],
-    name: "issue-tracker-sqlite-users",
-});
+const namespace = "issue-tracker-sqlite-users";
+const backendAdapter: OntologyBackendAdapter = {
+    name: namespace,
+    open: (context) =>
+        Effect.gen(function* () {
+            const storage = yield* SQLite.makeStorage(database, { namespace, mode: "authoritative" });
+            return yield* makeStorageOntologyBackend({
+                ir: serverIR,
+                namespace,
+                context,
+                ...storage,
+                mutators: {
+                    [seedAction]: async ({ tx, args, context }) => {
+                        if (args.id !== context.user)
+                            throw new Error("Profile identity does not match the authenticated user.");
+                        const existing = await tx.query<Record<string, unknown> | undefined>((q, objects) =>
+                            q
+                                .from({ user: objects.User! })
+                                .where(({ user }) => eq(user.id, args.id))
+                                .findOne()
+                        );
+                        if (existing) await tx.mutate.User!.update(args.id as string, args);
+                        else await tx.mutate.User!.create(args);
+                    },
+                },
+            });
+        }).pipe(
+            Effect.mapError((cause) =>
+                cause instanceof BackendError
+                    ? cause
+                    : new BackendError({
+                          operation: "sqlite.open",
+                          kind: "Unavailable",
+                          message: "SQLite storage failed.",
+                          retryable: false,
+                          cause,
+                      })
+            )
+        ),
+};
 
 const contexts = new WeakMap<Request, { user: string }>();
 

@@ -65,17 +65,10 @@ covered in [native-actions.md](./native-actions.md).
 
 ## What remains, in recommended order
 
-1. **Remaining blob integration and private records.** Native object/outbox references,
-   identity/alias GC, scoped reads and transactional receipt mappings are implemented;
-   the standalone blobs package and metadata collection are removed. Optional Alchemy
-   DO construction now uses the native owned backend, SQLite Tables and Alchemy R2
-   client, with an alarm-based GC example. Transactional attachment validation and
-   references coordinate actions with GC without an extra in-memory lock or
-   temporary upload roots. Next replace the legacy default SQLite/DO coordinator
-   and move helper transfers onto streams; validate isolate-crash recovery.
-   Public offline byte policy waits for offline query demand. Move connection and
-   installation records to their own ontology definitions and finish explicit
-   per-purpose browser key consent. See [attachments-gc.md](./attachments-gc.md).
+1. **Auth, connections and installations (next).** Move private records onto their
+   own ontology definitions/native storage. Finish explicit per-purpose browser
+   credential/key-persistence consent and key-access composition. Preserve working
+   OAuth callbacks, token refresh, installation selection and scoped cleanup.
 2. **Platform ownership.** Finish scoped Node/Expo construction and credential/key
    composition. Private connection/installation services still use coordinated
    per-context ownership. SharedWorker application data ownership is already live;
@@ -97,9 +90,9 @@ covered in [native-actions.md](./native-actions.md).
    private-mode coverage and multi-client reset recovery. Continue focused subsystem
    review in chat.
 
-The first two tasks at the previous checkpoint—native outbox parity and native
-backend construction/metadata ports—are implemented. The remaining list above
-includes work deliberately left outside that checkpoint.
+Native outbox parity, native backend construction/metadata ports, and the current
+blob consolidation/streaming checkpoint are implemented. Attachment follow-ups are
+tracked in [blob-future-work.md](./blob-future-work.md).
 
 ## Follow-up design
 
@@ -173,3 +166,31 @@ conformance now checks schema-derived draft references and transaction rollback 
 Memory, SQL and IndexedDB drivers. Streaming helper transfers and authoritative
 SQLite/R2 consolidation are still pending; this checkpoint does not claim those
 ports are complete.
+
+## Native SQLite/DO consolidation and streamed transfers — October 22
+
+Removed `sqlite-ontology` and its attachment coordinator. The shared
+`makeStorageOntologyBackend` executes actions/queries over native Tables and
+BlobStorage. SQLite supplies inline byte IO; custom byte services remain composable.
+Both example apps use this composition. Existing conformance cases moved with the
+shared implementation, without production-specific database migrations.
+
+Renamed the Cloudflare package to `durable-object-ontology-storage`. Its SQL bridge
+and Alchemy R2 byte adapter serve the same storage composition. `/alchemy` acquires
+the owned backend inside an Alchemy DO; the resource example declares the bucket,
+DO class, authenticated RPC endpoint, forwarding Worker and GC alarm. There is no
+parallel raw-binding R2 coordinator. Actual workerd resets verify interrupted R2
+publication and stale reader-root recovery after reopening the same DO.
+
+Attachment helper uploads use scoped response streams plus acknowledged ordered
+64 KiB request chunks. Downloads stream metadata and bounded chunks. Cancellation
+releases incomplete transfers, and size/sequence validation prevents partial
+publication. HTTP and MessagePort round trips are covered. Blob boundaries still
+materialize complete content; this is not durable resumability or range caching.
+Owned servers can bind helpers directly to their backend. No temporary upload lease
+or additional GC mutex was introduced.
+
+Verification: full workspace CI **136/136 tasks**, issue-tracker Chromium acceptance
+**4/4 cases**; ontology **75**, RPC server **48**, and local workerd **15** tests pass.
+No Cloudflare resources were deployed. Deferred blob features live in
+[blob-future-work.md](./blob-future-work.md); auth/connections/installations is next.

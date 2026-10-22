@@ -23,6 +23,14 @@
         },
         "./values": {
             "types": "./lib/utils/values.d.ts"
+        },
+        "./testing/sqlite": {
+            "types": "./lib/testing/sqlite.d.ts",
+            "default": "./lib/testing/sqlite.js"
+        },
+        "./testing/sqliteBackend": {
+            "types": "./lib/testing/sqliteBackend.d.ts",
+            "default": "./lib/testing/sqliteBackend.js"
         }
     },
     "scripts": {
@@ -43,6 +51,7 @@
         "@party-stack/ontology-spec": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
+        "@party-stack/sql-ontology-storage": "workspace:*",
         "change-case": "^5.4.4",
         "commander": "^14.0.2",
         "effect": "^4.0.5",
@@ -54,6 +63,7 @@
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
         "@tanstack/db": "0.14.0",
+        "better-sqlite3": "^12.9.0",
         "tsx": "^4.20.6",
         "typescript": "~7.0.2",
         "vite-plus": "catalog:"

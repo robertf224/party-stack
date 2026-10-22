@@ -22,7 +22,7 @@
         "@party-stack/ontology-server": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "@party-stack/sqlite-ontology": "workspace:*",
+        "@party-stack/sql-ontology-storage": "workspace:*",
         "@party-stack/web-runtime": "workspace:*",
         "@tanstack/db": "0.14.0",
         "@tanstack/react-db": "0.5.9",

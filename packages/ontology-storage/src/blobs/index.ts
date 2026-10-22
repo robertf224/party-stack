@@ -15,6 +15,7 @@ import {
 import type { OntologyStorageError } from "../errors.js";
 
 export * from "./model.js";
+export { exclusiveOwnerLiveness } from "./owners.js";
 export { collectAttachments, collectActionAttachments, collectObjectAttachments } from "./attachments.js";
 export type { AttachmentReference } from "./attachments.js";
 type Failure = BlobStorageError | OntologyStorageError;
@@ -57,11 +58,19 @@ export interface BlobStorageService {
 export class BlobStorage extends Context.Service<BlobStorage, BlobStorageService>()(
     "@party-stack/ontology-storage/blobs/BlobStorage"
 ) {
-    static readonly layer = (namespace: string) =>
+    static readonly layer = (
+        namespace: string,
+        options?: Omit<BlobStorageOptions, "namespace" | "tables" | "bytes">
+    ) =>
         Layer.effect(
             BlobStorage,
             Effect.gen(function* () {
-                return yield* makeBlobStorage({ namespace, tables: yield* Tables, bytes: yield* BlobBytes });
+                return yield* makeBlobStorage({
+                    ...options,
+                    namespace,
+                    tables: yield* Tables,
+                    bytes: yield* BlobBytes,
+                });
             })
         );
 }

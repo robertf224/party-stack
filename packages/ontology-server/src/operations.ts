@@ -1,34 +1,17 @@
 import { BackendError, ActionReceiptSchema } from "@party-stack/ontology-backend";
 import { ActionInvocationSchema, protocolValueCodec } from "@party-stack/ontology-backend/protocol";
 import { ReplicaStatusSchema, makeReplicaMonitor } from "@party-stack/ontology-replica";
-import { Effect, Queue, Schema, Stream, Fiber, Scope } from "effect";
+import { Effect, Queue, Schema, Stream, Fiber, Scope, Layer } from "effect";
 import { Rpc, RpcGroup, RpcClient } from "effect/rpc";
+import {
+    Attachment,
+    Target,
+    AttachmentTransferRpcs,
+    attachmentTransferHandlers,
+    splitAttachmentChunk,
+} from "./attachmentTransfers.js";
 import type { LiveOntology } from "@party-stack/ontology";
 import type { Headers } from "effect/http/Headers";
-
-const Attachment = Schema.Struct({
-    id: Schema.NonEmptyString,
-    type: Schema.optional(Schema.String),
-    source: Schema.optional(
-        Schema.Struct({
-            objectType: Schema.String,
-            primaryKey: Schema.Union([Schema.String, Schema.Number]),
-            property: Schema.String,
-        })
-    ),
-});
-const Target = Schema.Union([
-    Schema.Struct({
-        kind: Schema.Literal("objectProperty"),
-        objectType: Schema.String,
-        property: Schema.String,
-    }),
-    Schema.Struct({
-        kind: Schema.Literal("actionParameter"),
-        actionType: Schema.String,
-        parameter: Schema.String,
-    }),
-]);
 const Validation = Schema.Union([
     Schema.Struct({ certain: Schema.Literal(false) }),
     Schema.Struct({
@@ -74,11 +57,6 @@ const Trace = Schema.Struct({
     attributes: Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number, Schema.Boolean])),
 });
 const Parameters = Schema.Record(Schema.String, Schema.Unknown);
-const Bytes = Schema.Struct({
-    bytes: Schema.Uint8ArrayFromBase64,
-    type: Schema.String,
-    name: Schema.optional(Schema.String),
-});
 const Metadata = Schema.Struct({
     size: Schema.optional(Schema.Number),
     type: Schema.optional(Schema.String),
@@ -87,7 +65,7 @@ const Metadata = Schema.Struct({
 });
 
 /** Explicit helper operations alongside replica transfer. These do not bypass row replication. */
-export const OntologyOperationRpcs = RpcGroup.make(
+const HelperRpcs = RpcGroup.make(
     Rpc.make("QueryFunction", {
         payload: protocolValueCodec(Schema.Struct({ name: Schema.NonEmptyString, parameters: Parameters })),
         success: protocolValueCodec(Schema.Unknown),
@@ -104,17 +82,6 @@ export const OntologyOperationRpcs = RpcGroup.make(
         success: protocolValueCodec(Validation),
         error: BackendError,
     }),
-    Rpc.make("CreateAttachment", {
-        payload: Schema.Struct({
-            ...Bytes.fields,
-            id: Schema.optional(Schema.NonEmptyString),
-            target: Schema.optional(Target),
-            eager: Schema.optional(Schema.Boolean),
-        }),
-        success: Attachment,
-        error: BackendError,
-    }),
-    Rpc.make("ReadAttachment", { payload: Attachment, success: Bytes, error: BackendError }),
     Rpc.make("AttachmentMetadata", {
         payload: Schema.Struct({
             attachment: Attachment,
@@ -145,6 +112,7 @@ export const OntologyOperationRpcs = RpcGroup.make(
     Rpc.make("DeleteLocalData", { error: BackendError }),
     Rpc.make("ReleaseOwner", { error: BackendError })
 );
+export const OntologyOperationRpcs = HelperRpcs.merge(AttachmentTransferRpcs);
 export type OntologyOperationRequest =
     | {
           readonly operation: "QueryFunction" | "ValidateAction";
@@ -193,6 +161,7 @@ const missing = (name: string) =>
 
 export const ontologyOperationHandlers = <R>(options: {
     readonly ontology?: LiveOntology;
+    readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
     readonly ready?: Effect.Effect<void, BackendError, R>;
     readonly deleteLocalData?: Effect.Effect<void, BackendError, R>;
     readonly releaseOwner?: Effect.Effect<void, BackendError, R>;
@@ -207,10 +176,15 @@ export const ontologyOperationHandlers = <R>(options: {
                 options.ontology ? Effect.succeed(options.ontology) : Effect.fail(missing("helpers"))
             )
         );
-    return OntologyOperationRpcs.toLayer({
+    return HelperRpcs.toLayer({
         QueryFunction: (request, context) =>
             Effect.gen(function* () {
                 yield* options.authorize({ operation: "QueryFunction", ...request }, context.headers);
+                if (options.backend) {
+                    yield* options.ready ?? Effect.void;
+                    if (!options.backend.queryFunction) return yield* missing(request.name);
+                    return yield* options.backend.queryFunction(request.name, request.parameters);
+                }
                 const ontology = yield* live();
                 const query = Object.hasOwn(ontology.queryFunctions, request.name)
                     ? ontology.queryFunctions[request.name]
@@ -234,52 +208,14 @@ export const ontologyOperationHandlers = <R>(options: {
                         : action.validate(request.parameters)
                 );
             }),
-        CreateAttachment: (request, context) =>
-            Effect.gen(function* () {
-                yield* options.authorize(
-                    {
-                        operation: "CreateAttachment",
-                        id: request.id,
-                        target: request.target,
-                        type: request.type,
-                        size: request.bytes.byteLength,
-                    },
-                    context.headers
-                );
-                const ontology = yield* live();
-                const blob =
-                    request.name === undefined
-                        ? new Blob([new Uint8Array(request.bytes).buffer], { type: request.type })
-                        : new File([new Uint8Array(request.bytes).buffer], request.name, {
-                              type: request.type,
-                          });
-                const created = yield* attempt(() =>
-                    request.eager
-                        ? ontology.attachments.create(blob, {
-                              id: request.id,
-                              target: request.target,
-                              eager: true,
-                          })
-                        : ontology.attachments.create(blob, { id: request.id, target: request.target })
-                );
-                // An eager request waits here; a Promise is never transported to another host.
-                if (created.isMaterialized) yield* attempt(() => created.isMaterialized!);
-                return created.attachment;
-            }),
-        ReadAttachment: (attachment, context) =>
-            Effect.gen(function* () {
-                yield* options.authorize({ operation: "ReadAttachment", attachment }, context.headers);
-                const ontology = yield* live();
-                const blob = yield* attempt(() => ontology.attachments.blob(attachment));
-                return {
-                    bytes: new Uint8Array(yield* attempt(() => blob.arrayBuffer())),
-                    type: blob.type,
-                    ...(typeof File !== "undefined" && blob instanceof File ? { name: blob.name } : {}),
-                };
-            }),
         AttachmentMetadata: (request, context) =>
             Effect.gen(function* () {
                 yield* options.authorize({ operation: "AttachmentMetadata", ...request }, context.headers);
+                if (options.backend) {
+                    yield* options.ready ?? Effect.void;
+                    if (!options.backend.attachments?.metadata) return yield* missing("AttachmentMetadata");
+                    return yield* options.backend.attachments.metadata(request.attachment);
+                }
                 const ontology = yield* live();
                 return yield* attempt(() =>
                     ontology.attachments.metadata(request.attachment, {
@@ -370,7 +306,61 @@ export const ontologyOperationHandlers = <R>(options: {
                 const ontology = yield* live();
                 ontology.traces?.clear();
             }),
-    });
+    }).pipe(
+        Layer.merge(
+            attachmentTransferHandlers({
+                authorizeUpload: (request, headers) =>
+                    options.authorize(
+                        {
+                            operation: "CreateAttachment",
+                            id: request.id,
+                            target: request.target,
+                            type: request.type,
+                            size: request.size,
+                        },
+                        headers
+                    ),
+                create: (request, blob) =>
+                    Effect.gen(function* () {
+                        yield* options.ready ?? Effect.void;
+                        if (options.backend) {
+                            if (!options.backend.attachments?.stage)
+                                return yield* missing("CreateAttachment");
+                            return yield* options.backend.attachments.stage(
+                                { id: request.id ?? crypto.randomUUID(), type: request.type },
+                                blob
+                            );
+                        }
+                        const ontology = yield* live();
+                        const created = yield* attempt(() =>
+                            request.eager
+                                ? ontology.attachments.create(blob, {
+                                      id: request.id,
+                                      target: request.target,
+                                      eager: true,
+                                  })
+                                : ontology.attachments.create(blob, {
+                                      id: request.id,
+                                      target: request.target,
+                                  })
+                        );
+                        if (created.isMaterialized) yield* attempt(() => created.isMaterialized!);
+                        return created.attachment;
+                    }),
+                read: (attachment, headers) =>
+                    Effect.gen(function* () {
+                        yield* options.authorize({ operation: "ReadAttachment", attachment }, headers);
+                        yield* options.ready ?? Effect.void;
+                        if (options.backend) {
+                            if (!options.backend.attachments?.read) return yield* missing("ReadAttachment");
+                            return yield* options.backend.attachments.read(attachment);
+                        }
+                        const ontology = yield* live();
+                        return yield* attempt(() => ontology.attachments.blob(attachment));
+                    }),
+            })
+        )
+    );
 };
 
 type OperationsRpcClient = Effect.Success<
@@ -444,21 +434,76 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
     const attachments: LiveOntology["attachments"] = {
         create: async (blob, opts) => {
             const attachment = await run(
-                client.CreateAttachment({
-                    bytes: new Uint8Array(await blob.arrayBuffer()),
-                    type: blob.type,
-                    name: typeof File !== "undefined" && blob instanceof File ? blob.name : undefined,
-                    ...opts,
+                Effect.gen(function* () {
+                    let result: Schema.Schema.Type<typeof Attachment> | undefined;
+                    yield* Stream.runForEach(
+                        client.CreateAttachment({
+                            size: blob.size,
+                            type: blob.type,
+                            name: typeof File !== "undefined" && blob instanceof File ? blob.name : undefined,
+                            ...opts,
+                        }),
+                        (event) =>
+                            Effect.gen(function* () {
+                                if (event.kind === "complete") {
+                                    result = event.attachment;
+                                    return;
+                                }
+                                let sequence = 0;
+                                yield* Stream.runForEach(
+                                    Stream.fromReadableStream({
+                                        evaluate: () => blob.stream(),
+                                        onError: failure,
+                                    }),
+                                    (chunk) =>
+                                        Effect.forEach(
+                                            splitAttachmentChunk(chunk),
+                                            (bytes) =>
+                                                client.WriteAttachmentChunk({
+                                                    uploadId: event.uploadId,
+                                                    sequence: sequence++,
+                                                    bytes,
+                                                    end: false,
+                                                }),
+                                            { discard: true }
+                                        )
+                                );
+                                yield* client.WriteAttachmentChunk({
+                                    uploadId: event.uploadId,
+                                    sequence,
+                                    bytes: new Uint8Array(0),
+                                    end: true,
+                                });
+                            })
+                    );
+                    if (!result) return yield* missing("completed attachment transfer");
+                    return result;
                 })
             );
             return { attachment } as Awaited<ReturnType<LiveOntology["attachments"]["create"]>>;
         },
-        blob: async (attachment) => {
-            const result = await run(client.ReadAttachment(attachment));
-            return result.name === undefined
-                ? new Blob([new Uint8Array(result.bytes).buffer], { type: result.type })
-                : new File([new Uint8Array(result.bytes).buffer], result.name, { type: result.type });
-        },
+        blob: (attachment) =>
+            run(
+                Effect.gen(function* () {
+                    const parts: ArrayBuffer[] = [];
+                    let metadata: { type: string; size: number; name?: string } | undefined;
+                    let size = 0;
+                    yield* Stream.runForEach(client.ReadAttachment(attachment), (event) =>
+                        Effect.sync(() => {
+                            if (event.kind === "metadata") metadata = event;
+                            else {
+                                parts.push(new Uint8Array(event.bytes).buffer);
+                                size += event.bytes.length;
+                            }
+                        })
+                    );
+                    if (!metadata || size !== metadata.size)
+                        return yield* failure(new Error("Incomplete attachment download."));
+                    return metadata.name === undefined
+                        ? new Blob(parts, { type: metadata.type })
+                        : new File(parts, metadata.name, { type: metadata.type });
+                })
+            ),
         metadata: async (
             attachment: import("@party-stack/ontology/values").attachment,
             opts?: { select: readonly ("size" | "type" | "name" | "dimensions")[] }

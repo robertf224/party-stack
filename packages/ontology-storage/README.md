@@ -123,5 +123,7 @@ main entry and ontology object tokens. The old engine reference is in [TABLES.md
 The main entry does not import memory, IndexedDB, SQL, TanStack, or codegen tooling.
 
 SQL currently retains the shared rows table and JSON projections, with native
-SQLite/PostgreSQL planning and indexes. This port does not yet introduce native
-columns or replace existing sqlite-ontology / durable-object-ontology installations.
+SQLite/PostgreSQL planning and indexes. Native
+per-property SQL columns remain future work. The former SQLite ontology wrapper
+has been replaced by the shared storage backend composition; Durable Object SQL/R2
+bridges live in `@party-stack/durable-object-ontology-storage`.

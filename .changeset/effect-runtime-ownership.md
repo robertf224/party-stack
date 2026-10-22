@@ -13,8 +13,7 @@
 "@party-stack/expo-runtime": minor
 "@party-stack/ontology": minor
 "@party-stack/ontology-server": minor
-"@party-stack/sqlite-ontology": minor
-"@party-stack/durable-object-ontology": minor
+"@party-stack/durable-object-ontology-storage": minor
 ---
 
 Replace Effection lifetimes with Effect scopes and fibers throughout coordination,

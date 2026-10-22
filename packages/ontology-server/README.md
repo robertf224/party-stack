@@ -106,8 +106,18 @@ validation, attachment creation/metadata/bytes, owner outbox controls and trace
 subscriptions. Supplying `ontology` to the server binds these helpers to the
 owner's LiveOntology. They use named, schema-validated RPCs and mandatory per-call
 authorization; action submissions and row reads still go through replica state.
+Owned source-only servers can instead supply `backend` for query functions and
+attachment staging/reads/metadata. These helpers still require explicit authorization;
+row reads and action commits continue through the source protocol.
+
 Trace snapshots use a sliding buffer and are subscribed only while the consumer
-asks for them. File bytes use an explicit binary codec, separate from row values.
+asks for them. Attachment downloads stream metadata followed by bounded byte frames.
+Uploads use ordered, acknowledged 64 KiB chunk calls beneath a scoped response
+stream because Effect RPC supports streamed responses, not streamed request payloads.
+Closing that stream discards incomplete transfers. Sequence/size checks reject
+partial uploads; authorization runs before allocation and for each chunk. No
+durable resumable upload session is introduced. The Blob API still materializes
+content at storage boundaries; the transport avoids a single whole-file RPC frame.
 
 Optional `ready` gates Describe and helper requests while a worker restores its
 installation. Bootstrap failures retain their typed BackendError. Neither local

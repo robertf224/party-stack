@@ -10,7 +10,7 @@ import {
     ClientSubmissionCodec,
     ClientViewCodec,
 } from "@party-stack/ontology-backend/protocol";
-import { Deferred, Effect, Schema, Stream, Layer, Scope } from "effect";
+import { Context, Deferred, Effect, Schema, Stream, Layer, Scope } from "effect";
 import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcSchema } from "effect/rpc";
 import {
     OntologyOperationRpcs,
@@ -19,6 +19,7 @@ import {
     type OntologyOperationRequest,
     type OntologyOperationsClient,
 } from "./operations.js";
+import { RpcActivity } from "./rpcActivity.js";
 import type { LiveOntology } from "@party-stack/ontology";
 import type { BackendSubset } from "@party-stack/ontology-backend";
 import type { ClientSession, ClientToken } from "@party-stack/ontology-backend/clients";
@@ -74,7 +75,9 @@ export const makeOntologyRpcClient = RpcClient.make(OntologyRpcs.middleware(Subs
     Effect.provide(
         RpcMiddleware.layerClient(SubscriptionTracing, ({ rpc, request, next }) =>
             RpcSchema.isStreamSchema(rpc.successSchema)
-                ? Effect.annotateCurrentSpan("activity", "subscription").pipe(Effect.andThen(next(request)))
+                ? Effect.annotateCurrentSpan("activity", Context.get(rpc.annotations, RpcActivity)).pipe(
+                      Effect.andThen(next(request))
+                  )
                 : next(request)
         )
     )
@@ -106,6 +109,7 @@ export type OntologyRpcRequest =
 export interface OntologyRpcServerOptions<R = never> {
     readonly source: OntologySource;
     readonly ontology?: LiveOntology;
+    readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
     /** Worker bootstrap may run while transport starts accepting requests. */
     readonly ready?: Effect.Effect<void, BackendError, R>;
     /** Explicit local-partition administration; omitted helpers cannot delete data or stop an owner. */

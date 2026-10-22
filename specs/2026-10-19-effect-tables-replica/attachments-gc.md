@@ -116,21 +116,35 @@ alarm schedules bounded collection; it does not replace the shared GC algorithm.
 An existing alarm is preserved across constructor runs. Native R2 writes stream
 with a known length; the Blob read boundary currently materializes the response.
 
-## Remaining attachment migration
+## Platform composition and transfers
 
-- Replace SQLite's existing inline/external attachment coordinator and the default
-  Durable Object construction with this core. The optional Alchemy construction
-  already uses the native authoritative binding. Validate cloud deployment and
-  isolate-crash recovery; owner liveness remains explicit, and unknown owners
-  stay protected.
-- Stream uploads and downloads over the Effect RPC message channel, with bounded
-  backpressure and cancellation. Current helper RPCs still transfer a whole byte
-  payload. The scoped read capability is preparation, not completion of this port.
-- Add offline-query attachment policy once offline query demand exists. Internal
-  byte roots are available, but no public lease/pin API has been added.
-- Later: range coverage/caching, durable resumable uploads and direct byte grants.
-  Attachment pointers remain immutable; no public content-version abstraction is
-  required now.
+The legacy SQLite attachment coordinator and `sqlite-ontology` package are removed.
+`sql-ontology-storage/sqlite` supplies SQL Tables and replaceable byte IO; ontology's
+`makeStorageOntologyBackend` supplies the common authoritative action/query helpers.
+`durable-object-ontology-storage` supplies native DO SQL and Alchemy R2 bridges.
+Its `/alchemy` constructor composes those same services; the example declares the
+actual Alchemy resources, authenticated endpoint and GC alarm.
+
+The DO bridge configures `exclusiveOwnerLiveness` using the platform storage object's
+incarnation. Concurrent services on that incarnation share live-owner registration;
+unknown persisted owners after a reset belong to the previous incarnation. Workerd
+tests abort a DO after R2 write/before publication and during a scoped read, then
+reopen the same object and verify recovery, collection and subsequent writes.
+Other environments still require explicit liveness evidence for unknown owners.
+Cloud deployment is separate from this local acceptance.
+
+Attachment helper RPCs now stream downloads and upload progress/completion.
+Effect RPC does not stream request payloads, so uploads send ordered, acknowledged
+64 KiB chunks while a response stream owns a bounded queue. Cancelling that stream
+removes the transfer and rejects further chunks. Authorization runs before allocation
+and on each chunk; declared size/sequence validation prevents partial publication.
+HTTP and MessagePort transports use the same contract. Owned servers can bind the
+helpers directly to a backend; intermediate servers bind their LiveOntology facade.
+
+These are scoped transfers, not resumable upload sessions. Blob APIs still materialize
+complete content at the storage boundary, so this is not constant-memory end-to-end
+IO. Offline query policies, range caching, durable resumability, direct byte grants
+and optional integrations are tracked in [blob-future-work.md](./blob-future-work.md).
 
 Do not add workflow orchestration merely for the current intents: an external byte
 store still cannot join the metadata transaction. Effect scopes, retry and recovery

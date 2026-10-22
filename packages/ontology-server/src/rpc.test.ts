@@ -425,6 +425,34 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                 expect(
                     yield* Effect.promise(() => client.operations.attachments.metadata(attachment))
                 ).toMatchObject({ size: 3, type: "application/octet-stream" });
+                // The facade reads upload streams, including a source emitting a single large chunk.
+                const data = new Uint8Array(150_000).map((_, index) => index % 251);
+                const large = new Blob([data], { type: "application/octet-stream" });
+                const materialize = vi.fn(() => Promise.reject(new Error("Whole upload read forbidden")));
+                Object.defineProperty(large, "arrayBuffer", { value: materialize });
+                Object.defineProperty(large, "stream", {
+                    value: () =>
+                        new ReadableStream({
+                            start(controller) {
+                                controller.enqueue(data);
+                                controller.close();
+                            },
+                        }),
+                });
+                const big = yield* Effect.promise(() =>
+                    client.operations.attachments.create(large, { id: "large" })
+                );
+                expect(materialize).not.toHaveBeenCalled();
+                const downloaded = yield* Effect.promise(() =>
+                    client.operations.attachments.blob(big.attachment)
+                );
+                expect(new Uint8Array(yield* Effect.promise(() => downloaded.arrayBuffer()))).toEqual(data);
+                const empty = yield* Effect.promise(() =>
+                    client.operations.attachments.create(new Blob([]), { id: "empty" })
+                );
+                expect(
+                    (yield* Effect.promise(() => client.operations.attachments.blob(empty.attachment))).size
+                ).toBe(0);
                 expect(operations).not.toContain("ReplicaStatus");
                 const stopMonitoring = client.operations.replicaMonitor.subscribe(() => undefined);
                 yield* Effect.addFinalizer(() => Effect.sync(stopMonitoring));

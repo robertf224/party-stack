@@ -27,7 +27,8 @@ binds existing ObjectTypeDef definitions to generated codecs, derives primary
 keys, validates field paths, and stamps a storage namespace with its definition.
 The dynamic engine remains under explicit infrastructure entry points. No second
 authored schema API was introduced. Physical SQL storage still uses the existing
-shared-row/JSON layout; sqlite-ontology replacement remains future work.
+shared-row/JSON layout. The former sqlite-ontology wrapper now uses the common
+owned backend composition; native per-property SQL columns remain future work.
 
 ## Backend protocol versus owned storage
 
@@ -49,9 +50,9 @@ transaction machinery without understanding their protocol meaning. External
 attachment bytes still require staging/journaling and recovery rather than a false
 claim that SQL and R2 commit in one transaction.
 
-Durable Object bindings and R2 lifecycle handling still need a thin platform
-composition layer even if the current durable-object-ontology database path is
-replaced.
+Durable Object bindings and R2 lifecycle handling live in the thin
+durable-object-ontology-storage composition package. It shares the SQL Tables,
+blob intent/retention and owned backend implementations.
 
 ## Derived Effect schemas and storage mappings
 
