@@ -54,6 +54,15 @@ covered in [native-actions.md](./native-actions.md).
   search reads, native Admin Users queries and metadata snapshots. Salesforce native
   snapshots/actions/query functions and synthetic CRUD receipts. Known identities
   are preserved without claiming all automation effects are known.
+- **Foundry encrypted properties:** CipherText metadata imports as `Encrypted<string>`;
+  snapshots/edit loads preserve opaque handles and property sources. The native
+  backend exposes explicit, cancellable CipherText property decryption, with typed
+  errors and plaintext schema validation. Ordinary loads never decrypt. The unused
+  public backend encrypt hook was removed: actions continue to accept plaintext,
+  and their authoritative implementation handles encrypted property writes. Local
+  encryption remains available internally. This is the adapter boundary, not yet
+  the public decrypt/cache API or protocol transport. Foundry decrypt reads the
+  property's current value, so later caching must respect that source semantics.
 - **Browser credentials:** encrypted OAuth credential persistence with separate
   CryptoKey storage, callback fixes and persisted connection/installation demand.
   This is not yet the final per-purpose persistence-consent API.
@@ -110,6 +119,11 @@ tracked in [blob-future-work.md](./blob-future-work.md).
   invocations, indexes and mirrors; inspectable native SQL column layouts.
 - Bigint/long ontology kinds, CloudKit, SSR hydration and measured optimization.
   Existing provider endpoint choices should change in response to benchmarks.
+- **Outbox input encryption (deferred by request):** no outbox persistence changes
+  in this checkpoint. Revisit local encryption of persisted invocation payloads,
+  offline replay/key availability and consent, and all other durable payload copies.
+  Distinguish device encryption at rest from action contracts accepting pre-encrypted
+  values. A public remote encrypt hook is not required for the first case.
 
 ## Verification and practical limits
 

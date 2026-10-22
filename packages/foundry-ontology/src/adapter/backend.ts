@@ -53,6 +53,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
         signal: AbortSignal
     ) => Promise<unknown>;
     attachments?: OntologyBackendService["attachments"];
+    encrypted?: OntologyBackendService["encrypted"];
     decodeObject: (objectType: string, value: Record<string, unknown>) => Record<string, unknown>;
 }) {
     const watcher =
@@ -78,6 +79,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                       })
                   ),
         attachments: options.attachments,
+        encrypted: options.encrypted,
         loadSubset: Effect.fn("Foundry.loadSubset")(function* (subset: BackendSubset) {
             yield* Effect.annotateCurrentSpan("objectType", subset.objectType);
             if (subset.objectType === options.users?.objectType)

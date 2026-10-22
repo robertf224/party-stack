@@ -27,6 +27,7 @@ import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaAct
 import { getFoundryAttachmentKind } from "../meta/foundryAttachmentMetadata.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import { makeFoundryBackend } from "./backend.js";
+import { makeFoundryEncryptedValues } from "./encrypted.js";
 import {
     getFoundryValidationIssues,
     loadFoundrySubmissionCriteria,
@@ -448,6 +449,7 @@ export function createFoundryOntologyBackendAdapter(
                 ir: opts.ir,
                 context,
                 live: opts.live,
+                encrypted: makeFoundryEncryptedValues(opts.client, opts.ir),
                 users: opts.users && {
                     objectType: opts.users.objectType,
                     loadSubset: (query, signal) => opts.users!.loadSubset(opts.client, query, signal),

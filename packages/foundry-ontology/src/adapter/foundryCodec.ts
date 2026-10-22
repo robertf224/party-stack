@@ -1,5 +1,7 @@
+import { Schema } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { getFoundryAttachmentKind } from "../meta/foundryAttachmentMetadata.js";
+import { decodeFoundryCiphertext, encodeFoundryCiphertext } from "./encrypted.js";
 import {
     decodeFoundryMediaId,
     foundryMediaIdToReference,
@@ -8,6 +10,7 @@ import {
 import type { MediaReference } from "@osdk/foundry.core";
 import type { AttachmentProperty, OntologyObjectV2 } from "@osdk/foundry.ontologies";
 import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology";
+import type { Encrypted } from "@party-stack/ontology-spec/values";
 
 type FoundryObjectRecord = Record<string, unknown>;
 /** @deprecated Use {@link FoundryCodec} instead. */
@@ -53,7 +56,7 @@ export function createFoundryCodec(
     const decodeValue = (
         type: TypeDef,
         value: unknown,
-        context: { editHistory: boolean; optional: boolean } = {
+        context: { editHistory: boolean; optional: boolean; source?: Encrypted["source"] } = {
             editHistory: false,
             optional: false,
         }
@@ -82,6 +85,8 @@ export function createFoundryCodec(
         }
 
         switch (resolvedType.kind) {
+            case "encrypted":
+                return decodeFoundryCiphertext(value, context.source);
             case "string":
                 return value;
             case "boolean":
@@ -139,6 +144,10 @@ export function createFoundryCodec(
         object: FoundryObjectRecord,
         editHistory = false
     ): FoundryObjectRecord => {
+        const keyProperty = objectType.properties.find((property) => property.name === objectType.primaryKey);
+        const primaryKey = keyProperty
+            ? decodeValue(keyProperty.type, object[objectType.primaryKey], { editHistory, optional: false })
+            : undefined;
         return Object.fromEntries(
             Object.entries(object).map(([key, value]) => {
                 const property = objectType.properties.find((candidate) => candidate.name === key);
@@ -148,6 +157,13 @@ export function createFoundryCodec(
                         ? decodeValue(property.type, value, {
                               editHistory,
                               optional: false,
+                              source: Schema.is(Schema.Union([Schema.String, Schema.Finite]))(primaryKey)
+                                  ? {
+                                        objectType: objectType.name,
+                                        primaryKey,
+                                        property: key,
+                                    }
+                                  : undefined,
                           })
                         : value,
                 ];
@@ -162,6 +178,8 @@ export function createFoundryCodec(
         const resolvedType = resolveType(type);
 
         switch (resolvedType.kind) {
+            case "encrypted":
+                return encodeFoundryCiphertext(value);
             case "string":
             case "boolean":
             case "integer":

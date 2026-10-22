@@ -26,9 +26,13 @@ function convertFoundryObjectProperty(
     property: PropertyV2,
     required: boolean
 ): MetaObjectProperty {
-    const type = property.valueTypeApiName
+    const valueType = property.valueTypeApiName
         ? { kind: "ref" as const, value: { name: property.valueTypeApiName } }
         : convertFoundryObjectPropertyType(property.dataType);
+    const type =
+        property.dataType.type === "cipherText" && property.valueTypeApiName
+            ? { kind: "encrypted" as const, value: { type: valueType } }
+            : valueType;
     return {
         id: property.rid,
         name,

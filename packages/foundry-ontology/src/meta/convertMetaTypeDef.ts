@@ -120,6 +120,7 @@ export function convertFoundryObjectPropertyType(type: ObjectPropertyType): Type
         case "geopoint":
             return { kind: "geopoint", value: {} };
         case "cipherText":
+            return { kind: "encrypted", value: { type: { kind: "string", value: {} } } };
         case "geoshape":
         case "geotimeSeriesReference":
         case "marking":

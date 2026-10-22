@@ -173,10 +173,6 @@ export interface BackendEncryptedValues {
         value: Encrypted<unknown>,
         plaintextType: TypeDef
     ) => Effect.Effect<unknown, BackendError>;
-    readonly encrypt?: (
-        value: unknown,
-        plaintextType: TypeDef
-    ) => Effect.Effect<Encrypted<unknown>, BackendError>;
 }
 export interface OntologyBackendService {
     readonly name: string;
