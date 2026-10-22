@@ -10,6 +10,7 @@ import { makeAlchemyOntology } from "../src/alchemy/index.js";
 import { makeDurableObjectOntologyStorage, makeR2Bytes } from "../src/index.js";
 import { r2Prefix } from "../src/r2Keys.js";
 import { testBucket, withTestRuntime } from "./bindings.js";
+import { runOntologyResource, type ResourceResult } from "./resource.js";
 import type { Bucket } from "alchemy/Cloudflare/R2/Bucket";
 
 interface Environment {
@@ -18,6 +19,18 @@ interface Environment {
 
 /** Real Alchemy binding clients over workerd SQLite and R2; no cloud deployment. */
 export class AlchemyOntologyTest extends DurableObject<Environment> {
+    runResource(disabled: boolean): Promise<ResourceResult> {
+        return Effect.runPromise(
+            Effect.scoped(
+                runOntologyResource(
+                    this.ctx as unknown as Parameters<typeof runOntologyResource>[0],
+                    this.env.BLOBS,
+                    disabled
+                )
+            )
+        );
+    }
+
     crashAfterWrite() {
         const state = this.ctx;
         const bucket = this.env.BLOBS;

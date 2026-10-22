@@ -48,17 +48,41 @@ This package targets `alchemy@2.0.0-beta.83` and Effect 4.
 
 ## Alchemy construction
 
-`@party-stack/durable-object-ontology-storage/alchemy` adds
-`makeAlchemyOntology({ ir, ontologyId, bucket, context, mutators })`. Acquire it in
-Alchemy's inner Durable Object constructor. It uses the same root SQL/R2 bridges
-and returns the shared owned `backend`, `blobs`, and a bounded `collectGarbage`
-Effect. It does not declare or deploy a Cloudflare resource itself.
+`@party-stack/durable-object-ontology-storage/alchemy` provides a DO resource factory:
 
-The type-checked [Alchemy resource example](./examples/alchemy/alchemy.run.ts)
-provides the full wiring: bucket, DO class, authenticated Effect RPC endpoint,
-forwarding Worker, and hourly GC alarm. Existing alarms survive constructor reentry.
-Adapt its definition and authorization for your application. The example is an
-owned server; an intermediate server composes Replica with the same storage.
+```ts
+import { OntologyDurableObject } from "@party-stack/durable-object-ontology-storage/alchemy";
+import { Bucket } from "alchemy/Cloudflare/R2/Bucket";
+import { authorizeRequest } from "./authorization.js";
+import { ir } from "./ontology.js";
+
+export const Notes = OntologyDurableObject("Notes", {
+    ir,
+    bucket: Bucket("Attachments"),
+    authorize: authorizeRequest,
+});
+```
+
+Yield `Notes` in your Alchemy Worker's initialization to obtain its namespace, then
+forward requests with `notes.getByName("primary").fetch(request)`. Alchemy registers
+the binding and exported DO class; application code does not extend DurableObject.
+The factory supplies native SQL/R2 storage, the owned backend, authenticated Effect
+RPC and a bounded hourly GC alarm. Authorization is required for every RPC operation.
+`ontologyId` defaults to the resource name; each DO instance has isolated SQL state
+and its own R2 key prefix.
+
+Options may also be an Effect resolved during Alchemy initialization, for example to
+read `Config.Redacted` and construct the authorization function. `context`, `mutators`
+and `queryFunctions` pass through to the shared backend. Optional `gc` settings are
+`intervalMs`, `orphanGraceMs` and `limit`; `gc: false` disables collection/scheduling.
+The default orphan grace is one hour. Reconstruction preserves an existing alarm.
+
+The [complete Alchemy example](./examples/alchemy/alchemy.run.ts) adds a forwarding
+Worker and Stack. It is an owned server. For custom handlers or replica-server
+composition, `makeAlchemyOntology({ ir, ontologyId, bucket, context, mutators })`
+remains available: acquire it in an Alchemy DO's inner constructor to get the shared
+`backend`, `blobs` and `collectGarbage` Effect. Both entrypoints use the same services.
+Declaring the resource does not deploy it; deployment remains an Alchemy operation.
 
 Rows, attachment references, ID mappings, receipts, and journal entries share SQL
 transactions. R2 IO uses the common write/delete intents. An action validates its

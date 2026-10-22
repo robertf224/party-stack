@@ -21,6 +21,7 @@
     "dependencies": {
         "@party-stack/ontology": "workspace:*",
         "@party-stack/ontology-backend": "workspace:*",
+        "@party-stack/ontology-server": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/sql-ontology-storage": "workspace:*",
         "effect": "^4.0.5"
@@ -29,7 +30,6 @@
         "@cloudflare/vitest-plugin": "^1.4.0",
         "@cloudflare/workers-types": "^5.20260827.1",
         "@party-stack/build-config": "workspace:*",
-        "@party-stack/ontology-server": "workspace:*",
         "@tanstack/db": "0.14.0",
         "alchemy": "^2.0.0-beta.83",
         "esbuild": "^0.28.1",

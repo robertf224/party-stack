@@ -121,3 +121,24 @@ for (const phase of ["write", "read"] as const) {
         });
     });
 }
+
+for (const disabled of [false, true]) {
+    it(`Alchemy resource factory wires authenticated RPC, durable rows and ${disabled ? "disabled" : "scheduled"} GC without a user subclass`, async () => {
+        const { ALCHEMY_ONTOLOGY } = env as unknown as {
+            ALCHEMY_ONTOLOGY: DurableObjectNamespace<import("./alchemy.js").AlchemyOntologyTest>;
+        };
+        const result = await ALCHEMY_ONTOLOGY.get(ALCHEMY_ONTOLOGY.newUniqueId()).runResource(disabled);
+        expect(result).toEqual({
+            name: "ResourceNotes",
+            bindingRegistered: true,
+            schemaDeferred: true,
+            denied: true,
+            firstAlarm: true,
+            scheduled: true,
+            preservedAlarm: true,
+            orphanCollected: !disabled,
+            content: "retained",
+            title: "Resource factory",
+        });
+    });
+}

@@ -901,6 +901,9 @@ importers:
       '@party-stack/ontology-backend':
         specifier: workspace:*
         version: link:../ontology-backend
+      '@party-stack/ontology-server':
+        specifier: workspace:*
+        version: link:../ontology-server
       '@party-stack/ontology-storage':
         specifier: workspace:*
         version: link:../ontology-storage
@@ -920,9 +923,6 @@ importers:
       '@party-stack/build-config':
         specifier: workspace:*
         version: link:../build-config
-      '@party-stack/ontology-server':
-        specifier: workspace:*
-        version: link:../ontology-server
       '@tanstack/db':
         specifier: 0.14.0
         version: 0.14.0(typescript@7.0.2)

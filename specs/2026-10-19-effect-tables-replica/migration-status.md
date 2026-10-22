@@ -194,3 +194,19 @@ Verification: full workspace CI **136/136 tasks**, issue-tracker Chromium accept
 **4/4 cases**; ontology **75**, RPC server **48**, and local workerd **15** tests pass.
 No Cloudflare resources were deployed. Deferred blob features live in
 [blob-future-work.md](./blob-future-work.md); auth/connections/installations is next.
+
+## Alchemy resource convenience
+
+`OntologyDurableObject(name, { ir, bucket, authorize, ... })` now declares the owned
+DO resource without an application subclass. The factory registers Alchemy's
+namespace/export and supplies the same storage, RPC and bounded GC alarm wiring.
+Options may be an initialization Effect; custom construction can still use
+`makeAlchemyOntology`. The example Worker yields the resource and routes requests
+to a named instance. This does not change auth/connection migration scope.
+
+Local workerd coverage exercises the actual Alchemy namespace/export registration,
+deferred schema initialization, authenticated HTTP RPC, row persistence across
+reconstruction, retained versus orphan attachments, alarm preservation/rescheduling
+and disabled GC. The package has 17 local workerd tests; the example is type-checked
+and the compiled Worker dependency guard remains enabled. No cloud deployment was
+performed for this convenience helper.
