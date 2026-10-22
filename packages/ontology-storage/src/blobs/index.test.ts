@@ -419,3 +419,21 @@ it.effect("scoped reads pin file-backed content until the consumer finishes or i
         expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(1);
     }).pipe(Effect.scoped)
 );
+
+it.effect("only replica storage may retain an attachment whose bytes are not local", () =>
+    Effect.gen(function* () {
+        const tables = yield* Memory.make();
+        const { bytes } = memoryBytes();
+        for (const mode of ["replica", "authoritative"] as const) {
+            const blobs = yield* makeBlobStorage({ namespace: `availability:${mode}`, tables, bytes, mode });
+            const retained = yield* Effect.result(
+                tables.transaction((tx) => blobs.in(tx).retain("object", ["missing"], { bytes: false }))
+            );
+            expect(Result.isFailure(retained)).toBe(mode === "authoritative");
+            if (Result.isFailure(retained)) expect(retained.failure).toMatchObject({ kind: "NotFound" });
+            expect(yield* blobs.metadata("missing")).toEqual(
+                mode === "authoritative" ? undefined : expect.objectContaining({ id: "missing" })
+            );
+        }
+    }).pipe(Effect.scoped)
+);

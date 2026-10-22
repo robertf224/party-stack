@@ -66,3 +66,44 @@ pnpm --filter @party-stack/durable-object-ontology dev:fixture
 The fixture runs locally through Wrangler/workerd and does not deploy anything
 to Cloudflare. Its `primary` and `secondary` routes resolve to separate Durable
 Objects, matching the one-ontology-per-Durable-Object deployment model.
+
+## Alchemy / native ontology storage
+
+The optional `@party-stack/durable-object-ontology/alchemy` export composes the
+shared owned backend with SQLite Tables and native blob metadata. R2 bytes use
+Alchemy's `ReadWriteBucketClient` directly; Files SDK is not required. The default
+package export does not import Alchemy. This integration currently targets
+`alchemy@2.0.0-beta.83` and Effect 4.
+
+Acquire `makeAlchemyOntology({ ir, ontologyId, bucket, context, mutators })` in the
+inner Alchemy Durable Object constructor. It returns:
+
+- `backend`: the ordinary owned backend and its standard `protocol` source.
+- `blobs`: the shared ontology-storage blob service.
+- `collectGarbage`: a bounded authoritative orphan-collection pass.
+
+Application rows, attachment references, remote ID mappings, receipts and journal
+entries share SQLite transactions. R2 IO uses the shared generation/write/delete
+intent machinery. The action transaction validates attachment metadata and updates
+its object references atomically. GC uses the same transactional store: a committed
+reference prevents collection; an upload collected first causes the action to fail.
+There is no extra in-memory GC lock or persistent temporary upload root. Fresh
+unreferenced uploads have the shared one-hour grace period.
+
+The type-checked [Alchemy example](./examples/alchemy/alchemy.run.ts) defines a
+bucket, a Durable Object, an authenticated Effect RPC endpoint, a Worker forwarding
+to one named ontology, and hourly GC through a Durable Object alarm. It leaves an
+existing alarm scheduled when the constructor runs again. Adapt the portable
+[definition](./examples/alchemy/definition.ts), supply `ONTOLOGY_TOKEN` through the
+Alchemy/Effect configuration environment and configure your Cloudflare account
+before running Alchemy. The fixture is an authoritative owned server; an
+intermediate server composes Replica rather than changing blob retention rules.
+
+Local tests run actual Alchemy R2 binding clients against workerd SQLite/R2. They
+do not provision Cloudflare resources. Cloud deployment and isolate-crash recovery
+acceptance are still separate verification work. Owner-liveness recovery remains
+an explicit storage configuration; unknown owners are conservatively retained.
+
+The adapter streams known-length writes into R2. Reads currently materialize a
+Blob; independent staging and streamed attachment RPCs are still pending. The
+older default SQLite/DO attachment coordinator is not yet replaced by this path.

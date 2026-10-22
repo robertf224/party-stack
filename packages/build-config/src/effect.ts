@@ -8,7 +8,7 @@ export function defineEffectLibraryConfig(config: LibraryConfig = {}) {
         ...config,
         test: mergeConfig(
             {
-                alias: { vitest: "vite-plus/test" },
+                alias: [{ find: /^vitest$/, replacement: "vite-plus/test" }],
                 server: { deps: { inline: ["@effect/vitest"] } },
             },
             config.test ?? {}

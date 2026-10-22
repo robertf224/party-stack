@@ -9,6 +9,10 @@
         ".": {
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
+        },
+        "./alchemy": {
+            "types": "./lib/alchemy/index.d.ts",
+            "default": "./lib/alchemy/index.js"
         }
     },
     "scripts": {
@@ -16,13 +20,19 @@
     },
     "dependencies": {
         "@party-stack/ontology": "workspace:*",
-        "@party-stack/sqlite-ontology": "workspace:*"
+        "@party-stack/ontology-backend": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
+        "@party-stack/sql-ontology-storage": "workspace:*",
+        "@party-stack/sqlite-ontology": "workspace:*",
+        "effect": "^4.0.5"
     },
     "devDependencies": {
         "@cloudflare/vitest-plugin": "^1.4.0",
         "@cloudflare/workers-types": "^5.20260827.1",
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/ontology-server": "workspace:*",
         "@tanstack/db": "0.14.0",
+        "alchemy": "^2.0.0-beta.83",
         "esbuild": "^0.28.1",
         "typescript": "~7.0.2",
         "vite-plus": "catalog:",
@@ -30,6 +40,12 @@
         "wrangler": "^4.127.0"
     },
     "peerDependencies": {
-        "@tanstack/db": "0.14.0"
+        "@tanstack/db": "0.14.0",
+        "alchemy": "2.0.0-beta.83"
+    },
+    "peerDependenciesMeta": {
+        "alchemy": {
+            "optional": true
+        }
     }
 }

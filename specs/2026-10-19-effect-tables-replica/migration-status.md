@@ -1,4 +1,4 @@
-# Migration status — October 21, 2026
+# Migration status — October 22, 2026
 
 Current inventory. The [execution log](./implementation.md) records historical
 checkpoints; this file describes the current implementation. The overall
@@ -67,8 +67,12 @@ covered in [native-actions.md](./native-actions.md).
 
 1. **Remaining blob integration and private records.** Native object/outbox references,
    identity/alias GC, scoped reads and transactional receipt mappings are implemented;
-   the standalone blobs package and metadata collection are removed. Next port the
-   authoritative SQLite/R2 coordinator and streamed helper transfers onto this core.
+   the standalone blobs package and metadata collection are removed. Optional Alchemy
+   DO construction now uses the native owned backend, SQLite Tables and Alchemy R2
+   client, with an alarm-based GC example. Transactional attachment validation and
+   references coordinate actions with GC without an extra in-memory lock or
+   temporary upload roots. Next replace the legacy default SQLite/DO coordinator
+   and move helper transfers onto streams; validate isolate-crash recovery.
    Public offline byte policy waits for offline query demand. Move connection and
    installation records to their own ontology definitions and finish explicit
    per-purpose browser key consent. See [attachments-gc.md](./attachments-gc.md).
@@ -99,6 +103,14 @@ includes work deliberately left outside that checkpoint.
 
 ## Follow-up design
 
+- **Postgres concurrency (deferred):** keep the current Tables-prefix transaction
+  advisory lock for correctness. Later evaluate serializable transactions with
+  safe whole-transaction retries and real multi-connection tests. Revisit the
+  owned backend's shared journal-head row before claiming concurrent action
+  throughput. A plain sequence is not a safe publication cursor: allocation
+  order can differ from commit order. Keep changes in the SQL driver and journal
+  module, rather than adding platform branches throughout the runtime.
+
 - Portable query IR/builder with correlated subqueries, relationship helpers,
   cross-ontology references, security/demand interpretation and deeper limit pushdown.
 - Ontology-owned migration history and lens/cast semantics across rows, pending
@@ -108,11 +120,13 @@ includes work deliberately left outside that checkpoint.
 
 ## Verification and practical limits
 
-Current targeted suites pass: Replica 67 tests, ontology 59, Foundry 212,
-Salesforce 58, SQLite 15, ontology-server 42, and devtools 41. Full workspace CI
-passed **141/141 tasks**. Chromium acceptance passed **4/4 cases** after updating
-the example profile-seed invocation namespace for the native action contract.
-That example change does not add a library migration or reset stored rows.
+The October 22 native attachment checkpoint passes full workspace CI. Focused
+suites include ontology-storage (33), ontology-backend (17), and real workerd
+Durable Object tests (14). The Alchemy client tests cover shared references,
+immutable upload IDs, empty uploads, sliced reads, failure rollback and orphan GC.
+The shared attachment contract runs against Memory, IndexedDB and SQL and checks
+that missing authoritative uploads cannot commit dangling object references.
+No Cloudflare resources were provisioned or deployed for these tests.
 
 Regression coverage includes persisted retry deadlines and budget resets,
 pre-submission versus ambiguous failures, discard-all with uncertain outcomes,

@@ -1,6 +1,6 @@
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { Effect, Result } from "effect";
-import { makeBlobStorage } from "../blobs/index.js";
+import { makeBlobStorage, type BlobBytesService } from "../blobs/index.js";
 import { makeStorageModel } from "../ontology/model.js";
 import { makeOntologyStorage } from "../ontology/storage.js";
 import type { TablesService } from "../tables.js";
@@ -10,21 +10,18 @@ export const runBlobContract = Effect.fnUntraced(function* (tables: TablesServic
     yield* Effect.scoped(
         Effect.gen(function* () {
             const values = new Map<string, Blob>();
-            const blobs = yield* makeBlobStorage({
-                namespace: "blob-contract",
-                tables,
-                bytes: {
-                    read: (key) => Effect.promise(() => Promise.resolve(values.get(key))),
-                    write: (key, value) =>
-                        Effect.promise(async () => {
-                            values.set(key, value);
-                        }),
-                    delete: (key) =>
-                        Effect.promise(async () => {
-                            values.delete(key);
-                        }),
-                },
-            });
+            const bytes: BlobBytesService = {
+                read: (key) => Effect.promise(() => Promise.resolve(values.get(key))),
+                write: (key, value) =>
+                    Effect.promise(async () => {
+                        values.set(key, value);
+                    }),
+                delete: (key) =>
+                    Effect.promise(async () => {
+                        values.delete(key);
+                    }),
+            };
+            const blobs = yield* makeBlobStorage({ namespace: "blob-contract", tables, bytes });
             yield* blobs.stage("local", new Blob(["contract bytes"], { type: "text/plain" }));
             const failed = yield* Effect.result(
                 tables.transaction((tx) =>
@@ -92,6 +89,37 @@ export const runBlobContract = Effect.fnUntraced(function* (tables: TablesServic
             if ((yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })) !== 1)
                 throw new Error("Removing the last object reference releases staged bytes");
             if (yield* blobs.metadata("draft-file")) throw new Error("Orphan identity cleanup");
+
+            const authoritative = yield* makeBlobStorage({
+                namespace: "blob-authoritative",
+                tables,
+                bytes,
+                mode: "authoritative",
+            });
+            const ownedModel = yield* makeStorageModel({ namespace: "blob-authoritative", ir });
+            const owned = makeOntologyStorage(ownedModel, tables, { blobs: authoritative });
+            const ownedDrafts = ownedModel.objects.Draft!;
+            yield* authoritative.stage("owned-file", new Blob(["authoritative"]));
+            yield* owned.put(ownedDrafts, { id: "owned", files: [{ id: "owned-file" }] });
+            if ((yield* authoritative.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })) !== 0)
+                throw new Error("Committed references must prevent authoritative collection");
+            yield* owned.delete(ownedDrafts, "owned");
+            if ((yield* authoritative.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })) !== 1)
+                throw new Error("Unreferenced authoritative upload must be collectible");
+            const unavailable = yield* Effect.result(
+                owned.transaction((tx) =>
+                    Effect.gen(function* () {
+                        yield* tx.put(ownedDrafts, { id: "also-rolled-back", files: [] });
+                        yield* tx.put(ownedDrafts, { id: "late", files: [{ id: "owned-file" }] });
+                    })
+                )
+            );
+            if (!Result.isFailure(unavailable))
+                throw new Error("An expired upload must reject the object transaction");
+            if ((yield* owned.loadSubset(ownedDrafts)).length !== 0)
+                throw new Error("Missing authoritative attachments must roll back every object write");
+            if (yield* authoritative.metadata("owned-file"))
+                throw new Error("Authoritative references must not recreate a collected placeholder");
         })
     );
 });

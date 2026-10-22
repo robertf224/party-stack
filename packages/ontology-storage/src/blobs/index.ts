@@ -218,6 +218,8 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
             for (const id of new Set(ids)) {
                 if (!id) return yield* blobFailure("InvalidValue", "A blob handle needs an ID.");
                 const record = (yield* find(tx, id)) ?? empty(id, now);
+                if (options.mode === "authoritative" && !record.byteKey)
+                    return yield* blobFailure("NotFound", "Authoritative attachment bytes are unavailable.");
                 if (record.writing) return yield* blobFailure("Busy", "Blob staging has not completed.");
                 if (record.state === "staged" && !record.byteKey)
                     return yield* blobFailure("NotFound", "Staged bytes are unavailable.");

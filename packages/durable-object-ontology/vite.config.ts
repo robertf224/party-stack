@@ -1,11 +1,13 @@
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
-import { defineLibraryConfig, type LibraryConfig } from "@party-stack/build-config";
+import { type LibraryConfig } from "@party-stack/build-config";
+import { defineEffectLibraryConfig } from "@party-stack/build-config/effect";
 
-export default defineLibraryConfig({
+export default defineEffectLibraryConfig({
     run: {
         tasks: {
             test: {
-                command: "WRANGLER_WRITE_LOGS=0 vp exec vitest run && node scripts/verify-worker-bundle.mjs",
+                command:
+                    "vp exec node scripts/prepare-test-worker.mjs && WRANGLER_WRITE_LOGS=0 vp exec vitest run && node scripts/verify-worker-bundle.mjs",
             },
         },
     },

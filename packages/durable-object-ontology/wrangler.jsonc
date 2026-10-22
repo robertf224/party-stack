@@ -1,14 +1,16 @@
 {
     "$schema": "node_modules/wrangler/config-schema.json",
     "name": "party-stack-durable-object-ontology-test",
-    "main": "test/worker.ts",
+    "main": "temp/worker.js",
     "compatibility_date": "2026-08-27",
+    "compatibility_flags": ["nodejs_compat"],
     "durable_objects": {
         "bindings": [
             {
                 "name": "ONTOLOGY",
                 "class_name": "DurableObjectOntologyTest",
             },
+            { "name": "ALCHEMY_ONTOLOGY", "class_name": "AlchemyOntologyTest" },
         ],
     },
     "r2_buckets": [
@@ -20,7 +22,7 @@
     "migrations": [
         {
             "tag": "v1",
-            "new_sqlite_classes": ["DurableObjectOntologyTest"],
+            "new_sqlite_classes": ["DurableObjectOntologyTest", "AlchemyOntologyTest"],
         },
     ],
 }

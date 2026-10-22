@@ -5,5 +5,5 @@
         "rootDir": ".",
         "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types", "node"]
     },
-    "include": ["src/**/*.ts", "test/**/*.ts", "fixtures/**/*.ts"]
+    "include": ["src/**/*.ts", "test/**/*.ts", "fixtures/**/*.ts", "examples/**/*.ts"]
 }

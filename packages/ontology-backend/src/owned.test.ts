@@ -1,6 +1,7 @@
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
+import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Effect, Result } from "effect";
+import { Effect, Result, Deferred, Fiber } from "effect";
 import { expect, test } from "vitest";
 import { makeOwnedBackend, type OwnedTransaction } from "./owned.js";
 import { BackendError } from "./index.js";
@@ -158,5 +159,111 @@ test("concurrent actions read their transaction state and journal pagination nev
             expect(new Set(ids).size).toBe(12);
             expect(ids).toHaveLength(12);
         })
+    );
+});
+
+test("owned action transactions reject uploads collected before commit and retain uploads committed first", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const values = new Map<string, Blob>();
+                const blobs = yield* makeBlobStorage({
+                    namespace: "owned-uploads",
+                    tables,
+                    mode: "authoritative",
+                    bytes: {
+                        read: (key) => Effect.sync(() => values.get(key)),
+                        write: (key, value) =>
+                            Effect.sync(() => {
+                                values.set(key, value);
+                            }),
+                        delete: (key) =>
+                            Effect.sync(() => {
+                                values.delete(key);
+                            }),
+                    },
+                });
+                const definition: OntologyIR = {
+                    ...ir,
+                    objectTypes: [
+                        {
+                            name: "Asset",
+                            displayName: "Asset",
+                            pluralDisplayName: "Assets",
+                            primaryKey: "id",
+                            properties: [
+                                { name: "id", displayName: "ID", type: o.string({}) },
+                                { name: "photo", displayName: "Photo", type: o.attachment({}) },
+                            ],
+                        },
+                    ],
+                    actionTypes: [
+                        {
+                            name: "create",
+                            displayName: "Create",
+                            logic: [],
+                            parameters: [
+                                { name: "id", displayName: "ID", type: o.string({}) },
+                                { name: "photo", displayName: "Photo", type: o.attachment({}) },
+                            ],
+                        },
+                    ],
+                };
+                const uploaded = yield* Deferred.make<void>();
+                const finish = yield* Deferred.make<void>();
+                const backend = yield* makeOwnedBackend({
+                    namespace: "owned-uploads",
+                    ir: definition,
+                    tables,
+                    blobs,
+                    prepareUploads: () =>
+                        Effect.gen(function* () {
+                            yield* blobs.stage("photo", new Blob(["keep"]));
+                            yield* Deferred.succeed(uploaded, undefined);
+                            yield* Deferred.await(finish);
+                            return Effect.void;
+                        }).pipe(Effect.mapError(() => rejected())),
+                    mutators: { create: (tx, invocation) => tx.put("Asset", invocation.parameters) },
+                });
+                const action = yield* Effect.forkScoped(
+                    Effect.result(
+                        backend.invoke({
+                            id: "action",
+                            name: "create",
+                            parameters: {
+                                id: "asset",
+                                photo: { id: "photo" },
+                            },
+                            attachmentUploads: [
+                                { attachment: { id: "photo" }, blob: new Blob(["keep"]), target: {} },
+                            ],
+                        })
+                    )
+                );
+                yield* Deferred.await(uploaded);
+                // Upload preparation is outside the action transaction. An expired orphan
+                // may legitimately disappear before the action establishes its references.
+                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(1);
+                yield* Deferred.succeed(finish, undefined);
+                const collectedFirst = yield* Fiber.join(action);
+                expect(Result.isFailure(collectedFirst)).toBe(true);
+                expect((yield* backend.loadSubset({ objectType: "Asset" })).rows).toEqual([]);
+                expect(yield* blobs.metadata("photo")).toBeUndefined();
+                // No successful receipt was recorded: the same invocation can upload again.
+                const committedFirst = yield* backend.invoke({
+                    id: "action",
+                    name: "create",
+                    parameters: { id: "asset", photo: { id: "photo" } },
+                    attachmentUploads: [
+                        { attachment: { id: "photo" }, blob: new Blob(["keep"]), target: {} },
+                    ],
+                });
+                expect(committedFirst.outcome).toBe("committed");
+                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(0);
+                expect(values.size).toBe(1);
+                expect((yield* blobs.read("photo"))?.size).toBe(4);
+            })
+        )
     );
 });

@@ -81,3 +81,22 @@ describe("Durable Object ontology", () => {
         expect(rows).toEqual([]);
     });
 });
+
+it("Alchemy uses native transactional attachment references and collects only unreferenced authoritative bytes", async () => {
+    const { ALCHEMY_ONTOLOGY } = env as unknown as {
+        ALCHEMY_ONTOLOGY: DurableObjectNamespace<import("./alchemy.js").AlchemyOntologyTest>;
+    };
+    const result = await ALCHEMY_ONTOLOGY.get(ALCHEMY_ONTOLOGY.newUniqueId()).runRetention();
+    expect(result).toEqual({
+        conflict: true,
+        rangeText: "bytes",
+        emptyText: "",
+        protectedCount: 0,
+        text: "shared bytes",
+        stillShared: 0,
+        collected: 1,
+        missing: true,
+        rejected: true,
+        orphanCount: 1,
+    });
+});

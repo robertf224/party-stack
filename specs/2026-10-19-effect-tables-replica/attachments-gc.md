@@ -96,10 +96,33 @@ stream the returned file-backed Blob inside that scope. `read(id)` materializes 
 standalone Blob before releasing the root, so a caller can safely consume it after
 the call returns.
 
+## Action execution and collection
+
+Action/object writes validate attachment metadata and establish reverse references
+inside the same Tables transaction as the application rows. Authoritative storage
+rejects references whose byte generation is unavailable; replica storage may keep
+remote identities without a local byte cache. GC checks references and removes
+orphan metadata transactionally before scheduling external byte deletion. If the
+action commits first, its references prevent GC. If GC commits first, the action
+fails instead of recreating a placeholder and committing a dangling reference.
+Uploads before the action transaction use the ordinary orphan grace period.
+No additional in-memory GC lock or persistent temporary upload roots are needed.
+SQLite and IndexedDB serialize writers; SQL Tables already serializes PostgreSQL
+transactions across connections sharing a prefix with a transaction advisory lock.
+
+The optional Durable Object Alchemy integration composes the same owned backend,
+SQLite Tables and native BlobStorage with Alchemy's R2 client. The example's DO
+alarm schedules bounded collection; it does not replace the shared GC algorithm.
+An existing alarm is preserved across constructor runs. Native R2 writes stream
+with a known length; the Blob read boundary currently materializes the response.
+
 ## Remaining attachment migration
 
-- Replace SQLite's existing inline/external attachment coordinator with this core,
-  and have Durable Object/R2 composition use that same authoritative binding.
+- Replace SQLite's existing inline/external attachment coordinator and the default
+  Durable Object construction with this core. The optional Alchemy construction
+  already uses the native authoritative binding. Validate cloud deployment and
+  isolate-crash recovery; owner liveness remains explicit, and unknown owners
+  stay protected.
 - Stream uploads and downloads over the Effect RPC message channel, with bounded
   backpressure and cancellation. Current helper RPCs still transfer a whole byte
   payload. The scoped read capability is preparation, not completion of this port.

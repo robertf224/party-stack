@@ -230,3 +230,5 @@ export default {
         return new Response("ok");
     },
 };
+
+export { AlchemyOntologyTest } from "./alchemy.js";

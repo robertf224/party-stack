@@ -265,6 +265,8 @@ export const make = Effect.fnUntraced(function* (options: { readonly prefix?: st
                         Effect.gen(function* () {
                             // Serialize across Tables instances sharing this PostgreSQL namespace.
                             // SQLite drivers use a writer transaction for the same guarantee.
+                            // TODO: serializable PG transactions/retries and journal publication
+                            // ordering should replace this coarse lock for concurrent workloads.
                             if (dialect === "pg")
                                 yield* run(sql`SELECT pg_advisory_xact_lock(hashtext(${prefix}))`);
                             active = true;
