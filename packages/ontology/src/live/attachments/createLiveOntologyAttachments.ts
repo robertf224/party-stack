@@ -2,9 +2,9 @@ import { invariant } from "@bobbyfidz/panic";
 import { ImageMediaTypeOptions } from "@party-stack/ontology-spec/constants";
 import { getTargetValueType } from "@party-stack/ontology-spec/utils";
 import * as v from "@party-stack/ontology-spec/values";
+import type { BlobManager } from "../../runtime/blobs/types.js";
 import type { OntologyAttachmentsAdapter } from "../OntologyBackendAdapter.js";
 import type { AttachmentMetadata, AttachmentMetadataSelection, PartialAttachmentMetadata } from "./types.js";
-import type { BlobManager } from "@party-stack/blobs";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { OntologyAttachmentCreateTarget } from "@party-stack/ontology-spec/utils";
 

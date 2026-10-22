@@ -1,4 +1,5 @@
 import { Context, Effect, Layer } from "effect";
+import { collectObjectAttachments, type BlobStorageService } from "../blobs/index.js";
 import {
     codecError,
     configurationError,
@@ -66,7 +67,11 @@ const convert = <A>(direction: "encode" | "decode", f: () => A) =>
 const checkQuery = (f: () => void) => Effect.try({ try: f, catch: (cause) => queryError("query", cause) });
 
 /** Wrap the ported engine; native transaction ownership stays with its driver. */
-export function makeOntologyStorage(model: StorageModel, tables: TablesService): OntologyStorageService {
+export function makeOntologyStorage(
+    model: StorageModel,
+    tables: TablesService,
+    options?: { readonly blobs?: BlobStorageService }
+): OntologyStorageService {
     const compiled = compiledModel(model);
     const identity = Symbol();
     const wrap = (tx: Transaction, writable: boolean): StorageTransaction => {
@@ -131,12 +136,29 @@ export function makeOntologyStorage(model: StorageModel, tables: TablesService):
                     );
                 const input = yield* key(object, primaryKey);
                 yield* guard;
+                if (options?.blobs)
+                    yield* options.blobs
+                        .in(tx)
+                        .retain(
+                            JSON.stringify(["object", model.namespace, object.name, input]),
+                            collectObjectAttachments(compiled.ir, object.name, encoded).map(
+                                (entry) => entry.attachment.id
+                            ),
+                            { bytes: false }
+                        )
+                        .pipe(Effect.mapError((cause) => codecError("encode", cause)));
                 yield* tx.put(definition.table, input, encoded);
             }),
             delete: Effect.fnUntraced(function* <A, K extends Key>(object: ObjectStore<A, K>, input: K) {
                 const definition = yield* store(object);
                 yield* guard;
-                yield* tx.delete(definition.table, yield* key(object, input));
+                const selected = yield* key(object, input);
+                if (options?.blobs)
+                    yield* options.blobs
+                        .in(tx)
+                        .release(JSON.stringify(["object", model.namespace, object.name, selected]))
+                        .pipe(Effect.mapError((cause) => codecError("encode", cause)));
+                yield* tx.delete(definition.table, selected);
             }),
             ensureIndex: Effect.fnUntraced(function* <A>(object: ObjectStore<A>, index: Index) {
                 const definition = yield* store(object);

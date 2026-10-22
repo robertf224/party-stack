@@ -35,6 +35,9 @@ export const BlobRecordSchema = Schema.Struct({
     createdAt: Schema.Number,
     updatedAt: Schema.Number,
     lastAccessedAt: Schema.Number,
+    /** Derived from reverse references; never an independently incremented count. */
+    unreferencedAt: Schema.optional(Schema.Number),
+    bytesRetained: Schema.optional(Schema.Boolean),
 });
 export type BlobRecord = typeof BlobRecordSchema.Type;
 

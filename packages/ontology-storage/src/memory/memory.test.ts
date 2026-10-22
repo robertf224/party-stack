@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { expect, test } from "vitest";
 import { Table } from "../table-api.js";
-import { runContract } from "../testing/index.js";
+import { runContract, runBlobContract } from "../testing/index.js";
 import { runOntologyContract } from "../testing/ontology.js";
 import * as Memory from "./tables.js";
 
@@ -11,6 +11,7 @@ test("Memory Tables passes the same transactional/query/overlay contract", async
             const tables = yield* Memory.make();
             yield* runContract(tables);
             yield* runOntologyContract(tables);
+            yield* runBlobContract(tables);
         })
     );
 });

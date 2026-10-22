@@ -4,8 +4,8 @@ import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createLiveOntology } from "../LiveOntology.js";
 import { createLiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
+import type { BlobManager } from "../../runtime/blobs/types.js";
 import type { OntologyAttachmentsAdapter, OntologyBackendAdapter } from "../index.js";
-import type { BlobManager } from "@party-stack/blobs";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
@@ -240,9 +240,9 @@ describe("createLiveOntologyAttachments", () => {
         expect(creation.attachment.id).toBe("attachment-1");
         expect(creation.isMaterialized).toBeDefined();
         await materializationStartedSignal;
-        await expect(runtime.blobBytes.read("attachment-1").then((blob) => blob.text())).resolves.toBe(
-            "hello"
-        );
+        await expect(
+            ontology.attachments.blob(creation.attachment).then((blob) => blob.text())
+        ).resolves.toBe("hello");
         expect(materialized).toEqual([]);
         finishMaterialization?.();
         await creation.isMaterialized;
@@ -290,7 +290,7 @@ describe("createLiveOntologyAttachments", () => {
         expect(creation.attachment.id).toHaveLength(36);
         expect(creation.isMaterialized).toBeUndefined();
         await expect(
-            runtime.blobBytes.read(creation.attachment.id).then((blob) => blob.text())
+            ontology.attachments.blob(creation.attachment).then((blob) => blob.text())
         ).resolves.toBe("hello");
     });
 
@@ -338,7 +338,7 @@ describe("createLiveOntologyAttachments", () => {
 
         expect(creation.isMaterialized).toBeUndefined();
         await expect(
-            runtime.blobBytes.read(creation.attachment.id).then((blob) => blob.text())
+            ontology.attachments.blob(creation.attachment).then((blob) => blob.text())
         ).resolves.toBe("hello");
     });
 

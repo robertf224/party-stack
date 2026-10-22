@@ -1,4 +1,4 @@
-import type { BlobDimensions } from "@party-stack/blobs";
+import type { BlobDimensions } from "../../runtime/blobs/types.js";
 import type { ImageMediaType as GeneratedImageMediaType } from "@party-stack/ontology-spec";
 import type { attachment } from "@party-stack/ontology-spec/values";
 

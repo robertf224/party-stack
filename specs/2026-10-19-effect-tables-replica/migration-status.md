@@ -65,12 +65,13 @@ covered in [native-actions.md](./native-actions.md).
 
 ## What remains, in recommended order
 
-1. **Blob integration and private records.** Consolidate attachment facades onto
-   native storage, retire legacy blob paths, add explicit offline byte pins and
-   identity/alias GC, and preserve pending-action dependencies across hosts. Receipt
-   ID mappings now run after durable receipt persistence; integration can make the
-   metadata writes one transaction. Move connection/installation records to their
-   own ontology definitions and finish explicit per-purpose browser key consent.
+1. **Remaining blob integration and private records.** Native object/outbox references,
+   identity/alias GC, scoped reads and transactional receipt mappings are implemented;
+   the standalone blobs package and metadata collection are removed. Next port the
+   authoritative SQLite/R2 coordinator and streamed helper transfers onto this core.
+   Public offline byte policy waits for offline query demand. Move connection and
+   installation records to their own ontology definitions and finish explicit
+   per-purpose browser key consent. See [attachments-gc.md](./attachments-gc.md).
 2. **Platform ownership.** Finish scoped Node/Expo construction and credential/key
    composition. Private connection/installation services still use coordinated
    per-context ownership. SharedWorker application data ownership is already live;
@@ -138,3 +139,23 @@ app-shell navigation or production-safe untrusted remote access.
 
 Historical full workspace checkpoint on October 20: 141/141 tasks passed. This is
 not evidence that subsequent edits passed; the final checkpoint below supersedes it.
+
+## Attachment storage checkpoint — October 22
+
+Removed the legacy blobs package and unused TanStack metadata collection. Object
+and Replica row writes maintain schema-derived attachment reverse references in
+transaction, independently from outbox/reader byte pins. Indexed GC now removes
+unreferenced metadata and staged uploads after the configurable orphan grace
+(default one hour), while replica byte eviction preserves referenced identities.
+Authoritative bindings only collect unreferenced orphans. Receipt mappings commit
+with acknowledgement; a local binding conflict preserves the receipt for recovery
+without redispatch. Scoped reads protect file-backed content through consumption.
+Drafts remain ordinary application object types; no draft-specific API was added.
+
+Verification: full workspace CI **138/138 tasks**, issue-tracker Chromium
+acceptance **4/4 cases**. There are three fewer tasks because the standalone blobs
+package was removed. Storage has 32 tests, Replica 69 and ontology 61. Shared blob
+conformance now checks schema-derived draft references and transaction rollback on
+Memory, SQL and IndexedDB drivers. Streaming helper transfers and authoritative
+SQLite/R2 consolidation are still pending; this checkpoint does not claim those
+ports are complete.

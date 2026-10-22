@@ -12,7 +12,11 @@ import {
     OntologyStorageError,
     ConfigurationError,
 } from "@party-stack/ontology-storage";
-import { collectActionAttachments, type BlobStorageService } from "@party-stack/ontology-storage/blobs";
+import {
+    collectObjectAttachments,
+    collectActionAttachments,
+    type BlobStorageService,
+} from "@party-stack/ontology-storage/blobs";
 import {
     overlay,
     getVisible,
@@ -345,6 +349,28 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             )
         );
     }
+    const blobGroup = (type: string, kind: "base" | "overlay") =>
+        JSON.stringify(["replica-row", options.namespace, kind, type]);
+    const retainRowBlobs = (
+        tx: Transaction,
+        type: string,
+        key: Key,
+        value: ObjectValue | undefined,
+        kind: "base" | "overlay"
+    ) => {
+        if (!options.blobs) return Effect.void;
+        const group = blobGroup(type, kind);
+        const owner = JSON.stringify([group, key]);
+        return value === undefined
+            ? options.blobs.in(tx).release(owner)
+            : options.blobs.in(tx).retain(
+                  owner,
+                  collectObjectAttachments(options.ir, type, value).map((entry) => entry.attachment.id),
+                  { bytes: false, group }
+              );
+    };
+    const clearRowBlobs = (tx: Transaction, type: string, kind: "base" | "overlay") =>
+        options.blobs?.in(tx).releaseGroup(blobGroup(type, kind)) ?? Effect.void;
     const outbox = Table.make<PendingAction>({ name: name("outbox") });
     const completed = Table.make<PendingAction>({ name: name("completed") });
     // A deduplicated invocation can return a receipt older than our current head.
@@ -640,6 +666,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         if (entry.optimistic)
             for (const write of staged.values()) {
                 const v = views.get(write.type)!;
+                yield* retainRowBlobs(tx, write.type, write.key, write.value, "overlay");
                 if (write.value === undefined) yield* deleteVisible(tx, v, write.key);
                 else yield* putVisible(tx, v, write.key, write.value);
             }
@@ -688,7 +715,10 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         if (!retry && options.outbox?.failureStrategy === "discard-all") yield* discardFailedTail(tx);
     });
     const rebase = Effect.fn("Replica.rebase")(function* (tx: Transaction) {
-        for (const v of views.values()) yield* tx.clear(v.overrides);
+        for (const [type, v] of views) {
+            yield* clearRowBlobs(tx, type, "overlay");
+            yield* tx.clear(v.overrides);
+        }
         let blocked = false;
         for (const entry of yield* pendingIn(tx)) {
             if (blocked || entry.state === "blocked") {
@@ -832,9 +862,13 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         return (tx: Transaction) =>
             Effect.gen(function* () {
                 // Only an unfiltered complete snapshot can prove arbitrary cached keys were removed.
-                if (snapshot.complete && isWholeCollection(subset.query)) yield* tx.clear(v.base);
+                if (snapshot.complete && isWholeCollection(subset.query)) {
+                    yield* clearRowBlobs(tx, subset.objectType, "base");
+                    yield* tx.clear(v.base);
+                }
                 for (const [key, value] of repaired) {
                     if (value !== undefined) continue;
+                    yield* retainRowBlobs(tx, subset.objectType, key, undefined, "base");
                     yield* tx.delete(v.base, key);
                     yield* tx.delete(retention, identity(subset.objectType, key));
                 }
@@ -844,6 +878,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 ]) {
                     if (row.value[definitions.get(subset.objectType)!.primaryKey] !== row.key)
                         return yield* fault("Rejected", "Snapshot key does not match its row.");
+                    yield* retainRowBlobs(tx, subset.objectType, row.key, row.value, "base");
                     yield* tx.put(v.base, row.key, row.value);
                     yield* tx.put(retention, identity(subset.objectType, row.key), {
                         objectType: subset.objectType,
@@ -923,6 +958,13 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                         change.key
                                     )
                                         return yield* fault("Rejected", "Change key does not match its row.");
+                                    yield* retainRowBlobs(
+                                        tx,
+                                        change.objectType,
+                                        change.key,
+                                        change.value,
+                                        "base"
+                                    );
                                     yield* tx.put(v.base, change.key, change.value);
                                     yield* tx.put(retention, identity(change.objectType, change.key), {
                                         objectType: change.objectType,
@@ -930,6 +972,13 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                         accessedAt: yield* Clock.currentTimeMillis,
                                     });
                                 } else {
+                                    yield* retainRowBlobs(
+                                        tx,
+                                        change.objectType,
+                                        change.key,
+                                        undefined,
+                                        "base"
+                                    );
                                     yield* tx.delete(v.base, change.key);
                                     yield* tx.delete(retention, identity(change.objectType, change.key));
                                 }
@@ -1027,6 +1076,23 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         );
         yield* notify;
     });
+    const bindReceiptBlobs = (tx: Transaction, receipt: ActionReceipt) =>
+        options.blobs
+            ? Effect.forEach(
+                  receipt.attachmentIdMappings ?? [],
+                  (mapping) => options.blobs!.in(tx).bindRemoteId(mapping.localId, mapping.remoteId),
+                  { discard: true }
+              )
+            : Effect.void;
+    const saveReceipt = (entry: PendingAction, receipt: ActionReceipt, bindings: boolean) =>
+        tables.transaction((tx) =>
+            Effect.gen(function* () {
+                const done = yield* tx.get(completed, entry.invocation.id);
+                if (done) yield* tx.put(completed, entry.invocation.id, { ...done, receipt });
+                else yield* tx.put(outbox, entry.invocation.id, { ...entry, state: "acknowledged", receipt });
+                if (bindings) yield* bindReceiptBlobs(tx, receipt);
+            })
+        );
     const sync = Effect.fn("Replica.sync", { root: true })(function* () {
         yield* open;
         yield* service.collectClientGarbage;
@@ -1055,7 +1121,10 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             )
         );
         for (const entry of yield* boundary(tables.read(pendingIn)))
-            if (entry.receipt) yield* options.onReceipt?.(entry.receipt) ?? Effect.void;
+            if (entry.receipt) {
+                yield* boundary(tables.transaction((tx) => bindReceiptBlobs(tx, entry.receipt!)));
+                yield* options.onReceipt?.(entry.receipt) ?? Effect.void;
+            }
         yield* pull();
         // On restart, settle known remote commits before refreshing source snapshots.
         // Otherwise those snapshots can contain our edit while its optimistic
@@ -1197,26 +1266,18 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 receipt = result.success;
                 if (receipt.invocationId !== head.invocation.id)
                     return yield* fault("Rejected", "Backend returned a receipt for another invocation.");
+                // Normally mappings and acknowledgement share one commit. If a local mapping
+                // conflicts, preserve the remote evidence separately so recovery never re-invokes.
                 yield* boundary(
-                    tables.transaction((tx) =>
-                        Effect.gen(function* () {
-                            // A second context may have consumed the journal while invoke was
-                            // in flight. Its completed entry must not be resurrected here.
-                            const done = yield* tx.get(completed, head.invocation.id);
-                            if (done) {
-                                yield* tx.put(completed, head.invocation.id, { ...done, receipt });
-                                return;
-                            }
-                            yield* tx.put(outbox, head.invocation.id, {
-                                ...head,
-                                state: "acknowledged",
-                                receipt,
-                            });
-                        })
+                    saveReceipt(head, receipt, true).pipe(
+                        Effect.catch((error) =>
+                            saveReceipt(head, receipt!, false).pipe(Effect.andThen(Effect.fail(error)))
+                        )
                     )
                 );
                 yield* notify;
             }
+            yield* boundary(tables.transaction((tx) => bindReceiptBlobs(tx, receipt!)));
             yield* options.onReceipt?.(receipt) ?? Effect.void;
             if (receipt.cursor && backend.changes) {
                 yield* pull();
@@ -2241,6 +2302,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                 record.accessedAt > now - age
                             )
                                 continue;
+                            yield* retainRowBlobs(tx, record.objectType, record.key, undefined, "base");
                             yield* tx.delete(v.base, record.key);
                             yield* tx.delete(retention, row.key);
                             for (const cached of yield* tx.loadSubset(coverage, {

@@ -2,7 +2,6 @@
 "@party-stack/coordination": minor
 "@party-stack/runtime": minor
 "@party-stack/ontology-replica": minor
-"@party-stack/blobs": minor
 "@party-stack/foundry-object-set-watcher": minor
 "@party-stack/foundry-ontology": minor
 "@party-stack/salesforce-ontology": minor

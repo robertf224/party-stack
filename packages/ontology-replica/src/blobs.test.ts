@@ -2,7 +2,7 @@ import { BackendError, type OntologyBackendService } from "@party-stack/ontology
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Effect, Result, Scope, Exit } from "effect";
+import { Deferred, Fiber, Effect, Result, Scope, Exit } from "effect";
 import { expect, test } from "vitest";
 import { makeReplica } from "./index.js";
 
@@ -148,6 +148,171 @@ test("editing and removing pending actions atomically replace and release attach
                 yield* replica.remove("action");
                 expect(yield* blobs.collectGarbage({ olderThanMs: 0 })).toBe(1);
                 expect(values.size).toBe(0);
+            })
+        )
+    );
+});
+
+test("a mapping race preserves the receipt and recovers without another remote invocation", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const values = new Map<string, Blob>();
+                const reading = yield* Deferred.make<void>();
+                const finish = yield* Deferred.make<void>();
+                const blobs = yield* makeBlobStorage({
+                    namespace: "mapping-race",
+                    tables,
+                    bytes: {
+                        read: (key) =>
+                            Deferred.succeed(reading, undefined).pipe(
+                                Effect.andThen(Deferred.await(finish)),
+                                Effect.as(values.get(key))
+                            ),
+                        write: (key, value) =>
+                            Effect.sync(() => {
+                                values.set(key, value);
+                            }),
+                        delete: (key) =>
+                            Effect.sync(() => {
+                                values.delete(key);
+                            }),
+                    },
+                });
+                yield* blobs.stage("local", new Blob(["uploaded"]));
+                yield* blobs.cache("remote", new Blob(["remote"]));
+                const reader = yield* Effect.forkScoped(blobs.read("remote"));
+                yield* Deferred.await(reading);
+                let calls = 0;
+                const backend: OntologyBackendService = {
+                    name: "mapping",
+                    sourceId: "mapping",
+                    supportsIdempotency: false,
+                    loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                    queryFunction: () => Effect.void,
+                    invoke: (invocation) =>
+                        Effect.sync(() => {
+                            calls++;
+                            return {
+                                invocationId: invocation.id,
+                                outcome: "committed" as const,
+                                attachmentIdMappings: [{ localId: "local", remoteId: "remote" }],
+                            };
+                        }),
+                };
+                const settings = {
+                    namespace: "mapping-race",
+                    ir,
+                    tables,
+                    blobs,
+                    backend,
+                    execute: () => Effect.void,
+                    startSync: false,
+                };
+                const owner = yield* Scope.make();
+                const first = yield* Scope.provide(makeReplica(settings), owner);
+                yield* first.enqueue({ id: "action", name: "upload", parameters: { file: { id: "local" } } });
+                expect(Result.isFailure(yield* Effect.result(first.syncOnce))).toBe(true);
+                expect((yield* first.pending)[0]).toMatchObject({
+                    state: "acknowledged",
+                    attempts: 1,
+                    receipt: {
+                        outcome: "committed",
+                        attachmentIdMappings: [{ localId: "local", remoteId: "remote" }],
+                    },
+                });
+                yield* Scope.close(owner, Exit.void);
+                yield* Deferred.succeed(finish, undefined);
+                yield* Fiber.join(reader);
+                const reopened = yield* makeReplica(settings);
+                yield* reopened.syncOnce;
+                expect(calls).toBe(1);
+                expect(yield* reopened.pending).toEqual([]);
+                expect((yield* blobs.metadata("remote"))?.id).toBe("local");
+            })
+        )
+    );
+});
+
+test("replica snapshots and optimistic rows retain attachment identities and release them on removal", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const values = new Map<string, Blob>();
+                const blobs = yield* makeBlobStorage({
+                    namespace: "row-retention",
+                    tables,
+                    bytes: {
+                        read: (key) => Effect.succeed(values.get(key)),
+                        write: (key, value) =>
+                            Effect.sync(() => {
+                                values.set(key, value);
+                            }),
+                        delete: (key) =>
+                            Effect.sync(() => {
+                                values.delete(key);
+                            }),
+                    },
+                });
+                const definition: OntologyIR = {
+                    ...ir,
+                    objectTypes: [
+                        {
+                            name: "Document",
+                            displayName: "Document",
+                            pluralDisplayName: "Documents",
+                            primaryKey: "id",
+                            properties: [
+                                { name: "id", displayName: "ID", type: o.string({}) },
+                                { name: "file", displayName: "File", type: o.attachment({}) },
+                            ],
+                        },
+                    ],
+                };
+                let rows = [{ key: "doc", value: { id: "doc", file: { id: "cached" } } }];
+                const replica = yield* makeReplica({
+                    namespace: "row-retention",
+                    ir: definition,
+                    tables,
+                    blobs,
+                    startSync: false,
+                    backend: {
+                        name: "rows",
+                        sourceId: "rows",
+                        supportsIdempotency: false,
+                        loadSubset: () => Effect.succeed({ rows, complete: true }),
+                        queryFunction: () => Effect.void,
+                        invoke: () => Effect.die("offline"),
+                    },
+                    execute: (tx, invocation) =>
+                        tx.put("Document", { id: "optimistic", file: invocation.parameters.file }),
+                });
+                let owner = yield* Scope.make();
+                yield* Scope.provide(replica.demand({ objectType: "Document" }), owner);
+                yield* replica.syncOnce;
+                yield* blobs.cache("cached", new Blob(["cache"]));
+                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(1);
+                expect(yield* blobs.metadata("cached")).toBeDefined();
+                rows = [];
+                yield* Scope.close(owner, Exit.void);
+                owner = yield* Scope.make();
+                yield* Scope.provide(replica.demand({ objectType: "Document" }), owner);
+                yield* replica.syncOnce;
+                // A complete replacement snapshot removes the old row's reverse references.
+                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(1);
+                expect(yield* blobs.metadata("cached")).toBeUndefined();
+                yield* Scope.close(owner, Exit.void);
+                yield* blobs.stage("local", new Blob(["draft"]));
+                yield* replica.enqueue({
+                    id: "action",
+                    name: "upload",
+                    parameters: { file: { id: "local" } },
+                });
+                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(0);
+                yield* replica.remove("action");
+                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(1);
             })
         )
     );

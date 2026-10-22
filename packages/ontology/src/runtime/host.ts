@@ -1,14 +1,15 @@
-import { createBlobManager, type BlobManager } from "@party-stack/blobs";
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
 import { makeReplica, type ReplicaOptions, type ReplicaService } from "@party-stack/ontology-replica";
 import { Runtime } from "@party-stack/runtime";
 import { Effect, Queue, Scope, Stream } from "effect";
 import { prepareActionParameters } from "../live/actions/prepareActionParameters.js";
 import { unsupportedOntologyAttachmentsAdapter } from "../live/attachments/unsupportedOntologyAttachmentsAdapter.js";
+import { createBlobManager } from "./blobs/createBlobManager.js";
 import { observeReplicaRows } from "./hostQuery.js";
 import { executeTransactionMutator } from "./transactions.js";
 import type { LiveOntologyWrites } from "../live/LiveOntology.js";
 import type { OntologyBackendAdapter, OntologyAttachmentsAdapter } from "../live/OntologyBackendAdapter.js";
+import type { BlobManager } from "./blobs/types.js";
 import type { ConnectionMonitor } from "@party-stack/connections";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { attachment } from "@party-stack/ontology-spec/values";
@@ -161,13 +162,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
                     return { ...receipt, attachmentIdMappings: mappings.length ? mappings : undefined };
                 }),
         },
-        blobs: blobManager.storage ? yield* attempt(() => blobManager.storage!) : undefined,
-        onReceipt: (receipt) =>
-            Effect.forEach(
-                receipt.attachmentIdMappings ?? [],
-                (mapping) => attempt(() => blobManager.bindRemoteId(mapping.localId, mapping.remoteId)),
-                { discard: true }
-            ),
+        blobs: yield* attempt(() => blobManager.storage),
         execute: (tx, invocation, settings) =>
             executeTransactionMutator({
                 ir,

@@ -253,7 +253,7 @@ test("a scoped replica host runs without application collections and outlives in
         expect(await Effect.runPromise(host.replica.pending)).toEqual([]);
         await Effect.runPromise(Scope.close(owner, Exit.void));
         expect(released).toHaveBeenCalledOnce();
-        expect(host.blobManager.collection.status).toBe("cleaned-up");
+        await expect(host.blobManager.read("local")).rejects.toThrow("closed");
         await expect(Effect.runPromise(host.replica.pending)).rejects.toMatchObject({ kind: "Rejected" });
     } finally {
         await Effect.runPromise(Scope.close(firstSession, Exit.void));

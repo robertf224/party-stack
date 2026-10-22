@@ -1,5 +1,8 @@
+import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { Effect, Result } from "effect";
 import { makeBlobStorage } from "../blobs/index.js";
+import { makeStorageModel } from "../ontology/model.js";
+import { makeOntologyStorage } from "../ontology/storage.js";
 import type { TablesService } from "../tables.js";
 
 /** Exercise metadata/root atomicity against the driver's real transaction implementation. */
@@ -46,6 +49,49 @@ export const runBlobContract = Effect.fnUntraced(function* (tables: TablesServic
             const value = yield* blobs.read("local");
             if (!value || (yield* Effect.promise(() => value.text())) !== "refetched")
                 throw new Error("Alias cache refill");
+
+            const ir: OntologyIR = {
+                types: [],
+                linkTypes: [],
+                actionTypes: [],
+                queryFunctionTypes: [],
+                objectTypes: [
+                    {
+                        name: "Draft",
+                        displayName: "Draft",
+                        pluralDisplayName: "Drafts",
+                        primaryKey: "id",
+                        properties: [
+                            { name: "id", displayName: "ID", type: o.string({}) },
+                            {
+                                name: "files",
+                                displayName: "Files",
+                                type: o.list({ elementType: o.attachment({}) }),
+                            },
+                        ],
+                    },
+                ],
+            };
+            const model = yield* makeStorageModel({ namespace: "blob-drafts", ir });
+            const storage = makeOntologyStorage(model, tables, { blobs });
+            const drafts = model.objects.Draft!;
+            yield* blobs.stage("draft-file", new Blob(["draft"]));
+            yield* storage.put(drafts, { id: "draft", files: [{ id: "draft-file" }] });
+            if ((yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })) !== 1)
+                throw new Error("Only the unreferenced remote cache may be collected");
+            if (!(yield* blobs.metadata("draft-file"))) throw new Error("Draft identity retention");
+            const rejected = yield* Effect.result(
+                storage.transaction((tx) =>
+                    tx.delete(drafts, "draft").pipe(Effect.andThen(Effect.fail("rejected delete")))
+                )
+            );
+            if (!Result.isFailure(rejected)) throw new Error("Expected object rollback");
+            if ((yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })) !== 0)
+                throw new Error("Object and attachment roots must roll back together");
+            yield* storage.put(drafts, { id: "draft", files: [] });
+            if ((yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })) !== 1)
+                throw new Error("Removing the last object reference releases staged bytes");
+            if (yield* blobs.metadata("draft-file")) throw new Error("Orphan identity cleanup");
         })
     );
 });

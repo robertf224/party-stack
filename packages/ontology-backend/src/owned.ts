@@ -40,6 +40,7 @@ export interface OwnedBackendOptions {
     readonly namespace: string;
     readonly ir: OntologyIR;
     readonly tables: TablesService;
+    readonly blobs?: import("@party-stack/ontology-storage/blobs").BlobStorageService;
     /** A trusted principal binding; invocation IDs are deduplicated within this authority scope. */
     readonly invocationScope?: string;
     readonly clients?: ClientPolicy;
@@ -111,7 +112,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     const model = yield* boundary(
         makeStorageModel({ namespace: options.namespace, ir: options.ir, schemas: objectSchemas })
     );
-    const storage = makeOntologyStorage(model, options.tables);
+    const storage = makeOntologyStorage(model, options.tables, { blobs: options.blobs });
     const tables = options.tables;
     const maxCommits = options.history?.maxCommits ?? 10_000;
     if (!Number.isSafeInteger(maxCommits) || maxCommits < 1)

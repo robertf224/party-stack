@@ -1,9 +1,9 @@
 import { describe, expect, expectTypeOf, it, vi } from "vite-plus/test";
 import { createLiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
+import type { BlobManager } from "../../runtime/blobs/types.js";
 import type { OntologyAttachmentsAdapter } from "../OntologyBackendAdapter.js";
 import type { LiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
 import type { AttachmentMetadataField } from "./types.js";
-import type { BlobManager } from "@party-stack/blobs";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type * as v from "@party-stack/ontology-spec/values";
 

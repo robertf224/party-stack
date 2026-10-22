@@ -1,7 +1,6 @@
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { MemoryBlobBytesStore, SingleProcessCoordination, type RuntimeAdapter } from "@party-stack/runtime";
 import { disposeRuntimeEffects } from "@party-stack/runtime";
-import { queryOnce } from "@tanstack/db";
 import { Effect } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { createBlobManager } from "./createBlobManager.js";
@@ -21,9 +20,7 @@ test("native blob facade loads metadata on demand and preserves remote aliases a
     const manager = createBlobManager({ runtime, remote: { read }, gcTime: Infinity });
     try {
         await manager.ready;
-        expect(manager.collection.size).toBe(0);
         await manager.stage("local", new File(["staged"], "file.txt", { type: "text/plain" }));
-        expect(manager.collection.size).toBe(0);
         expect(await manager.metadata("local")).toMatchObject({ id: "local", size: 6, name: "file.txt" });
         expect(read).not.toHaveBeenCalled();
         await manager.bindRemoteId("local", "remote");
@@ -33,7 +30,7 @@ test("native blob facade loads metadata on demand and preserves remote aliases a
         expect(bytes.blobs.size).toBe(0);
         expect(await (await manager.read("local")).text()).toBe("refetched");
         expect(read).toHaveBeenCalledWith("remote", expect.anything());
-        const records = await queryOnce((q) => q.from({ blob: manager.collection }));
+        const records = (await Effect.runPromise(storage.records())).map((row) => row.value);
         expect(records).toMatchObject([{ id: "local", remoteId: "remote" }]);
         await Effect.runPromise(tables.transaction((tx) => storage.in(tx).retain("pending", ["local"])));
         bytes.blobs.clear();
@@ -42,7 +39,6 @@ test("native blob facade loads metadata on demand and preserves remote aliases a
         await Effect.runPromise(tables.transaction((tx) => storage.in(tx).release("pending")));
     } finally {
         await manager.cleanup();
-        expect(manager.collection.status).toBe("cleaned-up");
         await disposeRuntimeEffects(runtime);
         await coordination.close();
     }

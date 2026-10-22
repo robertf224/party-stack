@@ -1,8 +1,8 @@
-import { createBlobManager } from "@party-stack/blobs";
 import { o } from "@party-stack/ontology-spec";
 import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
+import { createBlobManager } from "../../runtime/blobs/createBlobManager.js";
 import { prepareActionParameters } from "./prepareActionParameters.js";
 import type { OntologyBackendAdapter } from "../OntologyBackendAdapter.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -149,7 +149,9 @@ describe("prepareActionParameters", () => {
                 remoteId: "remote-id",
             },
         ]);
-        expect(blobManager.collection.get("local-id")?.remoteId).toBeUndefined();
+        expect(
+            (await Effect.runPromise((await blobManager.storage).metadata("local-id")))?.remoteId
+        ).toBeUndefined();
 
         await blobManager.stage("upload-id", new Blob(["upload"]));
         const uploadAdapter: OntologyBackendAdapter = {

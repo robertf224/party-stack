@@ -1,5 +1,5 @@
 import { imageDimensionsFromStream } from "image-dimensions";
-import type { BlobDimensions } from "../types.js";
+import type { BlobDimensions } from "./types.js";
 
 export async function measureBlobDimensions(blob: Blob): Promise<BlobDimensions> {
     const dimensions = await imageDimensionsFromStream(blob.stream());

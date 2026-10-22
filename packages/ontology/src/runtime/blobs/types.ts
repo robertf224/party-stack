@@ -1,44 +1,11 @@
 import type { RuntimeAdapter } from "@party-stack/runtime";
-import type { Collection } from "@tanstack/db";
 import type { Scope } from "effect";
-
-export type BlobState = "staged" | "persisted" | "cached";
-
-export type BlobOperation =
-    | {
-          kind: "stage" | "cache" | "purge";
-          status: "pending";
-          operationId: string;
-      }
-    | {
-          kind: "stage" | "cache" | "purge";
-          status: "failed";
-          operationId: string;
-          error: string;
-      };
 
 export interface PartialBlobMetadata {
     size?: number;
     type?: string;
     name?: string | null;
     dimensions?: BlobDimensions | null;
-}
-
-export interface BlobMetadataRecord extends PartialBlobMetadata {
-    id: string;
-    remoteId?: string;
-    state?: BlobState;
-    operation?: BlobOperation;
-    lastAccessedAt?: number;
-    createdAt: number;
-    updatedAt: number;
-}
-
-export interface BlobRef {
-    id: string;
-    type: string;
-    size: number;
-    name?: string;
 }
 
 export interface BlobDimensions {
@@ -64,8 +31,7 @@ export interface BlobRemoteSource {
 
 export interface BlobManager {
     /** Native transactional storage for composition with a replica outbox. */
-    readonly storage?: Promise<import("@party-stack/ontology-storage/blobs").BlobStorageService>;
-    readonly collection: Collection<BlobMetadataRecord, string>;
+    readonly storage: Promise<import("@party-stack/ontology-storage/blobs").BlobStorageService>;
     /** Resolves once blob metadata persistence has finished starting. */
     readonly ready: Promise<void>;
     stage: (id: string, blob: Blob | File) => Promise<void>;

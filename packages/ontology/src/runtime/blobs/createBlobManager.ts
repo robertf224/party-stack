@@ -5,20 +5,13 @@ import {
     type BlobRecord,
 } from "@party-stack/ontology-storage/blobs";
 import { isCoordinationHost } from "@party-stack/runtime";
-import { Runtime, runtimeEffects, persistedCollectionOptions, storageSubset } from "@party-stack/runtime";
-import { createCollection, type CollectionConfig } from "@tanstack/db";
+import { Runtime, runtimeEffects } from "@party-stack/runtime";
 import { Effect, Exit, Fiber, Scope, Stream } from "effect";
-import { measureBlobDimensions } from "./metadata/measureBlobDimensions.js";
-import type {
-    BlobManager,
-    BlobManagerOptions,
-    BlobMetadataRecord,
-    BlobMetadataOptions,
-    PartialBlobMetadata,
-} from "./types.js";
+import { measureBlobDimensions } from "./measureBlobDimensions.js";
+import type { BlobManager, BlobManagerOptions, BlobMetadataOptions, PartialBlobMetadata } from "./types.js";
 
-/** Promise/TanStack application facade over the storage-owned Effect service. */
-export function createStorageBlobManager(options: BlobManagerOptions): BlobManager {
+/** Application Promise facade over the storage-owned Effect service. */
+export function createBlobManager(options: BlobManagerOptions): BlobManager {
     // Hosts enable cache collection after wiring transactional outbox retention.
     const gcTime = options.gcTime ?? Infinity;
     if (Number.isNaN(gcTime) || gcTime < 0)
@@ -26,7 +19,6 @@ export function createStorageBlobManager(options: BlobManagerOptions): BlobManag
     const managed = runtimeEffects(options.runtime).runtime;
     const owner = Effect.runSync(options.scope ? Scope.fork(options.scope) : Scope.make());
     let closed = false;
-    let collection: BlobManager["collection"];
     const namespace = JSON.stringify([options.runtime.owner, options.runtime.namespace]);
     const initialized = managed.runPromise(
         Effect.gen(function* () {
@@ -65,16 +57,9 @@ export function createStorageBlobManager(options: BlobManagerOptions): BlobManag
                                   )
                             : undefined,
                     });
-                    const config = yield* persistedCollectionOptions<BlobMetadataRecord, string>({
-                        id: `party-stack:${namespace}:blob-metadata`,
-                        getKey: (record) => record.id,
-                        load: (subset) => storage.records(storageSubset(subset)),
-                        changes: yield* runtime.subscribeChanges,
-                    });
                     yield* Effect.addFinalizer(() =>
-                        Effect.promise(async () => {
+                        Effect.sync(() => {
                             closed = true;
-                            if (collection.status !== "cleaned-up") await collection.cleanup();
                         })
                     );
                     const context = yield* Effect.context<never>();
@@ -118,44 +103,14 @@ export function createStorageBlobManager(options: BlobManagerOptions): BlobManag
                             }).pipe(Effect.catch(() => Effect.void)),
                             owner
                         );
-                    return { storage, config, notify: runtime.notify };
+                    else yield* Effect.forkIn(maintenance, owner);
+                    return { storage, notify: runtime.notify };
                 }),
                 owner
             );
         })
     );
     void initialized.catch(() => undefined);
-    const config: CollectionConfig<BlobMetadataRecord, string> = {
-        id: `party-stack:${namespace}:blob-metadata`,
-        getKey: (record) => record.id,
-        syncMode: "on-demand",
-        startSync: true,
-        sync: {
-            sync: (args) => {
-                const started = initialized.then(({ config }) =>
-                    closed ? undefined : config.sync.sync(args)
-                );
-                void started.catch(args.markError);
-                return {
-                    loadSubset: async (subset) => {
-                        const sync = await started;
-                        if (sync && typeof sync === "object") await sync.loadSubset?.(subset);
-                    },
-                    unloadSubset: (subset) => {
-                        void started.then((sync) => {
-                            if (sync && typeof sync === "object") sync.unloadSubset?.(subset);
-                        });
-                    },
-                    cleanup: async () => {
-                        const sync = await started;
-                        if (typeof sync === "function") sync();
-                        else await sync?.cleanup?.();
-                    },
-                };
-            },
-        },
-    };
-    collection = createCollection(config);
     const run = async <A>(
         work: (storage: BlobStorageService) => Effect.Effect<A, unknown>,
         signal?: AbortSignal
@@ -255,7 +210,6 @@ export function createStorageBlobManager(options: BlobManagerOptions): BlobManag
     void storage.catch(() => undefined);
     let cleanupPromise: Promise<void> | undefined;
     return {
-        collection,
         ready,
         storage,
         stage: async (id, blob) => {

@@ -1,12 +1,12 @@
 import { invariant } from "@bobbyfidz/panic";
 import { resolveType } from "@party-stack/ontology-spec/utils";
 import { collectActionAttachments } from "@party-stack/ontology-storage/blobs";
+import type { BlobManager } from "../../runtime/blobs/types.js";
 import type {
     OntologyAttachmentIdMapping,
     OntologyAttachmentUpload,
     OntologyBackendAdapter,
 } from "../OntologyBackendAdapter.js";
-import type { BlobManager } from "@party-stack/blobs";
 import type { OntologyIR, TypeDef } from "@party-stack/ontology-spec";
 import type { attachment } from "@party-stack/ontology-spec/values";
 import type { AttachmentReference as ActionAttachment } from "@party-stack/ontology-storage/blobs";

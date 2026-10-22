@@ -65,3 +65,17 @@ export function collectActionAttachments(
     );
     return [...new Map(entries.map((entry) => [entry.attachment.id, entry])).values()];
 }
+
+/** Object rows and action parameters share the same schema-directed attachment discovery. */
+export function collectObjectAttachments(
+    ir: OntologyIR,
+    name: string,
+    value: Record<string, unknown>
+): AttachmentReference[] {
+    const object = ir.objectTypes.find((object) => object.name === name);
+    if (!object) throw new TypeError("Unknown object type.");
+    const entries = object.properties.flatMap((property) =>
+        collectAttachments(ir, property.type, value[property.name])
+    );
+    return [...new Map(entries.map((entry) => [entry.attachment.id, entry])).values()];
+}

@@ -1,6 +1,7 @@
-import { expect, it as test } from "@effect/vitest";
+import { expect, it } from "@effect/vitest";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
-import { Effect, Deferred, Fiber, Exit, Result } from "effect";
+import { Effect, Deferred, Fiber, Exit, Result, Scope } from "effect";
+import { TestClock } from "effect/testing";
 import * as Memory from "../memory/tables.js";
 import { Table } from "../model.js";
 import { makeBlobStorage, collectActionAttachments, type BlobBytesService } from "./index.js";
@@ -21,7 +22,7 @@ function memoryBytes() {
     return { values, bytes };
 }
 
-test("durable outbox roots compose atomically, survive reopen and preserve aliases after byte eviction", async () => {
+it("durable outbox roots compose atomically, survive reopen and preserve aliases after byte eviction", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -56,7 +57,7 @@ test("durable outbox roots compose atomically, survive reopen and preserve alias
     );
 });
 
-test("failed enqueue transactions roll back roots and sole staged copies are never age-evicted", async () => {
+it("failed enqueue transactions roll back roots and sole staged copies survive the cache eviction policy", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -82,7 +83,7 @@ test("failed enqueue transactions roll back roots and sole staged copies are nev
     );
 });
 
-test("an old deletion cannot remove a newly cached generation", async () => {
+it("an old deletion cannot remove a newly cached generation", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -124,7 +125,7 @@ test("an old deletion cannot remove a newly cached generation", async () => {
     );
 });
 
-test("a reader protects its generation while external byte IO is in flight", async () => {
+it("a reader protects its generation while external byte IO is in flight", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -156,7 +157,7 @@ test("a reader protects its generation while external byte IO is in flight", asy
     );
 });
 
-test("cancellation waits for a non-cancelable writer and never publishes its late bytes", async () => {
+it("cancellation waits for a non-cancelable writer and never publishes its late bytes", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -198,7 +199,7 @@ test("cancellation waits for a non-cancelable writer and never publishes its lat
     );
 });
 
-test("GC retries durable deletion intents after a byte-store failure", async () => {
+it("GC retries durable deletion intents after a byte-store failure", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -228,7 +229,7 @@ test("GC retries durable deletion intents after a byte-store failure", async () 
     );
 });
 
-test("roots reject replacement writes, and recovery only removes abandoned owners", async () => {
+it("roots reject replacement writes, and recovery only removes abandoned owners", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -285,7 +286,7 @@ test("roots reject replacement writes, and recovery only removes abandoned owner
     );
 });
 
-test("attachment dependencies follow nested ontology unions, results, maps and lists", () => {
+it("attachment dependencies follow nested ontology unions, results, maps and lists", () => {
     const ir: OntologyIR = {
         types: [],
         objectTypes: [],
@@ -327,3 +328,94 @@ test("attachment dependencies follow nested ontology unions, results, maps and l
     });
     expect(refs.map((ref) => ref.attachment.id)).toEqual(["one", "two"]);
 });
+
+it.effect("orphan grace expires raw staged bytes, and renewed ownership restarts the grace", () =>
+    Effect.gen(function* () {
+        const tables = yield* Memory.make();
+        const { bytes, values } = memoryBytes();
+        const blobs = yield* makeBlobStorage({ namespace: "orphan-grace", tables, bytes });
+        yield* blobs.stage("raw", new Blob(["raw"]));
+        yield* TestClock.adjust(59 * 60_000);
+        expect(yield* blobs.collectGarbage({ olderThanMs: 0 })).toBe(0);
+        yield* tables.transaction((tx) => blobs.in(tx).retain("draft", ["raw"], { bytes: false }));
+        yield* TestClock.adjust(2 * 60_000);
+        expect(yield* blobs.collectGarbage({ olderThanMs: 0 })).toBe(0);
+        yield* tables.transaction((tx) => blobs.in(tx).release("draft"));
+        expect(yield* blobs.collectGarbage({ olderThanMs: 0 })).toBe(0);
+        yield* TestClock.adjust(60 * 60_000);
+        expect(yield* blobs.collectGarbage({ olderThanMs: 0 })).toBe(1);
+        expect(yield* blobs.metadata("raw")).toBeUndefined();
+        expect(values.size).toBe(0);
+    }).pipe(Effect.scoped)
+);
+
+it.effect(
+    "identity roots permit cache eviction, byte pins do not; authoritative storage preserves referenced bytes",
+    () =>
+        Effect.gen(function* () {
+            for (const mode of ["replica", "authoritative"] as const) {
+                const tables = yield* Memory.make();
+                const { bytes } = memoryBytes();
+                const blobs = yield* makeBlobStorage({ namespace: mode, tables, bytes, mode });
+                yield* blobs.cache("remote", new Blob(["cache"]));
+                yield* tables.transaction((tx) =>
+                    blobs.in(tx).retain("object", ["remote"], { bytes: false })
+                );
+                yield* tables.transaction((tx) => blobs.in(tx).retain("offline", ["remote"]));
+                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(0);
+                yield* tables.transaction((tx) => blobs.in(tx).release("offline"));
+                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(
+                    mode === "replica" ? 1 : 0
+                );
+                expect(yield* blobs.metadata("remote")).toBeDefined();
+                yield* tables.transaction((tx) => blobs.in(tx).release("object"));
+                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(1);
+                expect(yield* blobs.metadata("remote")).toBeUndefined();
+            }
+        }).pipe(Effect.scoped)
+);
+
+it.effect("transactional aliases merge a prior remote cache and transfer its retention roots", () =>
+    Effect.gen(function* () {
+        const tables = yield* Memory.make();
+        const { bytes, values } = memoryBytes();
+        const blobs = yield* makeBlobStorage({ namespace: "merge", tables, bytes });
+        yield* blobs.stage("local", new Blob(["uploaded"]));
+        yield* blobs.cache("remote", new Blob(["cached"]));
+        yield* tables.transaction((tx) => blobs.in(tx).retain("remote-pin", ["remote"]));
+        const failed = yield* Effect.result(
+            tables.transaction((tx) =>
+                blobs
+                    .in(tx)
+                    .bindRemoteId("local", "remote")
+                    .pipe(Effect.andThen(Effect.fail("rollback")))
+            )
+        );
+        expect(Result.isFailure(failed)).toBe(true);
+        expect((yield* blobs.metadata("remote"))?.id).toBe("remote");
+        yield* tables.transaction((tx) => blobs.in(tx).bindRemoteId("local", "remote"));
+        yield* blobs.recover;
+        expect(values.size).toBe(1);
+        expect((yield* blobs.metadata("remote"))?.id).toBe("local");
+        expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(0);
+        yield* tables.transaction((tx) => blobs.in(tx).release("remote-pin"));
+        expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(1);
+    }).pipe(Effect.scoped)
+);
+
+it.effect("scoped reads pin file-backed content until the consumer finishes or is interrupted", () =>
+    Effect.gen(function* () {
+        const tables = yield* Memory.make();
+        const { bytes } = memoryBytes();
+        const blobs = yield* makeBlobStorage({ namespace: "stream-reader", tables, bytes });
+        yield* blobs.cache("remote", new Blob(["streamable"]));
+        const reader = yield* Scope.make();
+        const content = yield* Scope.provide(blobs.readScoped("remote"), reader);
+        expect(content).toBeDefined();
+        expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(0);
+        const received = yield* Effect.tryPromise(() => new Response(content!.stream()).text());
+        expect(received).toBe("streamable");
+        yield* Scope.close(reader, Exit.void);
+        expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(1);
+    }).pipe(Effect.scoped)
+);

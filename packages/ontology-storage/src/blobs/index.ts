@@ -15,12 +15,18 @@ import {
 import type { OntologyStorageError } from "../errors.js";
 
 export * from "./model.js";
-export { collectAttachments, collectActionAttachments } from "./attachments.js";
+export { collectAttachments, collectActionAttachments, collectObjectAttachments } from "./attachments.js";
 export type { AttachmentReference } from "./attachments.js";
 type Failure = BlobStorageError | OntologyStorageError;
 export interface BlobRetentionTransaction {
     /** Replace this owner's durable roots in the same transaction as its outbox entry. */
-    readonly retain: (owner: string, ids: readonly string[]) => Effect.Effect<void, Failure>;
+    readonly retain: (
+        owner: string,
+        ids: readonly string[],
+        options?: { readonly bytes?: boolean; readonly group?: string }
+    ) => Effect.Effect<void, Failure>;
+    readonly bindRemoteId: (id: string, remoteId: string) => Effect.Effect<void, Failure>;
+    readonly releaseGroup: (group: string) => Effect.Effect<void, Failure>;
     readonly release: (owner: string) => Effect.Effect<void, Failure>;
 }
 export interface BlobStorageService {
@@ -31,12 +37,18 @@ export interface BlobStorageService {
     ) => Effect.Effect<import("../model.js").Row<BlobRecord>[], Failure>;
     readonly stage: (id: string, value: Blob) => Effect.Effect<void, Failure>;
     readonly cache: (id: string, value: Blob) => Effect.Effect<void, Failure>;
-    /** Local read. The caller decides whether a miss should acquire remote bytes. */
+    /** File-backed content is valid within the caller's scope; consume streams before it closes. */
+    readonly readScoped: (
+        id: string
+    ) => Effect.Effect<Blob | undefined, Failure, import("effect").Scope.Scope>;
+    /** Materialized local read; safe to consume after this call completes. The caller handles misses. */
     readonly read: (id: string) => Effect.Effect<Blob | undefined, Failure>;
     readonly updateMetadata: (id: string, value: BlobMetadata) => Effect.Effect<BlobRecord, Failure>;
     readonly bindRemoteId: (id: string, remoteId: string) => Effect.Effect<void, Failure>;
     readonly collectGarbage: (options: {
         readonly olderThanMs: number;
+        /** Unreferenced identities and sole local copies expire after this grace period. */
+        readonly orphanGraceMs?: number;
         readonly limit?: number;
     }) => Effect.Effect<number, Failure>;
     /** Retry detached generations and abandoned writes; unknown live owners are left alone. */
@@ -57,6 +69,8 @@ export interface BlobStorageOptions {
     readonly namespace: string;
     readonly tables: TablesService;
     readonly bytes: BlobBytesService;
+    /** Authoritative bytes are collectible only when their identity is unreferenced. */
+    readonly mode?: "replica" | "authoritative";
     readonly registerOwner?: (owner: string) => Effect.Effect<void, Failure, import("effect").Scope.Scope>;
     readonly isOwnerAlive?: (owner: string) => Effect.Effect<boolean, Failure>;
 }
@@ -81,16 +95,24 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
             decode: Schema.decodeUnknownSync(BlobRecordSchema),
         },
     });
-    const roots = Table.make<{ owner: string; blob: string; process?: string }>({ name: name("roots") });
+    const roots = Table.make<{
+        owner: string;
+        blob: string;
+        bytes: boolean;
+        group?: string;
+        process?: string;
+    }>({ name: name("roots") });
     const writes = Table.make<{ id: string; byteKey: string; owner: string }>({ name: name("writes") });
     const deletions = Table.make<{ byteKey: string }>({ name: name("deletions") });
     yield* tables.transaction((tx) =>
         Effect.gen(function* () {
             yield* tx.ensureIndex(records, { name: "remoteId", field: field("remoteId") });
             yield* tx.ensureIndex(records, { name: "accessed", field: field("lastAccessedAt") });
+            yield* tx.ensureIndex(records, { name: "unreferenced", field: field("unreferencedAt") });
             yield* tx.ensureIndex(roots, { name: "owner", field: field("owner") });
             yield* tx.ensureIndex(roots, { name: "blob", field: field("blob") });
             yield* tx.ensureIndex(roots, { name: "process", field: field("process") });
+            yield* tx.ensureIndex(roots, { name: "group", field: field("group") });
         })
     );
     const find = Effect.fnUntraced(function* (tx: ReadTransaction, id: string) {
@@ -104,9 +126,69 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
             tx.loadSubset(roots, { where: eq(field("blob"), id), limit: 1 }),
             (rows) => rows.length > 0
         );
+    const refreshRetention = Effect.fnUntraced(function* (tx: Transaction, id: string) {
+        const record = yield* tx.get(records, id);
+        if (!record) return;
+        const references = yield* tx.loadSubset(roots, { where: eq(field("blob"), id), limit: 1 });
+        const byteReferences = yield* tx.loadSubset(roots, {
+            where: and(eq(field("blob"), id), eq(field("bytes"), true)),
+            limit: 1,
+        });
+        yield* tx.put(records, id, {
+            ...record,
+            unreferencedAt: references.length
+                ? undefined
+                : (record.unreferencedAt ?? (yield* Clock.currentTimeMillis)),
+            bytesRetained: byteReferences.length > 0,
+        });
+    });
     const release = Effect.fnUntraced(function* (tx: Transaction, rootOwner: string) {
-        for (const row of yield* tx.loadSubset(roots, { where: eq(field("owner"), rootOwner) }))
-            yield* tx.delete(roots, row.key);
+        const previous = yield* tx.loadSubset(roots, { where: eq(field("owner"), rootOwner) });
+        for (const row of previous) yield* tx.delete(roots, row.key);
+        for (const id of new Set(previous.map((row) => row.value.blob))) yield* refreshRetention(tx, id);
+    });
+    const bindRemoteId = Effect.fnUntraced(function* (tx: Transaction, id: string, remoteId: string) {
+        if (!remoteId) return yield* blobFailure("InvalidValue", "A remote blob handle needs an ID.");
+        const record = yield* find(tx, id);
+        if (!record) return yield* blobFailure("NotFound", "Cannot bind a missing blob.");
+        if (record.writing) return yield* blobFailure("Busy", "Blob staging has not completed.");
+        if (record.remoteId && record.remoteId !== remoteId)
+            return yield* blobFailure("Conflict", "Blob ID is already bound to another remote ID.");
+        const other = yield* find(tx, remoteId);
+        if (other && other.id !== record.id) {
+            // A concurrent read may have cached the remote identity before the receipt arrived.
+            // Merge that placeholder, but never coalesce two independently staged identities.
+            if (other.id !== remoteId || other.state === "staged" || other.writing)
+                return yield* blobFailure("Conflict", "Remote blob ID is already bound.");
+            const inherited = yield* tx.loadSubset(roots, { where: eq(field("blob"), other.id) });
+            if (record.byteKey && other.byteKey && inherited.some((row) => row.value.process !== undefined))
+                return yield* blobFailure("Busy", "Remote cached bytes are being read.");
+            for (const row of inherited) {
+                yield* tx.delete(roots, row.key);
+                const rootKey = JSON.stringify([row.value.owner, record.id]);
+                const existing = yield* tx.get(roots, rootKey);
+                yield* tx.put(roots, rootKey, {
+                    ...row.value,
+                    blob: record.id,
+                    bytes: row.value.bytes || existing?.bytes === true,
+                });
+            }
+            if (other.byteKey && record.byteKey)
+                yield* tx.put(deletions, other.byteKey, { byteKey: other.byteKey });
+            yield* tx.delete(records, other.id);
+        }
+        yield* tx.put(records, record.id, {
+            ...record,
+            byteKey: record.byteKey ?? other?.byteKey,
+            size: record.size ?? other?.size,
+            type: record.type ?? other?.type,
+            name: record.name ?? other?.name,
+            dimensions: record.dimensions ?? other?.dimensions,
+            remoteId,
+            state: "persisted",
+            updatedAt: yield* Clock.currentTimeMillis,
+        });
+        yield* refreshRetention(tx, record.id);
     });
     const empty = (id: string, now: number): BlobRecord => ({
         id,
@@ -115,10 +197,22 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
         createdAt: now,
         updatedAt: now,
         lastAccessedAt: now,
+        unreferencedAt: now,
+        bytesRetained: false,
     });
     const retention = (tx: Transaction): BlobRetentionTransaction => ({
         release: (rootOwner) => release(tx, rootOwner),
-        retain: Effect.fnUntraced(function* (rootOwner: string, ids: readonly string[]) {
+        releaseGroup: Effect.fnUntraced(function* (group: string) {
+            const selected = yield* tx.loadSubset(roots, { where: eq(field("group"), group) });
+            for (const row of selected) yield* tx.delete(roots, row.key);
+            for (const id of new Set(selected.map((row) => row.value.blob))) yield* refreshRetention(tx, id);
+        }),
+        bindRemoteId: (id, remoteId) => bindRemoteId(tx, id, remoteId),
+        retain: Effect.fnUntraced(function* (
+            rootOwner: string,
+            ids: readonly string[],
+            settings?: { readonly bytes?: boolean; readonly group?: string }
+        ) {
             const selected: BlobRecord[] = [];
             const now = yield* Clock.currentTimeMillis;
             for (const id of new Set(ids)) {
@@ -135,7 +229,10 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                 yield* tx.put(roots, JSON.stringify([rootOwner, record.id]), {
                     owner: rootOwner,
                     blob: record.id,
+                    bytes: settings?.bytes ?? true,
+                    group: settings?.group,
                 });
+                yield* refreshRetention(tx, record.id);
             }
         }),
     });
@@ -239,19 +336,20 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
         if (options.isOwnerAlive)
             for (const row of yield* tables.loadSubset(roots, { where: ne(field("process"), undefined) })) {
                 if (row.value.process && !(yield* options.isOwnerAlive(row.value.process)))
-                    yield* tables.delete(roots, row.key);
+                    yield* tables.transaction((tx) => release(tx, row.value.owner));
             }
         yield* drain();
     }).pipe(Effect.withSpan("BlobStorage.recover"));
     let gcCursor: Cursor | undefined;
+    let orphanCursor: Cursor | undefined;
     const service: BlobStorageService = {
         in: retention,
         metadata: (id) => tables.read((tx) => find(tx, id)),
         records: (query) => tables.loadSubset(records, query),
         stage: (id, value) => write(id, value, "staged"),
         cache: (id, value) => write(id, value, "cached"),
-        read: Effect.fn("BlobStorage.read")(function* (id: string) {
-            return yield* Effect.acquireUseRelease(
+        readScoped: Effect.fn("BlobStorage.readScoped")(function* (id: string) {
+            const acquired = yield* Effect.acquireRelease(
                 tables.transaction((tx) =>
                     Effect.gen(function* () {
                         const record = yield* find(tx, id);
@@ -263,44 +361,57 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                             owner: rootOwner,
                             blob: record.id,
                             process: owner,
+                            bytes: true,
                         });
                         yield* tx.put(records, record.id, {
                             ...record,
+                            bytesRetained: true,
+                            unreferencedAt: undefined,
                             lastAccessedAt: yield* Clock.currentTimeMillis,
                         });
                         return { record, rootOwner };
                     })
                 ),
                 (acquired) =>
-                    Effect.gen(function* () {
-                        if (!acquired?.record.byteKey) return undefined;
-                        const value = yield* io(bytes.read(acquired.record.byteKey));
-                        if (value)
-                            return typeof acquired.record.name === "string"
-                                ? new File([value], acquired.record.name, {
-                                      type: acquired.record.type ?? value.type,
-                                  })
-                                : new Blob([value], { type: acquired.record.type ?? value.type });
-                        // A byte store can lose cache files independently. Detach only
-                        // the generation we read, preserving the identity and its roots.
-                        yield* tables.transaction((tx) =>
-                            Effect.gen(function* () {
-                                const record = yield* tx.get(records, acquired.record.id);
-                                if (!record || record.byteKey !== acquired.record.byteKey) return;
-                                yield* tx.put(records, record.id, { ...record, byteKey: undefined });
-                                yield* tx.put(deletions, acquired.record.byteKey!, {
-                                    byteKey: acquired.record.byteKey!,
-                                });
-                            })
-                        );
-                        return undefined;
-                    }),
-                (acquired) =>
                     acquired
                         ? tables.transaction((tx) => release(tx, acquired.rootOwner)).pipe(Effect.orDie)
                         : Effect.void
             );
+            return yield* Effect.gen(function* () {
+                if (!acquired?.record.byteKey) return undefined;
+                const value = yield* io(bytes.read(acquired.record.byteKey));
+                if (value)
+                    return typeof acquired.record.name === "string"
+                        ? new File([value], acquired.record.name, {
+                              type: acquired.record.type ?? value.type,
+                          })
+                        : new Blob([value], { type: acquired.record.type ?? value.type });
+                // A byte store can lose cache files independently. Detach only
+                // the generation we read, preserving the identity and its roots.
+                yield* tables.transaction((tx) =>
+                    Effect.gen(function* () {
+                        const record = yield* tx.get(records, acquired.record.id);
+                        if (!record || record.byteKey !== acquired.record.byteKey) return;
+                        yield* tx.put(records, record.id, { ...record, byteKey: undefined });
+                        yield* tx.put(deletions, acquired.record.byteKey!, {
+                            byteKey: acquired.record.byteKey!,
+                        });
+                    })
+                );
+                return undefined;
+            });
         }),
+        read: (id) =>
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const blob = yield* service.readScoped(id);
+                    if (!blob) return undefined;
+                    const buffer = yield* io(Effect.tryPromise(() => blob.arrayBuffer()));
+                    return typeof File !== "undefined" && blob instanceof File
+                        ? new File([buffer], blob.name, { type: blob.type })
+                        : new Blob([buffer], { type: blob.type });
+                })
+            ).pipe(Effect.withSpan("BlobStorage.read")),
         updateMetadata: Effect.fnUntraced(function* (id: string, input: BlobMetadata) {
             const metadata = yield* Schema.decodeUnknownEffect(BlobMetadataSchema)(input).pipe(
                 Effect.mapError((cause) => blobFailure("InvalidValue", "Invalid blob metadata.", cause))
@@ -318,48 +429,61 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                 })
             );
         }),
-        bindRemoteId: (id, remoteId) =>
-            tables.transaction((tx) =>
-                Effect.gen(function* () {
-                    const record = yield* find(tx, id);
-                    if (!record) return yield* blobFailure("NotFound", "Cannot bind a missing blob.");
-                    if (record.writing) return yield* blobFailure("Busy", "Blob staging has not completed.");
-                    const other = yield* find(tx, remoteId);
-                    if (other && other.id !== record.id)
-                        return yield* blobFailure("Conflict", "Remote blob ID is already bound.");
-                    if (record.remoteId && record.remoteId !== remoteId)
-                        return yield* blobFailure(
-                            "Conflict",
-                            "Blob ID is already bound to another remote ID."
-                        );
-                    yield* tx.put(records, record.id, {
-                        ...record,
-                        remoteId,
-                        state: "persisted",
-                        updatedAt: yield* Clock.currentTimeMillis,
-                    });
-                })
-            ),
+        bindRemoteId: (id, remoteId) => tables.transaction((tx) => bindRemoteId(tx, id, remoteId)),
         collectGarbage: Effect.fn("BlobStorage.collectGarbage")(function* ({
             olderThanMs,
             limit = 100,
+            orphanGraceMs = 60 * 60_000,
         }: {
             olderThanMs: number;
+            orphanGraceMs?: number;
             limit?: number;
         }) {
-            if (!Number.isFinite(olderThanMs) || olderThanMs < 0 || !Number.isSafeInteger(limit) || limit < 1)
+            if (
+                !Number.isFinite(olderThanMs) ||
+                olderThanMs < 0 ||
+                !Number.isFinite(orphanGraceMs) ||
+                orphanGraceMs < 0 ||
+                !Number.isSafeInteger(limit) ||
+                limit < 1
+            )
                 return yield* blobFailure("InvalidValue", "Invalid blob GC policy.");
-            const cutoff = (yield* Clock.currentTimeMillis) - olderThanMs;
+            const now = yield* Clock.currentTimeMillis;
+            const cutoff = now - olderThanMs;
             const count = yield* tables.transaction((tx) =>
                 Effect.gen(function* () {
                     let count = 0;
+                    const orphans = yield* tx.loadSubset(records, {
+                        where: and(
+                            lte(field("unreferencedAt"), now - orphanGraceMs),
+                            ne(field("unreferencedAt"), undefined),
+                            eq(field("writing"), undefined)
+                        ),
+                        orderBy: [{ field: field("unreferencedAt") }],
+                        after: orphanCursor,
+                        limit,
+                    });
+                    const lastOrphan = orphans.at(-1);
+                    orphanCursor =
+                        orphans.length === limit && lastOrphan
+                            ? cursorOf(lastOrphan, { orderBy: [{ field: field("unreferencedAt") }] })
+                            : undefined;
+                    for (const { value: record } of orphans) {
+                        if (yield* rooted(tx, record.id)) continue;
+                        if (record.byteKey)
+                            yield* tx.put(deletions, record.byteKey, { byteKey: record.byteKey });
+                        yield* tx.delete(records, record.id);
+                        count++;
+                    }
+                    if (options.mode === "authoritative") return count;
                     const candidates = yield* tx.loadSubset(records, {
                         where: and(
                             lte(field("lastAccessedAt"), cutoff),
                             eq(field("writing"), undefined),
                             ne(field("byteKey"), undefined),
                             ne(field("remoteId"), undefined),
-                            ne(field("state"), "staged")
+                            ne(field("state"), "staged"),
+                            ne(field("bytesRetained"), true)
                         ),
                         orderBy: [{ field: field("lastAccessedAt") }],
                         after: gcCursor,
@@ -375,7 +499,10 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                             !record.byteKey ||
                             record.state === "staged" ||
                             !record.remoteId ||
-                            (yield* rooted(tx, record.id))
+                            (yield* tx.loadSubset(roots, {
+                                where: and(eq(field("blob"), record.id), eq(field("bytes"), true)),
+                                limit: 1,
+                            })).length > 0
                         )
                             continue;
                         yield* tx.put(deletions, record.byteKey, { byteKey: record.byteKey });
