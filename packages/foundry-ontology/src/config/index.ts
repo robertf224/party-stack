@@ -15,7 +15,7 @@ import {
     applyAttachmentConstraintOverrides,
     type FoundryAttachmentConstraintOverride,
 } from "./applyAttachmentConstraintOverrides.js";
-import type { Connection } from "@party-stack/connections";
+import type { Connection } from "@party-stack/connect";
 
 export type { FoundryAttachmentConstraintOverride } from "./applyAttachmentConstraintOverrides.js";
 

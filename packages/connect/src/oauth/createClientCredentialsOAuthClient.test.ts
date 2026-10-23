@@ -50,6 +50,7 @@ describe("createClientCredentialsOAuthClient", () => {
                       })
                     : Response.json({
                           access_token: "access-token",
+                          token_type: "Bearer",
                           expires_in: 3600,
                       })
             );

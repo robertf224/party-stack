@@ -5,7 +5,7 @@ import { Effect, Scope, Exit } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { makeOntologyBackendInstallation } from "../runtime/installation.js";
 import { createOntologyBackendInstallation } from "./createOntologyBackendInstallation.js";
-import type { BackendConnectionAdapter, ConnectionEgressHandlers } from "@party-stack/connections";
+import type { BackendConnectionAdapter, ConnectionEgressHandlers } from "@party-stack/connect";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {

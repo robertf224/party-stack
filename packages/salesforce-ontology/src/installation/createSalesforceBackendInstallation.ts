@@ -22,7 +22,7 @@ import {
 } from "../connection.js";
 import { createSalesforceMetaOntologyBackendAdapter } from "../meta/createSalesforceMetaOntologyBackendAdapter.js";
 import type { SalesforceCrudActionTypeSelection } from "../crud.js";
-import type { BackendConnectionAdapterProvider, ConnectionEgress } from "@party-stack/connections";
+import type { BackendConnectionAdapterProvider, ConnectionEgress } from "@party-stack/connect";
 import type { RuntimeAdapterProvider } from "@party-stack/runtime";
 
 export type SalesforceConnectionOptions = Omit<

@@ -8,16 +8,16 @@ import {
     type EstablishedConnection,
     withHttpAuthenticationErrorHandling,
     withHttpRetryHandling,
-} from "@party-stack/connections";
-import { unauthenticated } from "@party-stack/errors";
-import { createFoundryFetch, createFoundryWebSocket, getTokenDetails } from "@party-stack/foundry-client";
+} from "@party-stack/connect";
 import {
     createClientCredentialsOAuthClient,
     createPublicOAuthClient,
     type ClientCredentialsOAuthClient,
     type OAuthSession,
     type PublicOAuthClient,
-} from "@party-stack/oauth";
+} from "@party-stack/connect";
+import { unauthenticated } from "@party-stack/errors";
+import { createFoundryFetch, createFoundryWebSocket, getTokenDetails } from "@party-stack/foundry-client";
 import type { BrowserAuthenticationPresentation } from "@party-stack/runtime";
 
 export interface FoundryOAuthConnectionOptions {
@@ -136,6 +136,7 @@ async function createFoundryConnectionAdapterInstance(
         : undefined;
     const clientCredentialsOauth: ClientCredentialsOAuthClient | undefined = options.clientCredentials
         ? createClientCredentialsOAuthClient({
+              scope: context.scope,
               clientId: options.clientCredentials.clientId,
               clientSecret: options.clientCredentials.clientSecret,
               tokenEndpoint: new URL(
@@ -297,7 +298,7 @@ async function createFoundryConnectionAdapterInstance(
         },
         async cleanup() {
             await publicOauth?.cleanup();
-            clientCredentialsOauth?.cleanup();
+            await clientCredentialsOauth?.cleanup();
         },
     };
 }

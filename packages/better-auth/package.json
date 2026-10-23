@@ -12,7 +12,7 @@
         }
     },
     "dependencies": {
-        "@party-stack/connections": "workspace:*",
+        "@party-stack/connect": "workspace:*",
         "@party-stack/errors": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",

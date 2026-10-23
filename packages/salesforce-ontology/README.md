@@ -29,7 +29,7 @@ const installation = await createSalesforceBackendInstallation({
 });
 ```
 
-The connection adapter uses `@party-stack/oauth`, persists refresh tokens
+The connection adapter uses `@party-stack/connect`, persists refresh tokens
 through the selected runtime, and applies authentication through
 `ConnectionEgress`. The Salesforce client and ontology backends remain
 token-provider/egress agnostic.

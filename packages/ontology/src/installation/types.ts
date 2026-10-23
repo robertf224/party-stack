@@ -1,10 +1,6 @@
 import type { CreateLiveOntologyOpts, LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 import type { OntologyBackendAdapterProvider } from "../live/OntologyBackendAdapter.js";
-import type {
-    BackendConnectionAdapterProvider,
-    Connection,
-    ConnectionEgress,
-} from "@party-stack/connections";
+import type { BackendConnectionAdapterProvider, Connection, ConnectionEgress } from "@party-stack/connect";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { MetaOntology } from "@party-stack/ontology-spec/meta";
 import type { RuntimeAdapterProvider } from "@party-stack/runtime";

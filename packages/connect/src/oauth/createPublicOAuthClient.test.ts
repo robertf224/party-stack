@@ -70,7 +70,7 @@ describe("createPublicOAuthClient", () => {
             };
             let client = await createPublicOAuthClient(options);
 
-            void client.signIn();
+            void client.signIn().catch(() => undefined);
             await vi.waitFor(() => {
                 expect(authorizationUrl).toBeDefined();
             });

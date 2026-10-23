@@ -1,5 +1,5 @@
+import { createClientCredentialsOAuthClient, createPublicOAuthClient } from "@party-stack/connect";
 import { createNodeRuntime } from "@party-stack/node-runtime";
-import { createClientCredentialsOAuthClient, createPublicOAuthClient } from "@party-stack/oauth";
 import { createSalesforceClient } from "../lib/index.js";
 
 function requiredEnvironmentVariable(name) {

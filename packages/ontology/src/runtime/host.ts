@@ -10,7 +10,7 @@ import { executeTransactionMutator } from "./transactions.js";
 import type { LiveOntologyWrites } from "../live/LiveOntology.js";
 import type { OntologyBackendAdapter, OntologyAttachmentsAdapter } from "../live/OntologyBackendAdapter.js";
 import type { BlobManager } from "./blobs/types.js";
-import type { ConnectionMonitor } from "@party-stack/connections";
+import type { ConnectionMonitor } from "@party-stack/connect";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { attachment } from "@party-stack/ontology-spec/values";
 import type { RuntimeAdapter } from "@party-stack/runtime";

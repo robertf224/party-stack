@@ -8,15 +8,15 @@ import {
     type EstablishedConnection,
     withHttpAuthenticationErrorHandling,
     withHttpRetryHandling,
-} from "@party-stack/connections";
-import { unauthenticated } from "@party-stack/errors";
+} from "@party-stack/connect";
 import {
     createClientCredentialsOAuthClient,
     createPublicOAuthClient,
     type ClientCredentialsOAuthClient,
     type OAuthSession,
     type PublicOAuthClient,
-} from "@party-stack/oauth";
+} from "@party-stack/connect";
+import { unauthenticated } from "@party-stack/errors";
 import {
     createSalesforceClient,
     type SalesforceChangeEvent,
@@ -197,6 +197,7 @@ async function createSalesforceConnectionAdapterInstance(
         : undefined;
     const clientCredentialsOauth: ClientCredentialsOAuthClient | undefined = options.clientCredentials
         ? createClientCredentialsOAuthClient({
+              scope: context.scope,
               clientId: options.clientCredentials.clientId,
               clientSecret: options.clientCredentials.clientSecret,
               tokenEndpoint: `${loginUrl}/services/oauth2/token`,
@@ -401,7 +402,7 @@ async function createSalesforceConnectionAdapterInstance(
         async cleanup() {
             tokenProviders.clear();
             await publicOauth?.cleanup();
-            clientCredentialsOauth?.cleanup();
+            await clientCredentialsOauth?.cleanup();
         },
     };
 }

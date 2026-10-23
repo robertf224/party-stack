@@ -3,7 +3,7 @@ import {
     createBetterAuthConnectionAdapter,
     type BetterAuthConnectionClient,
 } from "./createBetterAuthConnectionAdapter.js";
-import type { EstablishedConnection } from "@party-stack/connections";
+import type { EstablishedConnection } from "@party-stack/connect";
 
 describe("createBetterAuthConnectionAdapter", () => {
     it("restores and selects concurrent Better Auth sessions", async () => {

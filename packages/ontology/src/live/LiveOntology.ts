@@ -9,7 +9,7 @@ import type { OntologyMutatorRegistry } from "./mutators/types.js";
 import type { OntologyCollection } from "./objects/types.js";
 import type { OntologyBackendAdapterProvider } from "./OntologyBackendAdapter.js";
 import type { OntologyOutbox } from "./outbox/types.js";
-import type { ConnectionMonitor } from "@party-stack/connections";
+import type { ConnectionMonitor } from "@party-stack/connect";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 export type { LiveOntologyAction, LiveOntologyActionOptions } from "./actions/createLiveOntologyAction.js";

@@ -7,7 +7,7 @@ import {
     type ConnectionSession,
     type EstablishedConnection,
     withHttpAuthenticationErrorHandling,
-} from "@party-stack/connections";
+} from "@party-stack/connect";
 import { unauthenticated, isUnauthenticatedError } from "@party-stack/errors";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Runtime, runtimeEffects } from "@party-stack/runtime";

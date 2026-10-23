@@ -5,7 +5,7 @@ import {
 } from "../installation/createSalesforceBackendInstallation.js";
 import { salesforceCrudActionTypeName } from "../utils/ids.js";
 import type { SalesforceCrudActionTypeSelection } from "../crud.js";
-import type { Connection } from "@party-stack/connections";
+import type { Connection } from "@party-stack/connect";
 import type { OntologyPullConfig, OntologyPullSource, OntologyIR, TypeDef } from "@party-stack/ontology";
 
 export interface SalesforceOntologyPullConnectionOptions {

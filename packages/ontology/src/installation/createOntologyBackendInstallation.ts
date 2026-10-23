@@ -1,4 +1,4 @@
-import { createConnectionManager, createConnectionMonitor } from "@party-stack/connections";
+import { createConnectionManager, createConnectionMonitor } from "@party-stack/connect";
 import { createLocalCollection } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
 import { createLiveOntology } from "../live/LiveOntology.js";
@@ -10,7 +10,7 @@ import type {
     OntologyBackendInstallation,
     OntologyRoute,
 } from "./types.js";
-import type { Connection } from "@party-stack/connections";
+import type { Connection } from "@party-stack/connect";
 import type { MetaOntology } from "@party-stack/ontology-spec/meta";
 
 interface LocalOntologyPartition {

@@ -19,7 +19,7 @@ import {
     type FoundryAuthenticationClient,
 } from "../connection.js";
 import { createFoundryMetaOntologyBackendAdapter } from "../meta/createFoundryMetaOntologyBackendAdapter.js";
-import type { BackendConnectionAdapterProvider, ConnectionEgress } from "@party-stack/connections";
+import type { BackendConnectionAdapterProvider, ConnectionEgress } from "@party-stack/connect";
 import type { OntologyIR } from "@party-stack/ontology";
 import type { RuntimeAdapterProvider } from "@party-stack/runtime";
 

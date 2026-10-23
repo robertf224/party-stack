@@ -1,7 +1,7 @@
 import { createDefaultRuntime } from "@party-stack/runtime";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { createSalesforceConnectionAdapter } from "./connection.js";
-import type { EstablishedConnection } from "@party-stack/connections";
+import type { EstablishedConnection } from "@party-stack/connect";
 
 describe("createSalesforceConnectionAdapter", () => {
     afterEach(() => {

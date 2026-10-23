@@ -224,3 +224,42 @@ reconstruction, retained versus orphan attachments, alarm preservation/reschedul
 and disabled GC. The package has 17 local workerd tests; the example is type-checked
 and the compiled Worker dependency guard remains enabled. No cloud deployment was
 performed for this convenience helper.
+
+## Connect implementation checkpoint (2026-10-22)
+
+The agreed names are Installation (service instance), OAuthConnector (one OAuth
+app/flow configuration), OAuthConnection (saved authorization), and scoped live
+sessions. Personal and shared connectors can use separate records even when they
+share a provider app registration. Applications can extend the standard definitions
+with project/org properties and links; no new ontology inheritance or schema lens
+mechanism is required.
+
+`@party-stack/connect` now consolidates the former connections and OAuth packages:
+
+- `/spec` exports portable definitions and inferred types. Tokens and timestamp
+  expiries remain flat because Foundry struct fields do not support Cipher text.
+- The Effect `Connect` service implements PKCE attempts, single-use exchanges,
+  durable refresh claims, token rotation, explicit disconnect and bounded indexed
+  expiry cleanup. Native ciphertext and metadata commits share a Tables transaction.
+- `/server` supplies authenticated begin/callback/result/status handlers. Attempts
+  bind to an application session, callback permissions are checked again, return
+  URLs stay on the app origin, and the browser receives completion references.
+- The browser client supports runtime popup/redirect presentation. The existing
+  provider-facing public OAuth facade now uses Connect/native storage rather than
+  TanStack OAuth metadata collections or coordinated refresh RPC. Client-credentials
+  requests also have Effect scope ownership and cancellation.
+- Provider packages, Better Auth integration and issue-tracker import the new
+  package. Promise methods remain at existing UI/SDK boundaries.
+
+This is the foundation checkpoint, not completion of the entire auth migration.
+The native authority store is implemented; a Foundry-hosted Connect record store
+still needs trusted actions/Cipher writes for atomic claims and commits. Independent
+SDK reads/writes cannot implement the transaction contract. Connection-manager
+status projections, scoped installation acquisition/consolidation, the Better Auth
+server storage adapter, and the public decrypt/cache API remain. The existing
+browser credential persistence consent continues through the configured runtime
+key service; general encrypted-value caching will start with an opt-in boolean,
+without cache timestamps/TTL. Outbox input encryption remains explicitly deferred.
+
+See [the Connect package](../../packages/connect/README.md) for concrete setup,
+extension and hosting examples.

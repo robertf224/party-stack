@@ -1,4 +1,4 @@
-import { type ConnectionState } from "@party-stack/connections";
+import { type ConnectionState } from "@party-stack/connect";
 import { eq } from "@tanstack/db";
 import { createTrackerInstallations, FOUNDRY_ONTOLOGY_RID } from "./installations";
 import { openSharedOntology } from "./sharedOntology";

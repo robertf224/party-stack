@@ -1,7 +1,7 @@
 import { o, type OntologyIR } from "@party-stack/ontology";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createSalesforceOntologyPullConfig, createSalesforceOntologyPullSource } from "./index.js";
-import type { Connection } from "@party-stack/connections";
+import type { Connection } from "@party-stack/connect";
 
 function createSource() {
     return createSalesforceOntologyPullSource({

@@ -20,8 +20,8 @@
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/connect": "workspace:*",
         "@party-stack/node-runtime": "workspace:*",
-        "@party-stack/oauth": "workspace:*",
         "typescript": "~7.0.2",
         "vite-plus": "catalog:"
     }
