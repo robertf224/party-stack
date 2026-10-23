@@ -801,6 +801,12 @@ importers:
       '@party-stack/errors':
         specifier: workspace:*
         version: link:../errors
+      '@party-stack/ontology-backend':
+        specifier: workspace:*
+        version: link:../ontology-backend
+      '@party-stack/ontology-spec':
+        specifier: workspace:*
+        version: link:../ontology-spec
       '@party-stack/ontology-storage':
         specifier: workspace:*
         version: link:../ontology-storage
@@ -810,10 +816,16 @@ importers:
       effect:
         specifier: ^4.0.5
         version: 4.0.5
+      temporal-polyfill:
+        specifier: ^0.3.0
+        version: 0.3.0
     devDependencies:
       '@party-stack/build-config':
         specifier: workspace:*
         version: link:../build-config
+      '@party-stack/sql-ontology-storage':
+        specifier: workspace:*
+        version: link:../sql-ontology-storage
       '@tanstack/db':
         specifier: 0.14.0
         version: 0.14.0(typescript@7.0.2)

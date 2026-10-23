@@ -299,3 +299,66 @@ Provider logout runs outside the local state lock because an SDK may await its
 own session-change callback. User commands serialize separately; callbacks and
 refreshes can make guarded state transitions without reentrancy deadlocks. The
 connection lifecycle suite includes that callback sequence as a regression test.
+
+## Better Auth storage checkpoint (2026-10-23)
+
+Better Auth can retain its authentication/API implementation while a scoped custom
+adapter stores application-authored ontology objects. Its logical user/session/
+account/verification models are views through existing move/select lenses; Better
+Auth's schema is checked as an expected view, not imposed as the application's IR.
+The adapter rewrites field predicates, ordering and indexes, converts Date/Temporal
+at the SDK boundary, and merges writes without dropping hidden application fields.
+
+Owned backends expose `storage.read` and `storage.transaction` for trusted library
+integrations. Application-authored operations should normally remain actions.
+This capability is useful for an existing library that requires database access;
+it need not imply that imports, webhooks, or scheduled jobs should bypass actions.
+It is not part of the general backend protocol or exported over RPC. The same
+mutation recording and journal append implementation serves actions and these
+transactions; rows, attachment retention and journal entries commit atomically.
+
+Issue-tracker now stores auth users as its canonical User objects in the same
+SQLite namespace as issues/projects and private auth records. User search can see
+all registered profiles. The per-request current-user copy and hidden seed action
+are removed. A schema-driven public backend view projects both snapshots and
+journal changes, excludes private types and rejects private top-level query fields.
+The shared native namespace is freshly seeded; legacy Better Auth SQL tables and
+previous demo issue namespaces are not imported. General row permissions remain
+future work. See [Better Auth setup](../../packages/better-auth/README.md).
+
+Better Auth's own migration runner is explicitly invoked tooling for Kysely/raw
+SQL databases, not required by custom adapter initialization. Migrations remain
+separate future work; no compatibility migration or namespace guard bypass was
+introduced. Its Effect HTTP integration uses the ordinary handler, while Alchemy
+can supply our factory as a custom Database runtime without migration capability.
+Neither requires replacing the auth client interface or upgrading to beta.
+
+Installations still own provider-specific ontology resolution: Foundry can select
+multiple ontology IDs while a Salesforce instance typically exposes one schema.
+"Binding" describes the existing ontology route mapping well, but renaming it is
+not necessary for this checkpoint. Schema changes should eventually preserve a
+stable live handle while fencing writes, migrating persisted/optimistic/outbox
+state and rebuilding affected views. An observable openOntology by itself does
+not implement that lifecycle.
+
+Future directions discussed here:
+
+- Explicit action results/receipt payloads, potentially containing returned rows
+  or previous values of deleted rows. Keep their meaning distinct from replica
+  change batches; define result schemas, visibility, retry consistency and retention.
+- A PostgreSQL backend adapter over an existing database: subset reads against
+  native tables, application actions mapped to SQL functions/application handlers,
+  and logical decoding as the change source. It can observe independent writers
+  such as Better Auth using its ordinary SQL adapter. This is distinct from
+  sql-ontology-storage owning the database layout. Snapshot/cursor coordination,
+  action-to-transaction correlation, slot retention and recovery still need design.
+- SQLite session changesets or trigger-backed capture could supply another change
+  source; WAL pages alone are not a portable row-level replication API. Keep the
+  protocol about committed object changes, not tied to one journal table layout.
+- Continue using existing auth libraries rather than rebuilding password/session/
+  OAuth behavior as ontology actions in this migration. Domain actions such as
+  inviting a user can be added deliberately later.
+
+Public decrypt/cache APIs, Foundry-hosted Connect authority, broader coordination
+cleanup and ontology migration execution remain outstanding. Outbox input
+encryption remains deferred.

@@ -9,17 +9,25 @@
         ".": {
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
+        },
+        "./storage": {
+            "types": "./lib/storage/index.d.ts",
+            "default": "./lib/storage/index.js"
         }
     },
     "dependencies": {
         "@party-stack/connect": "workspace:*",
         "@party-stack/errors": "workspace:*",
+        "@party-stack/ontology-backend": "workspace:*",
+        "@party-stack/ontology-spec": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "effect": "^4.0.5"
+        "effect": "^4.0.5",
+        "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/sql-ontology-storage": "workspace:*",
         "@tanstack/db": "0.14.0",
         "better-auth": "^1.7.1",
         "typescript": "~7.0.2",

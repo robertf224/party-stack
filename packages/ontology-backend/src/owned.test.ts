@@ -267,3 +267,83 @@ test("owned action transactions reject uploads collected before commit and retai
         )
     );
 });
+
+test("trusted integrations share the action journal and preserve callback errors on rollback", async () => {
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            const tables = yield* Memory.make();
+            const backend = yield* makeOwnedBackend({
+                namespace: "trusted-integration",
+                ir,
+                tables,
+                mutators: {},
+            });
+            const before = yield* backend.loadSubset({ objectType: "Counter" });
+            const value = yield* backend.storage.transaction((tx) =>
+                Effect.gen(function* () {
+                    yield* tx.put("Counter", { id: "one", count: 1 });
+                    yield* tx.put("Counter", { id: "one", count: 2 });
+                    yield* tx.put("Other", { id: "two", count: 3 });
+                    return "return value";
+                })
+            );
+            expect(value).toBe("return value");
+            const page = yield* backend.changes!.pull({ cursor: before.cursor });
+            expect(page.commits).toHaveLength(1);
+            expect(page.commits[0]?.invocationId).toBeUndefined();
+            expect(page.commits[0]?.changes).toEqual([
+                { kind: "put", objectType: "Counter", key: "one", value: { id: "one", count: 2 } },
+                { kind: "put", objectType: "Other", key: "two", value: { id: "two", count: 3 } },
+            ]);
+            const marker = new Error("callback rejected");
+            const failed = yield* Effect.result(
+                backend.storage.transaction((tx) =>
+                    Effect.gen(function* () {
+                        yield* tx.delete("Counter", "one");
+                        return yield* Effect.fail(marker);
+                    })
+                )
+            );
+            expect(Result.isFailure(failed) && failed.failure).toBe(marker);
+            expect(yield* backend.storage.read((tx) => tx.get("Counter", "one"))).toEqual({
+                id: "one",
+                count: 2,
+            });
+            yield* backend.storage.transaction((tx) =>
+                tx.ensureIndex("Counter", { name: "count", field: { _tag: "Field", path: ["count"] } })
+            );
+            expect((yield* backend.changes!.pull({ cursor: page.cursor })).commits).toEqual([]);
+        })
+    );
+});
+
+test("a failed journal append rolls back the integration's object writes", async () => {
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            const raw = yield* Memory.make();
+            let rejectJournal = false;
+            const tables = {
+                ...raw,
+                put: ((table, key, value) =>
+                    rejectJournal && table.name === JSON.stringify(["backend", "journal-failure", "journal"])
+                        ? Effect.die(new Error("journal unavailable"))
+                        : raw.put(table, key, value)) as typeof raw.put,
+            };
+            const backend = yield* makeOwnedBackend({
+                namespace: "journal-failure",
+                ir,
+                tables,
+                mutators: {},
+            });
+            const before = yield* backend.loadSubset({ objectType: "Counter" });
+            rejectJournal = true;
+            const exit = yield* Effect.exit(
+                backend.storage.transaction((tx) => tx.put("Counter", { id: "one", count: 1 }))
+            );
+            expect(exit._tag).toBe("Failure");
+            rejectJournal = false;
+            expect(yield* backend.storage.read((tx) => tx.get("Counter", "one"))).toBeUndefined();
+            expect((yield* backend.changes!.pull({ cursor: before.cursor })).commits).toEqual([]);
+        })
+    );
+});

@@ -1,7 +1,12 @@
 import { Temporal } from "temporal-polyfill";
 import { describe, expect, it } from "vitest";
 import { o } from "./ir/index.js";
-import { applyLensToObject, applyLensToObjectType, mapTargetPathToSourceWithLens } from "./lenses.js";
+import {
+    applyLensToObject,
+    applyLensToObjectType,
+    applyLensPatchToObject,
+    mapTargetPathToSourceWithLens,
+} from "./lenses.js";
 import type { Lens, ObjectTypeDef } from "./ir/index.js";
 
 const source: ObjectTypeDef = {
@@ -94,4 +99,14 @@ describe("ontology lenses", () => {
         );
         expect(projected.updatedAt).toBe(updatedAt);
     });
+});
+
+it("applies view patches without dropping hidden source fields", () => {
+    const original = { id: "1", profilePicture: { id: "old" }, admin: true, familyName: "Lovelace" };
+    expect(applyLensPatchToObject(original, { avatar: { id: "new" } }, lens)).toEqual({
+        ...original,
+        profilePicture: { id: "new" },
+    });
+    expect(original.profilePicture.id).toBe("old");
+    expect(() => applyLensPatchToObject(original, { admin: false }, lens)).toThrow("not selected");
 });

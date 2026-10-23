@@ -1,6 +1,7 @@
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import {
     makeOntologyStorage,
+    OntologyStorageError,
     makeStorageModel,
     and,
     eq,
@@ -22,7 +23,13 @@ import type {
 } from "./index.js";
 import type { ClientSubmission, OntologySource, PendingAction } from "./protocol.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
-import type { Key, Query, ReadStorageTransaction, StorageTransaction } from "@party-stack/ontology-storage";
+import type {
+    Index,
+    Key,
+    Query,
+    ReadStorageTransaction,
+    StorageTransaction,
+} from "@party-stack/ontology-storage";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
 
 export interface OwnedReadTransaction {
@@ -35,6 +42,20 @@ export interface OwnedReadTransaction {
 export interface OwnedTransaction extends OwnedReadTransaction {
     put(objectType: string, value: Record<string, unknown>): Effect.Effect<void, BackendError>;
     delete(objectType: string, key: Key): Effect.Effect<void, BackendError>;
+}
+/** Trusted persistence access, never exposed by the public backend/RPC contract. */
+export interface OwnedStorageTransaction extends OwnedTransaction {
+    ensureIndex(objectType: string, index: Index): Effect.Effect<void, BackendError>;
+}
+export interface OwnedStorageService {
+    readonly ir: OntologyIR;
+    readonly read: <A, E, R>(
+        body: (tx: OwnedReadTransaction) => Effect.Effect<A, E, R>
+    ) => Effect.Effect<A, E | BackendError, R>;
+    /** Data changes and their journal batch commit in the same native transaction. */
+    readonly transaction: <A, E, R>(
+        body: (tx: OwnedStorageTransaction) => Effect.Effect<A, E, R>
+    ) => Effect.Effect<A, E | BackendError, R>;
 }
 export interface OwnedBackendOptions {
     readonly namespace: string;
@@ -69,6 +90,7 @@ export interface OwnedBackendOptions {
     ) => Effect.Effect<Effect.Effect<void, BackendError>, BackendError>;
 }
 export interface OwnedBackendService extends OntologyBackendService {
+    readonly storage: OwnedStorageService;
     /** Trusted protocol composition without an intermediate Replica or outbox. */
     readonly protocol: OntologySource;
     readonly collectClientGarbage: Effect.Effect<number, BackendError>;
@@ -191,6 +213,94 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         loadSubset: (name, query) =>
             boundary(Effect.flatMap(object(name), (store) => native.loadSubset(store, query))),
     });
+    const mutation = (native: StorageTransaction) => {
+        const changes = new Map<string, ObjectChange>();
+        const tx: OwnedStorageTransaction = {
+            ensureIndex: (name, index) =>
+                boundary(Effect.flatMap(object(name), (store) => native.ensureIndex(store, index))),
+            ...read(native),
+            put: (name, value) =>
+                boundary(
+                    Effect.gen(function* () {
+                        const store = yield* object(name);
+                        yield* native.put(store, value);
+                        const key = value[store.definition.primaryKey] as Key;
+                        changes.set(JSON.stringify([name, key]), {
+                            kind: "put",
+                            objectType: name,
+                            key,
+                            value: (yield* native.get(store, key))!,
+                        });
+                    })
+                ),
+            delete: (name, key) =>
+                boundary(
+                    Effect.gen(function* () {
+                        const store = yield* object(name);
+                        yield* native.delete(store, key);
+                        changes.set(JSON.stringify([name, key]), {
+                            kind: "delete",
+                            objectType: name,
+                            key,
+                        });
+                    })
+                ),
+        };
+        return { tx, changes };
+    };
+    const append = Effect.fnUntraced(function* (
+        changes: ReadonlyMap<string, ObjectChange>,
+        invocationId?: string
+    ) {
+        const revision = (yield* current) + 1;
+        if (!Number.isSafeInteger(revision))
+            return yield* fault("commit", "Unavailable", "Backend journal revision exhausted.");
+        const encodedCursor = cursor(revision);
+        const commit: BackendCommit = { cursor: encodedCursor, invocationId, changes: [...changes.values()] };
+        yield* tables.put(journal, revision, { revision, commit });
+        const journalFloor = Math.max(
+            (yield* tables.get(metadata, "head"))?.journalFloor ?? 0,
+            revision - maxCommits
+        );
+        for (const row of yield* tables.loadSubset(journal, { where: lte(field("revision"), journalFloor) }))
+            yield* tables.delete(journal, row.key);
+        yield* tables.put(metadata, "head", { revision, source, journalFloor });
+        return encodedCursor;
+    });
+    const trustedStorage: OwnedStorageService = {
+        ir: options.ir,
+        read: (body) =>
+            storage
+                .read((native) => body(read(native)))
+                .pipe(
+                    Effect.mapError((error) =>
+                        error instanceof OntologyStorageError
+                            ? fault("storage", "Unavailable", "Owned storage operation failed.", error)
+                            : error
+                    )
+                ),
+        transaction: (body) =>
+            Effect.gen(function* () {
+                const result = yield* storage
+                    .transaction((native) =>
+                        Effect.gen(function* () {
+                            const { tx, changes } = mutation(native);
+                            const value = yield* body(tx);
+                            if (changes.size) yield* append(changes);
+                            return { value, changed: changes.size > 0 };
+                        })
+                    )
+                    .pipe(
+                        Effect.mapError((error) =>
+                            error instanceof OntologyStorageError
+                                ? fault("storage", "Unavailable", "Owned storage operation failed.", error)
+                                : error
+                        )
+                    );
+                if (result.changed) yield* PubSub.publish(wakes, undefined);
+                return result.value;
+            }),
+    };
     const prepare = Effect.fn("OwnedBackend.prepare")(function* (invocation: ActionInvocation) {
         const parameterSchema = schemas.actionParameterSchemas[invocation.name];
         if (!parameterSchema || !options.mutators[invocation.name])
@@ -268,60 +378,15 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 );
             return { receipt: previous.receipt, changed: false };
         }
-        const changes = new Map<string, ObjectChange>();
-        const tx: OwnedTransaction = {
-            ...read(native),
-            put: (name, value) =>
-                boundary(
-                    Effect.gen(function* () {
-                        const store = yield* object(name);
-                        yield* native.put(store, value);
-                        const key = value[store.definition.primaryKey] as Key;
-                        changes.set(JSON.stringify([name, key]), {
-                            kind: "put",
-                            objectType: name,
-                            key,
-                            value: (yield* native.get(store, key))!,
-                        });
-                    })
-                ),
-            delete: (name, key) =>
-                boundary(
-                    Effect.gen(function* () {
-                        const store = yield* object(name);
-                        yield* native.delete(store, key);
-                        changes.set(JSON.stringify([name, key]), {
-                            kind: "delete",
-                            objectType: name,
-                            key,
-                        });
-                    })
-                ),
-        };
+        const { tx, changes } = mutation(native);
         yield* mutator(tx, { ...invocation, parameters });
         yield* commitUploads;
-        const revision = (yield* current) + 1;
-        if (!Number.isSafeInteger(revision))
-            return yield* fault("invoke", "Unavailable", "Backend journal revision exhausted.");
         const receipt: ActionReceipt = {
             invocationId: invocation.id,
             outcome: "committed",
-            cursor: cursor(revision),
+            cursor: yield* append(changes, invocation.id),
         };
-        const commit: BackendCommit = {
-            cursor: receipt.cursor!,
-            invocationId: invocation.id,
-            changes: [...changes.values()],
-        };
-        yield* tables.put(journal, revision, { revision, commit });
         if (retainReceipt) yield* tables.put(receipts, receiptKey(invocation.id), { fingerprint, receipt });
-        const journalFloor = Math.max(
-            (yield* tables.get(metadata, "head"))?.journalFloor ?? 0,
-            revision - maxCommits
-        );
-        for (const row of yield* tables.loadSubset(journal, { where: lte(field("revision"), journalFloor) }))
-            yield* tables.delete(journal, row.key);
-        yield* tables.put(metadata, "head", { revision, source, journalFloor });
         return {
             receipt,
             changed: true,
@@ -515,6 +580,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     };
     return {
         name: "owned",
+        storage: trustedStorage,
         sourceId: source,
         protocol,
         collectClientGarbage,

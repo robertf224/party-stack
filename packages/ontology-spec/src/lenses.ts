@@ -166,3 +166,20 @@ export function mapTargetPathToSourceWithLens(path: readonly string[], lens: Len
     }
     return rewritten;
 }
+
+/**
+ * Apply a patch expressed in the target view to an existing source object.
+ * Unlike inverting a projection, this preserves source fields hidden by select.
+ * The target paths must be writable move/select paths, not computed values.
+ */
+export function applyLensPatchToObject<Source extends Record<string, unknown>>(
+    source: Source,
+    patch: Record<string, unknown>,
+    lens: Lens
+): Source {
+    let result = source;
+    for (const [name, value] of Object.entries(patch)) {
+        result = setAtPath(result, mapTargetPathToSourceWithLens([name], lens), value);
+    }
+    return result;
+}
