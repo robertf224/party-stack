@@ -114,3 +114,46 @@ pnpm --filter @party-stack/durable-object-ontology-storage dev:fixture
 The inline SQLite fixture routes ontologies to separate DOs. Workerd/Miniflare
 conformance tests also exercise the real Alchemy R2 clients. They do not deploy or
 provision Cloudflare resources.
+
+## Supplying keys and rotating them
+
+The default generated key is convenient for initial setup. To own its lifecycle,
+supply pre-provisioned Alchemy Secrets Store resources instead:
+
+```ts
+export const Notes = OntologyDurableObject("Notes", {
+    ir,
+    bucket: Bucket("Attachments"),
+    authorize: authorizeRequest,
+    encryptionKeys: {
+        active: "2026-11",
+        secrets: {
+            "2026-10": OldEncryptionSecret,
+            "2026-11": NewEncryptionSecret,
+        },
+    },
+});
+```
+
+Each value is a Secret resource or an Effect that resolves one, using Alchemy's
+ordinary `Secret(...)` construction or `Secret.ref(...)` for an existing resource.
+Secret values must contain 32 random bytes encoded as 64 hexadecimal characters.
+The IDs in this map are persisted in ciphertext envelopes. All keys are read and
+imported when an instance initializes; active must name a configured key. An
+application can alternatively supply the lower-level `encryptionKeyring`; these
+two options are mutually exclusive. Supplied keys do not create the default
+Random/Secret resources.
+
+A rotation is an explicit rollout: provision a new secret, deploy readers with
+both keys while writes still use the old ID, then switch active to the new ID.
+Re-encrypt current rows through ordinary journaled storage transactions in bounded
+batches. Retain old keys while retained journal/outbox data, offline clients or
+backups still require their ciphertext. Remove the old key only after that
+retention/migration decision. Restart/reconstruct instances to load a changed key
+configuration. There is no automatic row migration or key retirement.
+
+Do not overwrite a secret's value while keeping its key ID. Alchemy should manage
+the supplied resources consistently; updating a generated resource manually can
+be undone by a later deployment. The first transition away from the default must
+also preserve its existing v1 key/resource until its ciphertext is retired. Use
+Alchemy's resource move/retention mechanisms when changing infrastructure ownership.

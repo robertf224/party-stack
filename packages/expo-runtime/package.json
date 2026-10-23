@@ -2,7 +2,8 @@
     "name": "@party-stack/expo-runtime",
     "version": "0.4.2",
     "files": [
-        "lib"
+        "lib",
+        "plugin"
     ],
     "type": "module",
     "sideEffects": [
@@ -16,6 +17,10 @@
         "./polyfill": {
             "types": "./lib/polyfill.d.ts",
             "default": "./lib/polyfill.js"
+        },
+        "./plugin": {
+            "types": "./plugin/index.d.cts",
+            "default": "./plugin/index.cjs"
         }
     },
     "dependencies": {

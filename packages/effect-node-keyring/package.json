@@ -1,0 +1,26 @@
+{
+    "name": "@party-stack/effect-node-keyring",
+    "version": "0.1.0",
+    "files": [
+        "lib"
+    ],
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        }
+    },
+    "dependencies": {
+        "@napi-rs/keyring": "^2.1.2"
+    },
+    "devDependencies": {
+        "@party-stack/build-config": "workspace:*",
+        "effect": "^4.0.5",
+        "typescript": "~7.0.2",
+        "vite-plus": "catalog:"
+    },
+    "peerDependencies": {
+        "effect": "^4.0.5"
+    }
+}

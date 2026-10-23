@@ -15,26 +15,42 @@ The polyfill replaces global `Blob` with Expo Blob and global `File` with a comp
 
 Attachment storage requires blobs with `arrayBuffer()`, as provided by Expo Blob and Expo File. Blobs returned by other native libraries may still use React Native's older Blob implementation; convert those to compatible blobs before passing them to the runtime. Cache reads return `expo-file-system` File objects, which Expo fetch accepts as upload bodies.
 
-## Authentication for platform secrets
+## Platform secrets
 
-```ts
-import { createExpoRuntimeWithOptions } from "@party-stack/expo-runtime";
+The runtime uses SecureStore without an additional biometric authentication
+requirement, so OAuth refresh can run without prompting. There is no global
+`requireAuthentication` option. Interactive session unlock, per-use verification,
+and separate policies for sensitive properties remain future work. Expo does not
+yet supply the general EncryptionKeyring needed by the downloaded-value row cache.
 
-const createRuntime = createExpoRuntimeWithOptions({
-    requireAuthentication: true,
-    authenticationPrompt: "Unlock private data",
-});
+## Native configuration
+
+Add the config plugin when using Expo prebuild/CNG:
+
+```json
+{
+    "expo": {
+        "plugins": ["@party-stack/expo-runtime/plugin"]
+    }
+}
 ```
 
-The default remains false. Options apply to SecureStore reads, writes and deletes;
-authentication errors are propagated. iOS prompts for reading/updating protected
-items, while Android requires authentication for all operations. A biometric
-enrollment change can invalidate protected entries. This is a native access policy,
-not a session unlock cache; keeping keys in memory for an unlocked session would be
-an additional application policy. Background OAuth refresh may be unable to prompt.
-Use a separate credential/key service when background credentials and interactive
-vault data need different access policies. No per-property key selector is added.
+The separate CommonJS entry runs in Expo's build process and does not load React
+Native or the runtime. It composes the SDK's SecureStore and SQLite plugins.
+SecureStore supplies Android backup exclusions for entries whose device keys
+cannot be restored. SQLite's native configuration stays at SDK defaults.
+No Face ID permission description is added, and an existing application-provided
+description is preserved. WebBrowser's default plugin adds no configuration, so
+it is not included; the experimental Android launcher activity stays disabled.
+Your application still supplies its OAuth redirect scheme/URL.
 
-This configures the existing platform SecretStore. Expo does not yet supply the
-general EncryptionKeyring needed by LiveOntology's downloaded-value cache by default.
-See [Expo SecureStore](https://docs.expo.dev/versions/latest/sdk/securestore/).
+If you maintain custom Android backup rules, include equivalent SecureStore
+exclusions yourself, then configure:
+
+```json
+["@party-stack/expo-runtime/plugin", { "configureAndroidBackup": false }]
+```
+
+The SDK preserves existing custom backup-rule references and warns when they need
+manual integration. Avoid declaring the same SDK plugins separately with competing
+options; Expo runs each plugin once. Changing plugins requires a native rebuild.

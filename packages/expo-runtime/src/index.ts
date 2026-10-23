@@ -1,5 +1,1 @@
-export {
-    createExpoRuntime,
-    createExpoRuntimeWithOptions,
-    type ExpoRuntimeOptions,
-} from "./createExpoRuntime.js";
+export { createExpoRuntime } from "./createExpoRuntime.js";

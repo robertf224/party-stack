@@ -2,12 +2,14 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { connectOntologyHttp } from "@party-stack/ontology-server/rpc/http";
 import { sqliteOntologyConformanceIR } from "@party-stack/ontology/testing/sqlite";
 import { Bucket } from "alchemy/Cloudflare/R2/Bucket";
+import { Secret } from "alchemy/Cloudflare/SecretsStore";
 import { isDurableObjectExport } from "alchemy/Cloudflare/Workers/DurableObject";
 import { DurableObjectState, fromDurableObjectState } from "alchemy/Cloudflare/Workers/DurableObjectState";
 import { Worker, WorkerEnvironment } from "alchemy/Cloudflare/Workers/Worker";
 import { makeWorkerRuntimeContext } from "alchemy/Cloudflare/Workers/WorkerRuntimeContext";
 import * as Output from "alchemy/Output";
 import { Stack } from "alchemy/Stack";
+import { Redacted } from "effect";
 import { ConfigProvider, Context, Effect, Result, type Scope } from "effect";
 import { FetchHttpClient, HttpEffect } from "effect/http";
 import { OntologyDurableObject } from "../src/alchemy/index.js";
@@ -44,6 +46,23 @@ const declare = Effect.fnUntraced(function* (bucket: R2Bucket, gc: OntologyDurab
         ir: sqliteOntologyConformanceIR,
         bucket: Bucket.ref("BLOBS"),
         gc,
+        ...(gc === false
+            ? {
+                  encryptionKeys: {
+                      active: "v2",
+                      secrets: {
+                          v1: Secret("ExternalOldKey", {
+                              store: { storeId: "test", accountId: "test" },
+                              value: Redacted.make("ab".repeat(32)),
+                          }),
+                          v2: Secret("ExternalNewKey", {
+                              store: { storeId: "test", accountId: "test" },
+                              value: Redacted.make("cd".repeat(32)),
+                          }),
+                      },
+                  },
+              }
+            : {}),
         context: { user: "tester" },
         authorize: (_request, headers) =>
             headers.authorization === "Bearer test"
@@ -62,6 +81,18 @@ const declare = Effect.fnUntraced(function* (bucket: R2Bucket, gc: OntologyDurab
         Effect.provideService(TestWorker, host as unknown as Effect.Success<typeof Worker>),
         Effect.provideService(WorkerEnvironment, {
             BLOBS: bucket,
+            ExternalOldKey: {
+                get: async () => {
+                    secretReads++;
+                    return "ab".repeat(32);
+                },
+            },
+            ExternalNewKey: {
+                get: async () => {
+                    secretReads++;
+                    return "cd".repeat(32);
+                },
+            },
             ResourceNotesEncryptionKey: {
                 get: async () => {
                     secretReads++;
@@ -79,7 +110,12 @@ const declare = Effect.fnUntraced(function* (bucket: R2Bucket, gc: OntologyDurab
     const exported = exports.ResourceNotes;
     if (!isDurableObjectExport(exported))
         throw new Error("Factory did not register a Durable Object export.");
-    return { namespace, exported, bindings, encryptionConfigured: () => secretReads > 0 };
+    return {
+        namespace,
+        exported,
+        bindings,
+        encryptionConfigured: () => secretReads === (gc === false ? 4 : 2),
+    };
 });
 
 export interface ResourceResult {

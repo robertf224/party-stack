@@ -1,84 +1,73 @@
+import { Effect, Redacted } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { NodeSecretStore } from "./NodeSecretStore.js";
-import type { SecretStorageBackend } from "cross-keychain";
 
-const keychain = vi.hoisted(() => ({
-    getAllBackends: vi.fn(),
+const native = vi.hoisted(() => ({
+    calls: 0,
+    unavailable: false,
+    entries: new Map<string, string>(),
+    set: vi.fn(),
+    remove: vi.fn(),
 }));
-
-vi.mock("cross-keychain", () => keychain);
-
-function memoryBackend(id = "native-macos"): SecretStorageBackend {
-    const values = new Map<string, string>();
+vi.mock("@party-stack/effect-node-keyring", async () => {
+    const { Effect, Redacted } = await import("effect");
     return {
-        id,
-        name: id,
-        priority: 10,
-        getPassword(service, account) {
-            return Promise.resolve(values.get(`${service}:${account}`) ?? null);
-        },
-        setPassword(service, account, password) {
-            values.set(`${service}:${account}`, password);
-            return Promise.resolve();
-        },
-        deletePassword(service, account) {
-            values.delete(`${service}:${account}`);
-            return Promise.resolve();
-        },
-        getCredential() {
-            return Promise.resolve(null);
-        },
-        withProperties() {
-            return this;
-        },
-        diagnose() {
-            return Promise.resolve({});
-        },
+        make: Effect.suspend(() => {
+            native.calls++;
+            if (native.unavailable) return Effect.fail(new Error("Native keyring unavailable"));
+            return Effect.succeed({
+                getPassword: (service: string, account: string) =>
+                    Effect.sync(() => {
+                        const value = native.entries.get(JSON.stringify([service, account]));
+                        return value === undefined ? undefined : Redacted.make(value);
+                    }),
+                setPassword: (service: string, account: string, value: Redacted.Redacted<string>) =>
+                    Effect.sync(() => {
+                        native.set(service, account, value);
+                        native.entries.set(JSON.stringify([service, account]), Redacted.value(value));
+                    }),
+                deleteCredential: (service: string, account: string) =>
+                    Effect.sync(() => {
+                        native.remove(service, account);
+                        return native.entries.delete(JSON.stringify([service, account]));
+                    }),
+            });
+        }),
     };
-}
+});
 
 describe("NodeSecretStore", () => {
     beforeEach(() => {
-        keychain.getAllBackends.mockReset();
+        native.calls = 0;
+        native.unavailable = false;
+        native.entries.clear();
+        vi.clearAllMocks();
     });
-
-    it("namespaces and hashes keychain accounts", async () => {
-        const backend = memoryBackend();
-        keychain.getAllBackends.mockResolvedValue([backend]);
-        const setPassword = vi.spyOn(backend, "setPassword");
-        const store = new NodeSecretStore({
-            service: "party-stack:test:secrets",
-        });
-
+    it("hashes service/accounts, passes redacted passwords and deletes missing entries safely", async () => {
+        const store = new NodeSecretStore({ service: "party-stack:test:secrets" });
         await store.set("tokens/client:id", "secret");
-
-        expect(setPassword).toHaveBeenCalledWith(
+        expect(native.set).toHaveBeenCalledWith(
             expect.stringMatching(/^party-stack\.[a-f0-9]{64}$/),
             expect.stringMatching(/^party-stack\.[a-f0-9]{64}$/),
-            "secret"
+            expect.anything()
         );
+        expect(Redacted.value(native.set.mock.calls[0]![2])).toBe("secret");
         await expect(store.get("tokens/client:id")).resolves.toBe("secret");
         await store.delete("tokens/client:id");
         await store.delete("tokens/client:id");
+        await expect(store.get("tokens/client:id")).resolves.toBeUndefined();
+        expect(native.remove).toHaveBeenCalledTimes(2);
     });
-
-    it("rejects file-only keychain availability", async () => {
-        keychain.getAllBackends.mockResolvedValue([memoryBackend("file")]);
-        const store = new NodeSecretStore({
-            service: "party-stack:test:secrets",
-        });
-
-        await expect(store.get("token")).rejects.toThrow("No OS keychain is available");
+    it("loads the native service lazily once", async () => {
+        const store = new NodeSecretStore({ service: "test" });
+        expect(native.calls).toBe(0);
+        await store.get("one");
+        await store.get("two");
+        expect(native.calls).toBe(1);
     });
-
-    it("selects the Linux Secret Service lazily", async () => {
-        keychain.getAllBackends.mockResolvedValue([memoryBackend("secret-service")]);
-        const store = new NodeSecretStore({
-            service: "party-stack:test:secrets",
-        });
-
-        expect(keychain.getAllBackends).not.toHaveBeenCalled();
-        await expect(store.get("token")).resolves.toBeUndefined();
-        expect(keychain.getAllBackends).toHaveBeenCalledOnce();
+    it("fails explicitly when the native binding is unavailable", async () => {
+        native.unavailable = true;
+        const store = new NodeSecretStore({ service: "test" });
+        await expect(store.get("token")).rejects.toThrow("Native keyring unavailable");
     });
 });

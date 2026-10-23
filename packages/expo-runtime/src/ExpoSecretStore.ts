@@ -1,6 +1,5 @@
 import { deleteItemAsync, getItemAsync, setItemAsync } from "expo-secure-store";
 import type { SecretStore } from "@party-stack/runtime";
-import type { SecureStoreOptions } from "expo-secure-store";
 
 // https://docs.expo.dev/versions/latest/sdk/securestore#securestoresetitemkey-value-options
 function encodeKey(value: string): string {
@@ -9,25 +8,15 @@ function encodeKey(value: string): string {
 }
 
 export class ExpoSecretStore implements SecretStore {
-    constructor(
-        private readonly prefix: string,
-        private readonly options?: SecureStoreOptions
-    ) {}
-
+    constructor(private readonly prefix: string) {}
     get(key: string): Promise<string | undefined> {
-        return (this.options ? getItemAsync(this.key(key), this.options) : getItemAsync(this.key(key))).then(
-            (value) => value ?? undefined
-        );
+        return getItemAsync(this.key(key)).then((value) => value ?? undefined);
     }
-
     set(key: string, value: string): Promise<void> {
-        return this.options
-            ? setItemAsync(this.key(key), value, this.options)
-            : setItemAsync(this.key(key), value);
+        return setItemAsync(this.key(key), value);
     }
-
     delete(key: string): Promise<void> {
-        return this.options ? deleteItemAsync(this.key(key), this.options) : deleteItemAsync(this.key(key));
+        return deleteItemAsync(this.key(key));
     }
 
     private key(key: string): string {

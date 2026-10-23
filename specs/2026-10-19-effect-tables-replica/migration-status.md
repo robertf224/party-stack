@@ -370,7 +370,7 @@ encryption remains deferred.
 
 ## October 23 checkpoint: embedded encryption and scoped decryption
 
-`Encrypted<T>` carries `{ciphertext, source?}` and a type-only `valueType` symbol.
+`Encrypted<T>` carries `{ciphertext, source?}` and a type-only `encryptedValueType` symbol.
 Native envelopes contain their encrypted data directly; there is no UUID mapping
 or ciphertext import/eviction service. Nested encrypted wrappers (including named
 references and containers) fail definition validation/schema compilation.
@@ -394,14 +394,22 @@ Both policy HTTP and Effect RPC route explicit decryption. HTTP requires canDecr
 in addition to row/property visibility. HTTP RPC cancellation reaches the owner's
 scoped operation. Memory tabs forward cache policy to their persistent owner.
 WebRuntime.persistEncryptionKeys documents persistence/same-origin/key-loss limits.
-Expo adds requireAuthentication/authenticationPrompt options to its platform secret
-store; session unlocking and a default general Expo EncryptionKeyring are separate
-follow-ups. Connect's OS-secret fallback still uses platform credential references.
+Expo has no global biometric runtime option; background credentials use SecureStore
+without an additional prompt. Session/per-use policies and a general Expo keyring
+remain [future work](./sensitive-access.md). Its /plugin entry composes SDK native
+configuration and SecureStore backup rules without adding Face ID permission.
+Node SecretStore now delegates to the standalone @party-stack/effect-node-keyring
+service, using required async native bindings and persistent Linux Secret Service.
+There is no cross-keychain/CLI/file fallback. Connect's platform-secret fallback
+still uses platform credential references.
 
 The Alchemy DO factory generates one stable 256-bit key through Alchemy Random,
 provisions a Cloudflare Secrets Store secret scoped by stack/stage/resource, and
 imports it as a non-extractable AES-GCM key. An explicit encryptionKeyring overrides
-this default. Key rotation and old-key retention remain future work.
+this default. encryptionKeys accepts pre-provisioned, versioned Alchemy secrets,
+selecting an active key while retaining old readers. Provisioning/rollout and
+journaled row re-encryption remain explicit application operations; there is no
+automatic rotation/migration or key retirement.
 
 Foundry v2 staged-write wrappers convert plaintext strings to {plaintext} and copied
 portable Foundry encrypted values to {ciphertext}, preserving OSDK instances without

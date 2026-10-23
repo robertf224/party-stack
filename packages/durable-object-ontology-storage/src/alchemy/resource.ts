@@ -12,16 +12,27 @@ import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { makeAlchemyOntology } from "./backend.js";
 import type { AlchemyOntologyOptions } from "./backend.js";
 import type { OntologyRpcServerOptions } from "@party-stack/ontology-server/rpc";
+import type { EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
 import type { Bucket } from "alchemy/Cloudflare/R2/Bucket";
+import type { ReadSecretClient } from "alchemy/Cloudflare/SecretsStore";
 import type { DurableObjectShape } from "alchemy/Cloudflare/Workers/DurableObject";
 import type { Worker } from "alchemy/Cloudflare/Workers/Worker";
 import type { PlatformServices } from "alchemy/Platform";
+
+export interface AlchemyEncryptionKeys {
+    /** Key ID for new writes. Keep previous key IDs configured until their ciphertext is retired. */
+    readonly active: string;
+    /** Secrets contain 32-byte AES keys as 64 hexadecimal characters. Provision/rotate them externally. */
+    readonly secrets: Readonly<Record<string, Secret | Effect.Effect<Secret, never, PlatformServices>>>;
+}
 
 export interface OntologyDurableObjectOptions extends Omit<AlchemyOntologyOptions, "bucket" | "ontologyId"> {
     readonly bucket: Bucket | Effect.Effect<Bucket, never, PlatformServices>;
     /** Defaults to the resource name. Instances remain isolated by their DO IDs. */
     readonly ontologyId?: string;
     readonly authorize: OntologyRpcServerOptions["authorize"];
+    /** Supply existing versioned secrets instead of provisioning the default key. Mutually exclusive with encryptionKeyring. */
+    readonly encryptionKeys?: AlchemyEncryptionKeys;
     /** Defaults to an hourly bounded pass with the shared one-hour orphan grace. */
     readonly gc?:
         | false
@@ -52,60 +63,58 @@ export function OntologyDurableObject(
             const gc = options.gc === false ? false : Schema.decodeUnknownSync(GC)(options.gc ?? {});
             const bucket = yield* ReadWriteBucket(options.bucket);
             const state = yield* DurableObjectState;
-            // Same provisioning/binding pattern as Alchemy's encrypted state store.
-            const encryptionSecret = options.encryptionKeyring
-                ? undefined
-                : yield* ReadSecret(
-                      Effect.gen(function* () {
-                          const store = yield* Store(`${name}Secrets`);
-                          const random = yield* Random(`${name}EncryptionKey`, { bytes: 32 });
-                          const stack = yield* Stack;
-                          const identity = JSON.stringify([stack.name, stack.stage, random.FQN]);
-                          const digest = yield* Effect.promise(() =>
-                              crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity))
-                          );
-                          const secretName = `party-stack-${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-                          return yield* Secret(`${name}EncryptionKey`, {
-                              name: secretName,
-                              store,
-                              value: random.text,
-                          });
-                      })
-                  );
+            if (options.encryptionKeyring && options.encryptionKeys)
+                return yield* Effect.die(new Error("Supply encryptionKeys or encryptionKeyring, not both."));
+            const configured = options.encryptionKeys;
+            if (configured && (!configured.active || !Object.hasOwn(configured.secrets, configured.active)))
+                return yield* Effect.die(
+                    new Error("The active encryption key must have a configured secret.")
+                );
+            const defaultSecret = Effect.gen(function* () {
+                const store = yield* Store(`${name}Secrets`);
+                const random = yield* Random(`${name}EncryptionKey`, { bytes: 32 });
+                const stack = yield* Stack;
+                const identity = JSON.stringify([stack.name, stack.stage, random.FQN]);
+                const digest = yield* Effect.promise(() =>
+                    crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity))
+                );
+                const secretName = `party-stack-${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+                return yield* Secret(`${name}EncryptionKey`, { name: secretName, store, value: random.text });
+            });
+            const clients = new Map<string, ReadSecretClient>();
+            if (!options.encryptionKeyring)
+                for (const [id, secret] of Object.entries(configured?.secrets ?? { v1: defaultSecret }))
+                    clients.set(id, yield* ReadSecret(secret));
             return Effect.gen(function* () {
-                const key = encryptionSecret
-                    ? yield* encryptionSecret.get().pipe(
-                          Effect.flatMap((value) =>
-                              Effect.tryPromise({
-                                  try: () => {
-                                      const hex = Redacted.value(value);
-                                      if (!/^[0-9a-f]{64}$/u.test(hex))
-                                          throw new Error("Invalid encryption key.");
-                                      return crypto.subtle.importKey(
-                                          "raw",
-                                          Uint8Array.from(hex.match(/../gu)!, (pair) =>
-                                              Number.parseInt(pair, 16)
-                                          ),
-                                          "AES-GCM",
-                                          false,
-                                          ["encrypt", "decrypt"]
-                                      );
-                                  },
-                                  catch: () => new Error("Could not initialize ontology encryption key."),
-                              })
-                          ),
-                          Effect.mapError(() => new Error("Could not initialize ontology encryption key.")),
-                          Effect.orDie
-                      )
-                    : undefined;
-                const encryptionKeyring =
-                    options.encryptionKeyring ??
-                    (key
-                        ? {
-                              active: Effect.succeed({ id: "v1", key }),
-                              get: (id: string) => Effect.succeed(id === "v1" ? key : undefined),
-                          }
-                        : undefined);
+                const keys = new Map<string, CryptoKey>();
+                for (const [id, client] of clients) {
+                    const key = yield* client.get().pipe(
+                        Effect.flatMap((value) =>
+                            Schema.decodeUnknownEffect(
+                                Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/iu))
+                            )(Redacted.value(value))
+                        ),
+                        Effect.flatMap((hex) =>
+                            Effect.tryPromise(() =>
+                                crypto.subtle.importKey(
+                                    "raw",
+                                    Uint8Array.from(hex.match(/../gu)!, (pair) => Number.parseInt(pair, 16)),
+                                    "AES-GCM",
+                                    false,
+                                    ["encrypt", "decrypt"]
+                                )
+                            )
+                        ),
+                        Effect.mapError(() => new Error("Could not initialize ontology encryption key.")),
+                        Effect.orDie
+                    );
+                    keys.set(id, key);
+                }
+                const active = configured?.active ?? "v1";
+                const encryptionKeyring: EncryptionKeyringService = options.encryptionKeyring ?? {
+                    active: Effect.succeed({ id: active, key: keys.get(active)! }),
+                    get: (id) => Effect.succeed(keys.get(id)),
+                };
                 const { backend } = yield* makeAlchemyOntology({
                     ...options,
                     encryptionKeyring,

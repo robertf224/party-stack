@@ -14,11 +14,11 @@
     "dependencies": {
         "@hono/node-server": "^2.1.1",
         "@party-stack/coordination": "workspace:*",
+        "@party-stack/effect-node-keyring": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "@party-stack/sql-ontology-storage": "workspace:*",
         "better-sqlite3": "^12.9.0",
-        "cross-keychain": "^1.1.0",
         "effect": "^4.0.5",
         "hono": "^4.13.5",
         "open": "^11.0.1",

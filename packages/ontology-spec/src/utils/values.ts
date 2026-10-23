@@ -18,7 +18,7 @@ export type Union<T extends Record<string, unknown>> = {
 
 export type Result<T, E> = Union<{ ok: T; err: E }>;
 
-declare const valueType: unique symbol;
+declare const encryptedValueType: unique symbol;
 
 /** Opaque encrypted data. Reading a record never implicitly decrypts it. */
 export interface Encrypted<T = unknown> {
@@ -28,7 +28,7 @@ export interface Encrypted<T = unknown> {
         readonly primaryKey: string | number;
         readonly property: string;
     };
-    readonly [valueType]?: T;
+    readonly [encryptedValueType]?: T;
 }
 
 export type attachment<Type extends string = string> = {

@@ -45,16 +45,12 @@ describe("ExpoSecretStore", () => {
     });
 });
 
-// The same native access policy must apply when reading, writing and deleting an item.
-it("forwards authentication policy without silently falling back on failure", async () => {
-    const options = { requireAuthentication: true, authenticationPrompt: "Unlock private data" };
-    const store = new ExpoSecretStore("private", options);
-    await store.set("key", "secret");
-    await store.get("key");
-    await store.delete("key");
-    expect(secureStore.setItemAsync).toHaveBeenLastCalledWith(expect.any(String), "secret", options);
-    expect(secureStore.getItemAsync).toHaveBeenLastCalledWith(expect.any(String), options);
-    expect(secureStore.deleteItemAsync).toHaveBeenLastCalledWith(expect.any(String), options);
-    secureStore.getItemAsync.mockRejectedValueOnce(new Error("Authentication cancelled"));
-    await expect(store.get("key")).rejects.toThrow("Authentication cancelled");
+it("uses SecureStore without an additional authentication requirement", async () => {
+    const store = new ExpoSecretStore("background-credentials");
+    await store.set("token", "secret");
+    await store.get("token");
+    await store.delete("token");
+    expect(secureStore.setItemAsync).toHaveBeenLastCalledWith(expect.any(String), "secret");
+    expect(secureStore.getItemAsync).toHaveBeenLastCalledWith(expect.any(String));
+    expect(secureStore.deleteItemAsync).toHaveBeenLastCalledWith(expect.any(String));
 });

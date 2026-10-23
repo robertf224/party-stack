@@ -6,7 +6,7 @@ Rows carry opaque encrypted data, rather than IDs into a separate ciphertext tab
 interface Encrypted<T> {
     readonly ciphertext: string;
     readonly source?: { objectType: string; primaryKey: string | number; property: string };
-    readonly [valueType]?: T; // Type-only symbol, no runtime plaintext.
+    readonly [encryptedValueType]?: T; // Type-only symbol, no runtime plaintext.
 }
 ```
 
@@ -91,7 +91,9 @@ a stable random 256-bit key in Cloudflare Secrets Store via Alchemy unless a cus
 keyring is supplied. Alchemy deployment state retains the generated secret; protect
 that state and the secret resource. Deleting/replacing the key without a rotation
 plan makes existing ciphertext unreadable. The DO helper imports it as a
-non-extractable AES-GCM CryptoKey. There is no automatic key rotation yet.
+non-extractable AES-GCM CryptoKey. The helper also accepts versioned, pre-provisioned
+secrets via encryptionKeys; applications own their rollout and data migration.
+There is no automatic key rotation or retirement.
 
 Effect RPC exposes an authorized Decrypt operation. Memory tabs forward cache
 policy to their persistent owner. Plaintext is returned only for that explicit
@@ -115,3 +117,11 @@ types are still separate work. Outbox parameter encryption remains deferred; fin
 property encryption alone does not encrypt an ordinary action argument already
 persisted in the outbox. Cache TTL, session unlock policies and separate keys for
 interactive versus background use can be layered on later.
+
+## Future user verification
+
+No global Expo biometric runtime option is exposed. Background OAuth credentials
+must remain usable without an interactive prompt. Property/operation access
+policies, session unlock scopes and per-use verification are separate future work,
+including enforcement before a cached read. See the
+[sensitive-access design notes](../../specs/2026-10-19-effect-tables-replica/sensitive-access.md).
