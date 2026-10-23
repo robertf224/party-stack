@@ -7,7 +7,8 @@ import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import { makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Runtime, createDefaultRuntime } from "@party-stack/runtime";
+import { Runtime } from "@party-stack/runtime";
+import { memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { queryOnce } from "@tanstack/db";
 import { Deferred, Effect, Fiber, Schema } from "effect";
 import { Temporal } from "temporal-polyfill";
@@ -63,7 +64,7 @@ const fixture = Effect.fnUntraced(function* (settings?: { keys?: boolean; owner?
     const keys = yield* Effect.promise(keyring);
     const owner = settings?.owner ?? "alice";
     const runtime = yield* Runtime.make({
-        ...createDefaultRuntime(owner, "private"),
+        ...memoryRuntimeFixture(owner, "private"),
         tables: Effect.succeed(tables),
         encryptionKeyring: settings?.keys === false ? undefined : Effect.succeed(keys),
     });

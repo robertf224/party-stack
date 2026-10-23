@@ -1,5 +1,4 @@
 import * as IndexedDb from "@effect/platform-browser/IndexedDb";
-import { LockBroadcastCoordination, SingleProcessCoordination } from "@party-stack/coordination";
 import { makeEncryptionKeyring } from "@party-stack/indexeddb-ontology-storage/encryption-keyring";
 import * as IndexedDbTables from "@party-stack/indexeddb-ontology-storage/tables";
 import { MemoryBlobBytesStore } from "@party-stack/runtime";
@@ -7,6 +6,7 @@ import { Runtime, RuntimeError } from "@party-stack/runtime";
 import { Effect, Layer } from "effect";
 import { createActorLiveness } from "./actorLiveness.js";
 import { createWebBrowserAuthentication } from "./createWebBrowserAuthentication.js";
+import { acquireHost } from "./hostOwnership.js";
 import { NavigatorNetworkConnectivity } from "./NavigatorNetworkConnectivity.js";
 import { OPFSBlobBytesStore } from "./OPFSBlobBytesStore.js";
 import type { RuntimeAdapter } from "@party-stack/runtime";
@@ -15,8 +15,6 @@ export interface WebRuntimeOptions {
     readonly owner: string;
     readonly namespace: string;
     readonly storage?: "indexeddb" | "memory";
-    /** single-process requires an exclusive owner or isolated memory storage. */
-    readonly coordination?: "locks" | "single-process";
     /** Explicitly allow a non-extractable AES-GCM CryptoKey to persist in IndexedDB across reloads.
      * Same-origin code can still use it to decrypt: this is not a vault lock or protection from XSS.
      * Keys are separate from ordinary table exports. Clearing site data loses the keys and makes
@@ -29,12 +27,11 @@ export interface WebRuntimeOptions {
 /** Lazy platform acquisition. The containing Layer Scope owns all open resources. */
 export const make = Effect.fn("WebRuntime.make")(function* (options: WebRuntimeOptions) {
     const persistent = options.storage !== "memory";
-    const shared = (options.coordination ?? (persistent ? "locks" : "single-process")) === "locks";
-    if (shared && (!globalThis.navigator?.locks || typeof BroadcastChannel === "undefined"))
+    if (persistent && !globalThis.navigator?.locks)
         return yield* new RuntimeError({
-            operation: "webRuntime.coordination",
+            operation: "webRuntime.ownership",
             cause: new Error(
-                "Web Locks and BroadcastChannel are required for shared persistent storage. Use an exclusive owner or isolated memory storage."
+                "Web Locks are required for persistent replica ownership. Select isolated memory storage when unavailable."
             ),
         });
     if (
@@ -47,21 +44,11 @@ export const make = Effect.fn("WebRuntime.make")(function* (options: WebRuntimeO
                 "IndexedDB and OPFS are unavailable. Isolated memory storage can be selected explicitly."
             ),
         });
-    const name = `party-stack:${options.owner}:${options.namespace}`;
+    const name = `party-stack:${JSON.stringify([options.owner, options.namespace])}`;
     const connectivity = yield* Effect.acquireRelease(
         Effect.try({
             try: () => NavigatorNetworkConnectivity.create(),
             catch: (cause) => new RuntimeError({ operation: "webRuntime.connectivity", cause }),
-        }),
-        (value) => Effect.promise(() => value.close())
-    );
-    const coordination = yield* Effect.acquireRelease(
-        Effect.try({
-            try: () =>
-                shared
-                    ? new LockBroadcastCoordination({ scope: name })
-                    : new SingleProcessCoordination({ scope: name }),
-            catch: (cause) => new RuntimeError({ operation: "webRuntime.coordination", cause }),
         }),
         (value) => Effect.promise(() => value.close())
     );
@@ -83,9 +70,10 @@ export const make = Effect.fn("WebRuntime.make")(function* (options: WebRuntimeO
         ? new OPFSBlobBytesStore({ directoryName: `${name}:blobs` })
         : new MemoryBlobBytesStore();
     const adapter: RuntimeAdapter = {
+        acquireHost: persistent ? acquireHost(name) : undefined,
         owner: options.owner,
         namespace: options.namespace,
-        coordination,
+
         connectivity,
         blobBytes,
         tables: persistent

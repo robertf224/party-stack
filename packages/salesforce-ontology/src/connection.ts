@@ -290,7 +290,9 @@ const createSalesforceConnectionAdapterInstance = Effect.fn("Salesforce.connecti
                     if (!publicOauth) {
                         throw unauthenticated("Salesforce public OAuth is not configured.");
                     }
-                    return createPublicSession(await publicOauth.refresh(userId));
+                    return createPublicSession(
+                        await publicOauth.refresh(userId, { ifExpiringWithinMs: 60_000 })
+                    );
                 });
             },
             disconnect() {

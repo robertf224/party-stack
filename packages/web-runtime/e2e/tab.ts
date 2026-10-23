@@ -1,10 +1,11 @@
 import { Table } from "@party-stack/ontology-storage/tables";
 import { createLocalCollection } from "@party-stack/runtime";
-import { Runtime, runtimeEffects } from "@party-stack/runtime";
+import { Runtime } from "@party-stack/runtime";
 import { createLiveQueryCollection, queryOnce } from "@tanstack/db";
-import { createWebRuntime } from "../src/createWebRuntime.js";
+import { ManagedRuntime, Scope } from "effect";
+import { layer } from "../src/WebRuntime.js";
 
-// Drop only event notifications; RPC, leader election, locks, and storage stay real.
+// Drop storage notifications while retaining real native locks and IndexedDB.
 const NativeBroadcastChannel = globalThis.BroadcastChannel;
 let dropEvents = false;
 class LossyBroadcastChannel extends EventTarget {
@@ -38,7 +39,17 @@ interface Item {
     score: number;
 }
 const namespace = new URL(location.href).searchParams.get("scope")!;
-const runtime = await createWebRuntime("browser-test", namespace);
+const app = ManagedRuntime.make(layer({ owner: "browser-test", namespace }));
+const service = await app.runPromise(Runtime);
+const runtime = service.adapter;
+let ownsHost = false;
+const hostScope = await app.runPromise(Scope.fork(service.scope));
+void app
+    .runPromise(Scope.provide(runtime.acquireHost!, hostScope))
+    .then(() => {
+        ownsHost = true;
+    })
+    .catch(() => undefined);
 const collection = createLocalCollection<Item, string>({ name: "items", runtime, getKey: (item) => item.id });
 const query = createLiveQueryCollection((q) =>
     q.from({ item: collection }).orderBy(({ item }) => item.score)
@@ -48,14 +59,12 @@ await queryOnce((q) => q.from({ item: query }));
 Object.assign(window, {
     persistenceTest: {
         durable: async () => {
-            const service = await runtimeEffects(runtime).runtime.runPromise(Runtime);
+            const service = await app.runPromise(Runtime);
             const table = Table.make<Item>({
                 name: JSON.stringify(["local", runtime.owner, runtime.namespace, "items"]),
             });
             return {
-                keys: (
-                    await runtimeEffects(runtime).runtime.runPromise(service.tables.loadSubset(table))
-                ).map((row) => row.key),
+                keys: (await app.runPromise(service.tables.loadSubset(table))).map((row) => row.key),
             };
         },
         rows: () => [...query.values()].map(({ id, title, score }) => ({ id, title, score })),
@@ -76,12 +85,12 @@ Object.assign(window, {
         resume: () => {
             window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
         },
-        leader: () => "isLeader" in runtime.coordination && runtime.coordination.isLeader,
+        leader: () => ownsHost,
         cleanup: async () => {
             subscription.unsubscribe();
             await query.cleanup();
             await collection.cleanup();
-            await runtime.cleanup?.();
+            await app.dispose();
         },
     },
 });

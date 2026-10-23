@@ -1,4 +1,6 @@
-import { Runtime, runtimeEffects, createDefaultRuntime, type RuntimeAdapter } from "@party-stack/runtime";
+import { Runtime, type RuntimeAdapter } from "@party-stack/runtime";
+import { closeRuntimeFixture } from "@party-stack/runtime/testing";
+import { runtimeFixtureContext, memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect, Exit, Scope } from "effect";
 import type { BackendConnectionAdapterProvider } from "@party-stack/connect";
 const releaseAdapters: Array<() => Promise<void>> = [];
@@ -9,12 +11,12 @@ async function openAdapter<A extends object>(
     provider: BackendConnectionAdapterProvider<A>,
     options: { installationId: string; runtime?: RuntimeAdapter }
 ) {
-    const runtime = options.runtime ?? createDefaultRuntime("installation", crypto.randomUUID());
-    const managed = runtimeEffects(runtime).runtime;
+    const runtime = options.runtime ?? memoryRuntimeFixture("installation", crypto.randomUUID());
+    const managed = runtimeFixtureContext(runtime).runtime;
     const owner = await managed.runPromise(Effect.flatMap(Runtime, (service) => Scope.fork(service.scope)));
     releaseAdapters.push(async () => {
         await Effect.runPromise(Scope.close(owner, Exit.void));
-        await runtime.cleanup?.();
+        await closeRuntimeFixture(runtime);
     });
     const adapter = await managed.runPromise(
         Scope.provide(provider({ ...options, runtime, scope: owner }), owner)
@@ -150,17 +152,17 @@ describe("createFoundryConnectionAdapter", () => {
     it("composes stored public OAuth authentication", async () => {
         const values = new Map<string, string>();
         const runtime = {
-            ...createDefaultRuntime("installation", `foundry-oauth-${crypto.randomUUID()}`),
+            ...memoryRuntimeFixture("installation", `foundry-oauth-${crypto.randomUUID()}`),
             secrets: {
-                get: (key: string) => Promise.resolve(values.get(key)),
-                set: (key: string, value: string) => {
-                    values.set(key, value);
-                    return Promise.resolve();
-                },
-                delete: (key: string) => {
-                    values.delete(key);
-                    return Promise.resolve();
-                },
+                get: (key: string) => Effect.sync(() => values.get(key)),
+                set: (key: string, value: string) =>
+                    Effect.sync(() => {
+                        values.set(key, value);
+                    }),
+                delete: (key: string) =>
+                    Effect.sync(() => {
+                        values.delete(key);
+                    }),
             },
             browserAuthentication: {
                 start({ redirectUrl }: { redirectUrl: string }) {
@@ -216,6 +218,6 @@ describe("createFoundryConnectionAdapter", () => {
         expect([...values.values()].some((value) => value.includes("refresh"))).toBe(true);
 
         await Effect.runPromise(adapter.cleanup?.() ?? Effect.void);
-        await runtime.cleanup?.();
+        await closeRuntimeFixture(runtime);
     });
 });

@@ -89,9 +89,9 @@ describe("real IndexedDB / Web Locks / BroadcastChannel tabs", () => {
             await expect.poll(() => run(reader, "rows")).toEqual([{ ...one, title: "Final" }]);
         });
     });
-    it("elects a replacement leader and continues persisting after its tab closes", async () => {
+    it("releases the persistent host lease when its owning tab closes", async () => {
         await tabs(async (writer, reader) => {
-            expect(await run(writer, "leader")).toBe(true);
+            await expect.poll(() => run(writer, "leader")).toBe(true);
             await run(writer, "insert", one);
             await expect.poll(() => run(reader, "rows")).toEqual([one]);
             await writer.close();

@@ -226,7 +226,6 @@ interface ReplicaCommonOptions {
     readonly online?: Effect.Effect<boolean>;
     readonly connectivity?: Stream.Stream<boolean>;
     /** Multi-context deployments supply their existing leader lease here. */
-    readonly asLeader?: (work: Effect.Effect<void, BackendError>) => Effect.Effect<void, BackendError>;
     readonly startSync?: boolean;
     readonly clients?: ClientPolicy;
     readonly pollIntervalMs?: number;
@@ -1498,9 +1497,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     });
     const syncOnce = options.source
         ? Effect.suspend(() => service.syncParent(options.source!))
-        : gate.withPermits(1)(
-              options.asLeader ? options.asLeader(diagnostics.sync(sync())) : diagnostics.sync(sync())
-          );
+        : gate.withPermits(1)(diagnostics.sync(sync()));
     const ownSourceId = (yield* boundary(tables.get(stateHead, "head")))!.sourceId;
     const clients = clientRegistry(options.namespace, ownSourceId, options.clients);
     yield* boundary(options.tables.transaction(clients.initialize));
@@ -2466,7 +2463,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             );
         if (gc) {
             const collect = service.collectGarbage(gc).pipe(Effect.asVoid);
-            const owned = gate.withPermits(1)(options.asLeader ? options.asLeader(collect) : collect);
+            const owned = gate.withPermits(1)(collect);
             yield* Effect.forkScoped(
                 Effect.forever(
                     Effect.sleep(gc.intervalMs).pipe(

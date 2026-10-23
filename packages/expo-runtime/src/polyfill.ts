@@ -1,4 +1,16 @@
 import { Blob } from "expo-blob";
+import { getRandomValues, randomUUID } from "expo-crypto";
+
+// Native AES is provided separately; only install the secure randomness used by portable IDs and nonces.
+if (typeof globalThis.crypto === "undefined")
+    Object.defineProperty(globalThis, "crypto", { value: {}, configurable: true });
+if (typeof globalThis.crypto.getRandomValues !== "function")
+    Object.defineProperty(globalThis.crypto, "getRandomValues", {
+        value: getRandomValues,
+        configurable: true,
+    });
+if (typeof globalThis.crypto.randomUUID !== "function")
+    Object.defineProperty(globalThis.crypto, "randomUUID", { value: randomUUID, configurable: true });
 
 // Expo declarations predate the current DOM Blob byte-array generics.
 globalThis.Blob = Blob as unknown as typeof globalThis.Blob;

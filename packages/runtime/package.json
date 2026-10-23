@@ -9,10 +9,13 @@
         ".": {
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
+        },
+        "./testing": {
+            "types": "./lib/testing.d.ts",
+            "default": "./lib/testing.js"
         }
     },
     "dependencies": {
-        "@party-stack/coordination": "workspace:*",
         "@party-stack/ontology-replica": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "effect": "^4.0.5"

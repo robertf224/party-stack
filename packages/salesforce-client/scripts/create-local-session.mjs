@@ -1,5 +1,6 @@
 import { createClientCredentialsOAuthClient, createPublicOAuthClient } from "@party-stack/connect";
 import { createNodeRuntime } from "@party-stack/node-runtime";
+import { Effect, Scope, Exit } from "effect";
 import { createSalesforceClient } from "../lib/index.js";
 
 function requiredEnvironmentVariable(name) {
@@ -67,7 +68,10 @@ export async function createLocalSalesforceSession() {
 
     // Smoke and demo intentionally share this runtime scope so the browser login
     // completed by either command can be restored by the other.
-    const runtime = await createNodeRuntime("salesforce-smoke", clientId);
+    const runtimeScope = Effect.runSync(Scope.make());
+    const runtime = (
+        await Effect.runPromise(Scope.provide(createNodeRuntime("salesforce-smoke", clientId), runtimeScope))
+    ).adapter;
     const oauth = await createPublicOAuthClient({
         clientId,
         redirectUrl,
@@ -98,12 +102,12 @@ export async function createLocalSalesforceSession() {
             session,
             async cleanup() {
                 await oauth.cleanup();
-                await runtime.cleanup?.();
+                await Effect.runPromise(Scope.close(runtimeScope, Exit.void));
             },
         };
     } catch (error) {
         await oauth.cleanup();
-        await runtime.cleanup?.();
+        await Effect.runPromise(Scope.close(runtimeScope, Exit.void));
         throw error;
     }
 }

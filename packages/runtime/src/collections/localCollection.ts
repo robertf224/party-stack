@@ -1,6 +1,6 @@
 import { BasicIndex, createCollection } from "@tanstack/db";
 import { Effect, Exit, Scope } from "effect";
-import { Runtime, runtimeEffects } from "../Runtime.js";
+import { Runtime, getRuntime } from "../Runtime.js";
 import { localCollectionOptions } from "./collections.js";
 import type { RuntimeAdapter } from "../types.js";
 import type { Collection, CollectionConfig } from "@tanstack/db";
@@ -13,14 +13,15 @@ export function createEffectLocalCollection<A extends object, K extends string |
     schemaVersion?: number;
     scope?: Scope.Scope;
 }): Collection<A, K> {
-    const managed = runtimeEffects(options.runtime).runtime;
+    const managed = { runPromise: Effect.runPromiseWith(getRuntime(options.runtime).context) };
     let closed = false;
     let collection: Collection<A, K>;
     let scopeClosing = false;
     const initialized = managed.runPromise(
         Effect.gen(function* () {
             const runtime = yield* Runtime;
-            const scope = yield* Scope.fork(options.scope ?? runtime.scope);
+            const scope = yield* Scope.fork(runtime.scope);
+            if (options.scope) yield* Scope.addFinalizer(options.scope, Scope.close(scope, Exit.void));
             yield* Scope.addFinalizer(
                 scope,
                 Effect.promise(async () => {

@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { createLocalCollection } from "@party-stack/runtime";
-import { Runtime, runtimeEffects } from "@party-stack/runtime";
+import { Runtime } from "@party-stack/runtime";
+import { acquireRuntime } from "@party-stack/runtime/testing";
+import { runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { queryOnce } from "@tanstack/db";
 import { Temporal } from "temporal-polyfill";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -27,7 +29,7 @@ afterEach(async () => {
     );
 });
 
-function createItems(runtime: Awaited<ReturnType<ReturnType<typeof createNodeRuntimeWithOptions>>>) {
+function createItems(runtime: Awaited<ReturnType<typeof acquireRuntime>>) {
     return createLocalCollection<Item, string>({
         name: "items",
         getKey: (item) => item.id,
@@ -43,7 +45,7 @@ describe("createNodeRuntime", () => {
         const provider = createNodeRuntimeWithOptions({ dataDirectory: directory });
         const instant = Temporal.Instant.from("2026-10-07T12:00:00.123456789Z");
         const date = Temporal.PlainDate.from("2026-10-07");
-        const open = (runtime: Awaited<ReturnType<typeof provider>>) =>
+        const open = (runtime: Awaited<ReturnType<typeof acquireRuntime>>) =>
             createLocalCollection<
                 { id: string; instant: Temporal.Instant; nested: { dates: Temporal.PlainDate[] } },
                 string
@@ -53,7 +55,7 @@ describe("createNodeRuntime", () => {
                 runtime,
                 schemaVersion: 1,
             });
-        const firstRuntime = await provider("owner", "temporal");
+        const firstRuntime = await acquireRuntime(provider("owner", "temporal"));
         const first = open(firstRuntime);
         const metadata = Table.make<{ cursor: Temporal.Instant; date: Temporal.PlainDate }>({
             name: "test-runtime-metadata",
@@ -62,8 +64,8 @@ describe("createNodeRuntime", () => {
             await queryOnce((q) => q.from({ row: first }));
             await first.insert({ id: "one", instant, nested: { dates: [date] } }).isPersisted.promise;
             await first.cleanup();
-            const storage = await runtimeEffects(firstRuntime).runtime.runPromise(Runtime);
-            await runtimeEffects(firstRuntime).runtime.runPromise(
+            const storage = await runtimeFixtureContext(firstRuntime).runtime.runPromise(Runtime);
+            await runtimeFixtureContext(firstRuntime).runtime.runPromise(
                 storage.tables.put(metadata, "head", { cursor: instant, date })
             );
         } finally {
@@ -71,7 +73,7 @@ describe("createNodeRuntime", () => {
             await firstRuntime.cleanup?.();
         }
 
-        const secondRuntime = await provider("owner", "temporal");
+        const secondRuntime = await acquireRuntime(provider("owner", "temporal"));
         const second = open(secondRuntime);
         try {
             await queryOnce((q) => q.from({ row: second }));
@@ -79,8 +81,8 @@ describe("createNodeRuntime", () => {
             expect(second.get("one")?.instant.epochNanoseconds).toBe(instant.epochNanoseconds);
             expect(second.get("one")?.nested.dates[0]).toBeInstanceOf(Temporal.PlainDate);
             expect(second.get("one")?.nested.dates[0]?.toString()).toBe(date.toString());
-            const storage = await runtimeEffects(secondRuntime).runtime.runPromise(Runtime);
-            const restored = await runtimeEffects(secondRuntime).runtime.runPromise(
+            const storage = await runtimeFixtureContext(secondRuntime).runtime.runPromise(Runtime);
+            const restored = await runtimeFixtureContext(secondRuntime).runtime.runPromise(
                 storage.tables.get(metadata, "head")
             );
             expect(restored?.cursor.epochNanoseconds).toBe(instant.epochNanoseconds);
@@ -97,7 +99,7 @@ describe("createNodeRuntime", () => {
         const provider = createNodeRuntimeWithOptions({
             dataDirectory: directory,
         });
-        const firstRuntime = await provider("owner", "namespace");
+        const firstRuntime = await acquireRuntime(provider("owner", "namespace"));
         const first = createItems(firstRuntime);
         await queryOnce((q) => q.from({ row: first }));
         await first.insert({
@@ -107,7 +109,7 @@ describe("createNodeRuntime", () => {
         await first.cleanup();
         await firstRuntime.cleanup?.();
 
-        const secondRuntime = await provider("owner", "namespace");
+        const secondRuntime = await acquireRuntime(provider("owner", "namespace"));
         const second = createItems(secondRuntime);
         await queryOnce((q) => q.from({ row: second }));
 
@@ -122,7 +124,9 @@ describe("createNodeRuntime", () => {
     it("resolves independent collection schemas on one database and preserves local data on mismatch", async () => {
         const directory = await mkdtemp(join(tmpdir(), "party-stack-runtime-"));
         directories.push(directory);
-        const runtime = await createNodeRuntimeWithOptions({ dataDirectory: directory })("owner", "schemas");
+        const runtime = await acquireRuntime(
+            createNodeRuntimeWithOptions({ dataDirectory: directory })("owner", "schemas")
+        );
         const open = (name: string, schemaVersion: number) =>
             createLocalCollection<Item, string>({
                 name,
@@ -170,8 +174,8 @@ describe("createNodeRuntime", () => {
         const provider = createNodeRuntimeWithOptions({
             dataDirectory: directory,
         });
-        const first = await provider("owner", "one");
-        const second = await provider("owner", "two");
+        const first = await acquireRuntime(provider("owner", "one"));
+        const second = await acquireRuntime(provider("owner", "two"));
 
         await first.blobBytes.write("blob", new Blob(["first"]));
         await second.blobBytes.write("blob", new Blob(["second"]));

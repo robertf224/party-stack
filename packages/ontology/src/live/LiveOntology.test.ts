@@ -1,6 +1,7 @@
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
-import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
+import { MemoryBlobBytesStore } from "@party-stack/runtime";
+import { asProvider } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createLiveOntology, waitForLiveOntologyReady } from "./LiveOntology.js";
@@ -29,14 +30,12 @@ const adapter = (backend = native()): OntologyBackendAdapter => ({
     open: () => Effect.succeed(backend),
 });
 const platform = (online = true) => {
-    const coordination = new SingleProcessCoordination({ scope: crypto.randomUUID() });
     return {
         owner: "user",
         namespace: crypto.randomUUID(),
         blobBytes: new MemoryBlobBytesStore(),
-        coordination,
+
         connectivity: { isConnected: online, subscribe: () => () => undefined },
-        cleanup: () => coordination.close(),
     };
 };
 
@@ -49,11 +48,11 @@ describe("native LiveOntology construction", () => {
             ir,
             context,
             id: "ontology-a",
-            runtime: (owner, namespace) => {
+            runtime: asProvider((owner, namespace) => {
                 expect(owner).toBe("user-42");
                 expect(namespace).toBe("ontology-a");
                 return runtime;
-            },
+            }),
             backend: (_ir, received) => {
                 expect(received).toBe(context);
                 return {
@@ -75,13 +74,13 @@ describe("native LiveOntology construction", () => {
     it("cleans up providers when persistence cannot be supplied", async () => {
         const cleanupBackend = vi.fn();
         const runtime = platform();
-        const cleanupRuntime = vi.fn(runtime.cleanup);
+        const cleanupRuntime = vi.fn();
         await expect(
             createLiveOntology({
                 ir,
                 persistObjects: true,
                 backend: () => ({ ...adapter(), cleanup: cleanupBackend }),
-                runtime: () => ({ ...runtime, cleanup: cleanupRuntime }),
+                runtime: asProvider(() => ({ ...runtime, cleanup: cleanupRuntime })),
             })
         ).rejects.toThrow("owned Tables storage");
         expect(cleanupBackend).toHaveBeenCalledOnce();
@@ -91,11 +90,11 @@ describe("native LiveOntology construction", () => {
     it("releases runtime and binding on failed native acquisition", async () => {
         const runtime = platform();
         const cleanup = vi.fn();
-        const cleanupRuntime = vi.fn(runtime.cleanup);
+        const cleanupRuntime = vi.fn();
         await expect(
             createLiveOntology({
                 ir,
-                runtime: () => ({ ...runtime, cleanup: cleanupRuntime }),
+                runtime: asProvider(() => ({ ...runtime, cleanup: cleanupRuntime })),
                 backend: () => ({
                     name: "fail",
                     cleanup,
@@ -121,7 +120,7 @@ describe("native LiveOntology construction", () => {
         const live = await createLiveOntology({
             ir,
             backend: () => adapter(native({ invoke })),
-            runtime: () => runtime,
+            runtime: asProvider(() => runtime),
         });
         try {
             const queued = await live.outbox.enqueue({
@@ -178,7 +177,11 @@ describe("native LiveOntology construction", () => {
 
     it("outbox mode returns on local admission while direct mode waits for confirmation", async () => {
         const runtime = platform(false);
-        const live = await createLiveOntology({ ir, runtime: () => runtime, backend: () => adapter() });
+        const live = await createLiveOntology({
+            ir,
+            runtime: asProvider(() => runtime),
+            backend: () => adapter(),
+        });
         try {
             await expect(live.actions.save!({}, { mode: "direct" })).rejects.toThrow("connectivity");
             await expect(

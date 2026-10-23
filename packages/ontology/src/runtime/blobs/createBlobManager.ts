@@ -4,8 +4,7 @@ import {
     type BlobStorageService,
     type BlobRecord,
 } from "@party-stack/ontology-storage/blobs";
-import { isCoordinationHost } from "@party-stack/runtime";
-import { Runtime, runtimeEffects } from "@party-stack/runtime";
+import { Runtime, getRuntime } from "@party-stack/runtime";
 import { Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { measureBlobDimensions } from "./measureBlobDimensions.js";
 import type { BlobManager, BlobManagerOptions, BlobMetadataOptions, PartialBlobMetadata } from "./types.js";
@@ -16,14 +15,15 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
     const gcTime = options.gcTime ?? Infinity;
     if (Number.isNaN(gcTime) || gcTime < 0)
         throw new RangeError("BlobManager gcTime must be a non-negative number.");
-    const managed = runtimeEffects(options.runtime).runtime;
-    const owner = Effect.runSync(options.scope ? Scope.fork(options.scope) : Scope.make());
+    const runtimeService = getRuntime(options.runtime);
+    const managed = { runPromise: Effect.runPromiseWith(runtimeService.context) };
+    const owner = Effect.runSync(Scope.fork(runtimeService.scope));
+    if (options.scope) Effect.runSync(Scope.addFinalizer(options.scope, Scope.close(owner, Exit.void)));
     let closed = false;
     const namespace = JSON.stringify([options.runtime.owner, options.runtime.namespace]);
     const initialized = managed.runPromise(
         Effect.gen(function* () {
             const runtime = yield* Runtime;
-            if (!options.scope) yield* Scope.addFinalizer(runtime.scope, Scope.close(owner, Exit.void));
             return yield* Scope.provide(
                 Effect.gen(function* () {
                     const storage = yield* makeBlobStorage({
@@ -62,7 +62,6 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
                             closed = true;
                         })
                     );
-                    const context = yield* Effect.context<never>();
                     const collect = Effect.gen(function* () {
                         if (gcTime !== Infinity) yield* storage.collectGarbage({ olderThanMs: gcTime });
                     }).pipe(
@@ -87,23 +86,7 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
                             yield* collect;
                         }
                     });
-                    const coordination = options.runtime.coordination;
-                    if (isCoordinationHost(coordination))
-                        yield* Effect.forkIn(
-                            Effect.tryPromise({
-                                try: (signal) =>
-                                    coordination.runAsLeader(
-                                        ({ signal }) =>
-                                            Effect.runPromiseWith(context)(Effect.scoped(maintenance), {
-                                                signal,
-                                            }),
-                                        { signal }
-                                    ),
-                                catch: (cause) => cause,
-                            }).pipe(Effect.catch(() => Effect.void)),
-                            owner
-                        );
-                    else yield* Effect.forkIn(maintenance, owner);
+                    yield* Effect.forkIn(maintenance, owner);
                     return { storage, notify: runtime.notify };
                 }),
                 owner

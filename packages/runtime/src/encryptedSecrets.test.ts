@@ -1,10 +1,9 @@
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
+import { memoryRuntimeFixture, defineRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
 import { expect, test } from "vite-plus/test";
 import { createEncryptedSecretStore } from "./encryptedSecrets.js";
-import { createDefaultRuntime } from "./utils/createDefaultRuntime.js";
-import { defineRuntime } from "./utils/defineRuntime.js";
 
 test("secret replacement atomically replaces embedded ciphertext without persisting plaintext", async () => {
     const tables = await Effect.runPromise(Memory.make());
@@ -12,8 +11,8 @@ test("secret replacement atomically replaces embedded ciphertext without persist
         "encrypt",
         "decrypt",
     ]);
-    const base = createDefaultRuntime("user", "secret-test");
-    const runtime = defineRuntime(() => ({
+    const base = memoryRuntimeFixture("user", "secret-test");
+    const runtime = defineRuntimeFixture(() => ({
         ...base,
         tables: Effect.succeed(tables),
         encryptionKeyring: Effect.succeed({
@@ -26,24 +25,26 @@ test("secret replacement atomically replaces embedded ciphertext without persist
     });
     const secrets = createEncryptedSecretStore(runtime);
     try {
-        await secrets.set("refresh", "first-secret-value");
+        await Effect.runPromise(secrets.set("refresh", "first-secret-value"));
         const first = await Effect.runPromise(tables.get(handles, "refresh"));
         expect(Object.keys(first!)).toEqual(["ciphertext"]);
-        expect(await secrets.get("refresh")).toBe("first-secret-value");
-        await secrets.set("refresh", "second-secret-value");
+        expect(await Effect.runPromise(secrets.get("refresh"))).toBe("first-secret-value");
+        await Effect.runPromise(secrets.set("refresh", "second-secret-value"));
         expect((await Effect.runPromise(tables.get(handles, "refresh")))?.ciphertext).not.toBe(
             first?.ciphertext
         );
-        expect(await secrets.get("refresh")).toBe("second-secret-value");
+        expect(await Effect.runPromise(secrets.get("refresh"))).toBe("second-secret-value");
         const persisted = await Effect.runPromise(tables.loadSubset(handles));
         expect(persisted).toHaveLength(1);
         expect(JSON.stringify(persisted)).not.toContain("secret-value");
-        expect(await createEncryptedSecretStore(runtime).get("refresh")).toBe("second-secret-value");
-        await secrets.delete("refresh");
-        expect(await secrets.get("refresh")).toBeUndefined();
+        expect(await Effect.runPromise(createEncryptedSecretStore(runtime).get("refresh"))).toBe(
+            "second-secret-value"
+        );
+        await Effect.runPromise(secrets.delete("refresh"));
+        expect(await Effect.runPromise(secrets.get("refresh"))).toBeUndefined();
         expect(await Effect.runPromise(tables.loadSubset(handles))).toEqual([]);
     } finally {
         await runtime.cleanup?.();
     }
-    await expect(secrets.get("refresh")).rejects.toThrow(/disposed|closed/i);
+    await expect(Effect.runPromise(secrets.get("refresh"))).rejects.toThrow(/disposed|closed|interrupted/i);
 });

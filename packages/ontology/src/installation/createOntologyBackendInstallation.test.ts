@@ -1,5 +1,6 @@
 import { o } from "@party-stack/ontology-spec";
-import { createDefaultRuntime, defineRuntime } from "@party-stack/runtime";
+import { asProvider } from "@party-stack/runtime/testing";
+import { memoryRuntimeFixture, defineRuntimeFixture } from "@party-stack/runtime/testing";
 import { queryOnce } from "@tanstack/db";
 import { Effect, Scope, Exit } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -75,8 +76,8 @@ describe("createOntologyBackendInstallation", () => {
     it("opens isolated LiveOntologies through one stable connection", async () => {
         const cleanupOntology = vi.fn();
         const destroyedNamespaces: string[] = [];
-        const runtime = defineRuntime((owner, namespace) => ({
-            ...createDefaultRuntime(owner, namespace),
+        const runtime = defineRuntimeFixture((owner, namespace) => ({
+            ...memoryRuntimeFixture(owner, namespace),
             destroy: () => {
                 destroyedNamespaces.push(`${owner}:${namespace}`);
             },
@@ -115,7 +116,7 @@ describe("createOntologyBackendInstallation", () => {
         const installation = await createOntologyBackendInstallation({
             installationId: "test-installation",
             connections: () => Effect.succeed(adapter),
-            runtime,
+            runtime: asProvider(runtime),
             routes: [
                 {
                     matches: () => true,
@@ -181,7 +182,7 @@ describe("createOntologyBackendInstallation", () => {
         const installation = await createOntologyBackendInstallation({
             installationId: "meta-route",
             connections: () => Effect.succeed(adapter),
-            runtime: createDefaultRuntime,
+            runtime: asProvider(memoryRuntimeFixture),
             routes: [
                 {
                     matches: (ontologyId) => ontologyId === "ontology",
@@ -233,7 +234,7 @@ describe("createOntologyBackendInstallation", () => {
         const installation = await createOntologyBackendInstallation({
             installationId: "ir-meta-route",
             connections: () => Effect.succeed(adapter),
-            runtime: createDefaultRuntime,
+            runtime: asProvider(memoryRuntimeFixture),
             routes: [
                 {
                     matches: (ontologyId) => ontologyId === "ontology",
@@ -265,7 +266,7 @@ describe("createOntologyBackendInstallation", () => {
         const installation = await createOntologyBackendInstallation({
             installationId: "forget-meta",
             connections: () => Effect.succeed(adapter),
-            runtime: createDefaultRuntime,
+            runtime: asProvider(memoryRuntimeFixture),
             routes: [
                 {
                     matches: (ontologyId) => ontologyId === "ontology",
@@ -303,7 +304,7 @@ describe("createOntologyBackendInstallation", () => {
         const installation = await createOntologyBackendInstallation({
             installationId: "ambiguous-routes",
             connections: () => Effect.succeed(adapter),
-            runtime: createDefaultRuntime,
+            runtime: asProvider(memoryRuntimeFixture),
             routes: [
                 {
                     matches: () => true,
@@ -341,7 +342,7 @@ describe("createOntologyBackendInstallation", () => {
         const installation = await createOntologyBackendInstallation({
             installationId: "concurrent-open",
             connections: () => Effect.succeed(adapter),
-            runtime: createDefaultRuntime,
+            runtime: asProvider(memoryRuntimeFixture),
             routes: [
                 {
                     matches: (ontologyId) => ontologyId === "ontology",
@@ -385,7 +386,7 @@ it("a scoped installation releases its live ontologies and connections with its 
             makeOntologyBackendInstallation({
                 installationId: "scoped-installation",
                 connections: () => Effect.succeed(createTestConnectionAdapter()),
-                runtime: createDefaultRuntime,
+                runtime: asProvider(memoryRuntimeFixture),
                 routes: [
                     {
                         matches: () => true,
@@ -429,7 +430,7 @@ it("retries a failed ontology acquisition rather than caching its failure", asyn
     const installation = await createOntologyBackendInstallation({
         installationId: "retry-open",
         connections: () => Effect.succeed(createTestConnectionAdapter()),
-        runtime: createDefaultRuntime,
+        runtime: asProvider(memoryRuntimeFixture),
         routes: [{ matches: () => true, configure }],
     });
     try {
@@ -455,7 +456,7 @@ it("shutdown during a live ontology acquisition releases the late resource exact
     const installation = await createOntologyBackendInstallation({
         installationId: "close-during-open",
         connections: () => Effect.succeed(createTestConnectionAdapter()),
-        runtime: createDefaultRuntime,
+        runtime: asProvider(memoryRuntimeFixture),
         routes: [
             {
                 matches: () => true,

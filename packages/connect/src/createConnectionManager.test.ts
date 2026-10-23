@@ -1,7 +1,7 @@
 import { unauthenticated } from "@party-stack/errors";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { createDefaultRuntime } from "@party-stack/runtime";
+import { memoryRuntimeFixture, runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { Deferred, Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ConnectionError } from "./ConnectionError.js";
@@ -10,6 +10,7 @@ import { createConnectionMonitor } from "./createConnectionMonitor.js";
 import type {
     BackendConnectionAdapter,
     ConnectionController,
+    ConnectionManager,
     ConnectionEgressHandlers,
     EstablishedConnection,
 } from "./types.js";
@@ -44,7 +45,7 @@ describe("createConnectionManager", () => {
             }),
             restoreConnections: () => Effect.succeed([]),
         };
-        const runtime = createDefaultRuntime("installation", "connections-test");
+        const runtime = memoryRuntimeFixture("installation", "connections-test");
         const manager = await createConnectionManager({
             installationId: "test-installation",
             runtime,
@@ -92,7 +93,7 @@ describe("createConnectionManager", () => {
     });
 
     it("preserves persisted needs-auth connections when restoration omits them", async () => {
-        const runtime = createDefaultRuntime("installation", `connections-needs-auth-${crypto.randomUUID()}`);
+        const runtime = memoryRuntimeFixture("installation", `connections-needs-auth-${crypto.randomUUID()}`);
         const tables = await Effect.runPromise(Memory.make());
         const rows = [
             {
@@ -105,9 +106,11 @@ describe("createConnectionManager", () => {
             version: 2,
         });
         await Effect.runPromise(tables.put(table, "user-1", rows[0]!.value));
+        const overriddenRuntime = { ...runtime, tables: Effect.succeed(tables) };
+        runtimeFixtureContext(overriddenRuntime);
         const manager = await createConnectionManager({
             installationId: "test-installation",
-            runtime: { ...runtime, tables: Effect.succeed(tables) },
+            runtime: overriddenRuntime,
             adapter: () =>
                 Effect.succeed({
                     name: "test",
@@ -122,6 +125,7 @@ describe("createConnectionManager", () => {
         });
         expect(await Effect.runPromise(tables.get(table, "user-1"))).toMatchObject(rows[0]!.value);
         await manager.cleanup();
+        await overriddenRuntime.cleanup();
         await runtime.cleanup?.();
     });
 
@@ -152,7 +156,7 @@ describe("createConnectionManager", () => {
             }),
             restoreConnections: () => Effect.succeed([]),
         };
-        const runtime = createDefaultRuntime("installation", `connections-expiry-${crypto.randomUUID()}`);
+        const runtime = memoryRuntimeFixture("installation", `connections-expiry-${crypto.randomUUID()}`);
         const manager = await createConnectionManager({
             installationId: "test-installation",
             runtime,
@@ -209,7 +213,7 @@ describe("createConnectionManager", () => {
                     },
                 ]),
         };
-        const runtime = createDefaultRuntime("installation", `connections-refresh-${crypto.randomUUID()}`);
+        const runtime = memoryRuntimeFixture("installation", `connections-refresh-${crypto.randomUUID()}`);
         const manager = await createConnectionManager({
             installationId: "test-installation",
             runtime,
@@ -231,7 +235,7 @@ describe("createConnectionManager", () => {
 });
 
 it("scope closure interrupts refresh, disposes sessions once and rejects late SDK callbacks", async () => {
-    const runtime = createDefaultRuntime("installation", `refresh-close-${crypto.randomUUID()}`);
+    const runtime = memoryRuntimeFixture("installation", `refresh-close-${crypto.randomUUID()}`);
     const release = vi.fn();
     const releaseAdapter = vi.fn();
     const interrupted = vi.fn();
@@ -281,7 +285,7 @@ it("scope closure interrupts refresh, disposes sessions once and rejects late SD
 });
 
 it("a late refresh cannot replace a newer login or resurrect a disconnected connection", async () => {
-    const runtime = createDefaultRuntime("installation", `refresh-generation-${crypto.randomUUID()}`);
+    const runtime = memoryRuntimeFixture("installation", `refresh-generation-${crypto.randomUUID()}`);
     const result = Effect.runSync(Deferred.make<EstablishedConnection>());
     const refresh = vi.fn(() => Deferred.await(result));
     const releaseLate = vi.fn();
@@ -341,7 +345,7 @@ it("a late refresh cannot replace a newer login or resurrect a disconnected conn
 });
 
 it("failed restoration releases resources acquired by the adapter", async () => {
-    const runtime = createDefaultRuntime("installation", `restore-failed-${crypto.randomUUID()}`);
+    const runtime = memoryRuntimeFixture("installation", `restore-failed-${crypto.randomUUID()}`);
     const release = vi.fn();
     const creating = createConnectionManager({
         installationId: "restore-failed",
@@ -370,7 +374,7 @@ it("failed restoration releases resources acquired by the adapter", async () => 
 });
 
 it("closing the runtime interrupts restoration before the manager has been returned", async () => {
-    const runtime = createDefaultRuntime("installation", `restore-interrupted-${crypto.randomUUID()}`);
+    const runtime = memoryRuntimeFixture("installation", `restore-interrupted-${crypto.randomUUID()}`);
     const release = vi.fn();
     const entered = vi.fn();
     const creating = createConnectionManager({
@@ -397,7 +401,7 @@ it("closing the runtime interrupts restoration before the manager has been retur
 });
 
 it("a failed request from an old session cannot invalidate a newer login", async () => {
-    const runtime = createDefaultRuntime("installation", `egress-generation-${crypto.randomUUID()}`);
+    const runtime = memoryRuntimeFixture("installation", `egress-generation-${crypto.randomUUID()}`);
     let rejectRequest!: (cause: unknown) => void;
     const request = new Promise<Response>((_resolve, reject) => {
         rejectRequest = reject;
@@ -446,7 +450,7 @@ it("a failed request from an old session cannot invalidate a newer login", async
 });
 
 it("interrupting a queued connection disposes its unadopted session", async () => {
-    const runtime = createDefaultRuntime("installation", `queued-connect-${crypto.randomUUID()}`);
+    const runtime = memoryRuntimeFixture("installation", `queued-connect-${crypto.randomUUID()}`);
     const disconnecting = vi.fn();
     const releaseNew = vi.fn();
     const manager = await createConnectionManager({
@@ -486,7 +490,7 @@ it("interrupting a queued connection disposes its unadopted session", async () =
 });
 
 it("attempts every session and adapter finalizer even when one session cleanup fails", async () => {
-    const runtime = createDefaultRuntime("installation", `cleanup-failure-${crypto.randomUUID()}`);
+    const runtime = memoryRuntimeFixture("installation", `cleanup-failure-${crypto.randomUUID()}`);
     const releaseOther = vi.fn();
     const releaseAdapter = vi.fn();
     const manager = await createConnectionManager({
@@ -524,7 +528,7 @@ it("attempts every session and adapter finalizer even when one session cleanup f
 });
 
 it("logout can await an SDK session-change callback without deadlocking", async () => {
-    const runtime = createDefaultRuntime("installation", `logout-callback-${crypto.randomUUID()}`);
+    const runtime = memoryRuntimeFixture("installation", `logout-callback-${crypto.randomUUID()}`);
     let controller!: ConnectionController;
     const release = vi.fn();
     const revoke = vi.fn(() => controller.disconnect("user"));
@@ -559,4 +563,134 @@ it("logout can await an SDK session-change callback without deadlocking", async 
         await runtime.cleanup?.();
     }
     expect(release).toHaveBeenCalledOnce();
+});
+
+it("restores and releases context-local sessions after another context signs in and logs out", async () => {
+    const { defineRuntimeFixture } = await import("@party-stack/runtime/testing");
+    const tables = await Effect.runPromise(Memory.make());
+    const listeners = [new Set<() => void>(), new Set<() => void>()];
+    const runtimes = listeners.map((own, index) =>
+        defineRuntimeFixture((owner, namespace) => ({
+            ...memoryRuntimeFixture(owner, namespace),
+            tables: Effect.succeed(tables),
+            storageNotifications: {
+                publish: () => {
+                    for (const listener of listeners[1 - index]!) listener();
+                },
+                subscribe: (listener: () => void) => {
+                    own.add(listener);
+                    return () => {
+                        own.delete(listener);
+                    };
+                },
+            },
+        }))("installation", "shared-sessions")
+    );
+    let connected = false;
+    let delayRestore = false;
+    const restoring = Effect.runSync(Deferred.make<void>());
+    const resume = Effect.runSync(Deferred.make<void>());
+    const released = [vi.fn(), vi.fn()];
+    const entry = (index: number): EstablishedConnection => ({
+        connection: { userId: "user", state: { status: "active" } },
+        session: {
+            disconnect: () =>
+                Effect.sync(() => {
+                    connected = false;
+                }),
+            cleanup: () => Effect.sync(released[index]!),
+        },
+    });
+    const managers: ConnectionManager<{ signIn(): Promise<void> }>[] = [];
+    try {
+        for (const [index, runtime] of runtimes.entries())
+            managers.push(
+                await createConnectionManager({
+                    installationId: "shared",
+                    runtime,
+                    adapter: () =>
+                        Effect.succeed({
+                            name: "shared",
+                            createAuthenticationClient: (controller: ConnectionController) => ({
+                                signIn: () =>
+                                    Effect.runPromise(
+                                        Effect.andThen(
+                                            Effect.sync(() => {
+                                                connected = true;
+                                            }),
+                                            controller.connect(entry(index))
+                                        )
+                                    ),
+                            }),
+                            restoreConnections: () =>
+                                Effect.gen(function* () {
+                                    if (!connected) return [];
+                                    const restored = entry(index);
+                                    if (index === 1 && delayRestore) {
+                                        delayRestore = false;
+                                        yield* Deferred.succeed(restoring, undefined);
+                                        yield* Deferred.await(resume);
+                                    }
+                                    return [restored];
+                                }),
+                        }),
+                })
+            );
+        await managers[0]!.authentication.signIn();
+        await vi.waitFor(() => expect(managers[1]!.egress("user")).toBeDefined());
+        await managers[0]!.disconnect("user");
+        await vi.waitFor(() => expect(managers[1]!.egress("user")).toBeUndefined());
+        await vi.waitFor(() => expect(released[1]).toHaveBeenCalledOnce());
+        delayRestore = true;
+        await managers[0]!.authentication.signIn();
+        await Effect.runPromise(Deferred.await(restoring));
+        await managers[0]!.disconnect("user");
+        await Effect.runPromise(Deferred.succeed(resume, undefined));
+        await vi.waitFor(() => expect(released[1]).toHaveBeenCalledTimes(2));
+        expect(managers[0]!.connections.get("user")?.state.status).toBe("inactive");
+        expect(managers[1]!.egress("user")).toBeUndefined();
+        await managers[0]!.authentication.signIn();
+        await vi.waitFor(() => expect(managers[1]!.egress("user")).toBeDefined());
+    } finally {
+        for (const manager of managers) await manager.cleanup();
+        for (const runtime of runtimes) await runtime.cleanup();
+    }
+    expect(listeners.map((value) => value.size)).toEqual([0, 0]);
+});
+
+it("an additional caller scope cannot extend a connection beyond the runtime's lifetime", async () => {
+    const { Scope, Exit } = await import("effect");
+    const caller = Effect.runSync(Scope.make());
+    const runtime = memoryRuntimeFixture("installation", "bounded-parent");
+    const release = vi.fn();
+    let controller!: ConnectionController;
+    const manager = await createConnectionManager({
+        installationId: "bounded",
+        runtime,
+        scope: caller,
+        adapter: () =>
+            Effect.succeed({
+                name: "bounded",
+                createAuthenticationClient: (value: ConnectionController) => {
+                    controller = value;
+                    return {};
+                },
+                restoreConnections: () => Effect.succeed([]),
+            }),
+    });
+    try {
+        await Effect.runPromise(
+            controller.connect({
+                connection: { userId: "user", state: { status: "active" } },
+                session: { disconnect: () => Effect.void, cleanup: () => Effect.sync(release) },
+            })
+        );
+        await runtime.cleanup();
+        expect(release).toHaveBeenCalledOnce();
+        expect(manager.connections.status).toBe("cleaned-up");
+    } finally {
+        await Effect.runPromise(Scope.close(caller, Exit.void));
+        await manager.cleanup();
+        await runtime.cleanup();
+    }
 });

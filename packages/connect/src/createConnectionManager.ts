@@ -1,5 +1,6 @@
 import { unauthenticated, type UnauthenticatedError } from "@party-stack/errors";
-import { isCoordinationHost, makeLocalCollection, Runtime, runtimeEffects } from "@party-stack/runtime";
+import { Table } from "@party-stack/ontology-storage/tables";
+import { makeLocalCollection, Runtime, getRuntime } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
 import { Clock, Context, Effect, Exit, Fiber, Layer, Queue, Scope, Semaphore, Stream } from "effect";
 import { ConnectionError, connectionOperation } from "./ConnectionError.js";
@@ -61,6 +62,7 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
         schemaVersion: 2,
     });
     const sessions = new Map<string, ConnectionSession>();
+    const sessionStates = new Map<string, string>();
     const sockets = new Map<string, Set<WebSocket>>();
     const locks = new Map<string, { state: Semaphore.Semaphore; command: Semaphore.Semaphore }>();
     const locked = <B, E>(userId: string, work: Effect.Effect<B, E>, mode: "state" | "command" = "state") =>
@@ -98,6 +100,7 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
         yield* closeSockets(userId);
         const session = sessions.get(userId);
         sessions.delete(userId);
+        sessionStates.delete(userId);
         yield* session?.cleanup?.() ?? Effect.void;
     });
     yield* Effect.addFinalizer(() =>
@@ -117,28 +120,39 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
             () => connections.update(userId, { optimistic: false }, update).isPersisted.promise
         );
     });
-    const applyEstablished = Effect.fnUntraced(function* (
+    const adoptSession = Effect.fnUntraced(function* (
         { connection, session }: EstablishedConnection,
         adopted?: () => void
     ) {
         if (disposed) return yield* closed();
         const previous = sessions.get(connection.userId);
-        // Persistence and replacing the live session form one uninterruptible handoff.
-        // If persistence fails the old session is still live.
-        yield* connectionOperation("persist", () => {
-            const transaction = connections.has(connection.userId)
-                ? connections.update(connection.userId, { optimistic: false }, (draft) => {
-                      Object.assign(draft, connection);
-                  })
-                : connections.insert(connection, { optimistic: false });
-            return transaction.isPersisted.promise;
-        });
         sessions.set(connection.userId, session);
+        sessionStates.set(connection.userId, JSON.stringify(connection.state));
         adopted?.();
         if (previous && previous !== session) {
             yield* closeSockets(connection.userId);
             yield* previous.cleanup?.() ?? Effect.void;
         }
+    }, Effect.uninterruptible);
+    const applyEstablished = Effect.fnUntraced(function* (
+        entry: EstablishedConnection,
+        adopted?: () => void
+    ) {
+        if (disposed) return yield* closed();
+        const { connection } = entry;
+        // Persistence and replacing the live session form one uninterruptible handoff.
+        // If persistence fails the old session is still live.
+        yield* connectionOperation("persist", () => {
+            if (JSON.stringify(connections.get(connection.userId)) === JSON.stringify(connection))
+                return Promise.resolve();
+            const transaction = connections.has(connection.userId)
+                ? connections.update(connection.userId, { optimistic: false }, (draft) => {
+                      Object.assign(draft, connection);
+                  })
+                : connections.insert(connection, { optimistic: false });
+            return transaction.isPersisted.promise.then(() => undefined);
+        });
+        yield* adoptSession(entry, adopted);
     }, Effect.uninterruptible);
     // Until a session is adopted, the submitting fiber owns it. This also covers
     // cancellation while waiting for another operation on the same user.
@@ -307,7 +321,8 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
         disconnect: (userId) => logout(userId, false),
         forget: (userId) => logout(userId, true),
         egress(userId) {
-            if (disposed || !sessions.has(userId)) return;
+            if (disposed || !sessions.has(userId) || connections.get(userId)?.state.status !== "active")
+                return;
             const handlers = () => {
                 const session = sessions.get(userId);
                 if (!session || disposed) throw closed();
@@ -380,20 +395,81 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
                 row.state = { status: "inactive" };
             });
         }
-    if (isCoordinationHost(runtime.adapter.coordination)) {
-        const host = runtime.adapter.coordination;
-        const asLeader = connectionOperation("refresh", (signal) =>
-            host.runAsLeader(({ signal }) => run(refresh(), { signal }), { signal })
-        ).pipe(
-            Effect.catch((error) =>
-                Effect.logWarning("Connection leader refresh failed", { kind: error.kind })
+    const connectionTable = Table.make<Connection>({
+        name: JSON.stringify(["local", runtime.adapter.owner, runtime.adapter.namespace, "connections"]),
+        version: 2,
+    });
+    // Credentials are shared transactionally; SDK clients and sockets belong to their context.
+    // Restore a local handle after another context signs in, and close it after remote logout.
+    const reconcile = Effect.fn("Connections.reconcile")(function* () {
+        const rows = yield* runtime.tables
+            .loadSubset(connectionTable)
+            .pipe(Effect.mapError((cause) => ConnectionError.from("restore", cause)));
+        const activeRows = rows.filter(({ value }) => value.state.status === "active");
+        const active = new Set(activeRows.map(({ value }) => value.userId));
+        for (const id of sessions.keys()) if (!active.has(id)) yield* locked(id, releaseSession(id));
+        const changed = new Set(
+            activeRows
+                .filter(
+                    ({ value }) =>
+                        !sessions.has(value.userId) ||
+                        sessionStates.get(value.userId) !== JSON.stringify(value.state)
+                )
+                .map(({ value }) => value.userId)
+        );
+        if (!changed.size) return;
+        yield* Effect.uninterruptibleMask((restore) =>
+            Effect.flatMap(restore(adapter.restoreConnections()), (entries) =>
+                Effect.forEach(
+                    entries,
+                    (entry) =>
+                        handoff(entry, (adopted) =>
+                            locked(
+                                entry.connection.userId,
+                                Effect.gen(function* () {
+                                    if (!changed.has(entry.connection.userId)) return;
+                                    const current = yield* runtime.tables
+                                        .get(connectionTable, entry.connection.userId)
+                                        .pipe(
+                                            Effect.mapError((cause) => ConnectionError.from("restore", cause))
+                                        );
+                                    // This is a projection of shared state. A late restore must never
+                                    // persist an old active status over another context's logout.
+                                    if (current?.state.status === "active")
+                                        yield* adoptSession(
+                                            {
+                                                ...entry,
+                                                connection: {
+                                                    ...current,
+                                                    state: current.state as Connection<"active">["state"],
+                                                },
+                                            },
+                                            adopted
+                                        );
+                                })
+                            )
+                        ),
+                    { discard: true }
+                )
             )
         );
-        yield* Effect.forever(
-            Effect.andThen(Effect.race(Queue.take(wake), Effect.sleep(REFRESH_POLL_MS)), asLeader)
-        ).pipe(Effect.forkScoped);
-        yield* Stream.runForEach(runtime.connectivity, () => Effect.sync(notify)).pipe(Effect.forkScoped);
-    }
+    });
+    yield* Stream.runForEach(runtime.externalChanges, () =>
+        reconcile().pipe(
+            Effect.catch((error) =>
+                Effect.logWarning("Connection reconciliation failed", { kind: error.kind })
+            )
+        )
+    ).pipe(Effect.forkScoped);
+    yield* Effect.forever(
+        Effect.andThen(
+            Effect.race(Queue.take(wake), Effect.sleep(REFRESH_POLL_MS)),
+            refresh().pipe(
+                Effect.catch((error) => Effect.logWarning("Connection refresh failed", { kind: error.kind }))
+            )
+        )
+    ).pipe(Effect.forkScoped);
+    yield* Stream.runForEach(runtime.connectivity, () => Effect.sync(notify)).pipe(Effect.forkScoped);
     // Close the door before interrupting work and releasing sessions.
     yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
@@ -409,9 +485,14 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
 export async function createConnectionManager<A extends object = object>(
     options: CreateConnectionManagerOptions<A>
 ): Promise<ConnectionManager<A>> {
-    const managed = runtimeEffects(options.runtime).runtime;
+    const managed = { runPromise: Effect.runPromiseWith(getRuntime(options.runtime).context) };
     const owner = await managed.runPromise(
-        Effect.flatMap(Runtime, (runtime) => Scope.fork(options.scope ?? runtime.scope))
+        Effect.gen(function* () {
+            const runtime = yield* Runtime;
+            const scope = yield* Scope.fork(runtime.scope);
+            if (options.scope) yield* Scope.addFinalizer(options.scope, Scope.close(scope, Exit.void));
+            return scope;
+        })
     );
     try {
         const manager = await managed.runPromise(

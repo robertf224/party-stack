@@ -2,7 +2,12 @@ import { createLiveOntology, o, type OntologyIR } from "@party-stack/ontology";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { OntologyDevtoolsPanel } from "@party-stack/ontology-devtools";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { createDefaultRuntime, defineRuntime, runtimeEffects } from "@party-stack/runtime";
+import {
+    memoryRuntimeFixture,
+    defineRuntimeFixture,
+    runtimeFixtureContext,
+    asProvider,
+} from "@party-stack/runtime/testing";
 import { createLiveQueryCollection, eq } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
 import { Effect } from "effect";
@@ -44,15 +49,15 @@ const backend = await Effect.runPromise(
 );
 await Effect.runPromise(backend.invoke({ id: "seed", name: "seed", parameters: {} }));
 let loads = 0;
-const fixtureRuntime = defineRuntime((owner, namespace) => ({
-    ...createDefaultRuntime(owner, namespace),
+const fixtureRuntime = defineRuntimeFixture((owner, namespace) => ({
+    ...memoryRuntimeFixture(owner, namespace),
     tables: Memory.make(),
 }))("anonymous", "attribution-fixture");
 const ontology = await createLiveOntology<Definition>({
     id: "attribution-fixture",
     ir,
     persistObjects: true,
-    runtime: () => fixtureRuntime,
+    runtime: asProvider(() => fixtureRuntime),
     backend: () => ({
         name: "fixture",
         open: () =>
@@ -104,7 +109,7 @@ const inspectedOntology = {
 };
 
 async function recordTraceFixtures() {
-    const runtime = runtimeEffects(fixtureRuntime).runtime;
+    const runtime = runtimeFixtureContext(fixtureRuntime).runtime;
     for (const name of ["Demand", "Traces"])
         await runtime.runPromise(
             Effect.exit(

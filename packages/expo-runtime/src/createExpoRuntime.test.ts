@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
-import { Runtime, runtimeEffects } from "@party-stack/runtime";
+import { Runtime } from "@party-stack/runtime";
+import { acquireRuntime } from "@party-stack/runtime/testing";
+import { runtimeFixtureContext } from "@party-stack/runtime/testing";
+import { Deferred, Effect, Fiber } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { make, layer } from "./createExpoRuntime.js";
 import { createExpoRuntime } from "./createExpoRuntime.js";
 
 const state = vi.hoisted(() => ({
@@ -29,7 +33,7 @@ vi.mock("./ExpoFileSystemBlobBytesStore.js", () => ({
         clear = state.clear;
     },
 }));
-vi.mock("./ExpoSecretStore.js", () => ({ ExpoSecretStore: class {} }));
+vi.mock("./ExpoSecretStore.js", () => ({ makeSecretStore: () => ({}) }));
 vi.mock("./createExpoBrowserAuthentication.js", () => ({ createExpoBrowserAuthentication: () => ({}) }));
 
 describe("createExpoRuntime", () => {
@@ -54,19 +58,19 @@ describe("createExpoRuntime", () => {
 
     it("hashes logical partition names into bounded filesystem names without ambiguous separators", async () => {
         const owner = "../user@example.com/".repeat(100);
-        const runtime = await createExpoRuntime(owner, "namespace");
+        const runtime = await acquireRuntime(createExpoRuntime(owner, "namespace"));
         expect(runtime.owner).toBe(owner);
         const name = `party-stack-${createHash("sha256")
             .update(JSON.stringify([owner, "namespace"]))
             .digest("hex")}`;
-        await runtimeEffects(runtime).runtime.runPromise(Runtime);
+        await runtimeFixtureContext(runtime).runtime.runPromise(Runtime);
         expect(state.open).toHaveBeenCalledWith(`${name}-storage.db`);
         expect(state.directory).toHaveBeenCalledWith({ directoryName: `${name}-blobs` });
         await runtime.cleanup?.();
-        const a = await createExpoRuntime("a:b", "c");
-        const b = await createExpoRuntime("a", "b:c");
-        await runtimeEffects(a).runtime.runPromise(Runtime);
-        await runtimeEffects(b).runtime.runPromise(Runtime);
+        const a = await acquireRuntime(createExpoRuntime("a:b", "c"));
+        const b = await acquireRuntime(createExpoRuntime("a", "b:c"));
+        await runtimeFixtureContext(a).runtime.runPromise(Runtime);
+        await runtimeFixtureContext(b).runtime.runPromise(Runtime);
         expect(state.open.mock.calls[1]?.[0]).not.toBe(state.open.mock.calls[2]?.[0]);
         await a.cleanup?.();
         await b.cleanup?.();
@@ -75,23 +79,54 @@ describe("createExpoRuntime", () => {
     it.each([false, true])(
         "closes before deleting and makes cleanup/destroy idempotent (cleanup first: %s)",
         async (cleanupFirst) => {
-            const runtime = await createExpoRuntime("owner", "namespace");
-            await runtimeEffects(runtime).runtime.runPromise(Runtime);
+            const runtime = await acquireRuntime(createExpoRuntime("owner", "namespace"));
+            await runtimeFixtureContext(runtime).runtime.runPromise(Runtime);
             if (cleanupFirst) await runtime.cleanup?.();
             await Promise.all([runtime.destroy?.(), runtime.cleanup?.(), runtime.destroy?.()]);
             expect(state.close).toHaveBeenCalledTimes(1);
             expect(state.disconnect).toHaveBeenCalledTimes(1);
-            expect(state.delete).toHaveBeenCalledTimes(2);
+            expect(state.delete).toHaveBeenCalledTimes(1);
             expect(state.clear).toHaveBeenCalledTimes(1);
-            expect(state.events).toEqual(["closed", "deleted", "deleted"]);
+            expect(state.events).toEqual(["closed", "deleted"]);
         }
     );
 
     it("does not delete the database if closing it fails", async () => {
         state.close.mockRejectedValue(new Error("close failed"));
-        const runtime = await createExpoRuntime("owner", "namespace");
-        await runtimeEffects(runtime).runtime.runPromise(Runtime);
+        const runtime = await acquireRuntime(createExpoRuntime("owner", "namespace"));
+        await runtimeFixtureContext(runtime).runtime.runPromise(Runtime);
         await expect(runtime.destroy?.()).rejects.toThrow("close failed");
         expect(state.delete).not.toHaveBeenCalled();
+    });
+
+    it("is lazy and releases the database and native listener on fiber interruption", async () => {
+        const acquire = make({ owner: "test", namespace: "scope" });
+        const opens = state.open.mock.calls.length;
+        expect(state.open.mock.calls.length).toBe(opens);
+        await Effect.runPromise(
+            Effect.gen(function* () {
+                const ready = yield* Deferred.make<void>();
+                const fiber = yield* Effect.forkChild(
+                    Effect.gen(function* () {
+                        yield* Runtime;
+                        yield* Deferred.succeed(ready, undefined);
+                        yield* Effect.never;
+                    }).pipe(Effect.provide(layer({ owner: "test", namespace: "scope" })))
+                );
+                yield* Deferred.await(ready);
+                yield* Fiber.interrupt(fiber);
+            })
+        );
+        expect(state.open.mock.calls.length).toBe(opens + 1);
+        expect(state.close).toHaveBeenCalledOnce();
+        expect(state.disconnect).toHaveBeenCalledOnce();
+        expect(Effect.isEffect(acquire)).toBe(true);
+    });
+
+    it("releases the connectivity subscription if database acquisition fails", async () => {
+        state.open.mockRejectedValueOnce(new Error("storage denied"));
+        await Effect.runPromise(Effect.result(Effect.scoped(make({ owner: "test", namespace: "denied" }))));
+        expect(state.disconnect).toHaveBeenCalledOnce();
+        expect(state.close).not.toHaveBeenCalled();
     });
 });

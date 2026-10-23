@@ -1,5 +1,5 @@
 import { o } from "@party-stack/ontology-spec";
-import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
+import { memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import { createBlobManager } from "../../runtime/blobs/createBlobManager.js";
@@ -48,16 +48,9 @@ const backendAdapter: OntologyBackendAdapter = {
 
 describe("prepareActionParameters", () => {
     it("collects action attachment uploads with resolved attachment type targets", async () => {
-        const coordination = new SingleProcessCoordination({
-            scope: "prepare-action-parameters-test",
-        });
+        const runtime = memoryRuntimeFixture("test", "prepare-action");
         const blobManager = createBlobManager({
-            runtime: {
-                owner: "test",
-                namespace: "prepare-action",
-                blobBytes: new MemoryBlobBytesStore(),
-                coordination,
-            },
+            runtime,
             remote: {
                 metadata: (id) => Promise.resolve({ id, size: 0, type: "", name: "" }),
                 read: () => Promise.reject(new Error("unexpected remote read")),
@@ -82,20 +75,13 @@ describe("prepareActionParameters", () => {
         expect(prepared.attachmentUploads[0]!.target).toEqual({});
         await expect(prepared.attachmentUploads[0]!.blob.text()).resolves.toBe("hello");
         await blobManager.cleanup();
-        await coordination.close();
+        await runtime.cleanup();
     });
 
     it("replaces materialized attachments and records id mappings", async () => {
-        const coordination = new SingleProcessCoordination({
-            scope: "materialize-action-parameters-test",
-        });
+        const runtime = memoryRuntimeFixture("test", "materialize-action");
         const blobManager = createBlobManager({
-            runtime: {
-                owner: "test",
-                namespace: "materialize-action",
-                blobBytes: new MemoryBlobBytesStore(),
-                coordination,
-            },
+            runtime,
             remote: {
                 metadata: (id) =>
                     Promise.resolve({
@@ -179,6 +165,6 @@ describe("prepareActionParameters", () => {
         await expect(uploaded.attachmentUploads[0]!.blob.text()).resolves.toBe("upload");
 
         await blobManager.cleanup();
-        await coordination.close();
+        await runtime.cleanup();
     });
 });

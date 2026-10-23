@@ -24,7 +24,6 @@
         }
     },
     "dependencies": {
-        "@party-stack/coordination": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "@party-stack/sql-ontology-storage": "workspace:*",

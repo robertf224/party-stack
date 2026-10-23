@@ -11,3 +11,5 @@ export {
 
 export { makeReplicaOntologyView } from "./view.js";
 export type { ReplicaViewOptions } from "./view.js";
+
+export { makeLiveOntology } from "../live/LiveOntology.js";

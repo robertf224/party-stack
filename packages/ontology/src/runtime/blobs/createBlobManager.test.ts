@@ -1,6 +1,7 @@
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { MemoryBlobBytesStore, SingleProcessCoordination, type RuntimeAdapter } from "@party-stack/runtime";
-import { disposeRuntimeEffects } from "@party-stack/runtime";
+import { MemoryBlobBytesStore, type RuntimeAdapter } from "@party-stack/runtime";
+import { runtimeFixtureContext } from "@party-stack/runtime/testing";
+import { closeRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { createBlobManager } from "./createBlobManager.js";
@@ -8,14 +9,14 @@ import { createBlobManager } from "./createBlobManager.js";
 test("native blob facade loads metadata on demand and preserves remote aliases after eviction", async () => {
     const tables = await Effect.runPromise(Memory.make());
     const bytes = new MemoryBlobBytesStore();
-    const coordination = new SingleProcessCoordination({ scope: "native-blobs" });
     const runtime: RuntimeAdapter = {
         owner: "user",
         namespace: "native",
         tables: Effect.succeed(tables),
-        coordination,
+
         blobBytes: bytes,
     };
+    runtimeFixtureContext(runtime);
     const read = vi.fn(() => Promise.resolve(new Blob(["refetched"], { type: "text/plain" })));
     const manager = createBlobManager({ runtime, remote: { read }, gcTime: Infinity });
     try {
@@ -39,22 +40,21 @@ test("native blob facade loads metadata on demand and preserves remote aliases a
         await Effect.runPromise(tables.transaction((tx) => storage.in(tx).release("pending")));
     } finally {
         await manager.cleanup();
-        await disposeRuntimeEffects(runtime);
-        await coordination.close();
+        await closeRuntimeFixture(runtime);
     }
 });
 
 test("native blob cleanup aborts remote work and fences a late non-cancelable response", async () => {
     const tables = await Effect.runPromise(Memory.make());
     const bytes = new MemoryBlobBytesStore();
-    const coordination = new SingleProcessCoordination({ scope: "native-cancel" });
     const runtime: RuntimeAdapter = {
         owner: "user",
         namespace: "cancel",
         tables: Effect.succeed(tables),
-        coordination,
+
         blobBytes: bytes,
     };
+    runtimeFixtureContext(runtime);
     let signal: AbortSignal | undefined;
     let finish!: (value: Blob) => void;
     const response = new Promise<Blob>((resolve) => {
@@ -82,7 +82,6 @@ test("native blob cleanup aborts remote work and fences a late non-cancelable re
     } finally {
         finish(new Blob());
         await manager.cleanup();
-        await disposeRuntimeEffects(runtime);
-        await coordination.close();
+        await closeRuntimeFixture(runtime);
     }
 });

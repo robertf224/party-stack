@@ -1,19 +1,13 @@
+import { runtimeFixtureContext, memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { queryOnce } from "@tanstack/db";
 import { Effect, Scope, Exit, Tracer, Stream } from "effect";
 import { expect, test } from "vite-plus/test";
-import {
-    makeLocalCollection,
-    makeReplicatedCollection,
-    Runtime,
-    runtimeEffects,
-    createRuntimeTraces,
-} from "./Runtime.js";
-import { createDefaultRuntime } from "./utils/createDefaultRuntime.js";
+import { makeLocalCollection, makeReplicatedCollection, Runtime, createRuntimeTraces } from "./Runtime.js";
 import type { ReplicaService } from "@party-stack/ontology-replica";
 
 test("scoped local collections persist, share one storage runtime, and stop on scope closure", async () => {
-    const adapter = createDefaultRuntime("test", "effect-local");
-    const { runtime } = runtimeEffects(adapter);
+    const adapter = memoryRuntimeFixture("test", "effect-local");
+    const { runtime } = runtimeFixtureContext(adapter);
     const scope = Effect.runSync(Scope.make());
     const subscriptions: Array<{ unsubscribe(): void }> = [];
     try {
@@ -57,8 +51,8 @@ test("scoped local collections persist, share one storage runtime, and stop on s
 });
 
 test("persisted inspection queries never acquire remote demand", async () => {
-    const adapter = createDefaultRuntime("test", "inspection");
-    const { runtime } = runtimeEffects(adapter);
+    const adapter = memoryRuntimeFixture("test", "inspection");
+    const { runtime } = runtimeFixtureContext(adapter);
     let demands = 0;
     const replica = {
         loadSubset: () => Effect.succeed([{ key: "one", value: { id: "one" } }]),
@@ -122,9 +116,9 @@ test("Effect trace buffer is bounded and omits parameters and secret attributes"
 test("the synchronous local helper uses owned tables and runtime cleanup closes every collection", async () => {
     const { make } = await import("@party-stack/ontology-storage/memory/tables");
     const { createLocalCollection } = await import("./utils/createLocalCollection.js");
-    const { defineRuntime } = await import("./utils/defineRuntime.js");
-    const base = createDefaultRuntime("test", "compatibility-local");
-    const adapter = defineRuntime(() => ({ ...base, tables: make() }))("test", "compatibility-local");
+    const { defineRuntimeFixture } = await import("@party-stack/runtime/testing");
+    const base = memoryRuntimeFixture("test", "compatibility-local");
+    const adapter = defineRuntimeFixture(() => ({ ...base, tables: make() }))("test", "compatibility-local");
     const options = {
         name: "notes",
         runtime: adapter,

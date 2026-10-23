@@ -232,7 +232,9 @@ const createFoundryConnectionAdapterInstance = Effect.fn("Foundry.connections")(
                     if (!publicOauth) {
                         throw unauthenticated("Foundry public OAuth is not configured.");
                     }
-                    return createPublicSession(await publicOauth.refresh(userId));
+                    return createPublicSession(
+                        await publicOauth.refresh(userId, { ifExpiringWithinMs: 60_000 })
+                    );
                 });
             },
             disconnect() {

@@ -1,4 +1,6 @@
-import { Runtime, runtimeEffects, createDefaultRuntime, type RuntimeAdapter } from "@party-stack/runtime";
+import { Runtime, type RuntimeAdapter } from "@party-stack/runtime";
+import { closeRuntimeFixture } from "@party-stack/runtime/testing";
+import { runtimeFixtureContext, memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect, Exit, Scope } from "effect";
 import type { BackendConnectionAdapterProvider } from "@party-stack/connect";
 const releaseAdapters: Array<() => Promise<void>> = [];
@@ -9,12 +11,12 @@ async function openAdapter<A extends object>(
     provider: BackendConnectionAdapterProvider<A>,
     options: { installationId: string; runtime?: RuntimeAdapter }
 ) {
-    const runtime = options.runtime ?? createDefaultRuntime("installation", crypto.randomUUID());
-    const managed = runtimeEffects(runtime).runtime;
+    const runtime = options.runtime ?? memoryRuntimeFixture("installation", crypto.randomUUID());
+    const managed = runtimeFixtureContext(runtime).runtime;
     const owner = await managed.runPromise(Effect.flatMap(Runtime, (service) => Scope.fork(service.scope)));
     releaseAdapters.push(async () => {
         await Effect.runPromise(Scope.close(owner, Exit.void));
-        await runtime.cleanup?.();
+        await closeRuntimeFixture(runtime);
     });
     const adapter = await managed.runPromise(
         Scope.provide(provider({ ...options, runtime, scope: owner }), owner)
@@ -171,11 +173,11 @@ describe("createBetterAuthConnectionAdapter", () => {
 it("restores offline session selectors across adapter recreation without storing bearer tokens", async () => {
     const Memory = await import("@party-stack/ontology-storage/memory/tables");
     const { Table } = await import("@party-stack/ontology-storage/tables");
-    const { createDefaultRuntime, defineRuntime } = await import("@party-stack/runtime");
+    const { memoryRuntimeFixture, defineRuntimeFixture } = await import("@party-stack/runtime/testing");
     const tables = await Effect.runPromise(Memory.make());
     let online = true;
-    const base = createDefaultRuntime("installation", "offline-better-auth");
-    const runtime = defineRuntime(() => ({
+    const base = memoryRuntimeFixture("installation", "offline-better-auth");
+    const runtime = defineRuntimeFixture(() => ({
         ...base,
         tables: Effect.succeed(tables),
         connectivity: {
@@ -241,6 +243,6 @@ it("restores offline session selectors across adapter recreation without storing
         );
         await Effect.runPromise(restored.cleanup?.() ?? Effect.void);
     } finally {
-        await runtime.cleanup?.();
+        await closeRuntimeFixture(runtime);
     }
 });

@@ -1,4 +1,7 @@
 export {
+    make,
+    layer,
+    type NodeRuntimeOptions,
     createNodeRuntime,
     createNodeRuntimeWithOptions,
     type CreateNodeRuntimeOptions,

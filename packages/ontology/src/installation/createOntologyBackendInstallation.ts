@@ -3,7 +3,7 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { makeLocalCollection, Runtime } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
 import { Context, Effect, Exit, Fiber, Layer, Scope, ScopedCache, Semaphore } from "effect";
-import { createLiveOntology } from "../live/LiveOntology.js";
+import { makeLiveOntology } from "../live/LiveOntology.js";
 import { createMetaOntologyConfiguration } from "./createMetaOntologyConfiguration.js";
 import type { LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 import type {
@@ -82,18 +82,9 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
     options: CreateOntologyBackendInstallationOptions<A>
 ): Effect.fn.Return<OntologyBackendInstallationService<A>, BackendError, Scope.Scope> {
     const owner = yield* Effect.scope;
-    const installationRuntime = yield* Effect.acquireRelease(
-        boundary("installation.runtime", async () =>
-            options.runtime("installation", scope(options.installationId))
-        ),
-        (runtime) =>
-            Effect.promise(async () => {
-                await runtime.cleanup?.();
-            })
-    );
-    const runtime = yield* Runtime.make(installationRuntime).pipe(
-        Effect.mapError((cause) => failure("installation.runtime", cause))
-    );
+    const runtime = yield* options
+        .runtime("installation", scope(options.installationId))
+        .pipe(Effect.mapError((cause) => failure("installation.runtime", cause)));
     return yield* Effect.gen(function* () {
         const connectionManager = yield* makeConnectionManager({
             installationId: options.installationId,
@@ -180,29 +171,30 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                     meta: meta ? (true as const) : undefined,
                 };
                 yield* recordPartition(partition);
-                // These are placement/SDK boundaries; local live ontologies themselves already run scoped Effects.
-                const open = !meta && options.openOntology ? options.openOntology : createLiveOntology;
-                return yield* Effect.acquireRelease(
-                    boundary("installation.open", () =>
-                        open({
-                            installationId: options.installationId,
-                            userId,
-                            ontologyId,
-                            id: `${liveOntologyNamespace(options.installationId, ontologyId)}${meta ? ":meta" : ""}`,
-                            ir: configured.ir,
-                            backend: configured.backend,
-                            runtime: options.runtime,
-                            context: {
-                                ...options.createContext?.(userId, ontologyId),
-                                ...configured.context,
-                                user: userId,
-                            },
-                            persistObjects: configured.persistObjects,
-                            writes: configured.writes,
-                            connection: createConnectionMonitor(monitorManager, userId),
-                        })
-                    ),
-                    (ontology) => Effect.promise(() => ontology.cleanup())
+                const settings = {
+                    installationId: options.installationId,
+                    userId,
+                    ontologyId,
+                    id: `${liveOntologyNamespace(options.installationId, ontologyId)}${meta ? ":meta" : ""}`,
+                    ir: configured.ir,
+                    backend: configured.backend,
+                    runtime: options.runtime,
+                    context: {
+                        ...options.createContext?.(userId, ontologyId),
+                        ...configured.context,
+                        user: userId,
+                    },
+                    persistObjects: configured.persistObjects,
+                    writes: configured.writes,
+                    connection: createConnectionMonitor(monitorManager, userId),
+                };
+                if (!meta && options.openOntology)
+                    return yield* Effect.acquireRelease(
+                        boundary("installation.open", () => options.openOntology!(settings)),
+                        (ontology) => Effect.promise(() => ontology.cleanup())
+                    );
+                return yield* makeLiveOntology(settings).pipe(
+                    Effect.mapError((cause) => failure("installation.open", cause))
                 );
             }),
         });
@@ -225,19 +217,18 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
             yield* closeUser(userId);
             for (const partition of [...partitions.values()].filter((row) => row.userId === userId)) {
                 const namespace = `${liveOntologyNamespace(options.installationId, partition.ontologyId)}${partition.meta ? ":meta" : ""}`;
-                yield* Effect.acquireRelease(
-                    boundary("installation.runtime", async () => options.runtime(userId, namespace)),
-                    (runtime) =>
-                        Effect.promise(async () => {
-                            await runtime.cleanup?.();
-                        })
-                ).pipe(
-                    Effect.flatMap((runtime) =>
-                        boundary("installation.destroy", async () => {
-                            await runtime.destroy?.();
-                        })
-                    ),
-                    Effect.scoped
+                yield* Effect.scoped(
+                    Effect.gen(function* () {
+                        const platformScope = yield* Scope.fork(yield* Effect.scope);
+                        const runtime = yield* Scope.provide(
+                            options.runtime(userId, namespace),
+                            platformScope
+                        ).pipe(Effect.mapError((cause) => failure("installation.runtime", cause)));
+                        yield* Scope.close(platformScope, Exit.void);
+                        yield* boundary("installation.destroy", async () => {
+                            await runtime.adapter.destroy?.();
+                        });
+                    })
                 );
                 yield* boundary(
                     "installation.partition",

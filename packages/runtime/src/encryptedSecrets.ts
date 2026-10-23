@@ -1,12 +1,12 @@
 import { makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Fiber, Schema } from "effect";
-import { Runtime, runtimeEffects } from "./Runtime.js";
+import { Runtime, getRuntime, RuntimeError } from "./Runtime.js";
 import type { RuntimeAdapter, SecretStore } from "./types.js";
 
 /** Application boundary: only embedded ciphertext enters ordinary storage. */
 export function createEncryptedSecretStore(adapter: RuntimeAdapter): SecretStore {
-    const managed = runtimeEffects(adapter).runtime;
+    const service = getRuntime(adapter);
     const namespace = JSON.stringify([adapter.owner, adapter.namespace]);
     const schema = Schema.Struct({ ciphertext: Schema.String });
     const handles = Table.make({
@@ -19,20 +19,21 @@ export function createEncryptedSecretStore(adapter: RuntimeAdapter): SecretStore
             values: ReturnType<typeof makeEncryptedValues>
         ) => Effect.Effect<A, unknown>
     ) =>
-        managed.runPromise(
-            Effect.gen(function* () {
-                const runtime = yield* Runtime;
-                if (!runtime.encryptionKeyring)
-                    return yield* Effect.fail(new Error("Runtime encryption is unavailable."));
-                const keys = runtime.encryptionKeyring;
-                return yield* Effect.flatMap(
-                    Effect.forkIn(
-                        runtime.tables.transaction((tx) => run(tx, makeEncryptedValues(namespace, keys))),
-                        runtime.scope
-                    ),
-                    Fiber.join
-                );
-            })
+        Effect.gen(function* () {
+            const runtime = yield* Runtime;
+            if (!runtime.encryptionKeyring)
+                return yield* Effect.fail(new Error("Runtime encryption is unavailable."));
+            const keys = runtime.encryptionKeyring;
+            return yield* Effect.flatMap(
+                Effect.forkIn(
+                    runtime.tables.transaction((tx) => run(tx, makeEncryptedValues(namespace, keys))),
+                    runtime.scope
+                ),
+                Fiber.join
+            );
+        }).pipe(
+            Effect.provide(service.context),
+            Effect.mapError((cause) => new RuntimeError({ operation: "secrets", cause }))
         );
     return {
         get: (key) =>
@@ -50,7 +51,7 @@ export function createEncryptedSecretStore(adapter: RuntimeAdapter): SecretStore
                 })
             ),
         delete: (key) =>
-            operation((tx, values) =>
+            operation((tx) =>
                 Effect.gen(function* () {
                     yield* tx.delete(handles, key);
                 })

@@ -1,8 +1,9 @@
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { MemoryBlobBytesStore, SingleProcessCoordination, defineRuntime } from "@party-stack/runtime";
-import { runtimeEffects } from "@party-stack/runtime";
+import { MemoryBlobBytesStore } from "@party-stack/runtime";
+import { asProvider } from "@party-stack/runtime/testing";
+import { defineRuntimeFixture, runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { Effect, Exit, Scope } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { createLiveOntology } from "../live/LiveOntology.js";
@@ -89,12 +90,11 @@ test("LiveOntology persists and restores offline projections, exposes local-only
                 },
             }),
     });
-    const runtime = defineRuntime((owner, namespace) => {
-        const coordination = new SingleProcessCoordination({ scope: `test:${owner}:${namespace}` });
+    const runtime = defineRuntimeFixture((owner, namespace) => {
         return {
             owner,
             namespace,
-            coordination,
+
             tables: Effect.succeed(local),
             blobBytes: new MemoryBlobBytesStore(),
             connectivity: {
@@ -108,13 +108,12 @@ test("LiveOntology persists and restores offline projections, exposes local-only
                     };
                 },
             },
-            cleanup: () => coordination.close(),
         };
     });
     const settings = {
         ir,
         backend: adapter,
-        runtime,
+        runtime: asProvider(runtime),
         persistObjects: true,
         writes: { defaultMode: "outbox" as const, defaultVisibility: "optimistic" as const },
     };
@@ -162,20 +161,18 @@ test("runtime cleanup closes the ontology's DbClient collections and sync scope"
     const backend = await Effect.runPromise(
         makeOwnedBackend({ namespace: "lifetime-server", ir, tables, mutators: {} })
     );
-    const coordination = new SingleProcessCoordination({ scope: "lifetime-runtime" });
-    const runtime = defineRuntime(() => ({
+    const runtime = defineRuntimeFixture(() => ({
         owner: "user",
         namespace: "lifetime",
         tables: Effect.succeed(tables),
-        coordination,
+
         blobBytes: new MemoryBlobBytesStore(),
         connectivity: { isConnected: false, subscribe: () => () => undefined },
-        cleanup: () => coordination.close(),
     }))("user", "lifetime");
     const cleanupBackend = vi.fn();
     const ontology = await createLiveOntology({
         ir,
-        runtime: () => runtime,
+        runtime: asProvider(() => runtime),
         backend: () => ({
             name: "lifetime",
             open: () => Effect.succeed(backend),
@@ -213,17 +210,15 @@ test("a scoped replica host runs without application collections and outlives in
     };
     const readAttachment = vi.fn(() => Promise.resolve(new Blob(["remote bytes"])));
     adapter.attachments = { getAttachmentContent: readAttachment };
-    const coordination = new SingleProcessCoordination({ scope: "scoped-host" });
-    const runtime = defineRuntime(() => ({
+    const runtime = defineRuntimeFixture(() => ({
         owner: "user",
         namespace: "scoped-host",
         tables: Effect.succeed(local),
-        coordination,
+
         blobBytes: new MemoryBlobBytesStore(),
         connectivity: { isConnected: false, subscribe: () => () => undefined },
-        cleanup: () => coordination.close(),
     }))("user", "scoped-host");
-    const managed = runtimeEffects(runtime).runtime;
+    const managed = runtimeFixtureContext(runtime).runtime;
     const owner = Effect.runSync(Scope.make());
     const firstSession = Effect.runSync(Scope.make());
     const secondSession = Effect.runSync(Scope.make());

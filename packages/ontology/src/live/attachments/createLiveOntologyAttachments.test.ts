@@ -1,5 +1,7 @@
 import { o } from "@party-stack/ontology-spec";
-import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
+import { MemoryBlobBytesStore } from "@party-stack/runtime";
+import { asProvider } from "@party-stack/runtime/testing";
+import { runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createLiveOntology } from "../LiveOntology.js";
@@ -186,9 +188,6 @@ describe("createLiveOntologyAttachments", () => {
             owner: "test-user",
             namespace: "eager-attachment",
             blobBytes: new MemoryBlobBytesStore(),
-            coordination: new SingleProcessCoordination({
-                scope: "eager-attachment",
-            }),
         };
         const materialized: string[] = [];
         let finishMaterialization: (() => void) | undefined;
@@ -225,7 +224,7 @@ describe("createLiveOntologyAttachments", () => {
         const ontology = await createLiveOntology({
             ir,
             backend: () => backendAdapter,
-            runtime: () => runtime,
+            runtime: asProvider(() => runtime),
         });
 
         const creation = await ontology.attachments.create(new Blob(["hello"]), {
@@ -257,9 +256,6 @@ describe("createLiveOntologyAttachments", () => {
             owner: "test-user",
             namespace: "targetless-attachment",
             blobBytes: new MemoryBlobBytesStore(),
-            coordination: new SingleProcessCoordination({
-                scope: "targetless-attachment",
-            }),
         };
         const backendAdapter: OntologyBackendAdapter = {
             name: "test",
@@ -282,7 +278,7 @@ describe("createLiveOntologyAttachments", () => {
         const ontology = await createLiveOntology({
             ir,
             backend: () => backendAdapter,
-            runtime: () => runtime,
+            runtime: asProvider(() => runtime),
         });
 
         const creation = await ontology.attachments.create(new Blob(["hello"]));
@@ -299,9 +295,6 @@ describe("createLiveOntologyAttachments", () => {
             owner: "test-user",
             namespace: "unsupported-attachment",
             blobBytes: new MemoryBlobBytesStore(),
-            coordination: new SingleProcessCoordination({
-                scope: "unsupported-attachment",
-            }),
         };
         const backendAdapter: OntologyBackendAdapter = {
             name: "test",
@@ -324,7 +317,7 @@ describe("createLiveOntologyAttachments", () => {
         const ontology = await createLiveOntology({
             ir,
             backend: () => backendAdapter,
-            runtime: () => runtime,
+            runtime: asProvider(() => runtime),
         });
 
         const creation = await ontology.attachments.create(new Blob(["hello"]), {
@@ -347,9 +340,6 @@ describe("createLiveOntologyAttachments", () => {
             owner: "test-user",
             namespace: "attachment-mapping",
             blobBytes: new MemoryBlobBytesStore(),
-            coordination: new SingleProcessCoordination({
-                scope: "attachment-mapping",
-            }),
         };
         const backendAdapter: OntologyBackendAdapter = {
             name: "test",
@@ -378,7 +368,7 @@ describe("createLiveOntologyAttachments", () => {
         const ontology = await createLiveOntology({
             ir: actionIr,
             backend: () => backendAdapter,
-            runtime: () => runtime,
+            runtime: asProvider(() => runtime),
         });
         const { attachment } = await ontology.attachments.create(new Blob(["hello"]), {
             target: {

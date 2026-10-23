@@ -63,10 +63,13 @@ generic authentication-client type. `createConnectionManager` and
 `createOntologyBackendInstallation` are thin Promise facades for framework callers;
 their cleanup methods close the same scopes. There is no second async implementation.
 Egress stays compatible with fetch/WebSocket APIs, and provider sign-in methods
-remain Promise boundaries. Runtime-provider, route-configuration and remote-placement
-callbacks also retain their current framework contracts.
+remain Promise boundaries. Runtime providers now return scoped Effects; route-configuration and remote-placement callbacks remain application boundaries.
 
-Refresh runs in a scoped fiber using Effect's Clock and connectivity stream. Session
+Refresh runs in a scoped fiber using Effect's Clock and connectivity stream.
+Transactional Connect claims serialize credential rotation across contexts. Durable
+connection metadata is shared through storage; SDK clients and sockets are scoped
+local handles, restored or released on external sign-in/logout notifications. There
+is no dependency on the former coordination package. Session
 replacement is serialized with logout; a late refresh or old request failure cannot
 reactivate or invalidate a newer session. Unadopted sessions are released if their
 submitting fiber is interrupted. Teardown attempts all session finalizers even when

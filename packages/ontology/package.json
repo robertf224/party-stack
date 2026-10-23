@@ -43,7 +43,6 @@
         "@bobbyfidz/panic": "^0.1.0",
         "@next/env": "^16.1.6",
         "@party-stack/connect": "workspace:*",
-        "@party-stack/coordination": "workspace:*",
         "@party-stack/errors": "workspace:*",
         "@party-stack/node-runtime": "workspace:*",
         "@party-stack/ontology-backend": "workspace:*",

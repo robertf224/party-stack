@@ -1,6 +1,10 @@
 import { isUnauthenticatedError } from "@party-stack/errors";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { createDefaultRuntime, defineRuntime } from "@party-stack/runtime";
+import {
+    memoryRuntimeFixture,
+    defineRuntimeFixture,
+    runtimeFixtureContext,
+} from "@party-stack/runtime/testing";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createPublicOAuthClient } from "./createPublicOAuthClient.js";
@@ -11,19 +15,19 @@ describe("createPublicOAuthClient", () => {
         async (ownedTables) => {
             const values = new Map<string, string>();
             let authorizationUrl: string | undefined;
-            const runtime = defineRuntime(() => ({
-                ...createDefaultRuntime("installation", `oauth-${crypto.randomUUID()}`),
+            const runtime = defineRuntimeFixture(() => ({
+                ...memoryRuntimeFixture("installation", `oauth-${crypto.randomUUID()}`),
                 tables: ownedTables ? Memory.make() : undefined,
                 secrets: {
-                    get: (key: string) => Promise.resolve(values.get(key)),
-                    set: (key: string, value: string) => {
-                        values.set(key, value);
-                        return Promise.resolve();
-                    },
-                    delete: (key: string) => {
-                        values.delete(key);
-                        return Promise.resolve();
-                    },
+                    get: (key: string) => Effect.sync(() => values.get(key)),
+                    set: (key: string, value: string) =>
+                        Effect.sync(() => {
+                            values.set(key, value);
+                        }),
+                    delete: (key: string) =>
+                        Effect.sync(() => {
+                            values.delete(key);
+                        }),
                 },
                 browserAuthentication: {
                     start() {
@@ -99,7 +103,7 @@ describe("createPublicOAuthClient", () => {
     );
 
     it("requires explicit consent for ordinary persisted secret storage", async () => {
-        const runtime = createDefaultRuntime("installation", `oauth-${crypto.randomUUID()}`);
+        const runtime = memoryRuntimeFixture("installation", `oauth-${crypto.randomUUID()}`);
 
         await expect(
             createPublicOAuthClient({
@@ -122,17 +126,17 @@ describe("createPublicOAuthClient", () => {
     it("restores expired refreshable sessions without network access", async () => {
         const values = new Map<string, string>();
         const runtime = {
-            ...createDefaultRuntime("installation", `oauth-${crypto.randomUUID()}`),
+            ...memoryRuntimeFixture("installation", `oauth-${crypto.randomUUID()}`),
             secrets: {
-                get: (key: string) => Promise.resolve(values.get(key)),
-                set: (key: string, value: string) => {
-                    values.set(key, value);
-                    return Promise.resolve();
-                },
-                delete: (key: string) => {
-                    values.delete(key);
-                    return Promise.resolve();
-                },
+                get: (key: string) => Effect.sync(() => values.get(key)),
+                set: (key: string, value: string) =>
+                    Effect.sync(() => {
+                        values.set(key, value);
+                    }),
+                delete: (key: string) =>
+                    Effect.sync(() => {
+                        values.delete(key);
+                    }),
             },
             browserAuthentication: {
                 start({ redirectUrl }: { redirectUrl: string }) {
@@ -148,6 +152,7 @@ describe("createPublicOAuthClient", () => {
                 },
             },
         };
+        runtimeFixtureContext(runtime);
         let tokenRequests = 0;
         const fetch = vi.fn<typeof globalThis.fetch>(() => {
             tokenRequests += 1;
@@ -206,8 +211,8 @@ it("runtime shutdown aborts token refresh and closes the OAuth owner without dis
         "decrypt",
     ]);
     const namespace = `oauth-cancel-${crypto.randomUUID()}`;
-    const provider = defineRuntime((owner, namespace) => ({
-        ...createDefaultRuntime(owner, namespace),
+    const provider = defineRuntimeFixture((owner, namespace) => ({
+        ...memoryRuntimeFixture(owner, namespace),
         tables: Effect.succeed(tables),
         encryptionKeyring: Effect.succeed({
             active: Effect.succeed({ id: "key", key }),

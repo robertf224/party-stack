@@ -1,5 +1,5 @@
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Context, Effect, Layer, ManagedRuntime, PubSub, Queue, Schema, Stream, Tracer } from "effect";
+import { Context, Effect, Layer, PubSub, Queue, Schema, Stream, Tracer } from "effect";
 import { BlobBytesNotFoundError } from "./BlobBytesNotFoundError.js";
 import { createRuntimeTraces } from "./tracing.js";
 import type { RuntimeTraces } from "./tracing.js";
@@ -26,6 +26,8 @@ const attempt = <A>(operation: string, run: () => Promise<A>) =>
     Effect.tryPromise({ try: run, catch: (cause) => new RuntimeError({ operation, cause }) });
 
 export interface RuntimeService {
+    readonly context: Context.Context<Runtime>;
+    readonly traces: RuntimeTraces;
     readonly adapter: RuntimeAdapter;
     readonly scope: import("effect").Scope.Scope;
     readonly tables: TablesService;
@@ -45,6 +47,8 @@ export interface RuntimeService {
 export class Runtime extends Context.Service<Runtime, RuntimeService>()("@party-stack/runtime/Runtime") {
     /** Construct the runtime in the caller's Scope; platform Layers own their resources. */
     static readonly make = Effect.fnUntraced(function* (adapter: RuntimeAdapter) {
+        const existing = (adapter as BoundAdapter)[serviceKey];
+        if (existing) return existing;
         const tables = yield* adapter.tables ?? Memory.make();
         const encryptionKeyring = adapter.encryptionKeyring ? yield* adapter.encryptionKeyring : undefined;
         const events = yield* PubSub.sliding<void>(1);
@@ -73,7 +77,14 @@ export class Runtime extends Context.Service<Runtime, RuntimeService>()("@party-
                 (unsubscribe) => Effect.sync(() => unsubscribe?.())
             )
         );
-        return Runtime.of({
+        const captured = yield* Effect.context<never>();
+        const traces = createRuntimeTraces();
+        let service: RuntimeService;
+        service = Runtime.of({
+            get context() {
+                return Context.add(Context.add(captured, Runtime, service), Tracer.Tracer, traces.tracer);
+            },
+            traces,
             adapter,
             scope: yield* Effect.scope,
             tables,
@@ -105,75 +116,24 @@ export class Runtime extends Context.Service<Runtime, RuntimeService>()("@party-
                 }),
             },
         });
+        Object.defineProperty(adapter, serviceKey, { value: service, configurable: true });
+        yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+                delete (adapter as BoundAdapter)[serviceKey];
+            })
+        );
+        return service;
     });
 
-    /** Compatibility for already constructed platform adapters. */
+    /** Acquire platform capabilities in the caller's scope. */
     static readonly layer = (adapter: RuntimeAdapter) => Layer.effect(Runtime, Runtime.make(adapter));
 }
-const disposed = new WeakSet<RuntimeAdapter>();
-const runtimes = new WeakMap<
-    RuntimeAdapter,
-    {
-        runtime: ManagedRuntime.ManagedRuntime<Runtime, unknown>;
-        traces: RuntimeTraces;
-        closed?: boolean;
-        closing?: Promise<void>;
-    }
->();
-/** One managed Effect scope per application runtime; Promise methods are framework boundaries. */
-export function runtimeEffects(adapter: RuntimeAdapter) {
-    if (disposed.has(adapter)) throw new Error("Runtime is closed.");
-    const existing = runtimes.get(adapter);
-    if (existing?.closed) throw new Error("Runtime is closed.");
-    if (existing) return existing;
-    const traces = createRuntimeTraces();
-    const layer = Runtime.layer(adapter).pipe(
-        Layer.provideMerge(Layer.succeed(Tracer.Tracer, traces.tracer))
-    );
-    const value = { runtime: ManagedRuntime.make(layer), traces };
-    runtimes.set(adapter, value);
-    return value;
-}
-/** Framework boundary over a scoped platform Layer. Both facades share this one runtime. */
-export async function createRuntimeAdapter<E>(layer: Layer.Layer<Runtime, E>): Promise<RuntimeAdapter> {
-    const traces = createRuntimeTraces();
-    const runtime = ManagedRuntime.make(
-        layer.pipe(Layer.provideMerge(Layer.succeed(Tracer.Tracer, traces.tracer)))
-    );
-    try {
-        const service = await runtime.runPromise(Runtime);
-        const binding = { runtime, traces };
-        const raw = service.adapter;
-        let destroying: Promise<void> | undefined;
-        const adapter: RuntimeAdapter = {
-            ...raw,
-            tables: Effect.succeed(service.tables),
-            encryptionKeyring: service.encryptionKeyring
-                ? Effect.succeed(service.encryptionKeyring)
-                : undefined,
-            cleanup: () => disposeRuntimeEffects(adapter),
-            destroy: raw.destroy
-                ? () =>
-                      (destroying ??= disposeRuntimeEffects(adapter)
-                          .then(() => raw.destroy!())
-                          .then(() => undefined))
-                : undefined,
-        };
-        runtimes.set(raw, binding);
-        runtimes.set(adapter, binding);
-        return adapter;
-    } catch (cause) {
-        await runtime.dispose();
-        throw cause;
-    }
-}
+const serviceKey = Symbol.for("@party-stack/runtime/scoped-service");
+type BoundAdapter = RuntimeAdapter & { [serviceKey]?: RuntimeService };
 
-export async function disposeRuntimeEffects(adapter: RuntimeAdapter): Promise<void> {
-    disposed.add(adapter);
-    const existing = runtimes.get(adapter);
-    if (existing) {
-        existing.closed = true;
-        existing.closing ??= existing.runtime.dispose();
-        await existing.closing;
-    }
+/** Capture an already acquired scoped service for a non-Effect application boundary. */
+export function getRuntime(adapter: RuntimeAdapter): RuntimeService {
+    const service = (adapter as BoundAdapter)[serviceKey];
+    if (!service) throw new Error("Runtime is not acquired or its scope is closed.");
+    return service;
 }

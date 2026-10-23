@@ -1,6 +1,6 @@
 import { unauthenticated } from "@party-stack/errors";
 import { and, eq, field, ne } from "@party-stack/ontology-storage";
-import { Runtime, runtimeEffects } from "@party-stack/runtime";
+import { Runtime, getRuntime } from "@party-stack/runtime";
 import { Clock, Effect, Exit, Fiber, Scope, Result, Schema } from "effect";
 import { makeConnect } from "../core/Connect.js";
 import { connectError, ConnectError } from "../core/errors.js";
@@ -25,9 +25,14 @@ const session = (record: OAuthConnectionRecord): OAuthSession => ({
 export async function createPublicOAuthClient(
     options: CreatePublicOAuthClientOptions
 ): Promise<PublicOAuthClient> {
-    const managed = runtimeEffects(options.runtime).runtime;
+    const managed = { runPromise: Effect.runPromiseWith(getRuntime(options.runtime).context) };
     const owner = await managed.runPromise(
-        Effect.flatMap(Runtime, (runtime) => Scope.fork(options.scope ?? runtime.scope))
+        Effect.gen(function* () {
+            const runtime = yield* Runtime;
+            const scope = yield* Scope.fork(runtime.scope);
+            if (options.scope) yield* Scope.addFinalizer(options.scope, Scope.close(scope, Exit.void));
+            return scope;
+        })
     );
     const close = () => Effect.runPromise(Scope.close(owner, Exit.void));
     try {
@@ -204,10 +209,20 @@ export async function createPublicOAuthClient(
                                 return [...restored.values()];
                             })
                         ),
-                    refresh: (userId) =>
+                    refresh: (userId, options) =>
                         run(
                             Effect.gen(function* () {
-                                return session(yield* connect.refresh((yield* find(userId)).id));
+                                const record = yield* find(userId);
+                                // A different context may already have refreshed this shared record.
+                                if (
+                                    options &&
+                                    record.accessToken &&
+                                    record.accessTokenExpiresAt &&
+                                    record.accessTokenExpiresAt.epochMilliseconds >
+                                        (yield* Clock.currentTimeMillis) + options.ifExpiringWithinMs
+                                )
+                                    return session(record);
+                                return session(yield* connect.refresh(record.id));
                             })
                         ),
                     getAccessToken: (userId) =>

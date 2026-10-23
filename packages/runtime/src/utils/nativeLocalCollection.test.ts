@@ -1,4 +1,3 @@
-import { SingleProcessCoordination } from "@party-stack/coordination";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import {
     Table,
@@ -6,13 +5,12 @@ import {
     TransactionError,
     type TablesService,
 } from "@party-stack/ontology-storage/tables";
+import { memoryRuntimeFixture, defineRuntimeFixture } from "@party-stack/runtime/testing";
 import { eq, queryOnce } from "@tanstack/db";
 import { Effect } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { MemoryBlobBytesStore } from "../memory/MemoryBlobBytesStore.js";
-import { createDefaultRuntime } from "./createDefaultRuntime.js";
 import { createLocalCollection } from "./createLocalCollection.js";
-import { defineRuntime } from "./defineRuntime.js";
 import type { RuntimeAdapter } from "../types.js";
 
 interface Item {
@@ -21,12 +19,11 @@ interface Item {
 }
 function provider(tables: TablesService) {
     const listeners = new Set<() => void>();
-    return defineRuntime((owner, namespace) => {
-        const coordination = new SingleProcessCoordination({ scope: crypto.randomUUID() });
+    return defineRuntimeFixture((owner, namespace) => {
         return {
             owner,
             namespace,
-            coordination,
+
             tables: Effect.succeed(tables),
             blobBytes: new MemoryBlobBytesStore(),
             storageNotifications: {
@@ -40,7 +37,6 @@ function provider(tables: TablesService) {
                     };
                 },
             },
-            cleanup: () => coordination.close(),
         };
     });
 }
@@ -49,7 +45,7 @@ const open = (runtime: RuntimeAdapter, name = "items", schemaVersion = 1) =>
 const rows = (collection: ReturnType<typeof open>) => queryOnce((q) => q.from({ row: collection }));
 
 test("default runtime collections use owned memory tables and survive collection close/reopen", async () => {
-    const runtime = createDefaultRuntime("owner", "memory");
+    const runtime = memoryRuntimeFixture("owner", "memory");
     const first = open(runtime);
     try {
         await rows(first);

@@ -1,5 +1,3 @@
-import type { Coordination } from "@party-stack/coordination";
-
 export interface BlobBytesStore {
     write(id: string, blob: Blob): Promise<void>;
     /** Reject with BlobBytesNotFoundError for a missing key; preserve other IO failures. */
@@ -13,9 +11,12 @@ export interface NetworkConnectivity {
 }
 
 export interface SecretStore {
-    get(key: string): Promise<string | undefined>;
-    set(key: string, value: string): Promise<void>;
-    delete(key: string): Promise<void>;
+    get(key: string): import("effect").Effect.Effect<string | undefined, import("./Runtime.js").RuntimeError>;
+    set(
+        key: string,
+        value: string
+    ): import("effect").Effect.Effect<void, import("./Runtime.js").RuntimeError>;
+    delete(key: string): import("effect").Effect.Effect<void, import("./Runtime.js").RuntimeError>;
 }
 
 export type BrowserAuthenticationPresentation = "popup" | "redirect";
@@ -36,7 +37,6 @@ export interface RuntimeAdapter {
     readonly owner: string;
     readonly namespace: string;
     blobBytes: BlobBytesStore;
-    coordination: Coordination;
     connectivity?: NetworkConnectivity;
     browserAuthentication?: BrowserAuthentication;
     secrets?: SecretStore;
@@ -56,11 +56,25 @@ export interface RuntimeAdapter {
         acquire(owner: string): import("effect").Effect.Effect<void, unknown, import("effect").Scope.Scope>;
         isAlive(owner: string): import("effect").Effect.Effect<boolean, unknown>;
     };
-    cleanup?: () => void | Promise<void>;
     destroy?: () => void | Promise<void>;
+    /** Acquire the sole persistent replica host until the calling Scope closes. */
+    acquireHost?: import("effect").Effect.Effect<
+        void,
+        import("./Runtime.js").RuntimeError,
+        import("effect").Scope.Scope
+    >;
 }
 
 export type RuntimeAdapterProvider = (
     owner: string,
     namespace: string
-) => RuntimeAdapter | Promise<RuntimeAdapter>;
+) => import("effect").Effect.Effect<
+    import("./Runtime.js").RuntimeService,
+    RuntimeAcquisitionError,
+    import("effect").Scope.Scope
+>;
+
+export type RuntimeAcquisitionError =
+    | import("./Runtime.js").RuntimeError
+    | import("@party-stack/ontology-storage").OntologyStorageError
+    | import("@party-stack/ontology-storage/encrypted").EncryptionError;

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { make as makeNodeKeyring, type NodeKeyringService } from "@party-stack/effect-node-keyring";
+import { make as makeNodeKeyring } from "@party-stack/effect-node-keyring";
+import { RuntimeError, type SecretStore } from "@party-stack/runtime";
 import { Effect, Redacted } from "effect";
-import type { SecretStore } from "@party-stack/runtime";
 
 export interface NodeSecretStoreOptions {
     service: string;
@@ -10,30 +10,44 @@ function encodeIdentifier(value: string): string {
     return `party-stack.${createHash("sha256").update(value).digest("hex")}`;
 }
 
-/** Promise facade for the native Effect service. Constructing a runtime does not open a keychain. */
-export class NodeSecretStore implements SecretStore {
-    readonly #service: string;
-    #keyring?: Promise<NodeKeyringService>;
-    constructor(options: NodeSecretStoreOptions) {
-        this.#service = encodeIdentifier(options.service);
-    }
-    async get(key: string): Promise<string | undefined> {
-        const keyring = await this.#getKeyring();
-        const value = await Effect.runPromise(keyring.getPassword(this.#service, encodeIdentifier(key)));
-        return value === undefined ? undefined : Redacted.value(value);
-    }
-    async set(key: string, value: string): Promise<void> {
-        const keyring = await this.#getKeyring();
-        await Effect.runPromise(
-            keyring.setPassword(this.#service, encodeIdentifier(key), Redacted.make(value))
+/** The native service is loaded on first use, once per scoped runtime. */
+export const makeSecretStore = Effect.fnUntraced(function* (options: NodeSecretStoreOptions) {
+    const service = encodeIdentifier(options.service);
+    const keyring = yield* Effect.cached(
+        makeNodeKeyring.pipe(
+            Effect.mapError(
+                () =>
+                    new RuntimeError({
+                        operation: "secrets.open",
+                        cause: new Error("Native keyring unavailable."),
+                    })
+            )
+        )
+    );
+    const operation = <A>(effect: Effect.Effect<A, unknown>) =>
+        effect.pipe(
+            Effect.mapError(
+                () =>
+                    new RuntimeError({
+                        operation: "secrets",
+                        cause: new Error("Native credential operation failed."),
+                    })
+            )
         );
-    }
-    async delete(key: string): Promise<void> {
-        const keyring = await this.#getKeyring();
-        await Effect.runPromise(keyring.deleteCredential(this.#service, encodeIdentifier(key)));
-    }
-    #getKeyring(): Promise<NodeKeyringService> {
-        this.#keyring ??= Effect.runPromise(makeNodeKeyring);
-        return this.#keyring;
-    }
-}
+    return {
+        get: (key) =>
+            operation(
+                Effect.flatMap(keyring, (native) => native.getPassword(service, encodeIdentifier(key)))
+            ).pipe(Effect.map((value) => (value === undefined ? undefined : Redacted.value(value)))),
+        set: (key, value) =>
+            operation(
+                Effect.flatMap(keyring, (native) =>
+                    native.setPassword(service, encodeIdentifier(key), Redacted.make(value))
+                )
+            ),
+        delete: (key) =>
+            operation(
+                Effect.flatMap(keyring, (native) => native.deleteCredential(service, encodeIdentifier(key)))
+            ).pipe(Effect.asVoid),
+    } satisfies SecretStore;
+});

@@ -11,17 +11,25 @@ import "expo-router/entry";
 
 Then use `createExpoRuntime` from `@party-stack/expo-runtime` as your installation's runtime provider.
 
-The polyfill replaces global `Blob` with Expo Blob and global `File` with a compatible class extending Expo Blob. It leaves Expo’s installed fetch unchanged. Import it once at startup; it is a separate entry point so importing the runtime alone does not replace Blob or File. Attachment uploads use Expo’s default fetch; do not opt back into React Native fetch with `EXPO_PUBLIC_USE_RN_FETCH`.
+The polyfill replaces global `Blob` with Expo Blob and global `File` with a compatible class extending Expo Blob. It also supplies secure native randomness when the host lacks it and leaves Expo’s installed fetch unchanged. Import it once at startup; it is a separate entry point so importing the runtime alone does not replace Blob or File. Attachment uploads use Expo’s default fetch; do not opt back into React Native fetch with `EXPO_PUBLIC_USE_RN_FETCH`.
 
 Attachment storage requires blobs with `arrayBuffer()`, as provided by Expo Blob and Expo File. Blobs returned by other native libraries may still use React Native's older Blob implementation; convert those to compatible blobs before passing them to the runtime. Cache reads return `expo-file-system` File objects, which Expo fetch accepts as upload bodies.
+
+## Effect lifetime
+
+`createExpoRuntime(owner, namespace)` and `make({ owner, namespace })` return Effects
+requiring `Scope`. `layer({ owner, namespace })` provides the Runtime service. Runtime
+acquisition is lazy; completion, failure or interruption closes SQLite and removes
+NetInfo listeners. There is no runtime Promise factory or manual cleanup API.
+Installations accept `createExpoRuntime` directly as their runtime provider.
 
 ## Platform secrets
 
 The runtime uses SecureStore without an additional biometric authentication
 requirement, so OAuth refresh can run without prompting. There is no global
 `requireAuthentication` option. Interactive session unlock, per-use verification,
-and separate policies for sensitive properties remain future work. Expo does not
-yet supply the general EncryptionKeyring needed by the downloaded-value row cache.
+and separate policies for sensitive properties remain future work. Expo runtimes
+supply an EncryptionKeyring backed by SecureStore and native expo-crypto AES-GCM for the downloaded-value row cache.
 
 ## Native configuration
 

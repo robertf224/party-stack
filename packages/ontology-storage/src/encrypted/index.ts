@@ -8,10 +8,25 @@ export class EncryptionError extends Schema.TaggedError<EncryptionError>()("Encr
     message: Schema.String,
 }) {}
 
+/** Platform AES-GCM implementations may keep their key in a native crypto module. */
+export interface NativeEncryptionKey {
+    readonly encrypt: (
+        plaintext: Uint8Array,
+        iv: Uint8Array,
+        additionalData: Uint8Array
+    ) => Promise<Uint8Array>;
+    readonly decrypt: (
+        ciphertext: Uint8Array,
+        iv: Uint8Array,
+        additionalData: Uint8Array
+    ) => Promise<Uint8Array>;
+}
+export type EncryptionKey = CryptoKey | NativeEncryptionKey;
+
 /** Key material stays in a platform key service, outside ordinary table data. */
 export interface EncryptionKeyringService {
-    readonly active: Effect.Effect<{ readonly id: string; readonly key: CryptoKey }, EncryptionError>;
-    readonly get: (id: string) => Effect.Effect<CryptoKey | undefined, EncryptionError>;
+    readonly active: Effect.Effect<{ readonly id: string; readonly key: EncryptionKey }, EncryptionError>;
+    readonly get: (id: string) => Effect.Effect<EncryptionKey | undefined, EncryptionError>;
 }
 export class EncryptionKeyring extends Context.Service<EncryptionKeyring, EncryptionKeyringService>()(
     "@party-stack/ontology-storage/EncryptionKeyring"
@@ -69,11 +84,15 @@ export function makeEncryptedValues(
             return yield* Effect.tryPromise({
                 try: async () => {
                     const iv = crypto.getRandomValues(new Uint8Array(12));
-                    const data = await crypto.subtle.encrypt(
-                        { name: "AES-GCM", iv, additionalData: aad(key.id), tagLength: 128 },
-                        key.key,
-                        new TextEncoder().encode(text)
-                    );
+                    const plaintext = new TextEncoder().encode(text);
+                    const data =
+                        "encrypt" in key.key
+                            ? await key.key.encrypt(plaintext, iv, aad(key.id))
+                            : await crypto.subtle.encrypt(
+                                  { name: "AES-GCM", iv, additionalData: aad(key.id), tagLength: 128 },
+                                  key.key,
+                                  plaintext
+                              );
                     const envelope: Ciphertext = {
                         format: "aes-gcm-v1",
                         keyId: key.id,
@@ -101,16 +120,19 @@ export function makeEncryptedValues(
             const data = yield* bytes(encrypted.data);
             const text = yield* Effect.tryPromise({
                 try: async () => {
-                    const plaintext = await crypto.subtle.decrypt(
-                        {
-                            name: "AES-GCM",
-                            iv,
-                            additionalData: aad(encrypted.keyId),
-                            tagLength: 128,
-                        },
-                        key,
-                        data
-                    );
+                    const plaintext =
+                        "decrypt" in key
+                            ? await key.decrypt(data, iv, aad(encrypted.keyId))
+                            : await crypto.subtle.decrypt(
+                                  {
+                                      name: "AES-GCM",
+                                      iv,
+                                      additionalData: aad(encrypted.keyId),
+                                      tagLength: 128,
+                                  },
+                                  key,
+                                  data
+                              );
                     return new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
                 },
                 catch: () =>

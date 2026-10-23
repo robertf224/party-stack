@@ -17,18 +17,19 @@ await Effect.runPromise(program.pipe(Effect.provide(WebRuntime.layer({ owner: "u
 ```
 
 Defining the Layer opens nothing. Building it acquires storage, connectivity and
-coordination resources in its Scope. Completion, failure or interruption closes
-the database, removes listeners, closes channels and releases coordination.
+platform resources in its Scope. Completion, failure or interruption closes
+the database, removes listeners, closes channels and releases native locks.
 No separate platform `cleanup()` call is needed. The implementation also works in
 workers, where `window` and `document` are unavailable.
 
-Persistent storage uses IndexedDB and OPFS; shared ownership uses Web Locks and
-BroadcastChannel by default. `coordination: "single-process"` is available when
-the caller already guarantees exclusive ownership. Missing shared APIs fail
-explicitly rather than silently allowing multiple independent dispatchers against
-one persistent namespace.
+Persistent storage uses IndexedDB and OPFS. A persistent replica acquires one native
+Web Lock for its entire host Scope; another owner waits until that Scope closes or
+the browser context dies. SharedWorker clients use the standard ontology protocol
+and memory replicas. BroadcastChannel carries storage invalidations for local
+private-state projections; it is not an RPC transport or leader-election service.
+Missing Web Locks fail explicitly for persistent storage.
 
-`storage: "memory"` selects isolated in-process storage and coordination. This is
+`storage: "memory"` selects isolated in-process storage. This is
 an explicit fallback choice, with memory lifetime; it does not recover pending
 work from an inaccessible persistent store. Worker support and storage access
 must be tested separately. Private browsing may provide temporary storage with
@@ -49,11 +50,11 @@ Cached copies are themselves encrypted with the device key. This runtime must be
 partitioned by authenticated owner/installation/ontology as usual; never reuse a
 private runtime for unrelated users. See [encrypted values](../ontology/encrypted-values.md).
 
-`createWebRuntime(owner, namespace, options?)` is an asynchronous framework boundary
-that builds this same Layer. It shares its acquired Runtime with installation and
-connection facades; `cleanup()` disposes that scope and `destroy()` then deletes
-local storage. It does not construct a second platform implementation. Browser key
-persistence is an explicit factory option too. Node/Expo platform construction and
-the remaining adapter/WeakMap consumers still need migration. Browser tests cover both the existing
-lock/broadcast path and a real SharedWorker owner with per-tab memory Replicas and
-TanStack collections, including tab closure and reload in an isolated Chromium context.
+`createWebRuntime(owner, namespace, options?)` returns the same scoped Effect as
+`make({ owner, namespace, ...options })`. It has no Promise constructor or manual
+cleanup method. Installations accept this provider directly; application entry
+points can supply `layer` to an Effect program or an outer ManagedRuntime.
+
+Browser tests cover native IndexedDB transactions/notifications, host-lock release
+on tab termination, and a SharedWorker owner with per-tab memory replicas and
+TanStack collections. Private browsing/storage access still requires platform testing.

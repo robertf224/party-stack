@@ -31,19 +31,11 @@ export function runtimeCredentialValues(
     const plain = Table.make<{ value: string }>({
         name: JSON.stringify(["connect", namespace, "explicit-plaintext-secrets"]),
     });
-    const attempt = <A>(run: () => Promise<A>) =>
-        Effect.tryPromise({
-            try: run,
-            catch: () => connectError("Storage", "Platform credential operation failed.", true),
-        });
     const get = (id: string) =>
-        platform
-            ? attempt(() => platform.get(id))
-            : runtime.tables.get(plain, id).pipe(Effect.map((row) => row?.value));
+        platform ? platform.get(id) : runtime.tables.get(plain, id).pipe(Effect.map((row) => row?.value));
     const set = (id: string, value: string) =>
-        platform ? attempt(() => platform.set(id, value)) : runtime.tables.put(plain, id, { value });
-    const drop = (id: string) =>
-        platform ? attempt(() => platform.delete(id)) : runtime.tables.delete(plain, id);
+        platform ? platform.set(id, value) : runtime.tables.put(plain, id, { value });
+    const drop = (id: string) => (platform ? platform.delete(id) : runtime.tables.delete(plain, id));
     return Effect.succeed({
         encrypt: Effect.fnUntraced(function* <A, AI>(schema: Schema.Codec<A, AI>, value: A) {
             const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.toCodecJson(schema)))(

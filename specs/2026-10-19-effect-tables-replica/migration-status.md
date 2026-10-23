@@ -41,9 +41,16 @@ covered in [native-actions.md](./native-actions.md).
   using mark-and-sweep. Blob metadata, aliases, generation intents and reader/outbox
   roots compose transactionally through ontology-storage. Byte IO uses recovery
   and generation fencing rather than pretending external IO shares a SQL transaction.
-- **Effect lifetimes:** removed Effection. Watcher, coordination, connectivity,
-  refresh and maintenance use scopes/fibers. WebRuntime has a lazy Layer; its async
-  facade builds the same acquired service. Failed acquisition and closure are tested.
+- **Effect lifetimes/platform ownership:** removed Effection and the coordination
+  package. Web, Node and Expo runtime constructors are scoped Effects and Layers;
+  there are no runtime Promise factories or manual runtime cleanup facades.
+  Native installation opens acquire the same runtime service directly. Scope closure
+  interrupts work and releases SQLite/IndexedDB, connectivity subscriptions and channels.
+  Persistent replica hosts use a lifetime Web Lock; RPC remains the standard ontology
+  protocol. Local private projections use storage invalidations, and transactional
+  Connect claims protect token rotation. SDK sessions/sockets remain context-local
+  resources and reconcile external sign-in/logout. Native keyrings compose OS
+  keychain/SecureStore with device encryption; Expo uses its native AES-GCM API.
 - **Browser placement:** persisted SharedWorker owner, memory tab Replicas, Effect
   RPC transport and helper operations. Parent state/overlay/outbox handoff is atomic;
   scoped connections forward local work and recover lost replies. Selected snapshots,
@@ -79,28 +86,24 @@ covered in [native-actions.md](./native-actions.md).
 
 ## What remains, in recommended order
 
-1. **Remaining Connect authority integration.** Better Auth's lensed native storage
-   adapter, scoped local Connect lifecycle, browser key opt-in and public decrypt/cache
-   API are implemented. A Foundry-hosted Connect authority still needs trusted actions /
-   Cipher writes for atomic refresh claims and credential commits. General native
-   mutator auto-encryption, generated write types and outbox-parameter protection are
-   separate follow-ups. Cross-context private service ownership belongs to step 2.
-2. **Platform ownership.** Finish scoped Node/Expo construction and credential/key
-   composition. Private connection/installation services still use coordinated
-   per-context ownership. SharedWorker application data ownership is already live;
-   remaining coordinated services prevent deleting coordination wholesale.
-3. **Protocol hardening.** Retained delta history, source/session reset recovery
+1. **Protocol hardening.** Retained delta history, source/session reset recovery
    preserving local work, scoped returned-state authorization, completed receipt /
    journal-history compaction, and protocol-child row/blob retention. Current
    selected snapshots replace atomically; they are not a retained delta stream.
    Protocol children require `gc:false` and no blob service. The issue-tracker
    placement is a trusted same-origin use, not a generic untrusted deployment.
-4. **Provider synchronization.** Foundry durable edits-history catch-up with honest
+2. **Provider synchronization.** Foundry durable edits-history catch-up with honest
    cursor guarantees, Salesforce CDC health/reconnect support, deeper predicate
    pushdown and narrower receipt read-back. Foundry watch invalidations currently
    repair with snapshots; Salesforce uses polling. Neither is a completed durable
    streaming synchronization port.
-5. **Recovery presentation and acceptance.** Engine retry/reconcile/wait APIs now
+3. **Remaining Connect authority integration.** Better Auth's lensed native storage
+   adapter, scoped local Connect lifecycle, browser key opt-in and public decrypt/cache
+   API are implemented. A Foundry-hosted Connect authority still needs trusted actions /
+   Cipher writes for atomic refresh claims and credential commits. General native
+   mutator auto-encryption, generated write types and outbox-parameter protection are
+   separate follow-ups.
+4. **Recovery presentation and acceptance.** Engine retry/reconcile/wait APIs now
    exist; application UX for uncertain/blocked work and independently verified
    provider receipts remains. Verify cold offline app-shell reload, broader browser /
    private-mode coverage and multi-client reset recovery. Continue focused subsystem

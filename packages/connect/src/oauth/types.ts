@@ -35,7 +35,8 @@ export interface PublicOAuthClient {
     signIn(options?: PublicOAuthSignInOptions): Promise<OAuthSession>;
     completeRedirect(url: string): Promise<OAuthSession | undefined>;
     restoreSessions(): Promise<readonly OAuthSession[]>;
-    refresh(userId: string): Promise<OAuthSession>;
+    /** Omit options to force refresh; background owners can reuse a token with sufficient validity. */
+    refresh(userId: string, options?: { ifExpiringWithinMs: number }): Promise<OAuthSession>;
     getAccessToken(userId: string): Promise<string>;
     revoke(userId: string): Promise<void>;
     cleanup(): Promise<void>;

@@ -13,7 +13,6 @@
     },
     "dependencies": {
         "@hono/node-server": "^2.1.1",
-        "@party-stack/coordination": "workspace:*",
         "@party-stack/effect-node-keyring": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",

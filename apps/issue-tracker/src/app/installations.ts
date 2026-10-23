@@ -8,7 +8,7 @@ import {
 } from "@party-stack/ontology";
 import { createRemoteOntologyBackend } from "@party-stack/ontology-server/client";
 import { createHttpRemoteOntologyTransport } from "@party-stack/ontology-server/http";
-import { Runtime, runtimeEffects } from "@party-stack/runtime";
+import { Runtime } from "@party-stack/runtime";
 import { createWebRuntime } from "@party-stack/web-runtime";
 import { Effect } from "effect";
 import ontology from "../ontology/ontology";
@@ -38,18 +38,11 @@ const FOUNDRY_REDIRECT_URL =
     import.meta.env.VITE_FOUNDRY_REDIRECT_URL ?? new URL("/auth/callback", globalThis.location.origin).href;
 
 // This example deliberately opts into persistent browser credentials.
-const trackerRuntime = async (owner: string, namespace: string) => {
-    const runtime = await createWebRuntime(owner, namespace, { persistEncryptionKeys: true });
-    try {
-        await runtimeEffects(runtime).runtime.runPromise(
-            Effect.flatMap(Runtime, ({ tables }) => migrateLinkMetadata(tables, namespace))
-        );
-        return runtime;
-    } catch (cause) {
-        await runtime.cleanup?.();
-        throw cause;
-    }
-};
+const trackerRuntime = Effect.fn("Tracker.runtime")(function* (owner: string, namespace: string) {
+    const runtime = yield* createWebRuntime(owner, namespace, { persistEncryptionKeys: true });
+    yield* migrateLinkMetadata(runtime.tables, namespace);
+    return runtime;
+});
 
 type OpenOntology = CreateOntologyBackendInstallationOptions["openOntology"];
 

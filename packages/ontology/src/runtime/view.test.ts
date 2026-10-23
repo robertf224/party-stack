@@ -2,7 +2,8 @@ import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica, replicaStateSource } from "@party-stack/ontology-replica";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { createDefaultRuntime, Runtime } from "@party-stack/runtime";
+import { Runtime } from "@party-stack/runtime";
+import { memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect, Exit, Scope, Fiber, Deferred } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { makeReplicaOntologyView } from "./view.js";
@@ -73,7 +74,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                     const scope = yield* Scope.fork(yield* Effect.scope);
                     const tab = yield* Scope.provide(
                         Effect.gen(function* () {
-                            const adapter = createDefaultRuntime("test", name);
+                            const adapter = memoryRuntimeFixture("test", name);
                             yield* Effect.addFinalizer(() =>
                                 Effect.promise(async () => {
                                     await adapter.cleanup?.();

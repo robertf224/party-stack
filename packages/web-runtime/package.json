@@ -16,7 +16,6 @@
     },
     "dependencies": {
         "@effect/platform-browser": "^4.0.5",
-        "@party-stack/coordination": "workspace:*",
         "@party-stack/indexeddb-ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "effect": "^4.0.5"

@@ -2,7 +2,7 @@ import { createLiveOntology, waitForLiveOntologyReady } from "@party-stack/ontol
 import { BackendError, encryptedPropertyCodec } from "@party-stack/ontology-backend";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { decode, encode } from "@party-stack/ontology/json";
-import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
+import { createDefaultRuntime } from "@party-stack/runtime";
 import {
     BaseQueryBuilder,
     IR,
@@ -671,19 +671,10 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
         fixedActionParameterValues: opts.policy?.fixedActionParameterValues,
     });
     const executionId = request.idempotencyKey ?? globalThis.crypto.randomUUID();
-    const coordination = new SingleProcessCoordination({
-        scope: `remote-ontology:${executionId}`,
-    });
     const ontology = await createLiveOntology<Ontology>({
         ir,
         backend: () => backendAdapter,
-        runtime: () => ({
-            owner: "remote-ontology",
-            namespace: executionId,
-            blobBytes: new MemoryBlobBytesStore(),
-            coordination,
-            cleanup: () => coordination.close(),
-        }),
+        runtime: (_owner, namespace) => createDefaultRuntime("remote-ontology", namespace),
         context: ctx as Record<string, unknown>,
     });
     let actionResult: OntologyApplyActionResult | void;
@@ -722,7 +713,6 @@ async function handleApplyAction<Context, Ontology extends OntologyDefinition = 
             replay: request.replay,
         });
     } finally {
-        void coordination.close();
         await ontology.cleanup();
     }
 

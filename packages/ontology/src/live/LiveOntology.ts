@@ -1,7 +1,8 @@
 import type { OntologyDefinition } from "@party-stack/ontology-spec";
 export type { OntologyDefinition } from "@party-stack/ontology-spec";
 import { createDefaultRuntime, type RuntimeAdapterProvider } from "@party-stack/runtime";
-import { createReplicaLiveOntology } from "../runtime/live.js";
+import { Effect, Exit, Scope } from "effect";
+import { makeReplicaLiveOntology } from "../runtime/live.js";
 import { provide } from "../utils/provide.js";
 import type { LiveOntologyAction } from "./actions/createLiveOntologyAction.js";
 import type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
@@ -136,28 +137,84 @@ export async function waitForLiveOntologyReady(ontology: LiveOntology): Promise<
     await ontology.ready;
 }
 
+/** Native acquisition. Runtime, backend, collections and replica fibers share the caller's Scope. */
+export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
+    Ontology extends OntologyDefinition = OntologyDefinition,
+    Context extends Record<string, unknown> = Record<string, unknown>,
+>(opts: CreateLiveOntologyOpts<Context>) {
+    const scope = yield* Scope.fork(yield* Effect.scope);
+    const opened = Effect.gen(function* () {
+        const ontologyId = opts.id ?? "default";
+        const context = (opts.context ?? {}) as Context;
+        const owner = getContextUserId(context) ?? "anonymous";
+        const runtime = yield* (opts.runtime ?? createDefaultRuntime)(owner, ontologyId);
+        const platform = runtime.adapter;
+        const resources = yield* Scope.fork(runtime.scope);
+        if (runtime.scope !== scope) yield* Scope.addFinalizer(scope, Scope.close(resources, Exit.void));
+        return yield* Scope.provide(
+            Effect.gen(function* () {
+                const backendAdapter = yield* Effect.acquireRelease(
+                    Effect.tryPromise({
+                        try: () => provide(opts.backend, opts.ir, context),
+                        catch: (cause) => cause,
+                    }),
+                    (adapter) =>
+                        Effect.promise(async () => {
+                            await adapter.cleanup?.();
+                        })
+                );
+                if (opts.persistObjects && !platform.tables) {
+                    return yield* Effect.fail(
+                        new Error("Persisted ontology objects require owned Tables storage.")
+                    );
+                }
+                const live = yield* makeReplicaLiveOntology({
+                    ir: opts.ir,
+                    context,
+                    runtime: platform,
+                    backendAdapter,
+                    writes: opts.writes,
+                    connection: opts.connection,
+                }).pipe(Effect.provide(runtime.context));
+                let closing: Promise<void> | undefined;
+                const cleanup = () => (closing ??= Effect.runPromise(Scope.close(scope, Exit.void)));
+                return {
+                    ...live,
+                    cleanup,
+                    destroy: async () => {
+                        await cleanup();
+                        await platform.destroy?.();
+                    },
+                } as LiveOntology<Ontology>;
+            }),
+            resources
+        );
+    });
+    return yield* Scope.provide(opened, scope).pipe(
+        Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void))
+    );
+});
+
+/** UI/SDK boundary; the native service above owns all implementation and cleanup. */
 export async function createLiveOntology<
     Ontology extends OntologyDefinition = OntologyDefinition,
     Context extends Record<string, unknown> = Record<string, unknown>,
 >(opts: CreateLiveOntologyOpts<Context>): Promise<LiveOntology<Ontology>> {
-    const ontologyId = opts.id ?? "default";
-    const context = (opts.context ?? {}) as Context;
-    const owner = getContextUserId(context) ?? "anonymous";
-    const backendAdapter = await provide(opts.backend, opts.ir, context);
-    const runtime = await provide(opts.runtime ?? createDefaultRuntime, owner, ontologyId);
-    if (opts.persistObjects && !runtime.tables) {
-        await Promise.allSettled([
-            Promise.resolve().then(() => backendAdapter.cleanup?.()),
-            Promise.resolve().then(() => runtime.cleanup?.()),
-        ]);
-        throw new Error("Persisted ontology objects require owned Tables storage.");
+    const scope = Effect.runSync(Scope.make());
+    try {
+        const live = await Effect.runPromise(Scope.provide(makeLiveOntology<Ontology, Context>(opts), scope));
+        let closing: Promise<void> | undefined;
+        const cleanup = () => (closing ??= Effect.runPromise(Scope.close(scope, Exit.void)));
+        return {
+            ...live,
+            cleanup,
+            destroy: async () => {
+                await cleanup();
+                await live.destroy();
+            },
+        };
+    } catch (cause) {
+        await Effect.runPromise(Scope.close(scope, Exit.fail(cause)));
+        throw cause;
     }
-    return createReplicaLiveOntology({
-        ir: opts.ir,
-        context,
-        runtime,
-        backendAdapter,
-        writes: opts.writes,
-        connection: opts.connection,
-    }) as Promise<LiveOntology<Ontology>>;
 }

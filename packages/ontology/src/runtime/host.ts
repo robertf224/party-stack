@@ -30,12 +30,11 @@ const attempt = <A>(run: () => Promise<A>) => Effect.tryPromise({ try: run, catc
 export interface ReplicaHostOptions {
     readonly ir: OntologyIR;
     readonly context: Record<string, unknown>;
+    /** The caller owns provider acquisition/cleanup; open(context) acquires native backend resources in this Scope. */
     readonly backendAdapter: OntologyBackendAdapter;
     readonly runtime: RuntimeAdapter;
     readonly writes?: LiveOntologyWrites;
     readonly connection?: ConnectionMonitor;
-    /** Transitional placement capability; a single owning worker needs no election wrapper. */
-    readonly asLeader?: ReplicaOptions["asLeader"];
     readonly gc?: ReplicaOptions["gc"];
 }
 export interface ReplicaHostService {
@@ -58,11 +57,6 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
 ): Effect.fn.Return<ReplicaHostService, BackendError, Runtime | Scope.Scope> {
     const services = yield* Runtime;
     const { runtime, context, ir, backendAdapter } = options;
-    yield* Effect.addFinalizer(() =>
-        Effect.promise(async () => {
-            await backendAdapter.cleanup?.();
-        })
-    );
     const backend = yield* backendAdapter.open(context);
     const captured = yield* Effect.context<never>();
     const attachmentsAdapter: OntologyAttachmentsAdapter =
@@ -182,7 +176,6 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
             );
         }),
         connectivity: Stream.merge(services.connectivity, connected),
-        asLeader: options.asLeader,
         gc: options.gc,
         outbox: options.writes?.outbox,
         externalChanges: services.externalChanges,
