@@ -26,3 +26,6 @@ See [native actions and backend construction](../../specs/2026-10-19-effect-tabl
 for action acceptance/confirmation, retries, ambiguous-outcome recovery and
 attachment receipt ordering, and [migration status](../../specs/2026-10-19-effect-tables-replica/migration-status.md)
 for the remaining integration work.
+
+See [encrypted values](./encrypted-values.md) for explicit decryption, encrypted
+local caching, authority key ownership, and Foundry response-identity limitations.

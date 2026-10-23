@@ -46,7 +46,7 @@ test("encrypted handles round-trip without plaintext or keys and decrypt only ex
                     missing.failure._tag === "EncryptionError" &&
                     missing.failure.kind
             ).toBe("MissingCiphertext");
-            yield* values.cache(handle, ciphertext!);
+            yield* values.importCiphertext(handle, ciphertext!);
             expect(yield* values.decrypt(plaintext, handle)).toEqual(value);
         })
     );
@@ -65,10 +65,10 @@ test("ciphertext authentication binds its handle and namespace; keys and plainte
                     Result.isFailure(result) ? (result.failure as { kind?: string }).kind : undefined
                 );
             const transplanted = { id: "different-id" };
-            yield* values.cache(transplanted, ciphertext);
+            yield* values.importCiphertext(transplanted, ciphertext);
             expect(yield* errorKind(values.decrypt(Schema.String, transplanted))).toBe("InvalidCiphertext");
             const other = makeEncryptedValues("different-namespace", tables, keys);
-            yield* other.cache(handle, ciphertext);
+            yield* other.importCiphertext(handle, ciphertext);
             expect(yield* errorKind(other.decrypt(Schema.String, handle))).toBe("InvalidCiphertext");
             const noKeys = makeEncryptedValues("owner", tables, {
                 ...keys,
@@ -76,7 +76,7 @@ test("ciphertext authentication binds its handle and namespace; keys and plainte
             });
             expect(yield* errorKind(noKeys.decrypt(Schema.String, handle))).toBe("MissingKey");
             expect(yield* errorKind(values.decrypt(Schema.Number, handle as never))).toBe("InvalidValue");
-            yield* values.cache(handle, {
+            yield* values.importCiphertext(handle, {
                 ...ciphertext,
                 data: `${ciphertext.data[0] === "A" ? "B" : "A"}${ciphertext.data.slice(1)}`,
             });

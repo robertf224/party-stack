@@ -1,4 +1,4 @@
-# Migration status — October 22, 2026
+# Migration status — October 23, 2026
 
 Current inventory. The [execution log](./implementation.md) records historical
 checkpoints; this file describes the current implementation. The overall
@@ -60,12 +60,15 @@ covered in [native-actions.md](./native-actions.md).
   errors and plaintext schema validation. Ordinary loads never decrypt. The unused
   public backend encrypt hook was removed: actions continue to accept plaintext,
   and their authoritative implementation handles encrypted property writes. Local
-  encryption remains available internally. This is the adapter boundary, not yet
-  the public decrypt/cache API or protocol transport. Foundry decrypt reads the
-  property's current value, so later caching must respect that source semantics.
+  encryption remains available internally. LiveOntology and both transports now
+  expose explicit decrypt/cache operations. Foundry's current-property response
+  cannot prove ciphertext identity and is therefore never cached under a handle.
+  Owned storage accepts a deployment keyring and returns identity-bound results.
 - **Browser credentials:** encrypted OAuth credential persistence with separate
   CryptoKey storage, callback fixes and persisted connection/installation demand.
-  This is not yet the final per-purpose persistence-consent API.
+  Key persistence requires explicit developer opt-in; individual property decrypts
+  independently opt into a device-encrypted cache. The API documents same-origin
+  access, key loss and offline revocation limits.
 - **Inspection:** persisted-only object/outbox views, structured query paths,
   coverage reasons and native pushdown diagnostics, component attribution, scoped
   Effect traces and parent tracing. Five tabs share shadow-root style isolation and
@@ -74,12 +77,12 @@ covered in [native-actions.md](./native-actions.md).
 
 ## What remains, in recommended order
 
-1. **Remaining Connect integration (next).** Better Auth's server database adapter
-   over ontology-storage; explicit per-purpose browser credential/key-persistence
-   consent and the public opt-in decrypt/cache API. A Foundry-hosted Connect store
-   needs trusted actions/Cipher writes for atomic claims and credential commits.
-   Native Connect records and scoped connection/installation lifecycle are implemented;
-   their remaining cross-context ownership belongs to the next platform step.
+1. **Remaining Connect authority integration.** Better Auth's lensed native storage
+   adapter, scoped local Connect lifecycle, browser key opt-in and public decrypt/cache
+   API are implemented. A Foundry-hosted Connect authority still needs trusted actions /
+   Cipher writes for atomic refresh claims and credential commits. General native
+   mutator auto-encryption, generated write types and outbox-parameter protection are
+   separate follow-ups. Cross-context private service ownership belongs to step 2.
 2. **Platform ownership.** Finish scoped Node/Expo construction and credential/key
    composition. Private connection/installation services still use coordinated
    per-context ownership. SharedWorker application data ownership is already live;
@@ -362,3 +365,37 @@ Future directions discussed here:
 Public decrypt/cache APIs, Foundry-hosted Connect authority, broader coordination
 cleanup and ontology migration execution remain outstanding. Outbox input
 encryption remains deferred.
+
+## October 23 checkpoint: explicit decryption and device-encrypted cache
+
+LiveOntology now exposes scoped `decrypt(value, {cache?, signal?})` and
+`evictDecrypted(value)` framework methods. Default cache:false bypasses persistent
+cached decrypted copies. Opt-in caching validates portable plaintext against the
+property definition, encrypts it with the configured device key, and updates its
+property mapping/replaces old ciphertext transactionally. Its binding includes the
+existing Runtime principal partition, source, property and immutable encrypted ID.
+Nested encrypted properties and standalone parameter handles remain lower-level
+schema-driven operations. Automatic cache TTL/row-eviction coupling remains future
+work; explicit eviction, replacement and partition destruction clean cached copies.
+
+The source decryption response optionally proves a valueId. Owned storage can do
+this with an explicit deployment keyring and immutable ciphertext handles. Foundry
+cannot: its property-current-value API returns plaintext without an identity or
+precondition. Such responses remain usable explicitly but are never cached under a
+possibly stale handle, even when cache:true. Before/after property reads cannot
+prove the binding in the presence of A→B→A changes.
+
+Both policy HTTP and Effect RPC route explicit decryption. HTTP requires canDecrypt
+in addition to row/property visibility. HTTP RPC disconnects before the first
+NDJSON chunk now interrupt the request scope; decrypt cancellation reaches the
+owner rather than leaving a pending decryption running. Memory tabs forward cache/eviction to their
+persistent owner. Plaintext is not added to ordinary replica state or journals.
+WebRuntime.persistEncryptionKeys now documents IndexedDB persistence, same-origin
+access, key loss and the independent per-call cache choice. The old ciphertext
+import method is renamed importCiphertext; it is not the decrypted-value cache.
+
+Foundry v2 staged-write wrappers convert plaintext strings to {plaintext} and copied
+portable Foundry handles to {ciphertext}, and preserve real OSDK CipherText objects
+without decrypting them. General native mutator auto-encryption/write types and
+outbox-parameter encryption remain design follow-ups, not implemented implicitly.
+See packages/ontology/encrypted-values.md for the full boundary and API contract.

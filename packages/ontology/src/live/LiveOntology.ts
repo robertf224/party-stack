@@ -73,6 +73,19 @@ export interface OntologyDiagnostics {
     readonly parent?: OntologyDiagnostics;
 }
 
+export interface DecryptOptions {
+    /** Default false: bypass the persistent decrypted-value cache. True permits a device-encrypted
+     * copy only when the authority proves the response belongs to this immutable value ID.
+     * Does not delete a copy previously cached with true; use evictDecrypted for that.
+     */
+    readonly cache?: boolean;
+    readonly signal?: AbortSignal;
+}
+export type LiveOntologyDecrypt = <A>(
+    value: import("@party-stack/ontology-spec/values").Encrypted<A>,
+    options?: DecryptOptions
+) => Promise<A>;
+
 export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefinition> {
     readonly ir: OntologyIR;
     readonly context: OntologyContext<Ontology>;
@@ -90,6 +103,13 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
     queryFunctions: LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>;
     attachments: LiveOntologyAttachments<Ontology>;
+    /** Explicit decryption of a top-level encrypted property handle. Ordinary queries never decrypt.
+     * A provider that only decrypts the property's current value may return a newer value than this
+     * handle; without identity evidence that response is never cached, even with cache:true.
+     */
+    decrypt: LiveOntologyDecrypt;
+    /** Remove this value's device-encrypted cached copy, without deleting its authoritative ciphertext. */
+    evictDecrypted: (value: import("@party-stack/ontology-spec/values").Encrypted) => Promise<void>;
     outbox: OntologyOutbox;
     cleanup: () => Promise<void>;
     destroy: () => Promise<void>;

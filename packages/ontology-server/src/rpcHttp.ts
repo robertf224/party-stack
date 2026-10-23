@@ -22,7 +22,10 @@ export const makeOntologyHttpHandler = Effect.fn("RemoteOntology.httpHandler")(f
         Effect.provide(ontologyRpcHandlers(options)),
         Effect.provide(RpcSerialization.layerNdjson)
     );
-    return HttpEffect.toWebHandler(app);
+    // HttpEffect handles request scopes uninterruptibly by default. Restore interruption
+    // while waiting for an RPC response so disconnecting before the first NDJSON chunk
+    // closes the request scope and cancels the corresponding server handler.
+    return HttpEffect.toWebHandler(app.pipe(Effect.interruptible));
 });
 
 /** Supply an Effect HttpClient with the desired authentication and fetch policy.

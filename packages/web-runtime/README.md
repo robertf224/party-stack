@@ -33,7 +33,21 @@ an explicit fallback choice, with memory lifetime; it does not recover pending
 work from an inaccessible persistent store. Worker support and storage access
 must be tested separately. Private browsing may provide temporary storage with
 different quotas. Browser-local encryption key persistence requires an explicit
-`persistEncryptionKeys: true` choice; finer per-purpose policy is still being designed.
+`persistEncryptionKeys: true` choice.
+
+```ts
+WebRuntime.layer({ owner: "user", namespace: "app", persistEncryptionKeys: true });
+```
+
+This explicitly permits a non-extractable AES-GCM CryptoKey to survive reloads in
+IndexedDB, in a separate key database. Same-origin code can still use the key to
+decrypt; it is not a vault lock or isolation from XSS. Clearing site data loses
+these keys. The flag enables persistent local credentials but does not opt ordinary
+encrypted properties into caching. `ontology.decrypt(value, { cache: true })` is a
+separate per-call choice; the default bypasses persistent cached plaintext copies.
+Cached copies are themselves encrypted with the device key. This runtime must be
+partitioned by authenticated owner/installation/ontology as usual; never reuse a
+private runtime for unrelated users. See [encrypted values](../ontology/encrypted-values.md).
 
 `createWebRuntime(owner, namespace, options?)` is an asynchronous framework boundary
 that builds this same Layer. It shares its acquired Runtime with installation and

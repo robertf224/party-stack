@@ -1,6 +1,7 @@
-import { BackendError } from "@party-stack/ontology-backend";
-import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
-import { Effect } from "effect";
+import { BackendError, encryptedPropertyCodec, EncryptedValueSchema } from "@party-stack/ontology-backend";
+import { makeOwnedBackend, type OwnedBackendService } from "@party-stack/ontology-backend/owned";
+import { makeEncryptedValues, type EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
+import { Effect, Schema } from "effect";
 import { executeTransactionMutator, withTransactionCollections } from "../runtime/index.js";
 import { createReadTx } from "./mutators/createMutatorTx.js";
 import type { OntologyMutatorRegistry, OntologyQueryFunctionRegistry } from "./mutators/types.js";
@@ -14,6 +15,8 @@ export interface StorageOntologyBackendOptions {
     readonly namespace: string;
     readonly tables: TablesService;
     readonly blobs: BlobStorageService;
+    /** Authority-owned keys, supplied by the deployment (KMS, secrets, or a platform key store). */
+    readonly encryptionKeyring?: EncryptionKeyringService;
     readonly context?: Record<string, unknown>;
     readonly mutators?: OntologyMutatorRegistry;
     readonly queryFunctions?: OntologyQueryFunctionRegistry;
@@ -59,11 +62,77 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
         } else yield* boundary(blobs.stage(attachment.id, blob));
         return { ...attachment, type: blob.type };
     });
-    const backend = yield* makeOwnedBackend({
+    const backend: OwnedBackendService = yield* makeOwnedBackend({
         namespace: options.namespace,
         ir: options.ir,
         tables,
         blobs,
+        encrypted: options.encryptionKeyring
+            ? {
+                  decrypt: Effect.fn("StorageOntology.decrypt")(function* (value) {
+                      const checked = yield* Effect.try({
+                          try: () => {
+                              const handle = Schema.decodeUnknownSync(EncryptedValueSchema)(value);
+                              return { handle, codec: encryptedPropertyCodec(options.ir, handle) };
+                          },
+                          catch: () =>
+                              new BackendError({
+                                  operation: "decrypt",
+                                  kind: "Rejected",
+                                  message: "Invalid encrypted property handle.",
+                                  retryable: false,
+                              }),
+                      });
+                      const source = checked.handle.source!;
+                      const row = yield* backend.storage.read((tx) =>
+                          tx.get(source.objectType, source.primaryKey)
+                      );
+                      const current = row?.[source.property];
+                      if (
+                          !current ||
+                          typeof current !== "object" ||
+                          !("id" in current) ||
+                          current.id !== value.id
+                      )
+                          return yield* new BackendError({
+                              operation: "decrypt",
+                              kind: "Conflict",
+                              message: "The encrypted property changed or is unavailable.",
+                              retryable: false,
+                          });
+                      const plaintext = yield* makeEncryptedValues(
+                          options.namespace,
+                          tables,
+                          options.encryptionKeyring!
+                      )
+                          .decrypt(Schema.Unknown, checked.handle)
+                          .pipe(
+                              Effect.mapError(
+                                  () =>
+                                      new BackendError({
+                                          operation: "decrypt",
+                                          kind: "Unavailable",
+                                          message: "Encrypted value is unavailable.",
+                                          retryable: false,
+                                      })
+                              )
+                          );
+                      return yield* Effect.try({
+                          try: () => {
+                              checked.codec.decode(plaintext);
+                              return { value: plaintext, valueId: value.id };
+                          },
+                          catch: () =>
+                              new BackendError({
+                                  operation: "decrypt",
+                                  kind: "Rejected",
+                                  message: "Invalid decrypted plaintext.",
+                                  retryable: false,
+                              }),
+                      });
+                  }),
+              }
+            : undefined,
         invocationScope: JSON.stringify(options.context?.user ?? "system"),
         mutators: Object.fromEntries(
             options.ir.actionTypes

@@ -1,3 +1,4 @@
+import { BackendError, encryptedPropertyCodec } from "@party-stack/ontology-backend";
 import { makeReplicaMonitor } from "@party-stack/ontology-replica";
 import {
     Runtime,
@@ -9,11 +10,13 @@ import { DbClient } from "@tanstack/db";
 import { Effect, Scope, Fiber } from "effect";
 import { createLiveOntologyAction } from "../live/actions/createLiveOntologyAction.js";
 import { decorateObjectAttachmentSources } from "../live/attachments/attachmentSources.js";
+import { decorateObjectEncryptedSources } from "../live/encryptedSources.js";
+import { makeLiveDecryption } from "./encrypted.js";
 import type { LiveOntologyAttachments } from "../live/attachments/createLiveOntologyAttachments.js";
 import type { LiveOntology, LiveOntologyWrites } from "../live/LiveOntology.js";
 import type { OntologyApplyActionResult } from "../live/OntologyBackendAdapter.js";
 import type { OntologyOutbox, OntologyOutboxEntry, OntologyActionRequest } from "../live/outbox/types.js";
-import type { BackendError, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { ActionInvocation, ActionReceipt } from "@party-stack/ontology-backend";
 import type { PendingAction, ReplicaService } from "@party-stack/ontology-replica";
 import type { OntologyIR, OntologyObject } from "@party-stack/ontology-spec";
@@ -63,6 +66,16 @@ export interface ReplicaViewOptions {
     readonly replica: ReplicaService;
     readonly attachments: LiveOntologyAttachments;
     readonly queryFunction: OntologyBackendService["queryFunction"];
+    readonly encrypted?: OntologyBackendService["encrypted"];
+    readonly sourceId?: string;
+    /** A memory tab forwards cache policy to its persistent owner. */
+    readonly decrypt?: (
+        value: import("@party-stack/ontology-spec/values").Encrypted,
+        options?: { cache?: boolean }
+    ) => Effect.Effect<unknown, BackendError>;
+    readonly evictDecrypted?: (
+        value: import("@party-stack/ontology-spec/values").Encrypted
+    ) => Effect.Effect<void, BackendError>;
     readonly traces?: RuntimeTraceStore;
     readonly parentDiagnostics?: LiveOntology["diagnostics"];
     readonly diagnosticLabel?: string;
@@ -120,7 +133,11 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
             replica,
             objectType: object.name,
             map: (row: OntologyObject) =>
-                decorateObjectAttachmentSources({ ir, objectType: object, object: row }),
+                decorateObjectEncryptedSources(
+                    ir,
+                    object,
+                    decorateObjectAttachmentSources({ ir, objectType: object, object: row })
+                ),
             getKey: (row: OntologyObject) => row[object.primaryKey] as string | number,
         };
         objects[object.name] = yield* makeReplicatedCollection(
@@ -160,6 +177,13 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
             ),
             { signal }
         );
+    const decryption = yield* makeLiveDecryption({
+        ir,
+        backend: {
+            sourceId: options.sourceId ?? replica.sourceId,
+            encrypted: options.encrypted,
+        },
+    });
     const wait = (id: string, until: "accepted" | "confirmed" = "confirmed") =>
         replica
             .awaitAction(id, { until })
@@ -261,6 +285,26 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         actions,
         outbox,
         attachments: options.attachments,
+        decrypt: async (value, settings) =>
+            (await run(
+                options.decrypt
+                    ? Effect.flatMap(options.decrypt(value, settings), (wire) =>
+                          Effect.try({
+                              try: () => encryptedPropertyCodec(ir, value).decode(wire),
+                              catch: () =>
+                                  new BackendError({
+                                      operation: "ontology.decrypt",
+                                      kind: "Rejected",
+                                      message: "Invalid decrypted value.",
+                                      retryable: false,
+                                  }),
+                          })
+                      )
+                    : decryption.decrypt(value, settings),
+                settings?.signal
+            )) as never,
+        evictDecrypted: (value) =>
+            run(options.evictDecrypted ? options.evictDecrypted(value) : decryption.evict(value)),
         queryFunctions: Object.fromEntries(
             ir.queryFunctionTypes.map((query) => [
                 query.name,

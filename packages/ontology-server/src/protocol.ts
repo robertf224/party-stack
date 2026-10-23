@@ -23,6 +23,7 @@ export interface RemoteOntologyDescription {
 }
 
 export type RemoteOntologyEndpoint =
+    | "decrypt"
     | "describe"
     | "replica-snapshot"
     | "pull-changes"
@@ -92,6 +93,10 @@ export interface RemoteRunQueryFunctionResponse {
     value: unknown;
 }
 
+export interface RemoteDecryptRequest {
+    value: import("@party-stack/ontology/values").Encrypted;
+}
+
 export interface RemoteAttachmentRequest {
     attachment: attachment;
 }
@@ -107,6 +112,10 @@ export interface RemoteOntologyTransportOptions {
 
 export interface RemoteOntologyTransport {
     readonly sourceId?: string;
+    decrypt?: (
+        request: RemoteDecryptRequest,
+        options?: RemoteOntologyTransportOptions
+    ) => Promise<import("@party-stack/ontology-backend").DecryptedValue>;
     /** Explicitly authorized full replica feed; ordinary row policies do not grant this capability. */
     replicaSnapshot?: (
         request: RemoteReplicaSnapshotRequest,
@@ -155,6 +164,7 @@ export interface ResolvableRemoteOntologyTransport extends RemoteOntologyTranspo
 }
 
 export type RemoteOntologyRequestByEndpoint = {
+    decrypt: RemoteDecryptRequest;
     describe: RemoteDescribeRequest;
     "replica-snapshot": RemoteReplicaSnapshotRequest;
     "pull-changes": RemotePullChangesRequest;
@@ -168,6 +178,7 @@ export type RemoteOntologyRequestByEndpoint = {
 };
 
 export type RemoteOntologyResponseByEndpoint = {
+    decrypt: import("@party-stack/ontology-backend").DecryptedValue;
     describe: RemoteOntologyDescription;
     "replica-snapshot": BackendSnapshot;
     "pull-changes": BackendChangePage;
@@ -181,6 +192,7 @@ export type RemoteOntologyResponseByEndpoint = {
 };
 
 export type RemoteOntologyRequestEnvelope =
+    | { endpoint: "decrypt"; input: RemoteDecryptRequest }
     | { endpoint: "describe"; input: RemoteDescribeRequest }
     | { endpoint: "replica-snapshot"; input: RemoteReplicaSnapshotRequest }
     | { endpoint: "pull-changes"; input: RemotePullChangesRequest }
@@ -203,6 +215,7 @@ export function parseRemoteOntologyJson(text: string): unknown {
 }
 
 export const remoteOntologyEndpointSchema = z.enum([
+    "decrypt",
     "describe",
     "replica-snapshot",
     "pull-changes",
@@ -325,6 +338,18 @@ export function parseRemoteOntologyRequest(
     input: unknown
 ): RemoteOntologyRequestEnvelope {
     switch (endpoint) {
+        case "decrypt":
+            return {
+                endpoint,
+                input: z
+                    .object({
+                        value: z
+                            .object({ id: z.string().min(1), source: attachmentSourceSchema.optional() })
+                            .strict(),
+                    })
+                    .strict()
+                    .parse(input),
+            };
         case "replica-snapshot":
             return {
                 endpoint,

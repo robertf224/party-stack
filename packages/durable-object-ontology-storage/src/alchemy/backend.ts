@@ -15,6 +15,8 @@ export interface AlchemyOntologyOptions {
     readonly ir: OntologyIR;
     readonly bucket: ReadWriteBucketClient;
     readonly ontologyId: string;
+    /** Authority-owned key service; can use Workers secrets or an external key-management service. */
+    readonly encryptionKeyring?: import("@party-stack/ontology-storage/encrypted").EncryptionKeyringService;
     readonly context?: Record<string, unknown>;
     readonly mutators?: OntologyMutatorRegistry;
     readonly queryFunctions?: OntologyQueryFunctionRegistry;

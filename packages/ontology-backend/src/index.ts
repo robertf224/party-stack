@@ -1,5 +1,5 @@
 import { Context, Schema } from "effect";
-import type { AttachmentTypeDef, TypeDef } from "@party-stack/ontology-spec";
+import type { AttachmentTypeDef } from "@party-stack/ontology-spec";
 import type { attachment, Encrypted } from "@party-stack/ontology-spec/values";
 import type { Key, Query, Row } from "@party-stack/ontology-storage";
 import type { Effect, Stream } from "effect";
@@ -167,12 +167,14 @@ export interface BackendAttachments {
         BackendError
     >;
 }
+export { EncryptedValueSchema, DecryptedValueSchema, encryptedPropertyCodec } from "./encrypted.js";
+export type { DecryptedValue } from "./encrypted.js";
+
 export interface BackendEncryptedValues {
     /** Explicit operation. Ordinary record loads return handles and never invoke this method. */
     readonly decrypt: (
-        value: Encrypted<unknown>,
-        plaintextType: TypeDef
-    ) => Effect.Effect<unknown, BackendError>;
+        value: Encrypted<unknown>
+    ) => Effect.Effect<import("./encrypted.js").DecryptedValue, BackendError>;
 }
 export interface OntologyBackendService {
     readonly name: string;

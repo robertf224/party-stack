@@ -1,5 +1,5 @@
 import { createLiveOntology, waitForLiveOntologyReady } from "@party-stack/ontology";
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, encryptedPropertyCodec } from "@party-stack/ontology-backend";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { decode, encode } from "@party-stack/ontology/json";
 import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
@@ -144,6 +144,13 @@ export interface RemoteOntologyPolicy<Context, Ontology extends OntologyDefiniti
      * Deliberately separate from row/property policies; use only for a fully shared replica domain.
      * Authorization is rechecked for every request, including after describe.
      */
+    /** Separate grant: permission to read an opaque handle does not grant access to its plaintext.
+     * Ordinary row/property policies are still checked before calling the decryption authority.
+     */
+    canDecrypt?: (
+        ctx: Context,
+        value: import("@party-stack/ontology/values").Encrypted
+    ) => boolean | Promise<boolean>;
     authorizeFullReplica?: (ctx: Context) => boolean | Promise<boolean>;
     baseObjectTypeQueries?: RemoteOntologyBaseObjectTypeQueries<Context, Ontology>;
     allowedObjectTypeProperties?: RemoteOntologyAllowedObjectTypeProperties<Context, Ontology>;
@@ -972,7 +979,7 @@ async function handleRunQueryFunction<Context, Ontology extends OntologyDefiniti
     }
 }
 
-async function withReadableAttachment<
+async function withReadablePropertyValue<
     Result,
     Context,
     Ontology extends OntologyDefinition = OntologyDefinition,
@@ -984,7 +991,7 @@ async function withReadableAttachment<
 ): Promise<Result> {
     const source = request.attachment.source;
     if (!source) {
-        throw new RemoteOntologyForbiddenError("Attachment reads require a source.");
+        throw new RemoteOntologyForbiddenError("Property value reads require a source.");
     }
 
     const ir = await resolveValue(opts.ir, ctx);
@@ -1042,7 +1049,7 @@ async function withReadableAttachment<
         );
         const object = objects.find((candidate) => candidate[primaryKey] === source.primaryKey);
         if (!object || !containsAttachmentId(object[source.property], request.attachment.id)) {
-            throw new RemoteOntologyForbiddenError("Attachment is not readable.");
+            throw new RemoteOntologyForbiddenError("Property value is not readable.");
         }
 
         return await read(ontology);
@@ -1051,8 +1058,8 @@ async function withReadableAttachment<
     }
 }
 
-const runBackend = <A, E>(effect: Effect.Effect<A, E>) =>
-    Effect.runPromise(Effect.result(effect)).then(EffectResult.getOrThrow);
+const runBackend = <A, E>(effect: Effect.Effect<A, E>, signal?: AbortSignal) =>
+    Effect.runPromise(Effect.result(effect), { signal }).then(EffectResult.getOrThrow);
 
 export function createRemoteOntologyServer<
     Context = Record<string, unknown>,
@@ -1062,7 +1069,8 @@ export function createRemoteOntologyServer<
         ctx: Context,
         endpoint: TEndpoint,
         input: RemoteOntologyRequestByEndpoint[TEndpoint],
-        uploads: OntologyAttachmentUpload[] = []
+        uploads: OntologyAttachmentUpload[] = [],
+        signal?: AbortSignal
     ): Promise<RemoteOntologyResponseByEndpoint[TEndpoint]> {
         switch (endpoint) {
             case "replica-snapshot":
@@ -1117,6 +1125,50 @@ export function createRemoteOntologyServer<
                     )
                 );
             }
+            case "decrypt": {
+                const request = input as import("./protocol.js").RemoteDecryptRequest;
+                if ((await opts.policy?.canDecrypt?.(ctx, request.value)) !== true)
+                    throw new RemoteOntologyForbiddenError("Decryption is not allowed.");
+                return (await withReadablePropertyValue(
+                    ctx,
+                    opts,
+                    { attachment: request.value },
+                    async (ontology) => {
+                        try {
+                            encryptedPropertyCodec(ontology.ir, request.value);
+                        } catch {
+                            throw new RemoteOntologyForbiddenError("Expected an encrypted property.");
+                        }
+                        const adapter = await resolveValue(opts.backendAdapter, ctx);
+                        return runBackend(
+                            Effect.scoped(
+                                Effect.gen(function* () {
+                                    const backend = yield* adapter.open(ctx as Record<string, unknown>);
+                                    if (!backend.encrypted)
+                                        return yield* new BackendError({
+                                            operation: "decrypt",
+                                            kind: "Unsupported",
+                                            message: "Decryption is unavailable.",
+                                            retryable: false,
+                                        });
+                                    return yield* backend.encrypted.decrypt(request.value).pipe(
+                                        Effect.mapError(
+                                            (error) =>
+                                                new BackendError({
+                                                    operation: "decrypt",
+                                                    kind: error.kind,
+                                                    retryable: error.retryable,
+                                                    message: "Decryption failed.",
+                                                })
+                                        )
+                                    );
+                                })
+                            ),
+                            signal
+                        );
+                    }
+                )) as RemoteOntologyResponseByEndpoint[TEndpoint];
+            }
             case "describe":
                 return (await handleDescribe(
                     ctx,
@@ -1156,7 +1208,7 @@ export function createRemoteOntologyServer<
                 )) as RemoteOntologyResponseByEndpoint[TEndpoint];
             case "attachment-metadata": {
                 const request = input as RemoteAttachmentMetadataRequest;
-                return (await withReadableAttachment(ctx, opts, request, (ontology) => {
+                return (await withReadablePropertyValue(ctx, opts, request, (ontology) => {
                     const metadata = ontology.attachments.metadata as (
                         attachment: RemoteAttachmentRequest["attachment"],
                         options: { select: readonly (keyof PartialAttachmentMetadata)[] }
@@ -1165,7 +1217,7 @@ export function createRemoteOntologyServer<
                 })) as RemoteOntologyResponseByEndpoint[TEndpoint];
             }
             case "attachment-content":
-                return (await withReadableAttachment(
+                return (await withReadablePropertyValue(
                     ctx,
                     opts,
                     input as RemoteAttachmentRequest,
@@ -1182,7 +1234,7 @@ export function createRemoteOntologyServer<
                 if (request.method === "GET" && endpoint === "attachment-content") {
                     const ctx = opts.getContext ? await opts.getContext(request) : ({} as Context);
                     const attachmentRequest = parseAttachmentQuery(url);
-                    const { blob, attachment } = await withReadableAttachment(
+                    const { blob, attachment } = await withReadablePropertyValue(
                         ctx,
                         opts,
                         attachmentRequest,
@@ -1205,7 +1257,7 @@ export function createRemoteOntologyServer<
 
                 const ctx = opts.getContext ? await opts.getContext(request) : ({} as Context);
                 const { input, uploads } = await parseRequestBody(request, endpoint);
-                const response = await handleRpc(ctx, endpoint, input as never, uploads);
+                const response = await handleRpc(ctx, endpoint, input as never, uploads, request.signal);
                 if (endpoint === "attachment-content") {
                     const blob = response as Blob;
                     return new Response(blob, {
@@ -1215,7 +1267,10 @@ export function createRemoteOntologyServer<
                         },
                     });
                 }
-                return jsonResponse(response);
+                return jsonResponse(
+                    response,
+                    endpoint === "decrypt" ? { headers: { "cache-control": "no-store" } } : undefined
+                );
             } catch (error) {
                 return errorResponse(error, getErrorStatus(error));
             }

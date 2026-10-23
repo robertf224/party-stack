@@ -1,4 +1,9 @@
-import { BackendError, ActionReceiptSchema } from "@party-stack/ontology-backend";
+import {
+    BackendError,
+    ActionReceiptSchema,
+    EncryptedValueSchema,
+    encryptedPropertyCodec,
+} from "@party-stack/ontology-backend";
 import { ActionInvocationSchema, protocolValueCodec } from "@party-stack/ontology-backend/protocol";
 import { ReplicaStatusSchema, makeReplicaMonitor } from "@party-stack/ontology-replica";
 import { Effect, Queue, Schema, Stream, Fiber, Scope, Layer } from "effect";
@@ -66,6 +71,12 @@ const Metadata = Schema.Struct({
 
 /** Explicit helper operations alongside replica transfer. These do not bypass row replication. */
 const HelperRpcs = RpcGroup.make(
+    Rpc.make("Decrypt", {
+        payload: Schema.Struct({ value: EncryptedValueSchema, cache: Schema.optional(Schema.Boolean) }),
+        success: protocolValueCodec(Schema.Unknown),
+        error: BackendError,
+    }),
+    Rpc.make("EvictDecrypted", { payload: EncryptedValueSchema, error: BackendError }),
     Rpc.make("QueryFunction", {
         payload: protocolValueCodec(Schema.Struct({ name: Schema.NonEmptyString, parameters: Parameters })),
         success: protocolValueCodec(Schema.Unknown),
@@ -115,6 +126,15 @@ const HelperRpcs = RpcGroup.make(
 export const OntologyOperationRpcs = HelperRpcs.merge(AttachmentTransferRpcs);
 export type OntologyOperationRequest =
     | {
+          readonly operation: "Decrypt";
+          readonly value: import("@party-stack/ontology/values").Encrypted;
+          readonly cache?: boolean;
+      }
+    | {
+          readonly operation: "EvictDecrypted";
+          readonly value: import("@party-stack/ontology/values").Encrypted;
+      }
+    | {
           readonly operation: "QueryFunction" | "ValidateAction";
           readonly name: string;
           readonly parameters: Record<string, unknown>;
@@ -150,6 +170,13 @@ const failure = (cause: unknown) =>
               retryable: true,
               cause,
           });
+const decryptFailure = (cause: unknown) =>
+    new BackendError({
+        operation: "decrypt",
+        kind: cause instanceof BackendError ? cause.kind : "Unavailable",
+        retryable: cause instanceof BackendError ? cause.retryable : true,
+        message: "Decryption failed.",
+    });
 const attempt = <A>(run: () => Promise<A>) => Effect.tryPromise({ try: run, catch: failure });
 const missing = (name: string) =>
     new BackendError({
@@ -177,6 +204,44 @@ export const ontologyOperationHandlers = <R>(options: {
             )
         );
     return HelperRpcs.toLayer({
+        Decrypt: (request, context) =>
+            Effect.gen(function* () {
+                yield* options.authorize({ operation: "Decrypt", ...request }, context.headers);
+                yield* options.ready ?? Effect.void;
+                if (options.backend) {
+                    if (!options.backend.encrypted) return yield* missing("Decrypt");
+                    const result = yield* options.backend.encrypted.decrypt(request.value);
+                    if (result.valueId !== undefined && result.valueId !== request.value.id)
+                        return yield* new BackendError({
+                            operation: "decrypt",
+                            kind: "Conflict",
+                            message: "The encrypted value changed.",
+                            retryable: false,
+                        });
+                    return result.value;
+                }
+                const ontology = yield* live();
+                const value = yield* Effect.tryPromise({
+                    try: (signal) => ontology.decrypt(request.value, { cache: request.cache, signal }),
+                    catch: decryptFailure,
+                });
+                return yield* Effect.try({
+                    try: () => encryptedPropertyCodec(ontology.ir, request.value).encode(value),
+                    catch: () =>
+                        new BackendError({
+                            operation: "decrypt",
+                            kind: "Rejected",
+                            message: "Invalid decrypted value.",
+                            retryable: false,
+                        }),
+                });
+            }).pipe(Effect.mapError(decryptFailure)),
+        EvictDecrypted: (value, context) =>
+            Effect.gen(function* () {
+                yield* options.authorize({ operation: "EvictDecrypted", value }, context.headers);
+                const ontology = yield* live();
+                yield* attempt(() => ontology.evictDecrypted(value));
+            }),
         QueryFunction: (request, context) =>
             Effect.gen(function* () {
                 yield* options.authorize({ operation: "QueryFunction", ...request }, context.headers);
@@ -367,6 +432,14 @@ type OperationsRpcClient = Effect.Success<
     ReturnType<typeof RpcClient.make<RpcGroup.Rpcs<typeof OntologyOperationRpcs>>>
 >;
 export interface OntologyOperationsClient {
+    /** Portable plaintext; the view decodes it against its ontology definition. Cache policy runs at the owner. */
+    readonly decrypt: (
+        value: import("@party-stack/ontology/values").Encrypted,
+        options?: { cache?: boolean }
+    ) => Effect.Effect<unknown, BackendError>;
+    readonly evictDecrypted: (
+        value: import("@party-stack/ontology/values").Encrypted
+    ) => Effect.Effect<void, BackendError>;
     readonly queryFunction: (
         name: string,
         parameters: Record<string, unknown>
@@ -514,6 +587,10 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
             }) as Awaited<ReturnType<LiveOntology["attachments"]["metadata"]>>,
     };
     return {
+        decrypt: (value, settings) =>
+            client.Decrypt({ value, cache: settings?.cache }).pipe(Effect.mapError(decryptFailure)),
+        evictDecrypted: (value) =>
+            client.EvictDecrypted(value).pipe(Effect.mapError(() => missing("EvictDecrypted"))),
         deleteLocalData: client.DeleteLocalData().pipe(Effect.mapError(failure)),
         releaseOwner: client.ReleaseOwner(undefined, { discard: true }).pipe(Effect.mapError(failure)),
         queryFunction: (name, parameters) =>

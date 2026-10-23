@@ -1,4 +1,4 @@
-import { BackendError, ActionReceiptSchema } from "@party-stack/ontology-backend";
+import { BackendError, ActionReceiptSchema, DecryptedValueSchema } from "@party-stack/ontology-backend";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect, Schema } from "effect";
 import { RemoteOntologyError } from "./errors.js";
@@ -127,6 +127,26 @@ export function makeRemoteOntologyBackend(options: {
                           request("pullChanges", (signal) => transport.pullChanges!(options, { signal })),
                   }
                 : undefined,
+        encrypted: transport.decrypt
+            ? {
+                  decrypt: (value) =>
+                      request("decrypt", async (signal) =>
+                          Schema.decodeUnknownSync(DecryptedValueSchema)(
+                              await transport.decrypt!({ value }, { signal })
+                          )
+                      ).pipe(
+                          Effect.mapError(
+                              (error) =>
+                                  new BackendError({
+                                      operation: "decrypt",
+                                      kind: error.kind,
+                                      retryable: error.retryable,
+                                      message: "Remote decryption failed.",
+                                  })
+                          )
+                      ),
+              }
+            : undefined,
         attachments: {
             read: (attachment, range) =>
                 request("attachment.read", async (signal) => {

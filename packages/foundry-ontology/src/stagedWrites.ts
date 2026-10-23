@@ -1,3 +1,5 @@
+import { resolveType } from "@party-stack/ontology-spec/utils";
+import { Predicate, Schema } from "effect";
 import type {
     OntologyIR,
     OntologyMutator,
@@ -25,6 +27,7 @@ export interface FoundryStagedWriteClient {
 }
 
 export interface CreateFoundryStagedWriteMutatorTxOptions {
+    ir: OntologyIR;
     client: FoundryStagedWriteClient;
     /**
      * Generated OSDK object type tokens, keyed by ontology API name. Required
@@ -56,6 +59,44 @@ function changesToRecord(
     return record;
 }
 
+const CiphertextHandle = Schema.Struct({
+    id: Schema.String.check(Schema.isPattern(/^CIPHER::[^:]+::.+::CIPHER$/u)),
+});
+
+/** Foundry v2 accepts {plaintext} for new secrets and {ciphertext} for a copied value.
+ * Encryption happens in the ambient Foundry transaction, never in the wrapper's query path.
+ */
+function writeProperties(
+    ir: OntologyIR,
+    objectType: string,
+    values: Record<string, unknown>
+): Record<string, unknown> {
+    const definition = ir.objectTypes.find((object) => object.name === objectType);
+    const result = { ...values };
+    for (const property of definition?.properties ?? []) {
+        if (!Object.hasOwn(values, property.name)) continue;
+        let type = resolveType(ir, property.type);
+        while (type.kind === "optional") type = resolveType(ir, type.value.type);
+        if (type.kind !== "encrypted") continue;
+        const value = values[property.name];
+        if (value === undefined) continue;
+        if (typeof value === "string") result[property.name] = { plaintext: value };
+        else if (Predicate.hasProperty(value, "decrypt") && Predicate.isFunction(value.decrypt)) {
+            // Real OSDK CipherText objects are normalized by WriteableClient itself; never invoke decrypt.
+            result[property.name] = value;
+        } else {
+            // Portable handles are not OSDK CipherText instances; convert them explicitly.
+            const parsed = Schema.decodeUnknownOption(CiphertextHandle)(value);
+            if (parsed._tag === "Some") result[property.name] = { ciphertext: parsed.value.id };
+            else
+                throw new TypeError(
+                    "Expected plaintext or a Foundry encrypted handle for an encrypted property."
+                );
+        }
+    }
+    return result;
+}
+
 export function createFoundryStagedWriteMutatorTx(
     options: CreateFoundryStagedWriteMutatorTxOptions
 ): OntologyMutatorTx {
@@ -81,7 +122,7 @@ export function createFoundryStagedWriteMutatorTx(
                                 options.objectTypes?.[objectType] ?? {
                                     $apiName: objectType,
                                 },
-                                object
+                                writeProperties(options.ir, objectType, object)
                             );
                         },
                         update: async (
@@ -93,7 +134,7 @@ export function createFoundryStagedWriteMutatorTx(
                                     $apiName: objectType,
                                     $primaryKey: key,
                                 },
-                                changesToRecord(changes)
+                                writeProperties(options.ir, objectType, changesToRecord(changes))
                             );
                         },
                         delete: async (key: string | number) => {
@@ -122,6 +163,7 @@ export async function runFoundryOntologyMutator(options: {
     objectTypes?: Record<string, unknown>;
 }): Promise<void> {
     const tx = createFoundryStagedWriteMutatorTx({
+        ir: options.ir,
         client: options.client,
         objectTypes: options.objectTypes,
     });

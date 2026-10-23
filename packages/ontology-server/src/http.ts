@@ -1,4 +1,8 @@
-import { BackendSnapshotSchema, BackendChangePageSchema } from "@party-stack/ontology-backend";
+import {
+    BackendSnapshotSchema,
+    BackendChangePageSchema,
+    DecryptedValueSchema,
+} from "@party-stack/ontology-backend";
 import { decode, encode } from "@party-stack/ontology/json";
 import { Schema } from "effect";
 import { parseRemoteOntologyErrorBody } from "./errors.js";
@@ -156,6 +160,16 @@ export function createHttpRemoteOntologyTransport(
 
     return {
         sourceId: String(opts.url),
+        decrypt: async (request, options) =>
+            Schema.decodeUnknownSync(DecryptedValueSchema)(
+                await postJson<unknown>(
+                    fetchImpl,
+                    resolveEndpoint(opts.url, "decrypt"),
+                    request,
+                    getHeaders(),
+                    options
+                )
+            ),
         replicaSnapshot: async (request, options) => {
             const snapshot = Schema.decodeUnknownSync(BackendSnapshotSchema)(
                 await postJson<unknown>(

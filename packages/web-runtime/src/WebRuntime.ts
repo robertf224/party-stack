@@ -17,7 +17,12 @@ export interface WebRuntimeOptions {
     readonly storage?: "indexeddb" | "memory";
     /** single-process requires an exclusive owner or isolated memory storage. */
     readonly coordination?: "locks" | "single-process";
-    /** Explicit browser-local key persistence; omitted keys must be composed separately. */
+    /** Explicitly allow a non-extractable AES-GCM CryptoKey to persist in IndexedDB across reloads.
+     * Same-origin code can still use it to decrypt: this is not a vault lock or protection from XSS.
+     * Keys are separate from ordinary table exports. Clearing site data loses the keys and makes
+     * remaining local ciphertext unreadable. This flag does not opt encrypted properties into caching;
+     * individual decrypt calls must request cache:true. Omitted keys must be composed separately.
+     */
     readonly persistEncryptionKeys?: boolean;
 }
 

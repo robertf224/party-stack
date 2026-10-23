@@ -32,8 +32,11 @@ export interface EncryptedValuesService {
     readonly encrypt: <A, AI>(schema: Schema.Codec<A, AI>, value: A) => Effect.Effect<Encrypted<A>, Failure>;
     readonly decrypt: <A, AI>(schema: Schema.Codec<A, AI>, value: Encrypted<A>) => Effect.Effect<A, Failure>;
     readonly ciphertext: (value: Encrypted<unknown>) => Effect.Effect<Ciphertext | undefined, Failure>;
-    /** Cache bytes from a trusted source; possessing ciphertext does not supply its key. */
-    readonly cache: (value: Encrypted<unknown>, ciphertext: Ciphertext) => Effect.Effect<void, Failure>;
+    /** Import existing ciphertext from a trusted source. This does not decrypt or re-encrypt it; the original key and namespace are still required. */
+    readonly importCiphertext: (
+        value: Encrypted<unknown>,
+        ciphertext: Ciphertext
+    ) => Effect.Effect<void, Failure>;
     /** Local eviction only. Callers must establish that the ciphertext is recoverable. */
     readonly evict: (value: Encrypted<unknown>) => Effect.Effect<void, Failure>;
 }
@@ -143,7 +146,7 @@ export function makeEncryptedValues(
             );
         }),
         ciphertext: (value) => tables.get(ciphertexts, value.id),
-        cache: (value, ciphertext) => tables.put(ciphertexts, value.id, ciphertext),
+        importCiphertext: (value, ciphertext) => tables.put(ciphertexts, value.id, ciphertext),
         evict: (value) => tables.delete(ciphertexts, value.id),
     };
 }
