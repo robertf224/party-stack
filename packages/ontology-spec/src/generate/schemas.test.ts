@@ -183,7 +183,7 @@ describe("Effect schema generation", () => {
                 tree: { label: "root", children: [{ label: "leaf", children: [] }] },
                 result: Result.succeed(Temporal.Instant.from("2026-10-19T00:00Z")),
                 photo: { id: "image", type: "image/png", source: { objectType: "Entry", primaryKey: 42, property: "photo" } },
-                position: { lat: 10, lon: 20 }, score: 1.25, rating: 9, active: true, metadata: { custom: true }, secret: { id: "encrypted-value" },
+                position: { lat: 10, lon: 20 }, score: 1.25, rating: 9, active: true, metadata: { custom: true }, secret: { ciphertext: "encrypted-value" },
             };
             const parsed: Entry = Schema.decodeUnknownSync(Schema.toType(s.EntrySchema))(value);
             const runtime = compileEffectSchemas(JSON.parse(readFileSync(new URL("./ontology.json", import.meta.url), "utf8")));
@@ -192,7 +192,7 @@ describe("Effect schema generation", () => {
             assert.deepEqual(Schema.decodeUnknownSync(runtimeEntry)(Schema.encodeSync(s.EntrySchema)(value)), parsed);
             assert.equal(Schema.encodeSync(Schema.fromJsonString(Schema.toCodecJson(runtimeEntry)))(value), Schema.encodeSync(Schema.fromJsonString(Schema.toCodecJson(s.EntrySchema)))(value));
             assert.equal(Object.getPrototypeOf(parsed), Object.prototype);
-            assert.deepEqual(parsed.secret, { id: "encrypted-value" });
+            assert.deepEqual(parsed.secret, { ciphertext: "encrypted-value" });
             assert.equal(parsed.parent, 99);
             const portable = Schema.encodeSync(s.EntrySchema)(value);
             assert.equal(portable.result.kind, "ok");

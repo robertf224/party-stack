@@ -146,3 +146,30 @@ describe("runtime Effect schemas", () => {
         expect(() => compileEffectSchemas(circular)).toThrow("Circular object reference primary key");
     });
 });
+
+it("rejects nested encrypted wrappers through containers and named references", () => {
+    for (const type of [
+        o.encrypted({ type: o.encrypted({ type: o.string({}) }) }),
+        o.encrypted({ type: o.list({ elementType: o.ref({ name: "Secret" }) }) }),
+    ]) {
+        const ir: OntologyIR = {
+            ...empty,
+            types: [
+                { name: "Secret", type: o.encrypted({ type: o.string({}) }) },
+                { name: "Invalid", type },
+            ],
+        };
+        expect(() => compileEffectSchemas(ir)).toThrow("another encrypted wrapper");
+    }
+    expect(() =>
+        compileEffectSchemas({
+            ...empty,
+            types: [
+                {
+                    name: "Valid",
+                    type: o.encrypted({ type: o.struct({ fields: [field("value", o.string({}))] }) }),
+                },
+            ],
+        })
+    ).not.toThrow();
+});

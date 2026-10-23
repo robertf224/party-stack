@@ -1,121 +1,117 @@
 # Encrypted values
 
-Rows contain portable `Encrypted<T>` handles. Loading, observing, journaling or
-replicating a row never decrypts it. A top-level encrypted property loaded through
-LiveOntology includes its object type, primary key and property as `source`.
+Rows carry opaque encrypted data, rather than IDs into a separate ciphertext table:
 
 ```ts
-const ssn = await ontology.decrypt(person.ssn);
+interface Encrypted<T> {
+    readonly ciphertext: string;
+    readonly source?: { objectType: string; primaryKey: string | number; property: string };
+    readonly [valueType]?: T; // Type-only symbol, no runtime plaintext.
+}
+```
+
+Native values contain a versioned AES-GCM envelope (key ID, nonce and authenticated
+ciphertext) in that string. Foundry values carry the original `CIPHER::…::CIPHER`
+string. The key lives separately in the platform key service. Encryption requires
+only the key service; no Tables service, ciphertext mapping or import operation.
+Copying the row copies its encrypted data. Nested encrypted wrappers are rejected,
+including through named types and containers.
+
+Loading, observing, journaling or replicating rows never decrypts them. A top-level
+encrypted property loaded through LiveOntology receives its property `source`:
+
+```ts
+const ssn = await ontology.decrypt(person.ssn); // Remote; cache defaults to false.
 const offlineSsn = await ontology.decrypt(person.ssn, { cache: true });
-await ontology.evictDecrypted(person.ssn);
 ```
 
-These Promise methods are the application boundary over scoped Effects. They
-return the property's normal portable/core value, including Temporal values and
-portable Result variants, rather than introducing Effect-specific domain types.
-`decrypt` accepts an AbortSignal and closes with the containing ontology scope.
-Handles for nested encrypted properties or standalone action parameters do not
-yet have a sufficiently precise property target for this convenience API; use
-the lower-level schema-driven EncryptedValues service for local values.
+These Promise methods are the application boundary over scoped Effects. Results use
+normal portable/core values, including Temporal and portable Result variants.
+An AbortSignal can cancel decryption, and the ontology scope owns its lifetime.
+The convenience method currently requires a known top-level property source.
+Standalone native values can use `EncryptedValues.encrypt/decrypt(schema, value)`.
 
-## Cache behavior
+## Local copies and row GC
 
-`cache` defaults to false. For remote values, false bypasses both reading and
-writing the persistent decrypted-value cache. It does not erase a copy that an
-earlier call deliberately cached; `evictDecrypted` does that. For locally owned
-values, decryption reads their authoritative local ciphertext: that is primary
-storage, not a downloaded plaintext cache.
+`cache: false` bypasses both reading and writing the downloaded-value cache. It
+does not erase a copy previously cached deliberately. An authoritative local
+ciphertext remains primary storage, even when decrypting without a downloaded cache.
 
-With true, a successful authority response can be re-encrypted under the device
-key and stored locally. Subsequent calls for the same value can work offline.
-No plaintext copy is written into base rows, optimistic rows, the journal or
-outbox. Only ordinary JavaScript memory holds the returned plaintext. Caching
-requires an explicitly configured EncryptionKeyring; absent keys produce an
-Unsupported error rather than persisting plaintext.
+With `cache: true`, remotely decrypted plaintext is encrypted again with the device
+key. The local encrypted copy is embedded in the existing replica row's property,
+alongside its original server ciphertext. Keeping the server value allows change
+detection and valid upstream copies. No plaintext is persisted in this cache.
 
-The existing authenticated Runtime partition supplies the user/installation/
-ontology boundary. Cache entries additionally identify the authority, object,
-property and immutable encrypted value. The binding is authenticated inside the
-encrypted payload, so swapping mapping records cannot reveal a different secret.
-There is at most one current cached copy per authority/property target. Replacing
-it and deleting the old ciphertext happen in one storage transaction. Cached
-copies remain until explicit eviction, replacement or partition destruction;
-automatic TTL/row-eviction coupling is future work. Access revoked on the server
-cannot retract a secret already downloaded for offline use.
+The device copy is private storage metadata, omitted from application rows,
+portable schemas and replica transfers. It authenticates the original ciphertext,
+authority, object/property and Runtime identity partition. Reopening can reuse it.
+An unchanged ciphertext preserves it through refresh; a changed ciphertext drops it.
+A transactional compare against the current base row prevents late decrypt responses
+from caching against changed values or recreating evicted rows. An optimistic-only
+value with no matching persisted base row is decrypted but not cached.
 
-`EncryptedValues.importCiphertext` is a different, low-level operation: it imports
-an already encrypted envelope and still needs its original key, namespace and
-handle. It does not implement the LiveOntology cache and was previously named
-`cache`. LiveOntology always re-encrypts downloaded plaintext with the local key.
+Row GC deletes the copy with the row. There is no additional cache table, retention
+root or public eviction API. A lost key/corrupt copy falls back to an authorized
+remote decrypt. `cache: true` requires a configured device EncryptionKeyring;
+missing keys never cause plaintext persistence. Server revocation cannot retract a
+value already downloaded for offline use.
 
-## Response identity
+## Response binding and Foundry assumption
 
-Backend decryption returns a portable JSON value and an optional `valueId`:
+A backend returns the portable JSON plaintext and, when available, the ciphertext
+it decrypted:
 
 ```ts
-{ value: "123-45-6789", valueId: handle.id }
+{ value: "123-45-6789", ciphertext: encrypted.ciphertext }
 ```
 
-Only an authority that can prove which immutable ciphertext it decrypted may set
-valueId. A mismatched ID produces Conflict. Omitting the ID permits explicit
-current-property decryption, but the result is never cached, even with cache:true.
-The plaintext representation is checked against the local ontology definition
-without including sensitive decoder inputs in errors.
+A contradictory ciphertext produces Conflict. Without this binding the result
+can be returned but is not cached. Plaintext is checked against the ontology
+property schema, and failures exclude sensitive inputs/provider bodies.
 
-Owned storage checks that the object's property still points at the requested
-handle, then decrypts that immutable local ciphertext. It can prove the ID.
-Foundry's current property-decrypt endpoint returns only plaintext, without the
-encrypted value/version it read or an expected-value precondition. Therefore its
-adapter omits valueId. A local revision check, or reading the remote property
-before and after, cannot rule out an intervening A→B→A change. Reliable Foundry
-caching needs an API that binds decryption to the requested ciphertext or returns
-the ciphertext identity read together with the plaintext.
+Owned backends check the requested row property then decrypt its immutable envelope.
+Foundry's current endpoint returns only the property's current plaintext. **Until
+Foundry echoes ciphertext in its decrypt response, the adapter assumes the property
+has not changed since it was loaded.** It reports the requested ciphertext under
+that assumption, allowing caching. A concurrent remote change can therefore return
+or cache a newer plaintext against an older ciphertext; the adapter carries an
+explicit TODO for the feature request. A before/after read would not fully remove
+that race.
 
-## Ownership and transports
+## Keys and transports
 
-The application Runtime provides scoped platform capabilities to LiveOntology:
-Tables, connectivity, bytes and optional device keys. It remains above storage
-and complements Effect's platform libraries. Storage and backend implementations
-do not depend on the application Runtime.
+Runtime supplies application capabilities (tables, connectivity, bytes and device
+keys), above the storage/backend packages. Browser key persistence requires the
+explicit `persistEncryptionKeys` opt-in. Same-origin code can use a persisted key;
+non-extractability does not protect against compromised application code.
 
-An owned storage backend receives `encryptionKeyring` explicitly. The encryption
-implementation uses WebCrypto AES-GCM; deployment code chooses how keys are
-stored/retrieved. Node's OS SecretStore for Connect credentials is distinct from
-this authority key service. No key is silently generated for an authoritative
-backend, since losing it across restart would make durable data unreadable.
-Cloudflare uses Workers WebCrypto, DO SQL and R2 capabilities, not Node filesystem,
-OS-keychain services or NodeRuntime.runMain. Alchemy ontology options accept the
-same authority encryptionKeyring service; an application supplies it from its
-chosen secret/key-management facility.
+Owned backend construction accepts `encryptionKeyring`. Cloudflare uses Workers
+WebCrypto, without Node filesystem/keychain APIs. `OntologyDurableObject` provisions
+a stable random 256-bit key in Cloudflare Secrets Store via Alchemy unless a custom
+keyring is supplied. Alchemy deployment state retains the generated secret; protect
+that state and the secret resource. Deleting/replacing the key without a rotation
+plan makes existing ciphertext unreadable. The DO helper imports it as a
+non-extractable AES-GCM CryptoKey. There is no automatic key rotation yet.
 
-Effect RPC exposes explicitly authorized Decrypt and EvictDecrypted operations.
-A memory tab forwards cache policy to its persistent owner; secret plaintext is
-not included in ordinary replica state transfer. The policy HTTP transport
-requires a separate canDecrypt grant plus readable row/property and matching
-handle. Reading a ciphertext handle alone never grants plaintext access.
+Effect RPC exposes an authorized Decrypt operation. Memory tabs forward cache
+policy to their persistent owner. Plaintext is returned only for that explicit
+operation, never ordinary replica state. The policy HTTP transport additionally
+requires a separate `canDecrypt` grant plus readable row/property and a matching
+ciphertext. Reading encrypted data alone grants no decrypt permission.
 
-## Writes and future outbox encryption
+Node's current OS SecretStore and Expo SecureStore remain separate platform
+credential facilities. Connect's platform-SecretStore fallback still uses opaque
+references into that OS store; this is distinct from native table encryption.
+Converting those platform stores into keyring providers is separate work.
 
-Foundry TypeScript v2 writes accept `{ plaintext }` for encryption and
-`{ ciphertext }` for copying existing ciphertext. The Party Stack staged-write
-wrapper translates string writes and portable Foundry encrypted handles into
-those representations. Property-change arrays and clearing optional properties
-follow the same path. No decrypted value is read to copy a ciphertext.
+## Writes and deferred work
 
-The proposed general mutator write model is plaintext-or-encrypted-handle for an
-encrypted property, while read values remain handles. Property context selects
-the encryption policy automatically. Native mutator auto-encryption and generated
-write types are not implemented by the decrypt API change. They must ensure
-plaintext does not leak into optimistic projections, persisted replay state or
-journal entries, and distinguish copying from re-encrypting for another authority.
+Foundry v2 staged writes translate string input to `{ plaintext }` and existing
+Foundry encrypted values to `{ ciphertext }`. Copying ciphertext does not decrypt
+it. Optional clearing and property-change arrays follow the same path.
 
-Encrypted action parameters are a separate future boundary: protect their
-persisted outbox representation with the device key, decrypt for local replay or
-dispatch when the provider expects plaintext, and define forwarding/recovery when
-the next authority uses different keys. Encrypting a property at final commit
-alone would not protect an ordinary plaintext action argument already in the
-outbox. This work remains deferred.
-
-References: [Foundry v2 write types](https://github.com/palantir/osdk-ts/blob/6df3c1ebcd2e692ca80dc7bd648f63a007c9e72c/packages/api/src/mapping/PropertyValueMapping.ts),
-[CipherText representations](https://github.com/palantir/osdk-ts/blob/6df3c1ebcd2e692ca80dc7bd648f63a007c9e72c/packages/api/src/object/CipherText.ts),
-[staged-edit normalization](https://github.com/palantir/osdk-ts/blob/6df3c1ebcd2e692ca80dc7bd648f63a007c9e72c/packages/functions/src/edits/toFunctionEditValue.ts).
+General native mutator auto-encryption and generated plaintext-or-encrypted write
+types are still separate work. Outbox parameter encryption remains deferred; final
+property encryption alone does not encrypt an ordinary action argument already
+persisted in the outbox. Cache TTL, session unlock policies and separate keys for
+interactive versus background use can be layered on later.

@@ -15,8 +15,17 @@ import { hashStorageName } from "./hashStorageName.js";
 import type { RuntimeAdapter } from "@party-stack/runtime";
 import type { SQLiteBindValue } from "expo-sqlite";
 
-export const createExpoRuntime: (owner: string, namespace: string) => Promise<RuntimeAdapter> = defineRuntime(
-    async (owner, namespace) => {
+export interface ExpoRuntimeOptions {
+    /** Protect platform secrets with device authentication. Background token refresh may require a prompt.
+     * Biometric enrollment changes can invalidate protected secrets. This does not create an unlocked session.
+     */
+    readonly requireAuthentication?: boolean;
+    readonly authenticationPrompt?: string;
+}
+export const createExpoRuntimeWithOptions = (
+    options: ExpoRuntimeOptions = {}
+): ((owner: string, namespace: string) => Promise<RuntimeAdapter>) =>
+    defineRuntime(async (owner, namespace) => {
         const name = `party-stack:${owner}:${namespace}`;
         const storageName = `party-stack-${await hashStorageName(JSON.stringify([owner, namespace]))}`;
         const connectivity = await ExpoNetworkConnectivity.create();
@@ -65,7 +74,10 @@ export const createExpoRuntime: (owner: string, namespace: string) => Promise<Ru
             namespace,
             blobBytes,
             browserAuthentication: createExpoBrowserAuthentication(),
-            secrets: new ExpoSecretStore(`${name}:secrets`),
+            secrets: new ExpoSecretStore(
+                `${name}:secrets`,
+                Object.keys(options).length ? options : undefined
+            ),
             connectivity,
             coordination,
             tables,
@@ -88,5 +100,6 @@ export const createExpoRuntime: (owner: string, namespace: string) => Promise<Ru
                 connectivity.close();
             },
         };
-    }
-);
+    });
+
+export const createExpoRuntime = createExpoRuntimeWithOptions();

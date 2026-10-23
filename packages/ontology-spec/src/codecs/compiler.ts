@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { nestedEncryptedIssues } from "../ir/encrypted.js";
 import { ImageMediaTypeOptions } from "../ir/generated/constants.js";
 import { Encrypted, Result, TemporalDate, TemporalTimestamp } from "./codecs.js";
 import type { FieldDef, OntologyIR, TypeDef } from "../ir/generated/types.js";
@@ -20,6 +21,8 @@ export interface CompiledEffectSchemas {
  * codecs additionally supply named static TypeScript types.
  */
 export function compileEffectSchemas(source: OntologyIR): CompiledEffectSchemas {
+    if (nestedEncryptedIssues(source).length)
+        throw new TypeError("Encrypted values cannot contain another encrypted wrapper.");
     // Lazy references must not observe later edits to the caller's definitions.
     const ir = structuredClone(source);
     const objects = new Map(ir.objectTypes.map((object) => [object.name, object]));

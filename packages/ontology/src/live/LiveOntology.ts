@@ -75,8 +75,8 @@ export interface OntologyDiagnostics {
 
 export interface DecryptOptions {
     /** Default false: bypass the persistent decrypted-value cache. True permits a device-encrypted
-     * copy only when the authority proves the response belongs to this immutable value ID.
-     * Does not delete a copy previously cached with true; use evictDecrypted for that.
+     * copy when the response is bound to this ciphertext (see the documented Foundry assumption).
+     * Cached device copies are removed with their replica rows.
      */
     readonly cache?: boolean;
     readonly signal?: AbortSignal;
@@ -109,7 +109,6 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
      */
     decrypt: LiveOntologyDecrypt;
     /** Remove this value's device-encrypted cached copy, without deleting its authoritative ciphertext. */
-    evictDecrypted: (value: import("@party-stack/ontology-spec/values").Encrypted) => Promise<void>;
     outbox: OntologyOutbox;
     cleanup: () => Promise<void>;
     destroy: () => Promise<void>;

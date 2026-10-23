@@ -6,9 +6,9 @@ import { expect, test } from "vitest";
 import { makeEncryptionKeyring } from "./encryptionKeyring.js";
 import { make } from "./tables.js";
 
-test("native IndexedDB commits encrypted handles and ciphertext and restores the nonextractable key", async () => {
+test("native IndexedDB commits embedded ciphertext and restores the nonextractable key", async () => {
     const name = `party-stack-encryption-test:${crypto.randomUUID()}`;
-    const handles = Table.make<{ id: string }>({ name: "handles" });
+    const handles = Table.make<{ ciphertext: string }>({ name: "handles" });
     const acquire = (scope: Scope.Scope) =>
         Effect.runPromise(
             Effect.gen(function* () {
@@ -22,7 +22,7 @@ test("native IndexedDB commits encrypted handles and ciphertext and restores the
     await Effect.runPromise(
         a.tables.transaction((tx) =>
             Effect.gen(function* () {
-                const values = makeEncryptedValues(name, tx, a.keys);
+                const values = makeEncryptedValues(name, a.keys);
                 yield* tx.put(
                     handles,
                     "refresh",
@@ -42,7 +42,7 @@ test("native IndexedDB commits encrypted handles and ciphertext and restores the
             b.tables.transaction((tx) =>
                 Effect.gen(function* () {
                     const handle = yield* tx.get(handles, "refresh");
-                    return yield* makeEncryptedValues(name, tx, b.keys).decrypt(Schema.String, handle!);
+                    return yield* makeEncryptedValues(name, b.keys).decrypt(Schema.String, handle!);
                 })
             )
         );

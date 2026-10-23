@@ -73,9 +73,6 @@ export interface ReplicaViewOptions {
         value: import("@party-stack/ontology-spec/values").Encrypted,
         options?: { cache?: boolean }
     ) => Effect.Effect<unknown, BackendError>;
-    readonly evictDecrypted?: (
-        value: import("@party-stack/ontology-spec/values").Encrypted
-    ) => Effect.Effect<void, BackendError>;
     readonly traces?: RuntimeTraceStore;
     readonly parentDiagnostics?: LiveOntology["diagnostics"];
     readonly diagnosticLabel?: string;
@@ -179,6 +176,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         );
     const decryption = yield* makeLiveDecryption({
         ir,
+        replica,
         backend: {
             sourceId: options.sourceId ?? replica.sourceId,
             encrypted: options.encrypted,
@@ -303,8 +301,6 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
                     : decryption.decrypt(value, settings),
                 settings?.signal
             )) as never,
-        evictDecrypted: (value) =>
-            run(options.evictDecrypted ? options.evictDecrypted(value) : decryption.evict(value)),
         queryFunctions: Object.fromEntries(
             ir.queryFunctionTypes.map((query) => [
                 query.name,

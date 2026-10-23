@@ -60,7 +60,7 @@ function changesToRecord(
 }
 
 const CiphertextHandle = Schema.Struct({
-    id: Schema.String.check(Schema.isPattern(/^CIPHER::[^:]+::.+::CIPHER$/u)),
+    ciphertext: Schema.String.check(Schema.isPattern(/^CIPHER::[^:]+::.+::CIPHER$/u)),
 });
 
 /** Foundry v2 accepts {plaintext} for new secrets and {ciphertext} for a copied value.
@@ -87,7 +87,7 @@ function writeProperties(
         } else {
             // Portable handles are not OSDK CipherText instances; convert them explicitly.
             const parsed = Schema.decodeUnknownOption(CiphertextHandle)(value);
-            if (parsed._tag === "Some") result[property.name] = { ciphertext: parsed.value.id };
+            if (parsed._tag === "Some") result[property.name] = { ciphertext: parsed.value.ciphertext };
             else
                 throw new TypeError(
                     "Expected plaintext or a Foundry encrypted handle for an encrypted property."

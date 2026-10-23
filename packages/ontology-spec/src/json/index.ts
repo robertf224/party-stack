@@ -75,11 +75,11 @@ function variantType(type: Extract<TypeDef, { kind: "union" | "result" }>, value
 
 function encryptedHandle(value: unknown): OntologyObject {
     assertRecord(value);
-    invariant(typeof value.id === "string", "Expected an encrypted value handle.");
-    if (value.source === undefined) return { id: value.id };
+    invariant(typeof value.ciphertext === "string", "Expected an encrypted value handle.");
+    if (value.source === undefined) return { ciphertext: value.ciphertext };
     assertRecord(value.source);
     return {
-        id: value.id,
+        ciphertext: value.ciphertext,
         source: {
             objectType: value.source.objectType,
             primaryKey: value.source.primaryKey,

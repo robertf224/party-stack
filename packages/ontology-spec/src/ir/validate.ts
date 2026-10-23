@@ -1,5 +1,6 @@
 import { isRelatedFromForeignKeySource, resolveRelatedLink } from "../utils/links.js";
 import { unwrapType } from "../utils/types.js";
+import { nestedEncryptedIssues } from "./encrypted.js";
 import { ImageMediaTypeOptions } from "./generated/constants.js";
 import type { ValidationIssue } from "../utils/validation.js";
 import type { Result } from "../utils/values.js";
@@ -988,7 +989,7 @@ function validateQueryFunctionType(
 }
 
 export function validate(ontology: OntologyIR): ValidationResult {
-    const errors: ValidationIssue[] = [];
+    const errors: ValidationIssue[] = nestedEncryptedIssues(ontology);
 
     // Collect value type names for ref resolution
     const valueTypeNames = new Set<string>();

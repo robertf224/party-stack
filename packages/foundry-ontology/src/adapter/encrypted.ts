@@ -13,17 +13,18 @@ const Source = Schema.Struct({
     primaryKey: Schema.Union([Schema.String, Schema.Finite]),
     property: Schema.String,
 });
-const Handle = Schema.Struct({ id: Ciphertext, source: Schema.optional(Source) });
+const Handle = Schema.Struct({ ciphertext: Ciphertext, source: Schema.optional(Source) });
 
 /** Ciphertext is an opaque identifier here, never implicitly decrypted or interpreted as plaintext. */
 export function decodeFoundryCiphertext(value: unknown, source?: Encrypted["source"]): Encrypted {
     const handle = Predicate.isString(value)
-        ? { id: Schema.decodeUnknownSync(Ciphertext)(value) }
+        ? { ciphertext: Schema.decodeUnknownSync(Ciphertext)(value) }
         : Schema.decodeUnknownSync(Handle)(value);
     return source ? { ...handle, source } : handle;
 }
 
-export const encodeFoundryCiphertext = (value: unknown): string => Schema.decodeUnknownSync(Handle)(value).id;
+export const encodeFoundryCiphertext = (value: unknown): string =>
+    Schema.decodeUnknownSync(Handle)(value).ciphertext;
 
 const rejected = (operation: string, message: string) =>
     new BackendError({ operation, kind: "Rejected", message, retryable: false });
@@ -82,9 +83,9 @@ export function makeFoundryEncryptedValues(client: OntologyClient, ir: OntologyI
                 catch: (cause) => requestError("foundry.decrypt", cause),
             });
             return yield* Effect.try({
-                // The property endpoint does not identify the ciphertext it actually decrypted.
-                // A before/after property read cannot rule out an intervening A→B→A change.
-                try: () => ({ value: codec.encode(result.plaintext) }),
+                // TODO(Foundry FR): require the decrypt response to echo its ciphertext.
+                // Until then, assume the property has not changed since this handle was read.
+                try: () => ({ value: codec.encode(result.plaintext), ciphertext: handle.ciphertext }),
                 catch: () => rejected("foundry.decrypt", "Invalid decrypted plaintext."),
             });
         }),

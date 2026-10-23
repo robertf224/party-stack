@@ -1,4 +1,6 @@
 import { BackendError } from "@party-stack/ontology-backend";
+import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { makeReplica } from "@party-stack/ontology-replica";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { TemporalTimestamp } from "@party-stack/ontology-spec/effect";
 import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
@@ -14,7 +16,6 @@ import { createLiveOntology } from "../live/LiveOntology.js";
 import { makeStorageOntologyBackend } from "../live/storageBackend.js";
 import { makeLiveDecryption } from "./encrypted.js";
 import type { Encrypted } from "@party-stack/ontology-spec/values";
-
 const ir: OntologyIR = {
     types: [],
     actionTypes: [],
@@ -44,7 +45,10 @@ const ir: OntologyIR = {
         },
     ],
 };
-const handle = { id: "cipher-1", source: { objectType: "Person", primaryKey: "1", property: "secret" } };
+const handle = {
+    ciphertext: "cipher-1",
+    source: { objectType: "Person", primaryKey: "1", property: "secret" },
+};
 const wire = { token: "private-token-test", at: "2026-10-23T00:00:00Z" };
 const decoded = { ...wire, at: Temporal.Instant.from(wire.at) };
 const keyring = async () => {
@@ -54,37 +58,65 @@ const keyring = async () => {
     ]);
     return { active: Effect.succeed({ id: "device", key }), get: () => Effect.succeed(key) };
 };
-const fixture = Effect.fnUntraced(function* (settings?: {
-    keys?: boolean;
-    owner?: string;
-    sourceId?: string;
-    tables?: Effect.Success<ReturnType<typeof Memory.make>>;
-}) {
-    const tables = settings?.tables ?? (yield* Memory.make());
+const fixture = Effect.fnUntraced(function* (settings?: { keys?: boolean; owner?: string }) {
+    const tables = yield* Memory.make();
     const keys = yield* Effect.promise(keyring);
-    const adapter = createDefaultRuntime(settings?.owner ?? "alice", "private");
+    const owner = settings?.owner ?? "alice";
     const runtime = yield* Runtime.make({
-        ...adapter,
+        ...createDefaultRuntime(owner, "private"),
         tables: Effect.succeed(tables),
         encryptionKeyring: settings?.keys === false ? undefined : Effect.succeed(keys),
     });
-    const call = vi.fn((value: Encrypted) => Effect.succeed({ value: wire, valueId: value.id }));
-    const open = (sourceId = settings?.sourceId ?? "authority") =>
-        makeLiveDecryption({ ir, backend: { sourceId, encrypted: { decrypt: call } } }).pipe(
+    const call = vi.fn((value: Encrypted) => Effect.succeed({ value: wire, ciphertext: value.ciphertext }));
+    const backend = {
+        name: "test",
+        sourceId: "authority",
+        supportsIdempotency: false,
+        loadSubset: () =>
+            Effect.succeed({ rows: [{ key: "1", value: { id: "1", secret: handle } }], complete: true }),
+        invoke: () => Effect.die("unused"),
+        queryFunction: () => Effect.die("unused"),
+        encrypted: { decrypt: call },
+        pollIntervalMs: () => false as const,
+    };
+    const replica = yield* makeReplica({
+        namespace: "private",
+        ir,
+        tables,
+        backend,
+        startSync: false,
+        execute: () => Effect.void,
+    });
+    // Load, then release demand so the row can later be collected.
+    yield* Effect.scoped(replica.demand({ objectType: "Person" }).pipe(Effect.andThen(replica.syncOnce)));
+    const open = (sourceId = "authority") =>
+        makeLiveDecryption({ ir, replica, backend: { sourceId, encrypted: backend.encrypted } }).pipe(
             Effect.provideService(Runtime, runtime)
         );
-    return { tables, runtime, call, open, service: yield* open() };
+    const raw = Table.make<{ id: string; secret: Encrypted & { localCache?: Encrypted } }>({
+        name: JSON.stringify(["replica", "private", "base:Person"]),
+    });
+    return { tables, runtime, call, replica, open, raw, service: yield* open() };
 });
 
-test("default decrypt bypasses cache; opt-in encrypts a copy, survives reopening, and can be evicted", async () => {
+test("cache is an encrypted row property, survives reopening, stays out of replication and follows row GC", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const { service, call, open, tables, runtime } = yield* fixture();
+                const { service, call, open, tables, raw, replica } = yield* fixture();
                 expect(yield* service.decrypt(handle)).toEqual(decoded);
                 expect(yield* service.decrypt(handle)).toEqual(decoded);
                 expect(call).toHaveBeenCalledTimes(2);
-                expect(yield* service.decrypt(handle, { cache: true })).toEqual(decoded);
+                yield* service.decrypt(handle, { cache: true });
+                const row = (yield* tables.get(raw, "1"))!;
+                expect(row.secret.ciphertext).toBe(handle.ciphertext);
+                expect(row.secret.localCache?.ciphertext).toContain("party-stack:encrypted:v1:");
+                expect(JSON.stringify(row)).not.toContain(wire.token);
+                const exported = yield* replica.snapshotState;
+                expect(JSON.stringify(exported)).not.toContain("localCache");
+                expect(JSON.stringify(structuredClone(exported))).not.toContain("party-stack:encrypted:v1:");
+                const reopened = yield* open();
+                expect(yield* reopened.decrypt(handle, { cache: true })).toEqual(decoded);
                 expect(call).toHaveBeenCalledTimes(3);
                 call.mockImplementation(
                     () =>
@@ -97,26 +129,10 @@ test("default decrypt bypasses cache; opt-in encrypts a copy, survives reopening
                             })
                         ) as never
                 );
-                const reopened = yield* open();
-                expect(yield* reopened.decrypt(handle, { cache: true })).toEqual(decoded);
                 expect((yield* Effect.result(reopened.decrypt(handle)))._tag).toBe("Failure");
-                const cacheName = JSON.stringify(["decrypted-cache", "alice", "private"]);
-                const record = (yield* tables.loadSubset(
-                    Table.make<{ local: { id: string } }>({ name: cacheName })
-                ))[0]!.value;
-                const cipher = yield* makeEncryptedValues(
-                    cacheName,
-                    tables,
-                    runtime.encryptionKeyring!
-                ).ciphertext(record.local);
-                expect(JSON.stringify(cipher)).not.toContain(wire.token);
-                yield* reopened.evict(handle);
-                expect(yield* tables.loadSubset(Table.make({ name: cacheName }))).toEqual([]);
-                expect(
-                    yield* makeEncryptedValues(cacheName, tables, runtime.encryptionKeyring!).ciphertext(
-                        record.local
-                    )
-                ).toBeUndefined();
+                expect(yield* replica.collectGarbage({ olderThanMs: 0 })).toBe(1);
+                expect(yield* tables.get(raw, "1")).toBeUndefined();
+                expect(yield* replica.encryptedCache.get(handle)).toBeUndefined();
                 expect((yield* Effect.result(reopened.decrypt(handle, { cache: true })))._tag).toBe(
                     "Failure"
                 );
@@ -125,68 +141,56 @@ test("default decrypt bypasses cache; opt-in encrypts a copy, survives reopening
     );
 });
 
-test("cache requires keys and separates source, principal, property, and encrypted value identities", async () => {
+test("cache requires keys and authenticates its authority, principal, property and original ciphertext", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const first = yield* fixture();
-                yield* first.service.decrypt(handle, { cache: true });
-                const otherSource = yield* first.open("other-authority");
-                yield* otherSource.decrypt(handle, { cache: true });
-                yield* first.service.decrypt({ ...handle, id: "cipher-2" }, { cache: true });
-                expect(first.call).toHaveBeenCalledTimes(3);
-                const otherUser = yield* fixture({ owner: "bob", tables: first.tables });
-                yield* otherUser.service.decrypt(handle, { cache: true });
-                expect(otherUser.call).toHaveBeenCalledTimes(1);
+                const f = yield* fixture();
+                yield* f.service.decrypt(handle, { cache: true });
+                yield* (yield* f.open("other-authority")).decrypt(handle, { cache: true });
+                expect(f.call).toHaveBeenCalledTimes(2);
+                const local = (yield* f.tables.get(f.raw, "1"))!.secret.localCache!;
+                yield* f.tables.put(f.raw, "1", {
+                    id: "1",
+                    secret: { ...handle, ciphertext: "cipher-2", localCache: local },
+                });
+                expect(
+                    yield* f.service.decrypt({ ...handle, ciphertext: "cipher-2" }, { cache: true })
+                ).toEqual(decoded);
+                expect(f.call).toHaveBeenCalledTimes(3);
                 const noKeys = yield* fixture({ keys: false });
                 expect(yield* noKeys.service.decrypt(handle)).toEqual(decoded);
                 expect(
                     yield* noKeys.service.decrypt(handle, { cache: true }).pipe(Effect.flip)
                 ).toMatchObject({ kind: "Unsupported" });
-                expect(noKeys.call).toHaveBeenCalledTimes(1);
+                // Same authority/property, copied bytes, different identity partition and device key.
+                const other = yield* fixture({ owner: "bob" });
+                yield* other.tables.put(other.raw, "1", (yield* f.tables.get(f.raw, "1"))!);
+                yield* other.service.decrypt({ ...handle, ciphertext: "cipher-2" }, { cache: true });
+                expect(other.call).toHaveBeenCalledTimes(1);
             })
         )
     );
 });
 
-test("unbound current-property responses are never cached; conflicting identity is rejected", async () => {
+test("unbound responses never cache; contradictory ciphertext is rejected and errors exclude secrets", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const { service, call } = yield* fixture();
+                const { service, call, tables, raw } = yield* fixture();
                 call.mockImplementation(() => Effect.succeed({ value: wire }) as never);
                 yield* service.decrypt(handle, { cache: true });
-                yield* service.decrypt(handle, { cache: true });
-                expect(call).toHaveBeenCalledTimes(2);
-                call.mockImplementation(() => Effect.succeed({ value: wire, valueId: "newer-cipher" }));
-                expect(yield* service.decrypt(handle, { cache: true }).pipe(Effect.flip)).toMatchObject({
-                    kind: "Conflict",
-                });
-            })
-        )
-    );
-});
-
-test("rejects invalid sources and redacts schema errors and provider bodies", async () => {
-    await Effect.runPromise(
-        Effect.scoped(
-            Effect.gen(function* () {
-                const { service, call } = yield* fixture();
-                expect((yield* Effect.result(service.decrypt({ id: "missing-source" })))._tag).toBe(
+                expect((yield* tables.get(raw, "1"))!.secret.localCache).toBeUndefined();
+                call.mockImplementation(() => Effect.succeed({ value: wire, ciphertext: "newer" }));
+                expect(yield* service.decrypt(handle).pipe(Effect.flip)).toMatchObject({ kind: "Conflict" });
+                expect((yield* Effect.result(service.decrypt({ ciphertext: "missing-source" })))._tag).toBe(
                     "Failure"
                 );
-                expect(
-                    (yield* Effect.result(
-                        service.decrypt({ ...handle, source: { ...handle.source, property: "id" } })
-                    ))._tag
-                ).toBe("Failure");
-                expect(call).not.toHaveBeenCalled();
-                call.mockImplementation(
-                    () =>
-                        Effect.succeed({
-                            value: { token: wire.token, at: wire.token },
-                            valueId: handle.id,
-                        }) as never
+                call.mockImplementation(() =>
+                    Effect.succeed({
+                        value: { token: wire.token, at: wire.token },
+                        ciphertext: handle.ciphertext,
+                    })
                 );
                 expect(JSON.stringify(yield* service.decrypt(handle).pipe(Effect.flip))).not.toContain(
                     wire.token
@@ -197,9 +201,9 @@ test("rejects invalid sources and redacts schema errors and provider bodies", as
                             new BackendError({
                                 operation: "provider",
                                 kind: "Rejected",
-                                retryable: false,
                                 message: wire.token,
                                 cause: wire.token,
+                                retryable: false,
                             })
                         ) as never
                 );
@@ -211,14 +215,41 @@ test("rejects invalid sources and redacts schema errors and provider bodies", as
     );
 });
 
-test("interrupting remote decryption cannot leave a cache entry", async () => {
+test("a late remote response cannot recreate an evicted row or attach a cache to changed ciphertext", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const { service, call } = yield* fixture();
+                for (const remove of [false, true]) {
+                    const f = yield* fixture();
+                    const started = yield* Deferred.make<void>();
+                    const reply = yield* Deferred.make<{ value: typeof wire; ciphertext: string }>();
+                    f.call.mockImplementation(() =>
+                        Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(reply)))
+                    );
+                    const fiber = yield* Effect.forkChild(f.service.decrypt(handle, { cache: true }));
+                    yield* Deferred.await(started);
+                    if (remove) yield* f.replica.collectGarbage({ olderThanMs: 0 });
+                    else yield* f.tables.put(f.raw, "1", { id: "1", secret: { ciphertext: "newer" } });
+                    yield* Deferred.succeed(reply, { value: wire, ciphertext: handle.ciphertext });
+                    expect(yield* Fiber.join(fiber)).toEqual(decoded);
+                    const row = yield* f.tables.get(f.raw, "1");
+                    expect(row?.secret.localCache).toBeUndefined();
+                    if (remove) expect(row).toBeUndefined();
+                    else expect(row?.secret.ciphertext).toBe("newer");
+                }
+            })
+        )
+    );
+});
+
+test("interrupting remote decryption cannot cache a value", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
                 const started = yield* Deferred.make<void>();
                 let stopped = false;
-                call.mockImplementation(
+                f.call.mockImplementation(
                     () =>
                         Deferred.succeed(started, undefined).pipe(
                             Effect.andThen(Effect.never),
@@ -229,20 +260,18 @@ test("interrupting remote decryption cannot leave a cache entry", async () => {
                             )
                         ) as never
                 );
-                const fiber = yield* Effect.forkChild(service.decrypt(handle, { cache: true }));
+                const fiber = yield* Effect.forkChild(f.service.decrypt(handle, { cache: true }));
                 yield* Deferred.await(started);
                 yield* Fiber.interrupt(fiber);
                 expect(stopped).toBe(true);
-                call.mockImplementation((value) => Effect.succeed({ value: wire, valueId: value.id }));
-                yield* service.decrypt(handle, { cache: true });
-                expect(call).toHaveBeenCalledTimes(2);
+                expect((yield* f.tables.get(f.raw, "1"))!.secret.localCache).toBeUndefined();
             })
         )
     );
 });
 
-test("LiveOntology decorates native encrypted handles and only decrypts on an explicit call", async () => {
-    const call = vi.fn(() => Effect.succeed({ value: wire, valueId: handle.id }));
+test("LiveOntology decorates encrypted sources and only decrypts explicitly", async () => {
+    const call = vi.fn(() => Effect.succeed({ value: wire, ciphertext: handle.ciphertext }));
     const live = await createLiveOntology({
         ir,
         backend: () => ({
@@ -254,7 +283,9 @@ test("LiveOntology decorates native encrypted handles and only decrypts on an ex
                     supportsIdempotency: false,
                     loadSubset: () =>
                         Effect.succeed({
-                            rows: [{ key: "1", value: { id: "1", secret: { id: handle.id } } }],
+                            rows: [
+                                { key: "1", value: { id: "1", secret: { ciphertext: handle.ciphertext } } },
+                            ],
                             complete: true,
                         }),
                     invoke: () => Effect.die("unused"),
@@ -268,35 +299,10 @@ test("LiveOntology decorates native encrypted handles and only decrypts on an ex
         expect(call).not.toHaveBeenCalled();
         expect(rows[0]!.secret).toEqual(handle);
         expect(await live.decrypt(rows[0]!.secret as typeof handle)).toEqual(decoded);
-        expect(call).toHaveBeenCalledTimes(1);
     } finally {
         await live.cleanup();
     }
 });
-
-test("cache ciphertext authenticates its value binding even if the mapping is transplanted", async () => {
-    await Effect.runPromise(
-        Effect.scoped(
-            Effect.gen(function* () {
-                const { tables, service, call } = yield* fixture();
-                yield* service.decrypt(handle, { cache: true });
-                const table = Table.make<{ valueId: string; local: Encrypted }>({
-                    name: JSON.stringify(["decrypted-cache", "alice", "private"]),
-                });
-                const entry = (yield* tables.loadSubset(table))[0]!;
-                yield* tables.put(table, entry.key, { ...entry.value, valueId: "cipher-2" });
-                call.mockImplementation(() =>
-                    Effect.succeed({ value: { ...wire, token: "new-value" }, valueId: "cipher-2" })
-                );
-                expect(yield* service.decrypt({ ...handle, id: "cipher-2" }, { cache: true })).toMatchObject({
-                    token: "new-value",
-                });
-                expect(call).toHaveBeenCalledTimes(2);
-            })
-        )
-    );
-});
-
 test("owned storage decrypts with deployment keys and proves an immutable handle identity", async () => {
     await Effect.runPromise(
         Effect.scoped(
@@ -321,14 +327,14 @@ test("owned storage decrypts with deployment keys and proves an immutable handle
                     blobs,
                     encryptionKeyring: keys,
                 });
-                const values = makeEncryptedValues(namespace, tables, keys);
+                const values = makeEncryptedValues(namespace, keys);
                 const schema = Schema.Struct({ token: Schema.String, at: TemporalTimestamp });
                 const encrypted = yield* values.encrypt(schema, decoded);
                 const target = { ...encrypted, source: handle.source };
                 yield* owned.storage.transaction((tx) => tx.put("Person", { id: "1", secret: encrypted }));
                 expect(yield* owned.encrypted!.decrypt(target)).toEqual({
                     value: wire,
-                    valueId: encrypted.id,
+                    ciphertext: encrypted.ciphertext,
                 });
                 const next = yield* values.encrypt(schema, { ...decoded, token: "rotated" });
                 yield* owned.storage.transaction((tx) => tx.put("Person", { id: "1", secret: next }));
@@ -337,6 +343,61 @@ test("owned storage decrypts with deployment keys and proves an immutable handle
                 });
                 const page = yield* owned.changes!.pull({});
                 expect(JSON.stringify(page)).not.toContain(wire.token);
+            })
+        )
+    );
+});
+
+test("journal refresh preserves the device copy only while the authoritative ciphertext matches", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const definition = {
+                    ...ir,
+                    objectTypes: [
+                        {
+                            ...ir.objectTypes[0]!,
+                            properties: [
+                                ...ir.objectTypes[0]!.properties,
+                                { name: "title", displayName: "Title", type: o.string({}) },
+                            ],
+                        },
+                    ],
+                };
+                const server = yield* makeOwnedBackend({
+                    namespace: "authority",
+                    ir: definition,
+                    tables: yield* Memory.make(),
+                    mutators: {},
+                });
+                yield* server.storage.transaction((tx) =>
+                    tx.put("Person", { id: "1", secret: handle, title: "first" })
+                );
+                const tables = yield* Memory.make();
+                const replica = yield* makeReplica({
+                    namespace: "local",
+                    ir: definition,
+                    tables,
+                    backend: server,
+                    execute: () => Effect.void,
+                    startSync: false,
+                });
+                yield* replica.syncOnce;
+                const local = { ciphertext: "device-encrypted-copy" };
+                yield* replica.encryptedCache.put(handle, local);
+                yield* server.storage.transaction((tx) =>
+                    tx.put("Person", { id: "1", secret: handle, title: "updated" })
+                );
+                yield* replica.syncOnce;
+                expect((yield* replica.get("Person", "1"))?.title).toBe("updated");
+                expect(yield* replica.encryptedCache.get(handle)).toEqual(local);
+                const rotated = { ...handle, ciphertext: "rotated" };
+                yield* server.storage.transaction((tx) =>
+                    tx.put("Person", { id: "1", secret: rotated, title: "updated" })
+                );
+                yield* replica.syncOnce;
+                expect(yield* replica.encryptedCache.get(handle)).toBeUndefined();
+                expect(yield* replica.encryptedCache.get(rotated)).toBeUndefined();
             })
         )
     );

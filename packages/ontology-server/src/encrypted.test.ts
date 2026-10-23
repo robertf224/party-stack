@@ -29,10 +29,13 @@ const ir: OntologyIR = {
         },
     ],
 };
-const value = { id: "cipher-1", source: { objectType: "Person", primaryKey: "1", property: "secret" } };
+const value = {
+    ciphertext: "cipher-1",
+    source: { objectType: "Person", primaryKey: "1", property: "secret" },
+};
 const plaintext = "2026-10-23T12:00:00Z";
 const setup = Effect.fnUntraced(function* () {
-    const decrypt = vi.fn(() => Effect.succeed({ value: plaintext, valueId: value.id }));
+    const decrypt = vi.fn(() => Effect.succeed({ value: plaintext, ciphertext: value.ciphertext }));
     const owned = yield* makeOwnedBackend({
         ir,
         namespace: "encrypted",
@@ -84,14 +87,13 @@ test("Effect HTTP RPC explicitly authorizes decrypt and preserves plaintext repr
     );
 });
 
-test("memory clients forward cache and eviction to their persistent ontology owner", async () => {
+test("memory clients forward cache policy to their persistent ontology owner", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const { owned } = yield* setup();
                 const decrypt = vi.fn(async () => Temporal.Instant.from(plaintext));
-                const evictDecrypted = vi.fn(async () => {});
-                const ontology = { ir, decrypt, evictDecrypted } as unknown as LiveOntology;
+                const ontology = { ir, decrypt } as unknown as LiveOntology;
                 const handler = yield* makeOntologyHttpHandler({
                     source: owned.protocol,
                     ontology,
@@ -108,8 +110,6 @@ test("memory clients forward cache and eviction to their persistent ontology own
                     value,
                     expect.objectContaining({ cache: true, signal: expect.any(AbortSignal) })
                 );
-                yield* client.operations.evictDecrypted(value);
-                expect(evictDecrypted).toHaveBeenCalledWith(value);
             })
         )
     );
@@ -149,9 +149,9 @@ test("policy HTTP requires a distinct decryption grant plus readable row/propert
                 expect(yield* request.pipe(Effect.flip)).toMatchObject({ kind: "Rejected" });
                 expect(decrypt).not.toHaveBeenCalled();
                 readable = true;
-                expect(yield* request).toEqual({ value: plaintext, valueId: value.id });
+                expect(yield* request).toEqual({ value: plaintext, ciphertext: value.ciphertext });
                 expect(
-                    yield* backend.encrypted!.decrypt({ ...value, id: "other" }).pipe(Effect.flip)
+                    yield* backend.encrypted!.decrypt({ ...value, ciphertext: "other" }).pipe(Effect.flip)
                 ).toMatchObject({ kind: "Rejected" });
                 expect(decrypt).toHaveBeenCalledTimes(1);
             })

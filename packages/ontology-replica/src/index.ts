@@ -2,6 +2,7 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { clientRegistry } from "@party-stack/ontology-backend/clients";
 import { stateIdentity } from "@party-stack/ontology-backend/protocol";
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
+import { resolveType } from "@party-stack/ontology-spec/utils";
 import {
     evaluateQuery,
     field,
@@ -27,8 +28,10 @@ import {
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Clock, Context, Effect, Exit, PubSub, Queue, Schema, Semaphore, Stream } from "effect";
 import { hasWindow, isWholeCollection, primaryKeyLookup } from "./coverage.js";
+import { cachedCopy, withCachedCopy, encryptedCacheCodec, preserveCachedCopies } from "./encryptedCache.js";
 import { makeReplicaDiagnostics } from "./status.js";
 import type { ReplicaLoad, ReplicaStatus } from "./status.js";
+import type { Encrypted } from "@party-stack/ontology-spec/values";
 export { ReplicaStatusSchema, makeReplicaMonitor } from "./status.js";
 export type { ReplicaStatus, ReplicaLoad, ReplicaMonitor } from "./status.js";
 import { connectReplicaParent } from "./parent.js";
@@ -124,6 +127,11 @@ export interface ReplicaService extends OwnedReadTransaction {
     readonly sourceId: string;
     /** Reads the confirmed baseline without optimistic overrides. Neither read path acquires remote demand. */
     readonly confirmed: OwnedReadTransaction;
+    /** Private device-encrypted copies, stored on existing base rows. Never creates or retains rows. */
+    readonly encryptedCache: {
+        readonly get: (value: Encrypted) => Effect.Effect<Encrypted | undefined, BackendError>;
+        readonly put: (value: Encrypted, local: Encrypted) => Effect.Effect<void, BackendError>;
+    };
     readonly changes: Stream.Stream<void>;
     /** Acquires the subscription now, before a caller reads its initial snapshot. */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<void>, BackendError, import("effect").Scope.Scope>;
@@ -332,11 +340,23 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     });
     const views = new Map<string, Overlay<ObjectValue>>();
     const definitions = new Map(options.ir.objectTypes.map((type) => [type.name, type]));
+    const encryptedProperties = new Map<string, readonly string[]>();
     for (const type of options.ir.objectTypes) {
+        const properties = type.properties
+            .filter((property) => {
+                let resolved = resolveType(options.ir, property.type);
+                while (resolved.kind === "optional") resolved = resolveType(options.ir, resolved.value.type);
+                return resolved.kind === "encrypted";
+            })
+            .map((property) => property.name);
+        encryptedProperties.set(type.name, properties);
         const schema = Schema.toEncoded(schemas.objectSchemas[type.name]!);
         const base = Table.make<ObjectValue>({
             name: name(`base:${type.name}`),
-            codec: { encode: Schema.encodeSync(schema), decode: Schema.decodeUnknownSync(schema) },
+            codec: encryptedCacheCodec(
+                { encode: Schema.encodeSync(schema), decode: Schema.decodeUnknownSync(schema) },
+                properties
+            ),
         });
         views.set(type.name, overlay(base, { name: name(`overlay:${type.name}`) }));
         importedViews.set(
@@ -432,6 +452,17 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             ? Effect.succeed(found)
             : Effect.fail(fault("Rejected", `Unknown object type ${JSON.stringify(type)}.`));
     };
+    const putBase = Effect.fnUntraced(function* (
+        tx: Transaction,
+        type: string,
+        key: Key,
+        value: ObjectValue
+    ) {
+        const v = yield* view(type);
+        const properties = encryptedProperties.get(type)!;
+        const previous = properties.length ? yield* tx.get(v.base, key) : undefined;
+        yield* tx.put(v.base, key, preserveCachedCopies(previous, value, properties));
+    });
     const diagnostics = yield* makeReplicaDiagnostics();
     const localNotify = PubSub.publish(events, undefined).pipe(
         Effect.andThen(diagnostics.changed),
@@ -861,6 +892,18 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         const now = yield* Clock.currentTimeMillis;
         return (tx: Transaction) =>
             Effect.gen(function* () {
+                const incoming = [
+                    ...snapshot.rows,
+                    ...[...repaired].flatMap(([key, value]) => (value === undefined ? [] : [{ key, value }])),
+                ];
+                const preserved = new Map<Key, ObjectValue>();
+                const properties = encryptedProperties.get(subset.objectType)!;
+                if (properties.length)
+                    for (const row of incoming)
+                        preserved.set(
+                            row.key,
+                            preserveCachedCopies(yield* tx.get(v.base, row.key), row.value, properties)
+                        );
                 // Only an unfiltered complete snapshot can prove arbitrary cached keys were removed.
                 if (snapshot.complete && isWholeCollection(subset.query)) {
                     yield* clearRowBlobs(tx, subset.objectType, "base");
@@ -872,14 +915,11 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     yield* tx.delete(v.base, key);
                     yield* tx.delete(retention, identity(subset.objectType, key));
                 }
-                for (const row of [
-                    ...snapshot.rows,
-                    ...[...repaired].flatMap(([key, value]) => (value === undefined ? [] : [{ key, value }])),
-                ]) {
+                for (const row of incoming) {
                     if (row.value[definitions.get(subset.objectType)!.primaryKey] !== row.key)
                         return yield* fault("Rejected", "Snapshot key does not match its row.");
                     yield* retainRowBlobs(tx, subset.objectType, row.key, row.value, "base");
-                    yield* tx.put(v.base, row.key, row.value);
+                    yield* tx.put(v.base, row.key, preserved.get(row.key) ?? row.value);
                     yield* tx.put(retention, identity(subset.objectType, row.key), {
                         objectType: subset.objectType,
                         key: row.key,
@@ -965,7 +1005,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                         change.value,
                                         "base"
                                     );
-                                    yield* tx.put(v.base, change.key, change.value);
+                                    yield* putBase(tx, change.objectType, change.key, change.value);
                                     yield* tx.put(retention, identity(change.objectType, change.key), {
                                         objectType: change.objectType,
                                         key: change.key,
@@ -1603,6 +1643,47 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         ),
         sourceId: ownSourceId,
         ...readOutside(false),
+        encryptedCache: {
+            get: (value) =>
+                access(
+                    tables.read((tx) =>
+                        Effect.gen(function* () {
+                            const source = value.source;
+                            if (
+                                !source ||
+                                !encryptedProperties.get(source.objectType)?.includes(source.property)
+                            )
+                                return;
+                            const v = yield* view(source.objectType);
+                            const row = yield* tx.get(v.base, source.primaryKey);
+                            const current = row?.[source.property] as Encrypted | undefined;
+                            return current?.ciphertext === value.ciphertext ? cachedCopy(current) : undefined;
+                        })
+                    )
+                ),
+            put: (value, local) =>
+                access(
+                    tables.transaction((tx) =>
+                        Effect.gen(function* () {
+                            const source = value.source;
+                            if (
+                                !source ||
+                                !encryptedProperties.get(source.objectType)?.includes(source.property)
+                            )
+                                return;
+                            const v = yield* view(source.objectType);
+                            const row = yield* tx.get(v.base, source.primaryKey);
+                            const current = row?.[source.property] as Encrypted | undefined;
+                            // A late response cannot recreate an evicted row or cache against a newer value.
+                            if (!row || current?.ciphertext !== value.ciphertext) return;
+                            yield* tx.put(v.base, source.primaryKey, {
+                                ...row,
+                                [source.property]: withCachedCopy(current, local),
+                            });
+                        })
+                    )
+                ),
+        },
         confirmed: readOutside(true),
         changes: Stream.fromPubSub(events),
         subscribeChanges: access(PubSub.subscribe(events)).pipe(Effect.map(Stream.fromSubscription)),
@@ -1731,6 +1812,18 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             const v = yield* view(object.objectType);
                             const primaryKey = definitions.get(object.objectType)!.primaryKey;
                             const inherited = importedViews.get(object.objectType)!;
+                            const preserved = new Map<Key, ObjectValue>();
+                            const properties = encryptedProperties.get(object.objectType)!;
+                            if (properties.length)
+                                for (const row of object.base)
+                                    preserved.set(
+                                        row.key,
+                                        preserveCachedCopies(
+                                            yield* tx.get(v.base, row.key),
+                                            row.value,
+                                            properties
+                                        )
+                                    );
                             yield* tx.clear(v.base);
                             yield* tx.clear(inherited.base);
                             yield* tx.clear(inherited.overrides);
@@ -1740,7 +1833,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                         "Rejected",
                                         "Parent base key does not match its row."
                                     );
-                                yield* tx.put(v.base, row.key, row.value);
+                                yield* tx.put(v.base, row.key, preserved.get(row.key) ?? row.value);
                                 yield* tx.put(inherited.base, row.key, row.value);
                             }
                             for (const row of object.overrides) {
@@ -1752,7 +1845,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                             "Rejected",
                                             "Parent projection key does not match its row."
                                         );
-                                    yield* tx.put(v.base, row.key, row.value.value);
+                                    yield* putBase(tx, object.objectType, row.key, row.value.value);
                                 }
                             }
                         }

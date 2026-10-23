@@ -61,9 +61,11 @@ covered in [native-actions.md](./native-actions.md).
   public backend encrypt hook was removed: actions continue to accept plaintext,
   and their authoritative implementation handles encrypted property writes. Local
   encryption remains available internally. LiveOntology and both transports now
-  expose explicit decrypt/cache operations. Foundry's current-property response
-  cannot prove ciphertext identity and is therefore never cached under a handle.
-  Owned storage accepts a deployment keyring and returns identity-bound results.
+  expose explicit decrypt/cache operations. Foundry temporarily assumes the property
+  has not changed while decrypting, pending its API echoing ciphertext in the response.
+  Native ciphertext is embedded in rows, with no UUID mapping/import API. Device
+  copies live privately on replica rows and follow row GC. Owned storage accepts a
+  deployment keyring; the Alchemy DO resource provisions a stable Secrets Store key.
 - **Browser credentials:** encrypted OAuth credential persistence with separate
   CryptoKey storage, callback fixes and persisted connection/installation demand.
   Key persistence requires explicit developer opt-in; individual property decrypts
@@ -366,36 +368,42 @@ Public decrypt/cache APIs, Foundry-hosted Connect authority, broader coordinatio
 cleanup and ontology migration execution remain outstanding. Outbox input
 encryption remains deferred.
 
-## October 23 checkpoint: explicit decryption and device-encrypted cache
+## October 23 checkpoint: embedded encryption and scoped decryption
 
-LiveOntology now exposes scoped `decrypt(value, {cache?, signal?})` and
-`evictDecrypted(value)` framework methods. Default cache:false bypasses persistent
-cached decrypted copies. Opt-in caching validates portable plaintext against the
-property definition, encrypts it with the configured device key, and updates its
-property mapping/replaces old ciphertext transactionally. Its binding includes the
-existing Runtime principal partition, source, property and immutable encrypted ID.
-Nested encrypted properties and standalone parameter handles remain lower-level
-schema-driven operations. Automatic cache TTL/row-eviction coupling remains future
-work; explicit eviction, replacement and partition destruction clean cached copies.
+`Encrypted<T>` carries `{ciphertext, source?}` and a type-only `valueType` symbol.
+Native envelopes contain their encrypted data directly; there is no UUID mapping
+or ciphertext import/eviction service. Nested encrypted wrappers (including named
+references and containers) fail definition validation/schema compilation.
 
-The source decryption response optionally proves a valueId. Owned storage can do
-this with an explicit deployment keyring and immutable ciphertext handles. Foundry
-cannot: its property-current-value API returns plaintext without an identity or
-precondition. Such responses remain usable explicitly but are never cached under a
-possibly stale handle, even when cache:true. Before/after property reads cannot
-prove the binding in the presence of A→B→A changes.
+LiveOntology exposes `decrypt(value, {cache?, signal?})`. Default cache:false
+bypasses downloaded copies. Opt-in caching re-encrypts remote plaintext with the
+device key and embeds it privately on the existing replica row's property. Cache
+metadata is omitted from application rows and replication. A transactional current-
+ciphertext check prevents late responses from caching against changed/deleted rows.
+Unchanged refreshes preserve it; replacement and row GC remove it automatically.
+The original server ciphertext remains available for copying and change detection.
+There is no public evictDecrypted API or separate decrypted-value table.
+
+Backend decryption optionally echoes the ciphertext it decrypted. Contradictions
+fail; unbound results are not cached. Foundry temporarily echoes the requested
+ciphertext under the explicit assumption that its current-property decrypt did not
+race a remote change. Its adapter contains a TODO for Foundry to return the actual
+ciphertext alongside plaintext. This is an accepted limitation until that API exists.
 
 Both policy HTTP and Effect RPC route explicit decryption. HTTP requires canDecrypt
-in addition to row/property visibility. HTTP RPC disconnects before the first
-NDJSON chunk now interrupt the request scope; decrypt cancellation reaches the
-owner rather than leaving a pending decryption running. Memory tabs forward cache/eviction to their
-persistent owner. Plaintext is not added to ordinary replica state or journals.
-WebRuntime.persistEncryptionKeys now documents IndexedDB persistence, same-origin
-access, key loss and the independent per-call cache choice. The old ciphertext
-import method is renamed importCiphertext; it is not the decrypted-value cache.
+in addition to row/property visibility. HTTP RPC cancellation reaches the owner's
+scoped operation. Memory tabs forward cache policy to their persistent owner.
+WebRuntime.persistEncryptionKeys documents persistence/same-origin/key-loss limits.
+Expo adds requireAuthentication/authenticationPrompt options to its platform secret
+store; session unlocking and a default general Expo EncryptionKeyring are separate
+follow-ups. Connect's OS-secret fallback still uses platform credential references.
+
+The Alchemy DO factory generates one stable 256-bit key through Alchemy Random,
+provisions a Cloudflare Secrets Store secret scoped by stack/stage/resource, and
+imports it as a non-extractable AES-GCM key. An explicit encryptionKeyring overrides
+this default. Key rotation and old-key retention remain future work.
 
 Foundry v2 staged-write wrappers convert plaintext strings to {plaintext} and copied
-portable Foundry handles to {ciphertext}, and preserve real OSDK CipherText objects
-without decrypting them. General native mutator auto-encryption/write types and
-outbox-parameter encryption remain design follow-ups, not implemented implicitly.
-See packages/ontology/encrypted-values.md for the full boundary and API contract.
+portable Foundry encrypted values to {ciphertext}, preserving OSDK instances without
+decrypting. General native mutator auto-encryption/write types and outbox-parameter
+encryption remain separate follow-ups. See packages/ontology/encrypted-values.md.

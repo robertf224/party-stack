@@ -2,7 +2,6 @@ import { Encrypted as EncryptedSchema, TemporalTimestamp } from "@party-stack/on
 import { Effect, Result, Schema } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { expect, test } from "vitest";
-import * as Memory from "../memory/tables.js";
 import { makeEncryptedValues } from "./index.js";
 
 const keyring = async () => {
@@ -16,71 +15,63 @@ const keyring = async () => {
     };
 };
 
-test("encrypted handles round-trip without plaintext or keys and decrypt only explicitly", async () => {
+test("ciphertext is self-contained and round-trips Temporal without any storage service", async () => {
     const keys = await keyring();
     await Effect.runPromise(
         Effect.gen(function* () {
-            const tables = yield* Memory.make();
-            const values = makeEncryptedValues("test", tables, keys);
-            const plaintext = Schema.Struct({ token: Schema.String, at: TemporalTimestamp });
-            const value = {
-                token: "sensitive-token-for-test",
+            const values = makeEncryptedValues("test", keys);
+            const schema = Schema.Struct({ token: Schema.String, at: TemporalTimestamp });
+            const plaintext = {
+                token: "sensitive-token-test",
                 at: Temporal.Instant.from("2026-10-19T00:00:00.123456789Z"),
             };
-            const handle = yield* values.encrypt(plaintext, value);
-            expect(Object.keys(handle)).toEqual(["id"]);
-            const encoded = Schema.encodeSync(EncryptedSchema(plaintext))(handle);
-            expect(encoded).toEqual(handle);
-            const ciphertext = yield* values.ciphertext(handle);
-            expect(ciphertext?.format).toBe("aes-gcm-v1");
-            expect(JSON.stringify(ciphertext)).not.toContain(value.token);
-            expect(Object.keys(ciphertext!)).toEqual(["format", "keyId", "iv", "data"]);
-            expect(yield* values.decrypt(plaintext, handle)).toEqual(value);
-            const second = yield* values.encrypt(plaintext, value);
-            expect((yield* values.ciphertext(second))?.iv).not.toBe(ciphertext?.iv);
-            yield* values.evict(handle);
-            expect(yield* values.ciphertext(handle)).toBeUndefined();
-            const missing = yield* Effect.result(values.decrypt(plaintext, handle));
+            const encrypted = yield* values.encrypt(schema, plaintext);
+            expect(Object.keys(encrypted)).toEqual(["ciphertext"]);
+            expect(JSON.stringify(encrypted)).not.toContain(plaintext.token);
+            expect(Schema.encodeSync(EncryptedSchema(schema))(encrypted)).toEqual(encrypted);
             expect(
-                Result.isFailure(missing) &&
-                    missing.failure._tag === "EncryptionError" &&
-                    missing.failure.kind
-            ).toBe("MissingCiphertext");
-            yield* values.importCiphertext(handle, ciphertext!);
-            expect(yield* values.decrypt(plaintext, handle)).toEqual(value);
+                yield* makeEncryptedValues("test", keys).decrypt(schema, structuredClone(encrypted))
+            ).toEqual(plaintext);
+            expect((yield* values.encrypt(schema, plaintext)).ciphertext).not.toBe(encrypted.ciphertext);
         })
     );
 });
 
-test("ciphertext authentication binds its handle and namespace; keys and plaintext types remain required", async () => {
+test("authentication rejects tampering, other namespaces and missing keys; plaintext schema remains required", async () => {
     const keys = await keyring();
     await Effect.runPromise(
         Effect.gen(function* () {
-            const tables = yield* Memory.make();
-            const values = makeEncryptedValues("owner", tables, keys);
-            const handle = yield* values.encrypt(Schema.String, "private-test-value");
-            const ciphertext = (yield* values.ciphertext(handle))!;
-            const errorKind = <A>(effect: Effect.Effect<A, unknown>) =>
+            const values = makeEncryptedValues("owner", keys);
+            const encrypted = yield* values.encrypt(Schema.String, "private-test-value");
+            const kind = <A>(effect: Effect.Effect<A, unknown>) =>
                 Effect.map(Effect.result(effect), (result) =>
                     Result.isFailure(result) ? (result.failure as { kind?: string }).kind : undefined
                 );
-            const transplanted = { id: "different-id" };
-            yield* values.importCiphertext(transplanted, ciphertext);
-            expect(yield* errorKind(values.decrypt(Schema.String, transplanted))).toBe("InvalidCiphertext");
-            const other = makeEncryptedValues("different-namespace", tables, keys);
-            yield* other.importCiphertext(handle, ciphertext);
-            expect(yield* errorKind(other.decrypt(Schema.String, handle))).toBe("InvalidCiphertext");
-            const noKeys = makeEncryptedValues("owner", tables, {
-                ...keys,
-                get: () => Effect.succeed(undefined),
-            });
-            expect(yield* errorKind(noKeys.decrypt(Schema.String, handle))).toBe("MissingKey");
-            expect(yield* errorKind(values.decrypt(Schema.Number, handle as never))).toBe("InvalidValue");
-            yield* values.importCiphertext(handle, {
-                ...ciphertext,
-                data: `${ciphertext.data[0] === "A" ? "B" : "A"}${ciphertext.data.slice(1)}`,
-            });
-            expect(yield* errorKind(values.decrypt(Schema.String, handle))).toBe("InvalidCiphertext");
+            expect(yield* kind(makeEncryptedValues("other", keys).decrypt(Schema.String, encrypted))).toBe(
+                "InvalidCiphertext"
+            );
+            expect(
+                yield* kind(
+                    makeEncryptedValues("owner", { ...keys, get: () => Effect.succeed(undefined) }).decrypt(
+                        Schema.String,
+                        encrypted
+                    )
+                )
+            ).toBe("MissingKey");
+            const wrongKeys = yield* Effect.promise(keyring);
+            expect(
+                yield* kind(makeEncryptedValues("owner", wrongKeys).decrypt(Schema.String, encrypted))
+            ).toBe("InvalidCiphertext");
+            expect(yield* kind(values.decrypt(Schema.Number, encrypted as never))).toBe("InvalidValue");
+            const prefix = "party-stack:encrypted:v1:";
+            const envelope = JSON.parse(encrypted.ciphertext.slice(prefix.length));
+            envelope.data = (envelope.data[0] === "A" ? "B" : "A") + envelope.data.slice(1);
+            expect(
+                yield* kind(values.decrypt(Schema.String, { ciphertext: prefix + JSON.stringify(envelope) }))
+            ).toBe("InvalidCiphertext");
+            expect(yield* kind(values.decrypt(Schema.String, { ciphertext: "CIPHER::remote" }))).toBe(
+                "InvalidCiphertext"
+            );
         })
     );
 });

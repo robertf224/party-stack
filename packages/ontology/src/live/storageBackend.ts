@@ -91,8 +91,8 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                       if (
                           !current ||
                           typeof current !== "object" ||
-                          !("id" in current) ||
-                          current.id !== value.id
+                          !("ciphertext" in current) ||
+                          current.ciphertext !== value.ciphertext
                       )
                           return yield* new BackendError({
                               operation: "decrypt",
@@ -102,7 +102,6 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                           });
                       const plaintext = yield* makeEncryptedValues(
                           options.namespace,
-                          tables,
                           options.encryptionKeyring!
                       )
                           .decrypt(Schema.Unknown, checked.handle)
@@ -120,7 +119,7 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                       return yield* Effect.try({
                           try: () => {
                               checked.codec.decode(plaintext);
-                              return { value: plaintext, valueId: value.id };
+                              return { value: plaintext, ciphertext: value.ciphertext };
                           },
                           catch: () =>
                               new BackendError({

@@ -76,7 +76,6 @@ const HelperRpcs = RpcGroup.make(
         success: protocolValueCodec(Schema.Unknown),
         error: BackendError,
     }),
-    Rpc.make("EvictDecrypted", { payload: EncryptedValueSchema, error: BackendError }),
     Rpc.make("QueryFunction", {
         payload: protocolValueCodec(Schema.Struct({ name: Schema.NonEmptyString, parameters: Parameters })),
         success: protocolValueCodec(Schema.Unknown),
@@ -129,10 +128,6 @@ export type OntologyOperationRequest =
           readonly operation: "Decrypt";
           readonly value: import("@party-stack/ontology/values").Encrypted;
           readonly cache?: boolean;
-      }
-    | {
-          readonly operation: "EvictDecrypted";
-          readonly value: import("@party-stack/ontology/values").Encrypted;
       }
     | {
           readonly operation: "QueryFunction" | "ValidateAction";
@@ -211,7 +206,7 @@ export const ontologyOperationHandlers = <R>(options: {
                 if (options.backend) {
                     if (!options.backend.encrypted) return yield* missing("Decrypt");
                     const result = yield* options.backend.encrypted.decrypt(request.value);
-                    if (result.valueId !== undefined && result.valueId !== request.value.id)
+                    if (result.ciphertext !== undefined && result.ciphertext !== request.value.ciphertext)
                         return yield* new BackendError({
                             operation: "decrypt",
                             kind: "Conflict",
@@ -236,12 +231,6 @@ export const ontologyOperationHandlers = <R>(options: {
                         }),
                 });
             }).pipe(Effect.mapError(decryptFailure)),
-        EvictDecrypted: (value, context) =>
-            Effect.gen(function* () {
-                yield* options.authorize({ operation: "EvictDecrypted", value }, context.headers);
-                const ontology = yield* live();
-                yield* attempt(() => ontology.evictDecrypted(value));
-            }),
         QueryFunction: (request, context) =>
             Effect.gen(function* () {
                 yield* options.authorize({ operation: "QueryFunction", ...request }, context.headers);
@@ -437,9 +426,6 @@ export interface OntologyOperationsClient {
         value: import("@party-stack/ontology/values").Encrypted,
         options?: { cache?: boolean }
     ) => Effect.Effect<unknown, BackendError>;
-    readonly evictDecrypted: (
-        value: import("@party-stack/ontology/values").Encrypted
-    ) => Effect.Effect<void, BackendError>;
     readonly queryFunction: (
         name: string,
         parameters: Record<string, unknown>
@@ -589,8 +575,6 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
     return {
         decrypt: (value, settings) =>
             client.Decrypt({ value, cache: settings?.cache }).pipe(Effect.mapError(decryptFailure)),
-        evictDecrypted: (value) =>
-            client.EvictDecrypted(value).pipe(Effect.mapError(() => missing("EvictDecrypted"))),
         deleteLocalData: client.DeleteLocalData().pipe(Effect.mapError(failure)),
         releaseOwner: client.ReleaseOwner(undefined, { discard: true }).pipe(Effect.mapError(failure)),
         queryFunction: (name, parameters) =>

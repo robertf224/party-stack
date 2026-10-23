@@ -6,7 +6,7 @@ import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { Encrypted } from "@party-stack/ontology-spec/values";
 
 export const EncryptedValueSchema = Schema.Struct({
-    id: Schema.NonEmptyString,
+    ciphertext: Schema.NonEmptyString,
     source: Schema.optional(
         Schema.Struct({
             objectType: Schema.NonEmptyString,
@@ -19,10 +19,10 @@ export const EncryptedValueSchema = Schema.Struct({
 /** value uses the property's portable JSON representation, including Temporal and Result values. */
 export const DecryptedValueSchema = Schema.Struct({
     value: Schema.Unknown,
-    /** Set only when the authority can prove which immutable encrypted value it decrypted.
-     * Property-current-value endpoints must omit this when they cannot bind their response.
+    /** Ciphertext associated with this plaintext. Contradictions are rejected; absent binding prevents caching.
+     * Prefer an authority-proven value. Adapters using current-property APIs must explicitly document any assumption.
      */
-    valueId: Schema.optional(Schema.NonEmptyString),
+    ciphertext: Schema.optional(Schema.NonEmptyString),
 });
 export type DecryptedValue = typeof DecryptedValueSchema.Type;
 

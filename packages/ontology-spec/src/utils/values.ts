@@ -18,17 +18,17 @@ export type Union<T extends Record<string, unknown>> = {
 
 export type Result<T, E> = Union<{ ok: T; err: E }>;
 
-declare const encryptedPlaintext: unique symbol;
+declare const valueType: unique symbol;
 
-/** A portable handle. Neither ciphertext availability nor decrypt permission is implied. */
+/** Opaque encrypted data. Reading a record never implicitly decrypts it. */
 export interface Encrypted<T = unknown> {
-    readonly id: string;
+    readonly ciphertext: string;
     readonly source?: {
         readonly objectType: string;
         readonly primaryKey: string | number;
         readonly property: string;
     };
-    readonly [encryptedPlaintext]?: T;
+    readonly [valueType]?: T;
 }
 
 export type attachment<Type extends string = string> = {

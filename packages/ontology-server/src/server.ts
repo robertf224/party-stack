@@ -986,7 +986,9 @@ async function withReadablePropertyValue<
 >(
     ctx: Context,
     opts: CreateRemoteOntologyServerOptions<Context, Ontology>,
-    request: RemoteAttachmentRequest,
+    request: {
+        attachment: RemoteAttachmentRequest["attachment"] | import("@party-stack/ontology/values").Encrypted;
+    },
     read: (ontology: LiveOntology<Ontology>) => Promise<Result>
 ): Promise<Result> {
     const source = request.attachment.source;
@@ -1048,7 +1050,16 @@ async function withReadablePropertyValue<
             })
         );
         const object = objects.find((candidate) => candidate[primaryKey] === source.primaryKey);
-        if (!object || !containsAttachmentId(object[source.property], request.attachment.id)) {
+        const expected = request.attachment;
+        const actual = object?.[source.property];
+        const matches =
+            "ciphertext" in expected
+                ? typeof actual === "object" &&
+                  actual !== null &&
+                  "ciphertext" in actual &&
+                  actual.ciphertext === expected.ciphertext
+                : containsAttachmentId(actual, expected.id);
+        if (!object || !matches) {
             throw new RemoteOntologyForbiddenError("Property value is not readable.");
         }
 

@@ -85,7 +85,7 @@ const authority = Effect.gen(function* () {
     const keys = yield* EncryptionKeyring;
     const namespace = "private-connections";
     const store = yield* makeConnectStore({ tables, namespace });
-    const values = makeEncryptedValues(namespace, tables, keys);
+    const values = { ...makeEncryptedValues(namespace, keys), evict: () => Effect.void };
     const connect = yield* makeConnect({
         store,
         values,

@@ -7,6 +7,7 @@ import { DurableObjectState, fromDurableObjectState } from "alchemy/Cloudflare/W
 import { Worker, WorkerEnvironment } from "alchemy/Cloudflare/Workers/Worker";
 import { makeWorkerRuntimeContext } from "alchemy/Cloudflare/Workers/WorkerRuntimeContext";
 import * as Output from "alchemy/Output";
+import { Stack } from "alchemy/Stack";
 import { ConfigProvider, Context, Effect, Result, type Scope } from "effect";
 import { FetchHttpClient, HttpEffect } from "effect/http";
 import { OntologyDurableObject } from "../src/alchemy/index.js";
@@ -32,6 +33,13 @@ const declare = Effect.fnUntraced(function* (bucket: R2Bucket, gc: OntologyDurab
                     bindings.push(properties);
                 }),
     };
+    const stack: Context.Service.Shape<typeof Stack> = {
+        name: "resource-test",
+        stage: "test",
+        resources: {},
+        bindings: {},
+        actions: {},
+    };
     const resource = OntologyDurableObject("ResourceNotes", {
         ir: sqliteOntologyConformanceIR,
         bucket: Bucket.ref("BLOBS"),
@@ -49,10 +57,19 @@ const declare = Effect.fnUntraced(function* (bucket: R2Bucket, gc: OntologyDurab
                       })
                   ),
     });
+    let secretReads = 0;
     const namespace = yield* resource.pipe(
-        // Test-only partial host: these are the binding/export capabilities the SDK invokes.
         Effect.provideService(TestWorker, host as unknown as Effect.Success<typeof Worker>),
-        Effect.provideService(WorkerEnvironment, { BLOBS: bucket }),
+        Effect.provideService(WorkerEnvironment, {
+            BLOBS: bucket,
+            ResourceNotesEncryptionKey: {
+                get: async () => {
+                    secretReads++;
+                    return "ab".repeat(32);
+                },
+            },
+        }),
+        Effect.provideService(Stack, stack),
         Effect.provideService(
             ConfigProvider.ConfigProvider,
             ConfigProvider.fromUnknown({ ALCHEMY_PHASE: "plan" })
@@ -62,13 +79,14 @@ const declare = Effect.fnUntraced(function* (bucket: R2Bucket, gc: OntologyDurab
     const exported = exports.ResourceNotes;
     if (!isDurableObjectExport(exported))
         throw new Error("Factory did not register a Durable Object export.");
-    return { namespace, exported, bindings };
+    return { namespace, exported, bindings, encryptionConfigured: () => secretReads > 0 };
 });
 
 export interface ResourceResult {
     name: string;
     bindingRegistered: boolean;
     schemaDeferred: boolean;
+    encryptionConfigured: boolean;
     denied: boolean;
     firstAlarm: boolean;
     scheduled: boolean;
@@ -179,6 +197,7 @@ export const runOntologyResource: (
     );
     const snapshot = yield* restored.read(yield* restored.openClient());
     return {
+        encryptionConfigured: definition.encryptionConfigured(),
         name: definition.namespace.name,
         bindingRegistered: definition.bindings.some((registration) =>
             registration.bindings.some(

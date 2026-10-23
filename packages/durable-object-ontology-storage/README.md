@@ -67,7 +67,8 @@ Yield `Notes` in your Alchemy Worker's initialization to obtain its namespace, t
 forward requests with `notes.getByName("primary").fetch(request)`. Alchemy registers
 the binding and exported DO class; application code does not extend DurableObject.
 The factory supplies native SQL/R2 storage, the owned backend, authenticated Effect
-RPC and a bounded hourly GC alarm. Authorization is required for every RPC operation.
+RPC, a stable encryption key provisioned through Alchemy/Cloudflare Secrets Store,
+and a bounded hourly GC alarm. Authorization is required for every RPC operation.
 `ontologyId` defaults to the resource name; each DO instance has isolated SQL state
 and its own R2 key prefix.
 
@@ -75,6 +76,12 @@ Options may also be an Effect resolved during Alchemy initialization, for exampl
 read `Config.Redacted` and construct the authorization function. `context`, `mutators`
 and `queryFunctions` pass through to the shared backend. Optional `gc` settings are
 `intervalMs`, `orphanGraceMs` and `limit`; `gc: false` disables collection/scheduling.
+Supply `encryptionKeyring` to override the default key service. The generated 256-bit
+key is retained in Alchemy deployment state and Cloudflare Secrets Store; protect both.
+Do not replace/delete it while retaining ciphertext without a key-rotation plan.
+There is no automatic rotation yet. The runtime imports it with WebCrypto as a
+non-extractable AES-GCM key.
+
 The default orphan grace is one hour. Reconstruction preserves an existing alarm.
 
 The [complete Alchemy example](./examples/alchemy/alchemy.run.ts) adds a forwarding

@@ -7,7 +7,7 @@ export function Encrypted<A, AI>(
     _plaintext: Schema.Codec<A, AI>
 ): Schema.Codec<EncryptedValue<A>, EncryptedValue<AI>> {
     return Schema.Struct({
-        id: Schema.String,
+        ciphertext: Schema.String,
         source: Schema.optional(
             Schema.Struct({
                 objectType: Schema.String,

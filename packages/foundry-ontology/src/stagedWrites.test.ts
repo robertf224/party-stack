@@ -91,7 +91,7 @@ it("encrypts plaintext and copies opaque Foundry handles through v2 staged edits
         args: {},
         mutator: async ({ tx }) => {
             await tx.mutate.Task!.create({ id: "one", secret: "private test value" });
-            await tx.mutate.Task!.update("one", { secret: { id: ciphertext } });
+            await tx.mutate.Task!.update("one", { secret: { ciphertext: ciphertext } });
             await tx.mutate.Task!.update("one", [{ path: ["secret"], value: "rotated" }]);
             await tx.mutate.Task!.update("one", { secret: undefined });
         },
@@ -110,7 +110,10 @@ it("encrypts plaintext and copies opaque Foundry handles through v2 staged edits
             ir: schema,
             client: { create, update, delete: async () => {} },
             args: {},
-            mutator: ({ tx }) => tx.mutate.Task!.update("one", { secret: { id: "device-only-handle" } }),
+            mutator: ({ tx }) =>
+                tx.mutate.Task!.update("one", {
+                    secret: { ciphertext: "party-stack:encrypted:v1:device-only-envelope" },
+                }),
         })
     ).rejects.toThrow("Foundry encrypted handle");
 });

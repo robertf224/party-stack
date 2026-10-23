@@ -344,7 +344,10 @@ export function parseRemoteOntologyRequest(
                 input: z
                     .object({
                         value: z
-                            .object({ id: z.string().min(1), source: attachmentSourceSchema.optional() })
+                            .object({
+                                ciphertext: z.string().min(1),
+                                source: attachmentSourceSchema.optional(),
+                            })
                             .strict(),
                     })
                     .strict()

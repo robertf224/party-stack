@@ -18,10 +18,11 @@ async function fixture(extended = false) {
         "encrypt",
         "decrypt",
     ]);
-    const values = makeEncryptedValues("connect", tables, {
+    const cryptoValues = makeEncryptedValues("connect", {
         active: Effect.succeed({ id: "key", key }),
         get: () => Effect.succeed(key),
     });
+    const values = { ...cryptoValues, evict: () => Effect.void };
     const ir = structuredClone(connectOntology);
     if (extended) {
         ir.objectTypes
@@ -112,10 +113,9 @@ describe("Connect authority", () => {
         expect(await run(f.values.decrypt(Schema.String, attempt.codeVerifier))).not.toBe("");
         const connection = await f.complete(started.id);
         expect(await run(f.connect.accessToken(connection.id))).toBe("access");
-        expect(connection.accessToken?.id).not.toContain("access");
+        expect(connection.accessToken?.ciphertext).not.toContain("access");
         expect((await f.complete(started.id)).id).toBe(connection.id);
         expect(f.exchange).toHaveBeenCalledTimes(1);
-        expect(await run(f.values.ciphertext(attempt.codeVerifier))).toBeUndefined();
         expect((await run(f.store.get("OAuthConnector", "connector")))?.connection).toBe(connection.id);
     });
     it("checks principal, expiry, callback location and prevents duplicate in-flight exchanges", async () => {
@@ -166,13 +166,11 @@ describe("Connect authority", () => {
         );
         expect(await run(next.accessToken(connection.id))).toBe("access");
     });
-    it("rotates credentials atomically and removes superseded ciphertext", async () => {
+    it("rotates credentials atomically and replaces embedded ciphertext", async () => {
         const f = await fixture();
         const connection = await f.complete((await f.begin()).id);
         const next = await run(f.connect.refresh(connection.id));
         expect(await run(f.connect.accessToken(connection.id))).toBe("new-access");
-        expect(await run(f.values.ciphertext(connection.accessToken!))).toBeUndefined();
-        expect(await run(f.values.ciphertext(connection.refreshToken!))).toBeUndefined();
         expect(await run(f.values.decrypt(Schema.String, next.refreshToken!))).toBe("rotated");
         expect(next.operationId).toBeUndefined();
     });
@@ -185,7 +183,6 @@ describe("Connect authority", () => {
         expect(next.status).toBe("needs-auth");
         expect(next.refreshToken).toBeUndefined();
         expect(next.operationId).toBeUndefined();
-        expect(await run(f.values.ciphertext(connection.refreshToken!))).toBeUndefined();
         expect(await run(f.connect.accessToken(connection.id))).toBe("access");
     });
     it("keeps credentials after a definite transient provider failure", async () => {
@@ -246,7 +243,6 @@ describe("Connect authority", () => {
         await run(f.store.put("OAuthAuthorizationAttempt", { ...attempt, expiresAt: time(-1000) }));
         expect(await run(f.connect.collectExpired({ limit: 1 }))).toEqual({ attempts: 1, refreshTokens: 1 });
         expect(await run(f.store.get("OAuthAuthorizationAttempt", started.id))).toBeUndefined();
-        expect(await run(f.values.ciphertext(attempt.codeVerifier))).toBeUndefined();
         expect((await run(f.store.get("OAuthConnection", connection.id)))?.status).toBe("needs-auth");
         expect(await run(f.connect.accessToken(connection.id))).toBe("access");
     });
@@ -291,7 +287,6 @@ describe("Connect authority", () => {
         f.provider.revoke = () => Effect.fail(connectError("Provider", "Unavailable", true));
         await expect(run(f.connect.disconnect(connection.id))).rejects.toThrow(/Unavailable/);
         expect((await run(f.store.get("OAuthConnection", connection.id)))?.status).toBe("inactive");
-        expect(await run(f.values.ciphertext(connection.accessToken!))).toBeUndefined();
     });
 });
 
@@ -364,7 +359,7 @@ describe("Connect HTTP boundary", () => {
     });
 });
 
-it("rolls back ciphertext and handles together if saving rotated credentials fails", async () => {
+it("rolls back embedded credentials if saving rotated credentials fails", async () => {
     const f = await fixture();
     const connection = await f.complete((await f.begin()).id);
     let failedHandle: string | undefined;
@@ -378,9 +373,9 @@ it("rolls back ciphertext and handles together if saving rotated credentials fai
                 name === "OAuthConnection" &&
                 "accessToken" in value &&
                 value.accessToken &&
-                value.accessToken.id !== connection.accessToken!.id
+                value.accessToken.ciphertext !== connection.accessToken!.ciphertext
             ) {
-                failedHandle = value.accessToken.id;
+                failedHandle = value.accessToken.ciphertext;
                 return f.store
                     .put(name, value)
                     .pipe(Effect.andThen(Effect.fail(connectError("Storage", "Injected commit failure"))));
@@ -396,7 +391,7 @@ it("rolls back ciphertext and handles together if saving rotated credentials fai
     expect(stored.accessToken).toEqual(connection.accessToken);
     expect(stored.refreshToken).toEqual(connection.refreshToken);
     expect(await run(f.values.decrypt(Schema.String, connection.refreshToken!))).toBe("refresh");
-    expect(await run(f.values.ciphertext({ id: failedHandle! }))).toBeUndefined();
+    expect(stored.accessToken?.ciphertext).not.toBe(failedHandle);
     expect(stored.operationId).toBeDefined();
 });
 
@@ -436,5 +431,4 @@ it("can disconnect locally when the decryption key is unavailable", async () => 
     );
     await run(connect.disconnect(connection.id));
     expect((await run(f.store.get("OAuthConnection", connection.id)))?.status).toBe("inactive");
-    expect(await run(f.values.ciphertext(connection.accessToken!))).toBeUndefined();
 });

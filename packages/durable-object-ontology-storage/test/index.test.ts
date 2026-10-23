@@ -132,6 +132,7 @@ for (const disabled of [false, true]) {
             name: "ResourceNotes",
             bindingRegistered: true,
             schemaDeferred: true,
+            encryptionConfigured: true,
             denied: true,
             firstAlarm: true,
             scheduled: true,

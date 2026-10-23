@@ -52,14 +52,14 @@ describe("Foundry encrypted properties", () => {
         for (const decode of [codec.decodeObject, codec.decodeEditObject]) {
             expect(decode("Person", { id: "person-1", ssn: cipher })).toEqual({
                 id: "person-1",
-                ssn: { id: cipher, source },
+                ssn: { ciphertext: cipher, source },
             });
             expect(decode("Person", { id: "person-1", ssn: null })).toEqual({
                 id: "person-1",
                 ssn: undefined,
             });
         }
-        expect(codec.encodeValue(o.encrypted({ type: o.string({}) }), { id: cipher })).toBe(cipher);
+        expect(codec.encodeValue(o.encrypted({ type: o.string({}) }), { ciphertext: cipher })).toBe(cipher);
         expect(() => codec.encodeValue(o.encrypted({ type: o.string({}) }), "plaintext")).toThrow(
             "Expected object"
         );
@@ -69,8 +69,9 @@ describe("Foundry encrypted properties", () => {
     it("decrypts explicitly through the property API every time, without caching", async () => {
         calls.decrypt.mockResolvedValue({ plaintext: "123-45-6789" });
         for (let i = 0; i < 2; i++)
-            expect(await Effect.runPromise(backend.decrypt({ id: cipher, source }))).toEqual({
+            expect(await Effect.runPromise(backend.decrypt({ ciphertext: cipher, source }))).toEqual({
                 value: "123-45-6789",
+                ciphertext: cipher,
             });
         expect(calls.decrypt).toHaveBeenCalledTimes(2);
         expect(calls.decrypt).toHaveBeenCalledWith(
@@ -93,8 +94,9 @@ describe("Foundry encrypted properties", () => {
                         live: false,
                     }).open({});
                     expect(native.encrypted).toBeDefined();
-                    expect(yield* native.encrypted!.decrypt({ id: cipher, source })).toEqual({
+                    expect(yield* native.encrypted!.decrypt({ ciphertext: cipher, source })).toEqual({
                         value: "value",
+                        ciphertext: cipher,
                     });
                 })
             )
@@ -144,7 +146,7 @@ describe("Foundry encrypted properties", () => {
             scopedClient.fetch("https://foundry.example/decrypt")
         );
         const controller = new AbortController();
-        const result = Effect.runPromiseExit(values.decrypt({ id: cipher, source }), {
+        const result = Effect.runPromiseExit(values.decrypt({ ciphertext: cipher, source }), {
             signal: controller.signal,
         });
         await vi.waitFor(() => expect(requestSignal).toBeDefined());
@@ -155,9 +157,9 @@ describe("Foundry encrypted properties", () => {
 
     it("rejects missing/unknown/non-encrypted property targets before making a request", async () => {
         for (const handle of [
-            { id: cipher },
-            { id: cipher, source: { ...source, objectType: "Unknown" } },
-            { id: cipher, source: { ...source, property: "id" } },
+            { ciphertext: cipher },
+            { ciphertext: cipher, source: { ...source, objectType: "Unknown" } },
+            { ciphertext: cipher, source: { ...source, property: "id" } },
         ])
             expect(Exit.isFailure(await Effect.runPromiseExit(backend.decrypt(handle)))).toBe(true);
         expect(calls.decrypt).not.toHaveBeenCalled();
@@ -170,7 +172,7 @@ describe("Foundry encrypted properties", () => {
             type: o.string({ constraint: o.StringConstraint.regex({ regex: "^[0-9-]+$" }) }),
         });
         const exit = await Effect.runPromiseExit(
-            makeFoundryEncryptedValues(client, strict).decrypt({ id: cipher, source })
+            makeFoundryEncryptedValues(client, strict).decrypt({ ciphertext: cipher, source })
         );
         expect(Exit.isFailure(exit)).toBe(true);
         expect(JSON.stringify(exit)).not.toContain("sensitive invalid plaintext");
@@ -184,7 +186,7 @@ describe("Foundry encrypted properties", () => {
         expect(
             Exit.isFailure(
                 await Effect.runPromiseExit(
-                    makeFoundryEncryptedValues(client, numeric).decrypt({ id: cipher, source })
+                    makeFoundryEncryptedValues(client, numeric).decrypt({ ciphertext: cipher, source })
                 )
             )
         ).toBe(true);
@@ -200,7 +202,9 @@ describe("Foundry encrypted properties", () => {
         "classifies status %s without retaining sensitive provider errors",
         async (statusCode, kind, retryable) => {
             calls.decrypt.mockRejectedValue({ statusCode, body: "sensitive provider body" });
-            const error = await Effect.runPromise(backend.decrypt({ id: cipher, source }).pipe(Effect.flip));
+            const error = await Effect.runPromise(
+                backend.decrypt({ ciphertext: cipher, source }).pipe(Effect.flip)
+            );
             expect(error).toMatchObject({ _tag: "BackendError", kind, retryable });
             expect(JSON.stringify(error)).not.toContain("sensitive provider body");
         }

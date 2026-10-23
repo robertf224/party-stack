@@ -4,13 +4,13 @@ import { Effect, Fiber, Schema } from "effect";
 import { Runtime, runtimeEffects } from "./Runtime.js";
 import type { RuntimeAdapter, SecretStore } from "./types.js";
 
-/** Application boundary: only opaque handles and ciphertext enter ordinary storage. */
+/** Application boundary: only embedded ciphertext enters ordinary storage. */
 export function createEncryptedSecretStore(adapter: RuntimeAdapter): SecretStore {
     const managed = runtimeEffects(adapter).runtime;
     const namespace = JSON.stringify([adapter.owner, adapter.namespace]);
-    const schema = Schema.Struct({ id: Schema.String });
+    const schema = Schema.Struct({ ciphertext: Schema.String });
     const handles = Table.make({
-        name: JSON.stringify(["runtime", adapter.owner, adapter.namespace, "secret-handles"]),
+        name: JSON.stringify(["runtime", adapter.owner, adapter.namespace, "secrets"]),
         codec: { encode: Schema.encodeSync(schema), decode: Schema.decodeUnknownSync(schema) },
     });
     const operation = <A>(
@@ -27,7 +27,7 @@ export function createEncryptedSecretStore(adapter: RuntimeAdapter): SecretStore
                 const keys = runtime.encryptionKeyring;
                 return yield* Effect.flatMap(
                     Effect.forkIn(
-                        runtime.tables.transaction((tx) => run(tx, makeEncryptedValues(namespace, tx, keys))),
+                        runtime.tables.transaction((tx) => run(tx, makeEncryptedValues(namespace, keys))),
                         runtime.scope
                     ),
                     Fiber.join
@@ -45,18 +45,14 @@ export function createEncryptedSecretStore(adapter: RuntimeAdapter): SecretStore
         set: (key, value) =>
             operation((tx, values) =>
                 Effect.gen(function* () {
-                    const previous = yield* tx.get(handles, key);
                     const next = yield* values.encrypt(Schema.String, value);
                     yield* tx.put(handles, key, next);
-                    if (previous) yield* values.evict(previous);
                 })
             ),
         delete: (key) =>
             operation((tx, values) =>
                 Effect.gen(function* () {
-                    const previous = yield* tx.get(handles, key);
                     yield* tx.delete(handles, key);
-                    if (previous) yield* values.evict(previous);
                 })
             ),
     };

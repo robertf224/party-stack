@@ -47,7 +47,7 @@ it("round-trips Temporal inside portable Results/unions and forwards only encryp
                 created: Temporal.Instant.from("2026-10-19T12:00:00.123456789Z"),
                 dates: [Temporal.PlainDate.from("2026-10-19")],
                 secret: {
-                    id: "opaque",
+                    ciphertext: "opaque",
                     plaintext: "must not be forwarded",
                     source: {
                         objectType: "Note",
@@ -69,7 +69,7 @@ it("round-trips Temporal inside portable Results/unions and forwards only encryp
                 created: "2026-10-19T12:00:00.123456789Z",
                 dates: ["2026-10-19"],
                 secret: {
-                    id: "opaque",
+                    ciphertext: "opaque",
                     source: { objectType: "Note", primaryKey: "one", property: "secret" },
                 },
             },
@@ -82,7 +82,7 @@ it("round-trips Temporal inside portable Results/unions and forwards only encryp
             value: {
                 ...value.value.value,
                 secret: {
-                    id: "opaque",
+                    ciphertext: "opaque",
                     source: { objectType: "Note", primaryKey: "one", property: "secret" },
                 },
             },

@@ -16,7 +16,10 @@ export function runtimeCredentialValues(
     import("../core/errors.js").ConnectError
 > {
     if (runtime.encryptionKeyring)
-        return Effect.succeed(makeEncryptedValues(namespace, runtime.tables, runtime.encryptionKeyring));
+        return Effect.succeed({
+            ...makeEncryptedValues(namespace, runtime.encryptionKeyring),
+            evict: () => Effect.void,
+        });
     const platform = runtime.adapter.secrets;
     if (!platform && !allowPlaintext)
         return Effect.fail(
@@ -48,18 +51,18 @@ export function runtimeCredentialValues(
             ).pipe(Effect.mapError(() => connectError("Storage", "Invalid credential value.")));
             const id = `${namespace}:${crypto.randomUUID()}`;
             yield* set(id, encoded);
-            return { id };
+            return { ciphertext: id };
         }),
         decrypt: Effect.fnUntraced(function* <A, AI>(
             schema: Schema.Codec<A, AI>,
             value: import("@party-stack/ontology-spec/values").Encrypted<A>
         ) {
-            const encoded = yield* get(value.id);
+            const encoded = yield* get(value.ciphertext);
             if (encoded === undefined) return yield* connectError("Storage", "Credential is unavailable.");
             return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(schema)))(
                 encoded
             ).pipe(Effect.mapError(() => connectError("Storage", "Invalid stored credential.")));
         }),
-        evict: (value) => drop(value.id),
+        evict: (value) => drop(value.ciphertext),
     });
 }
