@@ -1,13 +1,15 @@
-import { createConnectionManager, createConnectionMonitor } from "@party-stack/connect";
-import { createLocalCollection } from "@party-stack/runtime";
+import { makeConnectionManager, createConnectionMonitor } from "@party-stack/connect";
+import { BackendError } from "@party-stack/ontology-backend";
+import { makeLocalCollection, Runtime } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
+import { Context, Effect, Exit, Fiber, Layer, Scope, ScopedCache, Semaphore } from "effect";
 import { createLiveOntology } from "../live/LiveOntology.js";
 import { createMetaOntologyConfiguration } from "./createMetaOntologyConfiguration.js";
-import type { LiveOntology } from "../live/LiveOntology.js";
-import type { OntologyDefinition } from "../live/LiveOntology.js";
+import type { LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 import type {
     CreateOntologyBackendInstallationOptions,
     OntologyBackendInstallation,
+    OntologyBackendInstallationService,
     OntologyRoute,
 } from "./types.js";
 import type { Connection } from "@party-stack/connect";
@@ -52,292 +54,278 @@ function routeFor(routes: readonly OntologyRoute[], ontologyId: string): Ontolog
     return matching[0]!;
 }
 
-export async function createOntologyBackendInstallation<AuthenticationClient extends object = object>(
-    options: CreateOntologyBackendInstallationOptions<AuthenticationClient>
-): Promise<OntologyBackendInstallation<AuthenticationClient>> {
-    const installationRuntime = await options.runtime("installation", scope(options.installationId));
-    let connectionManager;
-    try {
-        connectionManager = await createConnectionManager({
-            installationId: options.installationId,
-            runtime: installationRuntime,
-            adapter: options.connections,
-        });
-    } catch (error) {
-        await installationRuntime.cleanup?.();
-        throw error;
-    }
-    const partitions = createLocalCollection<LocalOntologyPartition, string>({
-        name: "ontology-partitions",
-        getKey: (partition) => partition.id,
-        runtime: installationRuntime,
-        schemaVersion: 1,
-    });
-    const partitionDemand = partitions.subscribeChanges(() => {}, { includeInitialState: true });
-    try {
-        await queryOnce((q) => q.from({ row: partitions }));
-    } catch (error) {
-        partitionDemand.unsubscribe();
-        await partitions.cleanup();
-        await connectionManager.cleanup();
-        await installationRuntime.cleanup?.();
-        throw error;
-    }
-    const live = new Map<string, LiveOntology>();
-    const opening = new Map<string, Promise<LiveOntology>>();
-    let disposed = false;
-    let cleanupPromise: Promise<void> | undefined;
+const failure = (operation: string, cause: unknown) =>
+    cause instanceof BackendError
+        ? cause
+        : new BackendError({
+              operation,
+              kind: "Unavailable",
+              message: cause instanceof Error ? cause.message : "Installation operation failed.",
+              retryable: true,
+              cause,
+          });
+const boundary = <A>(operation: string, run: () => PromiseLike<A>) =>
+    Effect.tryPromise({ try: run, catch: (cause) => failure(operation, cause) });
 
-    const closeKey = async (key: string) => {
-        const pending = opening.get(key);
-        if (pending) {
-            await pending.catch(() => undefined);
-        }
-        const ontology = live.get(key);
-        if (!ontology) return;
-        live.delete(key);
-        await ontology.cleanup();
-    };
-    const close = (userId: string, ontologyId: string) => closeKey(ontologyKey(userId, ontologyId));
-    const recordPartition = async (partition: LocalOntologyPartition): Promise<void> => {
-        const existing = partitions.get(partition.id);
-        const transaction = existing
-            ? partitions.update(
-                  partition.id,
-                  {
-                      optimistic: false,
-                  },
-                  (draft) => {
-                      Object.assign(draft, partition);
-                  }
-              )
-            : partitions.insert(partition, {
-                  optimistic: false,
-              });
-        await transaction.isPersisted.promise;
-    };
-    const removePartitionRecord = async (id: string): Promise<void> => {
-        if (!partitions.get(id)) {
-            return;
-        }
-        const transaction = partitions.delete(id, {
-            optimistic: false,
-        });
-        await transaction.isPersisted.promise;
-    };
-    const destroyPartition = async (partition: LocalOntologyPartition): Promise<void> => {
-        const pending = opening.get(partition.id);
-        if (pending) {
-            await pending.catch(() => undefined);
-        }
-        const ontology = live.get(partition.id);
-        live.delete(partition.id);
-        if (ontology) {
-            await ontology.destroy();
-        } else {
-            const namespace = `${liveOntologyNamespace(
-                options.installationId,
-                partition.ontologyId
-            )}${partition.meta ? ":meta" : ""}`;
-            const runtime = await options.runtime(partition.userId, namespace);
-            if (runtime.destroy) {
-                await runtime.destroy();
-            } else {
+export class OntologyInstallation extends Context.Service<
+    OntologyInstallation,
+    OntologyBackendInstallationService
+>()("@party-stack/ontology/OntologyInstallation") {
+    static readonly layer = (options: CreateOntologyBackendInstallationOptions) =>
+        Layer.effect(OntologyInstallation, makeOntologyBackendInstallation(options));
+}
+
+/** Native lifecycle: collections, sessions, live ontologies and in-flight opens share one scope. */
+export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.make")(function* <
+    A extends object = object,
+>(
+    options: CreateOntologyBackendInstallationOptions<A>
+): Effect.fn.Return<OntologyBackendInstallationService<A>, BackendError, Scope.Scope> {
+    const owner = yield* Effect.scope;
+    const installationRuntime = yield* Effect.acquireRelease(
+        boundary("installation.runtime", async () =>
+            options.runtime("installation", scope(options.installationId))
+        ),
+        (runtime) =>
+            Effect.promise(async () => {
                 await runtime.cleanup?.();
-            }
-        }
-        await removePartitionRecord(partition.id);
-    };
-    const destroyUserPartitions = async (userId: string): Promise<void> => {
-        const prefix = `${scope(userId)}:`;
-        await Promise.allSettled(
-            [...opening].filter(([key]) => key.startsWith(prefix)).map(([, pending]) => pending)
+            })
+    );
+    const runtime = yield* Runtime.make(installationRuntime).pipe(
+        Effect.mapError((cause) => failure("installation.runtime", cause))
+    );
+    return yield* Effect.gen(function* () {
+        const connectionManager = yield* makeConnectionManager({
+            installationId: options.installationId,
+            adapter: options.connections,
+        }).pipe(Effect.mapError((cause) => failure("installation.connections", cause)));
+        const context = yield* Effect.context<never>();
+        const run = Effect.runPromiseWith(context);
+        const monitorManager = {
+            connections: connectionManager.connections,
+            reportUnauthenticated: (
+                id: string,
+                error: Parameters<typeof connectionManager.reportUnauthenticated>[1]
+            ) => run(connectionManager.reportUnauthenticated(id, error)),
+        };
+        const partitions = yield* makeLocalCollection<LocalOntologyPartition, string>({
+            name: "ontology-partitions",
+            getKey: (row) => row.id,
+            schemaVersion: 1,
+        });
+        yield* Effect.acquireRelease(
+            Effect.sync(() => partitions.subscribeChanges(() => {}, { includeInitialState: true })),
+            (demand) => Effect.sync(() => demand.unsubscribe())
         );
-        await Promise.all(
-            [...partitions.values()].filter((partition) => partition.userId === userId).map(destroyPartition)
-        );
-    };
-    const closeUserOntologies = async (userId: string): Promise<void> => {
-        const prefix = `${scope(userId)}:`;
-        const toClose = [...new Set([...live.keys(), ...opening.keys()])].filter((key) =>
-            key.startsWith(prefix)
-        );
-        await Promise.all(toClose.map(closeKey));
-    };
-    const openConfiguredOntology = async <Ontology extends OntologyDefinition>(openOptions: {
-        userId: string;
-        ontologyId: string;
-        meta: boolean;
-    }): Promise<LiveOntology<Ontology>> => {
-        const { userId, ontologyId, meta } = openOptions;
-        if (disposed) {
-            throw new Error(`Backend installation "${options.installationId}" is closed.`);
-        }
-        const current = connectionManager.connections.get(userId);
-        if (!isActiveConnection(current)) {
-            throw new Error(
-                `User "${userId}" is not connected to backend installation "${options.installationId}".`
+        yield* boundary("installation.restore", () => queryOnce((q) => q.from({ row: partitions })));
+        let disposed = false;
+        const closed = () =>
+            failure(
+                "installation.closed",
+                new Error(`Backend installation "${options.installationId}" is closed.`)
             );
-        }
-        const egress = connectionManager.egress(userId);
-        if (!egress) {
-            throw new Error(`Connection egress for user "${userId}" is unavailable.`);
-        }
-        const key = meta ? metaOntologyKey(userId, ontologyId) : ontologyKey(userId, ontologyId);
-        const existing = live.get(key);
-        if (existing) {
-            return existing as unknown as LiveOntology<Ontology>;
-        }
-        const pending = opening.get(key);
-        if (pending) {
-            return pending as unknown as Promise<LiveOntology<Ontology>>;
-        }
-        const open = (async () => {
-            const route = routeFor(options.routes, ontologyId);
-            const configureOptions = {
-                connection: current,
-                egress,
-                ontologyId,
-            };
-            let configured;
-            if (meta) {
-                if (route.configureMeta) {
-                    configured = await route.configureMeta(configureOptions);
-                } else if (route.configure) {
-                    const application = await route.configure(configureOptions);
-                    configured = createMetaOntologyConfiguration({
-                        ir: application.ir,
-                    });
-                } else {
-                    throw new Error(`Ontology route for "${ontologyId}" does not support metadata.`);
-                }
-            } else {
-                if (!route.configure) {
-                    throw new Error(
-                        `Ontology route for "${ontologyId}" does not support opening the application ontology.`
+        const ensureOpen = Effect.suspend(() => (disposed ? Effect.fail(closed()) : Effect.void));
+        const locks = new Map<string, Semaphore.Semaphore>();
+        const locked = <B, E, R>(userId: string, work: Effect.Effect<B, E, R>) =>
+            Effect.suspend(() => {
+                let lock = locks.get(userId);
+                if (!lock) locks.set(userId, (lock = Semaphore.makeUnsafe(1)));
+                return lock.withPermit(work);
+            });
+        const owned = <B>(work: Effect.Effect<B, BackendError>) =>
+            Effect.andThen(ensureOpen, Effect.flatMap(Effect.forkIn(work, owner), Fiber.join));
+        const recordPartition = (row: LocalOntologyPartition) =>
+            boundary("installation.partition", () => {
+                const transaction = partitions.has(row.id)
+                    ? partitions.update(row.id, { optimistic: false }, (draft) => {
+                          Object.assign(draft, row);
+                      })
+                    : partitions.insert(row, { optimistic: false });
+                return transaction.isPersisted.promise;
+            });
+        const cache = yield* ScopedCache.makeWith<string, LiveOntology, BackendError>({
+            capacity: Number.MAX_SAFE_INTEGER,
+            // Failed acquisitions must be retryable; successful resources live until explicit close or scope closure.
+            timeToLive: (exit) => (Exit.isSuccess(exit) ? Infinity : 0),
+            lookup: Effect.fn("OntologyInstallation.open")(function* (key: string) {
+                const [userId, ontologyId, meta] = JSON.parse(key) as [string, string, boolean];
+                const current = connectionManager.connections.get(userId);
+                const egress = connectionManager.egress(userId);
+                if (!isActiveConnection(current) || !egress)
+                    return yield* failure(
+                        "installation.open",
+                        new Error(
+                            `User "${userId}" is not connected to backend installation "${options.installationId}".`
+                        )
                     );
-                }
-                configured = await route.configure(configureOptions);
-            }
-            const context = {
-                ...options.createContext?.(userId, ontologyId),
-                ...configured.context,
-                user: userId,
-            };
-            const runtimeNamespace = `${liveOntologyNamespace(options.installationId, ontologyId)}${
-                meta ? ":meta" : ""
-            }`;
-            await recordPartition({
-                id: key,
-                userId,
-                ontologyId,
-                meta: meta ? true : undefined,
-            });
-            const openLive = !meta && options.openOntology ? options.openOntology : createLiveOntology;
-            const ontology = await openLive({
-                installationId: options.installationId,
-                userId,
-                ontologyId,
-                id: runtimeNamespace,
-                ir: configured.ir,
-                backend: configured.backend,
-                runtime: options.runtime,
-                context,
-                persistObjects: configured.persistObjects,
-                writes: configured.writes,
-                connection: createConnectionMonitor(connectionManager, userId),
-            });
-            if (disposed) {
-                await ontology.cleanup();
-                throw new Error(
-                    meta
-                        ? `Backend installation "${options.installationId}" closed while opening metadata for ontology "${ontologyId}".`
-                        : `Backend installation "${options.installationId}" closed while opening ontology "${ontologyId}".`
-                );
-            }
-            live.set(key, ontology);
-            return ontology;
-        })();
-        opening.set(key, open);
-        try {
-            return (await open) as unknown as LiveOntology<Ontology>;
-        } finally {
-            if (opening.get(key) === open) {
-                opening.delete(key);
-            }
-        }
-    };
-
-    const installation: OntologyBackendInstallation<AuthenticationClient> = {
-        installationId: options.installationId,
-        get connections() {
-            return connectionManager.connections;
-        },
-        get authentication() {
-            return connectionManager.authentication;
-        },
-        async disconnect(userId) {
-            await closeUserOntologies(userId);
-            await connectionManager.disconnect(userId);
-        },
-        async forget(userId) {
-            const results = await Promise.allSettled([
-                destroyUserPartitions(userId),
-                connectionManager.forget(userId),
-            ]);
-            const errors: unknown[] = [];
-            for (const result of results) {
-                if (result.status === "rejected") {
-                    errors.push(result.reason as unknown);
-                }
-            }
-            if (errors.length > 0) {
-                throw new AggregateError(
-                    errors,
-                    `Failed to forget user "${userId}" from backend installation "${options.installationId}".`
-                );
-            }
-        },
-        async openOntology<Ontology extends OntologyDefinition = OntologyDefinition>({
-            userId,
-            ontologyId,
-        }: {
-            userId: string;
-            ontologyId: string;
-        }): Promise<LiveOntology<Ontology>> {
-            return openConfiguredOntology<Ontology>({
-                userId,
-                ontologyId,
-                meta: false,
-            });
-        },
-        async openMetaOntology({ userId, ontologyId }) {
-            return openConfiguredOntology<MetaOntology>({
-                userId,
-                ontologyId,
-                meta: true,
-            });
-        },
-        closeOntology: ({ userId, ontologyId }) => close(userId, ontologyId),
-        closeMetaOntology: ({ userId, ontologyId }) => closeKey(metaOntologyKey(userId, ontologyId)),
-        cleanup() {
-            cleanupPromise ??= (async () => {
-                disposed = true;
-                try {
-                    await Promise.allSettled(opening.values());
-                    await Promise.all([...live.values()].map((ontology) => ontology.cleanup()));
-                } finally {
-                    live.clear();
-                    partitionDemand.unsubscribe();
-                    try {
-                        await Promise.all([connectionManager.cleanup(), partitions.cleanup()]);
-                    } finally {
-                        await installationRuntime.cleanup?.();
+                const route = yield* Effect.try({
+                    try: () => routeFor(options.routes, ontologyId),
+                    catch: (cause) => failure("installation.route", cause),
+                });
+                const configureOptions = { connection: current, egress, ontologyId };
+                const configured = yield* boundary("installation.configure", async () => {
+                    if (meta && route.configureMeta) return route.configureMeta(configureOptions);
+                    if (route.configure) {
+                        const application = await route.configure(configureOptions);
+                        return meta ? createMetaOntologyConfiguration({ ir: application.ir }) : application;
                     }
-                }
-            })();
-            return cleanupPromise;
-        },
-    };
-    return installation;
+                    throw new Error(
+                        `Ontology route for "${ontologyId}" does not support ${meta ? "metadata" : "opening the application ontology"}.`
+                    );
+                });
+                const partition = {
+                    id: meta ? metaOntologyKey(userId, ontologyId) : ontologyKey(userId, ontologyId),
+                    userId,
+                    ontologyId,
+                    meta: meta ? (true as const) : undefined,
+                };
+                yield* recordPartition(partition);
+                // These are placement/SDK boundaries; local live ontologies themselves already run scoped Effects.
+                const open = !meta && options.openOntology ? options.openOntology : createLiveOntology;
+                return yield* Effect.acquireRelease(
+                    boundary("installation.open", () =>
+                        open({
+                            installationId: options.installationId,
+                            userId,
+                            ontologyId,
+                            id: `${liveOntologyNamespace(options.installationId, ontologyId)}${meta ? ":meta" : ""}`,
+                            ir: configured.ir,
+                            backend: configured.backend,
+                            runtime: options.runtime,
+                            context: {
+                                ...options.createContext?.(userId, ontologyId),
+                                ...configured.context,
+                                user: userId,
+                            },
+                            persistObjects: configured.persistObjects,
+                            writes: configured.writes,
+                            connection: createConnectionMonitor(monitorManager, userId),
+                        })
+                    ),
+                    (ontology) => Effect.promise(() => ontology.cleanup())
+                );
+            }),
+        });
+        const keyFor = (userId: string, ontologyId: string, meta: boolean) =>
+            JSON.stringify([userId, ontologyId, meta]);
+        const open = <T extends OntologyDefinition>(userId: string, ontologyId: string, meta: boolean) =>
+            owned(
+                locked(
+                    userId,
+                    Effect.andThen(ensureOpen, ScopedCache.get(cache, keyFor(userId, ontologyId, meta)))
+                )
+            ) as Effect.Effect<LiveOntology<T>, BackendError>;
+        const close = (userId: string, ontologyId: string, meta: boolean) =>
+            owned(locked(userId, ScopedCache.invalidate(cache, keyFor(userId, ontologyId, meta))));
+        const closeUser = Effect.fnUntraced(function* (userId: string) {
+            for (const key of yield* ScopedCache.keys(cache))
+                if ((JSON.parse(key) as string[])[0] === userId) yield* ScopedCache.invalidate(cache, key);
+        });
+        const destroyUser = Effect.fnUntraced(function* (userId: string) {
+            yield* closeUser(userId);
+            for (const partition of [...partitions.values()].filter((row) => row.userId === userId)) {
+                const namespace = `${liveOntologyNamespace(options.installationId, partition.ontologyId)}${partition.meta ? ":meta" : ""}`;
+                yield* Effect.acquireRelease(
+                    boundary("installation.runtime", async () => options.runtime(userId, namespace)),
+                    (runtime) =>
+                        Effect.promise(async () => {
+                            await runtime.cleanup?.();
+                        })
+                ).pipe(
+                    Effect.flatMap((runtime) =>
+                        boundary("installation.destroy", async () => {
+                            await runtime.destroy?.();
+                        })
+                    ),
+                    Effect.scoped
+                );
+                yield* boundary(
+                    "installation.partition",
+                    () => partitions.delete(partition.id, { optimistic: false }).isPersisted.promise
+                );
+            }
+        });
+        yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+                disposed = true;
+            })
+        );
+        return {
+            installationId: options.installationId,
+            authentication: connectionManager.authentication,
+            connections: connectionManager.connections,
+            openOntology: <T extends OntologyDefinition>({
+                userId,
+                ontologyId,
+            }: {
+                userId: string;
+                ontologyId: string;
+            }) => open<T>(userId, ontologyId, false),
+            openMetaOntology: ({ userId, ontologyId }: { userId: string; ontologyId: string }) =>
+                open<MetaOntology>(userId, ontologyId, true),
+            closeOntology: ({ userId, ontologyId }: { userId: string; ontologyId: string }) =>
+                close(userId, ontologyId, false),
+            closeMetaOntology: ({ userId, ontologyId }: { userId: string; ontologyId: string }) =>
+                close(userId, ontologyId, true),
+            disconnect: (userId: string) =>
+                owned(
+                    locked(
+                        userId,
+                        Effect.gen(function* () {
+                            yield* closeUser(userId);
+                            yield* connectionManager
+                                .disconnect(userId)
+                                .pipe(Effect.mapError((cause) => failure("installation.disconnect", cause)));
+                        })
+                    )
+                ),
+            forget: (userId: string) =>
+                owned(
+                    locked(
+                        userId,
+                        Effect.gen(function* () {
+                            // Attempt both, but preserve the partition record when destruction fails so forgetting can be retried.
+                            const destroyed = yield* Effect.exit(destroyUser(userId));
+                            const forgotten = yield* Effect.exit(
+                                connectionManager
+                                    .forget(userId)
+                                    .pipe(Effect.mapError((cause) => failure("installation.forget", cause)))
+                            );
+                            yield* destroyed;
+                            yield* forgotten;
+                        })
+                    )
+                ),
+        } satisfies OntologyBackendInstallationService<A>;
+    }).pipe(Effect.provideService(Runtime, runtime));
+});
+
+/** Promise facade for framework code. It owns a scope; no lifecycle logic lives here. */
+export async function createOntologyBackendInstallation<A extends object = object>(
+    options: CreateOntologyBackendInstallationOptions<A>
+): Promise<OntologyBackendInstallation<A>> {
+    const owner = Effect.runSync(Scope.make());
+    const run = <B>(effect: Effect.Effect<B, BackendError>) => Effect.runPromise(effect);
+    try {
+        const installation = await run(
+            Effect.flatMap(
+                Effect.forkIn(Scope.provide(makeOntologyBackendInstallation(options), owner), owner),
+                Fiber.join
+            )
+        );
+        let closing: Promise<void> | undefined;
+        return {
+            ...installation,
+            openOntology: (options) => run(installation.openOntology(options)),
+            openMetaOntology: (options) => run(installation.openMetaOntology(options)),
+            closeOntology: (options) => run(installation.closeOntology(options)),
+            closeMetaOntology: (options) => run(installation.closeMetaOntology(options)),
+            disconnect: (id) => run(installation.disconnect(id)),
+            forget: (id) => run(installation.forget(id)),
+            cleanup: () => (closing ??= Effect.runPromise(Scope.close(owner, Exit.void))),
+        };
+    } catch (cause) {
+        await Effect.runPromise(Scope.close(owner, Exit.fail(cause)));
+        throw cause;
+    }
 }

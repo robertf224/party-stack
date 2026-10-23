@@ -1,4 +1,5 @@
 import {
+    connectionOperation,
     type BackendConnectionAdapter,
     type BackendConnectionAdapterContext,
     type BackendConnectionAdapterProvider,
@@ -18,6 +19,7 @@ import {
 } from "@party-stack/connect";
 import { unauthenticated } from "@party-stack/errors";
 import { createFoundryFetch, createFoundryWebSocket, getTokenDetails } from "@party-stack/foundry-client";
+import { Effect } from "effect";
 import type { BrowserAuthenticationPresentation } from "@party-stack/runtime";
 
 export interface FoundryOAuthConnectionOptions {
@@ -99,59 +101,76 @@ function createFoundryEgressWrapper(options: {
     };
 }
 
-async function createFoundryConnectionAdapterInstance(
+const createFoundryConnectionAdapterInstance = Effect.fn("Foundry.connections")(function* (
     options: CreateFoundryConnectionAdapterOptions,
     context: BackendConnectionAdapterContext
-): Promise<BackendConnectionAdapter<FoundryAuthenticationClient>> {
+): Effect.fn.Return<
+    BackendConnectionAdapter<FoundryAuthenticationClient>,
+    import("@party-stack/connect").ConnectionError,
+    import("effect").Scope.Scope
+> {
+    const oauthOptions = options.oauth;
+    const clientCredentialsOptions = options.clientCredentials;
     let tokenActive = Boolean(options.token);
-    const publicOauth: PublicOAuthClient | undefined = options.oauth
-        ? await createPublicOAuthClient({
-              clientId: options.oauth.clientId,
-              redirectUrl: options.oauth.redirectUrl,
-              scopes: [...new Set(["offline_access", ...(options.oauth.scopes ?? DEFAULT_SCOPES)])],
-              authorizationServer: {
-                  issuer: new URL(
-                      "multipass/",
-                      options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
-                  ).toString(),
-                  authorizationEndpoint: new URL(
-                      "multipass/api/oauth2/authorize",
-                      options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
-                  ).toString(),
-                  tokenEndpoint: new URL(
-                      "multipass/api/oauth2/token",
-                      options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
-                  ).toString(),
-                  revocationEndpoint: new URL(
-                      "multipass/api/oauth2/revoke_token",
-                      options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
-                  ).toString(),
-              },
-              runtime: context.runtime,
-              scope: context.scope,
-              fetch: options.oauth.fetch,
-              dangerouslyPersistSecrets: options.oauth.dangerouslyPersistSecrets,
-              resolveUserId: (token) => getTokenDetails(token).userId,
-          })
+    const publicOauth: PublicOAuthClient | undefined = oauthOptions
+        ? yield* Effect.acquireRelease(
+              connectionOperation("oauth.open", async () =>
+                  createPublicOAuthClient({
+                      clientId: oauthOptions.clientId,
+                      redirectUrl: oauthOptions.redirectUrl,
+                      scopes: [...new Set(["offline_access", ...(oauthOptions.scopes ?? DEFAULT_SCOPES)])],
+                      authorizationServer: {
+                          issuer: new URL(
+                              "multipass/",
+                              options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
+                          ).toString(),
+                          authorizationEndpoint: new URL(
+                              "multipass/api/oauth2/authorize",
+                              options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
+                          ).toString(),
+                          tokenEndpoint: new URL(
+                              "multipass/api/oauth2/token",
+                              options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
+                          ).toString(),
+                          revocationEndpoint: new URL(
+                              "multipass/api/oauth2/revoke_token",
+                              options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
+                          ).toString(),
+                      },
+                      runtime: context.runtime,
+                      scope: context.scope,
+                      fetch: oauthOptions.fetch,
+                      dangerouslyPersistSecrets: oauthOptions.dangerouslyPersistSecrets,
+                      resolveUserId: (token) => getTokenDetails(token).userId,
+                  })
+              ),
+              (client) => Effect.promise(() => client.cleanup())
+          )
         : undefined;
-    const clientCredentialsOauth: ClientCredentialsOAuthClient | undefined = options.clientCredentials
-        ? createClientCredentialsOAuthClient({
-              scope: context.scope,
-              clientId: options.clientCredentials.clientId,
-              clientSecret: options.clientCredentials.clientSecret,
-              tokenEndpoint: new URL(
-                  "multipass/api/oauth2/token",
-                  options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
-              ).toString(),
-              tokenEndpointAuthMethod: "client_secret_basic",
-              revocationEndpoint: new URL(
-                  "multipass/api/oauth2/revoke_token",
-                  options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
-              ).toString(),
-              scopes: options.clientCredentials.scopes ?? DEFAULT_SCOPES,
-              fetch: options.clientCredentials.fetch,
-              resolveUserId: (token) => options.clientCredentials?.userId ?? getTokenDetails(token).userId,
-          })
+    const clientCredentialsOauth: ClientCredentialsOAuthClient | undefined = clientCredentialsOptions
+        ? yield* Effect.acquireRelease(
+              connectionOperation("oauth.open", async () =>
+                  createClientCredentialsOAuthClient({
+                      scope: context.scope,
+                      clientId: clientCredentialsOptions.clientId,
+                      clientSecret: clientCredentialsOptions.clientSecret,
+                      tokenEndpoint: new URL(
+                          "multipass/api/oauth2/token",
+                          options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
+                      ).toString(),
+                      tokenEndpointAuthMethod: "client_secret_basic",
+                      revocationEndpoint: new URL(
+                          "multipass/api/oauth2/revoke_token",
+                          options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
+                      ).toString(),
+                      scopes: clientCredentialsOptions.scopes ?? DEFAULT_SCOPES,
+                      fetch: clientCredentialsOptions.fetch,
+                      resolveUserId: (token) =>
+                          clientCredentialsOptions?.userId ?? getTokenDetails(token).userId,
+                  })
+              ),
+              (client) => Effect.promise(() => client.cleanup())
+          )
         : undefined;
 
     const createTokenSession = (candidate?: string): EstablishedConnection => {
@@ -165,12 +184,10 @@ async function createFoundryConnectionAdapterInstance(
             state: activeState(expiresAt, false),
         };
         const session: ConnectionSession = {
-            disconnect() {
-                if (token === options.token) {
-                    tokenActive = false;
-                }
-                return Promise.resolve();
-            },
+            disconnect: () =>
+                Effect.sync(() => {
+                    if (token === options.token) tokenActive = false;
+                }),
             egress: createFoundryEgressWrapper({
                 baseUrl: options.baseUrl,
                 tokenProvider: () => Promise.resolve(token),
@@ -190,8 +207,8 @@ async function createFoundryConnectionAdapterInstance(
             state: activeState(oauthSession.expiration?.expiresAt, true),
         };
         const session: ConnectionSession = {
-            refresh: () => createClientCredentialsSession(oauth, true),
-            disconnect: () => oauth.revoke(),
+            refresh: () => connectionOperation("refresh", () => createClientCredentialsSession(oauth, true)),
+            disconnect: () => connectionOperation("disconnect", () => oauth.revoke()),
             egress: createFoundryEgressWrapper({
                 baseUrl: options.baseUrl,
                 tokenProvider: () => oauth.getAccessToken(),
@@ -210,14 +227,18 @@ async function createFoundryConnectionAdapterInstance(
             ),
         };
         const session: ConnectionSession = {
-            async refresh() {
-                if (!publicOauth) {
-                    throw unauthenticated("Foundry public OAuth is not configured.");
-                }
-                return createPublicSession(await publicOauth.refresh(userId));
+            refresh() {
+                return connectionOperation("refresh", async () => {
+                    if (!publicOauth) {
+                        throw unauthenticated("Foundry public OAuth is not configured.");
+                    }
+                    return createPublicSession(await publicOauth.refresh(userId));
+                });
             },
-            async disconnect() {
-                await publicOauth?.revoke(userId);
+            disconnect() {
+                return connectionOperation("disconnect", async () => {
+                    await publicOauth?.revoke(userId);
+                });
             },
             egress: createFoundryEgressWrapper({
                 baseUrl: options.baseUrl,
@@ -241,7 +262,7 @@ async function createFoundryConnectionAdapterInstance(
                     const session = await publicOauth.completeRedirect(url);
                     if (!session) return;
                     const connectionSession = createPublicSession(session);
-                    await controller.connect(connectionSession);
+                    await Effect.runPromise(controller.connect(connectionSession));
                     return connectionSession.connection;
                 },
                 signIn: {
@@ -253,7 +274,7 @@ async function createFoundryConnectionAdapterInstance(
                             browserPresentation: authenticationOptions.browserPresentation,
                         });
                         const connectionSession = createPublicSession(session);
-                        await controller.connect(connectionSession);
+                        await Effect.runPromise(controller.connect(connectionSession));
                         return connectionSession.connection;
                     },
                     async clientCredentials() {
@@ -264,7 +285,7 @@ async function createFoundryConnectionAdapterInstance(
                             throw new Error("Foundry client credentials cannot run in a browser.");
                         }
                         const session = await createClientCredentialsSession(clientCredentialsOauth);
-                        await controller.connect(session);
+                        await Effect.runPromise(controller.connect(session));
                         return session.connection;
                     },
                     async apiToken(authenticationOptions = {}) {
@@ -272,36 +293,34 @@ async function createFoundryConnectionAdapterInstance(
                         if (authenticationOptions.token === undefined && options.token) {
                             tokenActive = true;
                         }
-                        await controller.connect(session);
+                        await Effect.runPromise(controller.connect(session));
                         return session.connection;
                     },
                 },
             };
         },
-        async restoreConnections() {
-            const restored = new Map<string, EstablishedConnection>();
-            if (tokenActive && options.token) {
-                const session = createTokenSession();
-                restored.set(session.connection.userId, session);
-            }
-            if (publicOauth) {
-                for (const oauthSession of await publicOauth.restoreSessions()) {
-                    const session = createPublicSession(oauthSession);
+        restoreConnections() {
+            return connectionOperation("restore", async () => {
+                const restored = new Map<string, EstablishedConnection>();
+                if (tokenActive && options.token) {
+                    const session = createTokenSession();
                     restored.set(session.connection.userId, session);
                 }
-            }
-            if (clientCredentialsOauth && typeof window === "undefined") {
-                const session = await createClientCredentialsSession(clientCredentialsOauth);
-                restored.set(session.connection.userId, session);
-            }
-            return [...restored.values()];
-        },
-        async cleanup() {
-            await publicOauth?.cleanup();
-            await clientCredentialsOauth?.cleanup();
+                if (publicOauth) {
+                    for (const oauthSession of await publicOauth.restoreSessions()) {
+                        const session = createPublicSession(oauthSession);
+                        restored.set(session.connection.userId, session);
+                    }
+                }
+                if (clientCredentialsOauth && typeof window === "undefined") {
+                    const session = await createClientCredentialsSession(clientCredentialsOauth);
+                    restored.set(session.connection.userId, session);
+                }
+                return [...restored.values()];
+            });
         },
     };
-}
+});
 
 export function createFoundryConnectionAdapter(
     options: CreateFoundryConnectionAdapterOptions

@@ -3,8 +3,10 @@ import { createDefaultRuntime, defineRuntime } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
 import { Effect, Scope, Exit } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { makeOntologyBackendInstallation } from "../runtime/installation.js";
-import { createOntologyBackendInstallation } from "./createOntologyBackendInstallation.js";
+import {
+    createOntologyBackendInstallation,
+    makeOntologyBackendInstallation,
+} from "./createOntologyBackendInstallation.js";
 import type { BackendConnectionAdapter, ConnectionEgressHandlers } from "@party-stack/connect";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
@@ -46,17 +48,19 @@ function createTestConnectionAdapter() {
                         status: "active" as const,
                     },
                 };
-                await controller.connect({
-                    connection,
-                    session: {
-                        disconnect: () => Promise.resolve(),
-                        egress: () => handlers,
-                    },
-                });
+                await Effect.runPromise(
+                    controller.connect({
+                        connection,
+                        session: {
+                            disconnect: () => Effect.void,
+                            egress: () => handlers,
+                        },
+                    })
+                );
                 return connection;
             },
         }),
-        restoreConnections: () => Promise.resolve([]),
+        restoreConnections: () => Effect.succeed([]),
     } satisfies BackendConnectionAdapter<{
         signIn(): Promise<{
             userId: string;
@@ -94,21 +98,23 @@ describe("createOntologyBackendInstallation", () => {
                         userId: "user-1",
                         state: { status: "active" as const },
                     };
-                    await controller.connect({
-                        connection,
-                        session: {
-                            disconnect: () => Promise.resolve(),
-                            egress: () => handlers,
-                        },
-                    });
+                    await Effect.runPromise(
+                        controller.connect({
+                            connection,
+                            session: {
+                                disconnect: () => Effect.void,
+                                egress: () => handlers,
+                            },
+                        })
+                    );
                     return connection;
                 },
             }),
-            restoreConnections: () => Promise.resolve([]),
+            restoreConnections: () => Effect.succeed([]),
         };
         const installation = await createOntologyBackendInstallation({
             installationId: "test-installation",
-            connections: () => adapter,
+            connections: () => Effect.succeed(adapter),
             runtime,
             routes: [
                 {
@@ -174,7 +180,7 @@ describe("createOntologyBackendInstallation", () => {
         }));
         const installation = await createOntologyBackendInstallation({
             installationId: "meta-route",
-            connections: () => adapter,
+            connections: () => Effect.succeed(adapter),
             runtime: createDefaultRuntime,
             routes: [
                 {
@@ -226,7 +232,7 @@ describe("createOntologyBackendInstallation", () => {
         };
         const installation = await createOntologyBackendInstallation({
             installationId: "ir-meta-route",
-            connections: () => adapter,
+            connections: () => Effect.succeed(adapter),
             runtime: createDefaultRuntime,
             routes: [
                 {
@@ -258,7 +264,7 @@ describe("createOntologyBackendInstallation", () => {
         const cleanupMeta = vi.fn();
         const installation = await createOntologyBackendInstallation({
             installationId: "forget-meta",
-            connections: () => adapter,
+            connections: () => Effect.succeed(adapter),
             runtime: createDefaultRuntime,
             routes: [
                 {
@@ -296,7 +302,7 @@ describe("createOntologyBackendInstallation", () => {
         const adapter = createTestConnectionAdapter();
         const installation = await createOntologyBackendInstallation({
             installationId: "ambiguous-routes",
-            connections: () => adapter,
+            connections: () => Effect.succeed(adapter),
             runtime: createDefaultRuntime,
             routes: [
                 {
@@ -334,7 +340,7 @@ describe("createOntologyBackendInstallation", () => {
         }));
         const installation = await createOntologyBackendInstallation({
             installationId: "concurrent-open",
-            connections: () => adapter,
+            connections: () => Effect.succeed(adapter),
             runtime: createDefaultRuntime,
             routes: [
                 {
@@ -378,7 +384,7 @@ it("a scoped installation releases its live ontologies and connections with its 
         Scope.provide(
             makeOntologyBackendInstallation({
                 installationId: "scoped-installation",
-                connections: () => createTestConnectionAdapter(),
+                connections: () => Effect.succeed(createTestConnectionAdapter()),
                 runtime: createDefaultRuntime,
                 routes: [
                     {
@@ -395,18 +401,88 @@ it("a scoped installation releases its live ontologies and connections with its 
     );
     try {
         const connection = await installation.authentication.signIn();
-        await installation.openOntology({ userId: connection.userId, ontologyId: "ontology" });
+        await Effect.runPromise(
+            installation.openOntology({ userId: connection.userId, ontologyId: "ontology" })
+        );
         await Effect.runPromise(Scope.close(scope, Exit.void));
         expect(installation.connections.status).toBe("cleaned-up");
         expect(cleanup).toHaveBeenCalledOnce();
         await expect(
-            installation.openOntology({
-                userId: connection.userId,
-                ontologyId: "ontology",
-            })
+            Effect.runPromise(
+                installation.openOntology({
+                    userId: connection.userId,
+                    ontologyId: "ontology",
+                })
+            )
         ).rejects.toThrow("is closed");
     } finally {
         await Effect.runPromise(Scope.close(scope, Exit.void));
     }
+    expect(cleanup).toHaveBeenCalledOnce();
+});
+
+it("retries a failed ontology acquisition rather than caching its failure", async () => {
+    const configure = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Temporary route failure"))
+        .mockResolvedValue({ ir, backend: createTestBackend });
+    const installation = await createOntologyBackendInstallation({
+        installationId: "retry-open",
+        connections: () => Effect.succeed(createTestConnectionAdapter()),
+        runtime: createDefaultRuntime,
+        routes: [{ matches: () => true, configure }],
+    });
+    try {
+        await installation.authentication.signIn();
+        await expect(installation.openOntology({ userId: "user-1", ontologyId: "ontology" })).rejects.toThrow(
+            "Temporary route failure"
+        );
+        const ontology = await installation.openOntology({ userId: "user-1", ontologyId: "ontology" });
+        expect(ontology.ir).toBe(ir);
+        expect(configure).toHaveBeenCalledTimes(2);
+    } finally {
+        await installation.cleanup();
+    }
+});
+
+it("shutdown during a live ontology acquisition releases the late resource exactly once", async () => {
+    let resolveBackend!: () => void;
+    const gate = new Promise<void>((resolve) => {
+        resolveBackend = resolve;
+    });
+    const entered = vi.fn();
+    const cleanup = vi.fn();
+    const installation = await createOntologyBackendInstallation({
+        installationId: "close-during-open",
+        connections: () => Effect.succeed(createTestConnectionAdapter()),
+        runtime: createDefaultRuntime,
+        routes: [
+            {
+                matches: () => true,
+                configure: () => ({
+                    ir,
+                    backend: async () => {
+                        entered();
+                        await gate;
+                        return { ...createTestBackend(), cleanup };
+                    },
+                }),
+            },
+        ],
+    });
+    await installation.authentication.signIn();
+    const opening = installation.openOntology({ userId: "user-1", ontologyId: "ontology" });
+    const outcome = opening.then(
+        () => "unexpected success",
+        () => "interrupted"
+    );
+    await vi.waitFor(() => expect(entered).toHaveBeenCalledOnce());
+    const closing = installation.cleanup();
+    resolveBackend();
+    await closing;
+    expect(await outcome).toBe("interrupted");
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(installation.connections.status).toBe("cleaned-up");
+    await installation.cleanup();
     expect(cleanup).toHaveBeenCalledOnce();
 });

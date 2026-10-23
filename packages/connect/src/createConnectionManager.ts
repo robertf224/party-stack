@@ -1,377 +1,436 @@
-import { isUnauthenticatedError, unauthenticated, type UnauthenticatedError } from "@party-stack/errors";
-import { createLocalCollection, isCoordinationHost } from "@party-stack/runtime";
-import { Runtime, runtimeEffects } from "@party-stack/runtime";
+import { unauthenticated, type UnauthenticatedError } from "@party-stack/errors";
+import { isCoordinationHost, makeLocalCollection, Runtime, runtimeEffects } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
-import { Effect, Exit, Fiber, Queue, Scope } from "effect";
+import { Clock, Context, Effect, Exit, Fiber, Layer, Queue, Scope, Semaphore, Stream } from "effect";
+import { ConnectionError, connectionOperation } from "./ConnectionError.js";
 import { createDefaultConnectionEgressHandlers } from "./createDefaultConnectionEgressHandlers.js";
-import {
-    type BackendConnectionAdapter,
-    type BackendConnectionAdapterProvider,
-    type Connection,
-    type ConnectionController,
-    type ConnectionEgressHandlers,
-    type ConnectionManager,
-    type ConnectionSession,
-    type EstablishedConnection,
+import type {
+    BackendConnectionAdapterProvider,
+    Connection,
+    ConnectionController,
+    ConnectionEgressHandlers,
+    ConnectionManager,
+    ConnectionManagerService,
+    ConnectionSession,
+    EstablishedConnection,
 } from "./types.js";
 import type { RuntimeAdapter } from "@party-stack/runtime";
 
 const REFRESH_POLL_MS = 30_000;
 const REFRESH_WINDOW_MS = 60_000;
 
-// TODO: Add lifecycle garbage collection. Automatically expire
-// abandoned adapter-specific connection attempts, but retain established
-// inactive/needs-auth connections unless the application explicitly
-// forgets them or opts into a retention policy that protects open ontologies
-// and pending outbox work.
-
-export interface CreateConnectionManagerOptions<AuthenticationClient extends object = object> {
+export interface ConnectionManagerOptions<AuthenticationClient extends object = object> {
     installationId: string;
-    runtime: RuntimeAdapter;
-    scope?: Scope.Scope;
     adapter: BackendConnectionAdapterProvider<AuthenticationClient>;
     egressHandlers?: ConnectionEgressHandlers;
 }
 
-export async function createConnectionManager<AuthenticationClient extends object = object>(
-    options: CreateConnectionManagerOptions<AuthenticationClient>
-): Promise<ConnectionManager<AuthenticationClient>> {
-    const managed = runtimeEffects(options.runtime).runtime;
-    const owner = await managed.runPromise(
-        Effect.flatMap(Runtime, (service) => Scope.fork(options.scope ?? service.scope))
-    );
-    const close = () => Effect.runPromise(Scope.close(owner, Exit.void));
-    const context = {
+export interface CreateConnectionManagerOptions<
+    A extends object = object,
+> extends ConnectionManagerOptions<A> {
+    runtime: RuntimeAdapter;
+    scope?: Scope.Scope;
+}
+
+export class Connections extends Context.Service<Connections, ConnectionManagerService>()(
+    "@party-stack/connect/Connections"
+) {
+    static readonly layer = (options: ConnectionManagerOptions) =>
+        Layer.effect(Connections, makeConnectionManager(options));
+}
+
+/** Owns sessions and refresh fibers in the caller's scope. SDK authentication clients remain generic. */
+export const makeConnectionManager = Effect.fn("Connections.make")(function* <A extends object = object>(
+    options: ConnectionManagerOptions<A>
+): Effect.fn.Return<ConnectionManagerService<A>, ConnectionError, Runtime | Scope.Scope> {
+    const runtime = yield* Runtime;
+    const owner = yield* Effect.scope;
+    const context = yield* Effect.context<never>();
+    const run = Effect.runPromiseWith(context);
+    let disposed = false;
+    const lifetime = new AbortController();
+    const adapter = yield* options.adapter({
         installationId: options.installationId,
-        runtime: options.runtime,
-        scope: owner,
-    };
-    let adapter: BackendConnectionAdapter<AuthenticationClient>;
-    try {
-        adapter = await options.adapter(context);
-    } catch (error) {
-        await close();
-        throw error;
-    }
-    const baseEgressHandlers = options.egressHandlers ?? createDefaultConnectionEgressHandlers();
-    const connections = createLocalCollection<Connection, string>({
-        name: "connections",
-        getKey: (connection) => connection.userId,
-        runtime: options.runtime,
-        schemaVersion: 2,
+        runtime: runtime.adapter,
         scope: owner,
     });
+    yield* Effect.addFinalizer(() => adapter.cleanup?.() ?? Effect.void);
+    const connections = yield* makeLocalCollection<Connection, string>({
+        name: "connections",
+        getKey: (connection) => connection.userId,
+        schemaVersion: 2,
+    });
     const sessions = new Map<string, ConnectionSession>();
-    const wake = Effect.runSync(Queue.sliding<void>(1));
+    const sockets = new Map<string, Set<WebSocket>>();
+    const locks = new Map<string, { state: Semaphore.Semaphore; command: Semaphore.Semaphore }>();
+    const locked = <B, E>(userId: string, work: Effect.Effect<B, E>, mode: "state" | "command" = "state") =>
+        Effect.suspend(() => {
+            let lock = locks.get(userId);
+            if (!lock)
+                locks.set(
+                    userId,
+                    (lock = { state: Semaphore.makeUnsafe(1), command: Semaphore.makeUnsafe(1) })
+                );
+            return lock[mode].withPermit(work);
+        });
+    const wake = yield* Queue.sliding<void>(1);
+    yield* Effect.addFinalizer(() => Queue.shutdown(wake));
     const notify = () => {
         Queue.offerUnsafe(wake, undefined);
     };
-    const lifetime = new AbortController();
-    const sockets = new Map<string, Set<WebSocket>>();
-    let refreshTask: Promise<Fiber.Fiber<void>> | undefined;
-    let unsubscribeConnectivity: (() => void) | undefined;
-    let connectionDemand: { unsubscribe(): void } | undefined;
-    let disposed = false;
-
-    const updateConnection = async (
-        userId: string,
-        update: (connection: Connection) => void
-    ): Promise<Connection | undefined> => {
-        if (!connections.get(userId)) return;
-        const transaction = connections.update(userId, { optimistic: false }, update);
-        await transaction.isPersisted.promise;
-        return connections.get(userId);
-    };
-    const releaseSession = async (userId: string): Promise<void> => {
-        for (const socket of sockets.get(userId) ?? []) socket.close();
-        sockets.delete(userId);
-        const session = sessions.get(userId);
-        sessions.delete(userId);
-        await Promise.resolve(session?.cleanup?.());
-    };
-    const reportUnauthenticated = async (userId: string, error: UnauthenticatedError) => {
-        await releaseSession(userId);
-        await updateConnection(userId, (connection) => {
-            connection.state = {
-                status: "needs-auth",
-                error: error.message,
-            };
+    const closed = () =>
+        new ConnectionError({
+            operation: "lifecycle",
+            kind: "Closed",
+            message: "Connection manager is closed.",
         });
-    };
-    const applyConnection = async <Status extends Connection["state"]["status"]>(
-        connection: Connection<Status>
-    ): Promise<Connection<Status>> => {
-        const record: Connection = {
-            ...connection,
-            state: connection.state,
-        };
-        const current = connections.get(connection.userId);
-        const transaction = current
-            ? connections.update(connection.userId, { optimistic: false }, (draft) => {
-                  Object.assign(draft, record);
-              })
-            : connections.insert(record, { optimistic: false });
-        await transaction.isPersisted.promise;
-        return connections.get(connection.userId)! as unknown as Connection<Status>;
-    };
-    const applyEstablishedConnection = async (established: EstablishedConnection): Promise<void> => {
-        const { connection, session } = established;
-        if (disposed) {
-            await session.cleanup?.();
-            throw new Error("Connection manager is closed.");
-        }
-        const userId = connection.userId;
-        const previous = sessions.get(userId);
-        sessions.set(userId, session);
-        try {
-            await applyConnection(connection);
-        } catch (error) {
-            if (previous) {
-                sessions.set(userId, previous);
-            } else {
-                sessions.delete(userId);
-            }
-            await Promise.resolve(session.cleanup?.());
-            throw error;
-        }
-        if (previous && previous !== session) {
+    // Every external operation is a child fiber, including callbacks from SDKs.
+    const owned = <B>(work: Effect.Effect<B, ConnectionError>) =>
+        Effect.suspend(() =>
+            disposed ? Effect.fail(closed()) : Effect.flatMap(Effect.forkIn(work, owner), Fiber.join)
+        );
+    const closeSockets = (userId: string) =>
+        Effect.sync(() => {
             for (const socket of sockets.get(userId) ?? []) socket.close();
             sockets.delete(userId);
-            await Promise.resolve(previous.cleanup?.());
+        });
+    const releaseSession = Effect.fnUntraced(function* (userId: string) {
+        yield* closeSockets(userId);
+        const session = sessions.get(userId);
+        sessions.delete(userId);
+        yield* session?.cleanup?.() ?? Effect.void;
+    });
+    yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+            const exits = yield* Effect.forEach(
+                [...sessions.keys()],
+                (id) => Effect.exit(releaseSession(id)),
+                { concurrency: "unbounded" }
+            );
+            for (const exit of exits) yield* exit;
+        })
+    );
+    const updateConnection = Effect.fnUntraced(function* (userId: string, update: (row: Connection) => void) {
+        if (!connections.has(userId)) return;
+        yield* connectionOperation(
+            "persist",
+            () => connections.update(userId, { optimistic: false }, update).isPersisted.promise
+        );
+    });
+    const applyEstablished = Effect.fnUntraced(function* (
+        { connection, session }: EstablishedConnection,
+        adopted?: () => void
+    ) {
+        if (disposed) return yield* closed();
+        const previous = sessions.get(connection.userId);
+        // Persistence and replacing the live session form one uninterruptible handoff.
+        // If persistence fails the old session is still live.
+        yield* connectionOperation("persist", () => {
+            const transaction = connections.has(connection.userId)
+                ? connections.update(connection.userId, { optimistic: false }, (draft) => {
+                      Object.assign(draft, connection);
+                  })
+                : connections.insert(connection, { optimistic: false });
+            return transaction.isPersisted.promise;
+        });
+        sessions.set(connection.userId, session);
+        adopted?.();
+        if (previous && previous !== session) {
+            yield* closeSockets(connection.userId);
+            yield* previous.cleanup?.() ?? Effect.void;
         }
+    }, Effect.uninterruptible);
+    // Until a session is adopted, the submitting fiber owns it. This also covers
+    // cancellation while waiting for another operation on the same user.
+    const handoff = (
+        entry: EstablishedConnection,
+        use: (adopted: () => void) => Effect.Effect<void, ConnectionError>,
+        alreadyOwned = false
+    ) =>
+        Effect.suspend(() => {
+            let adopted = alreadyOwned || sessions.get(entry.connection.userId) === entry.session;
+            return Effect.acquireUseRelease(
+                Effect.void,
+                () =>
+                    use(() => {
+                        adopted = true;
+                    }),
+                () => (adopted ? Effect.void : (entry.session.cleanup?.() ?? Effect.void))
+            );
+        });
+    const markUnauthenticated = Effect.fnUntraced(function* (userId: string, error: UnauthenticatedError) {
+        yield* releaseSession(userId);
+        yield* updateConnection(userId, (row) => {
+            row.state = { status: "needs-auth", error: error.message };
+        });
+    });
+    const reportUnauthenticated = (userId: string, error: UnauthenticatedError) =>
+        owned(locked(userId, markUnauthenticated(userId, error)));
+    const controller: ConnectionController = {
+        connect: (entry) =>
+            handoff(entry, (adopted) =>
+                owned(locked(entry.connection.userId, applyEstablished(entry, adopted))).pipe(
+                    Effect.tap(() => Effect.sync(notify))
+                )
+            ),
+        disconnect: (userId) =>
+            owned(
+                locked(
+                    userId,
+                    Effect.gen(function* () {
+                        yield* releaseSession(userId);
+                        yield* updateConnection(userId, (row) => {
+                            row.state = { status: "inactive" };
+                        });
+                        notify();
+                    })
+                )
+            ),
     };
-    const refreshDueConnections = async (signal: AbortSignal) => {
-        const now = Date.now();
+    const authentication = yield* Effect.try({
+        try: () => adapter.createAuthenticationClient(controller),
+        catch: (cause) => ConnectionError.from("authentication", cause),
+    });
+    const refresh = Effect.fn("Connections.refresh")(function* () {
+        const now = yield* Clock.currentTimeMillis;
         for (const connection of connections.values()) {
-            signal.throwIfAborted();
             const state = connection.state;
-            if (state.status !== "active" || state.expiration === undefined) {
-                continue;
-            }
-            const expiresAt = state.expiration.expiresAt;
-            if (state.expiration.refreshable) {
-                if (
-                    expiresAt > now + REFRESH_WINDOW_MS ||
-                    options.runtime.connectivity?.isConnected === false
-                ) {
-                    continue;
-                }
-                const session = sessions.get(connection.userId);
-                if (!session?.refresh) {
-                    await updateConnection(connection.userId, (draft) => {
-                        draft.state = {
-                            status: "error",
-                            error: "Connection is refreshable, but its live session does not implement refresh.",
-                        };
-                    });
-                    continue;
-                }
-                try {
-                    const refreshed = await session.refresh({ signal });
-                    if (signal.aborted || disposed) {
-                        await refreshed.session.cleanup?.();
-                        signal.throwIfAborted();
-                        return;
-                    }
-                    if (refreshed.connection.userId !== connection.userId) {
-                        throw new Error(
-                            `Connection refresh changed user from "${connection.userId}" to "${refreshed.connection.userId}".`
-                        );
-                    }
-                    await applyEstablishedConnection(refreshed);
-                } catch (error) {
-                    if (signal.aborted || disposed) return;
-                    if (isUnauthenticatedError(error)) {
-                        await reportUnauthenticated(connection.userId, error);
-                    }
-                }
-                continue;
-            } else {
-                if (expiresAt <= now) {
-                    await reportUnauthenticated(
+            if (state.status !== "active" || !state.expiration) continue;
+            const { expiresAt, refreshable } = state.expiration;
+            const previous = sessions.get(connection.userId);
+            if (!refreshable) {
+                if (expiresAt <= now)
+                    yield* reportUnauthenticated(
                         connection.userId,
                         unauthenticated("The connection has expired.")
                     );
-                }
                 continue;
             }
+            if (expiresAt > now + REFRESH_WINDOW_MS || !(yield* runtime.online)) continue;
+            if (!previous?.refresh) {
+                yield* locked(
+                    connection.userId,
+                    updateConnection(connection.userId, (row) => {
+                        row.state = {
+                            status: "error",
+                            error: "Connection is refreshable, but its live session does not implement refresh.",
+                        };
+                    })
+                );
+                continue;
+            }
+            yield* Effect.uninterruptibleMask((restore) =>
+                Effect.flatMap(restore(previous.refresh!()), (next) =>
+                    handoff(
+                        next,
+                        (adopted) =>
+                            restore(
+                                locked(
+                                    connection.userId,
+                                    Effect.suspend(() => {
+                                        if (disposed || sessions.get(connection.userId) !== previous)
+                                            return Effect.void;
+                                        if (next.connection.userId !== connection.userId)
+                                            return Effect.fail(
+                                                new ConnectionError({
+                                                    operation: "refresh",
+                                                    kind: "InvalidState",
+                                                    message: "Connection refresh changed user identity.",
+                                                })
+                                            );
+                                        return applyEstablished(next, adopted);
+                                    })
+                                )
+                            ),
+                        next.session === previous
+                    )
+                )
+            ).pipe(
+                Effect.catch((error) =>
+                    error.kind === "Unauthenticated"
+                        ? locked(
+                              connection.userId,
+                              Effect.suspend(() =>
+                                  sessions.get(connection.userId) === previous
+                                      ? markUnauthenticated(connection.userId, unauthenticated(error.message))
+                                      : Effect.void
+                              )
+                          )
+                        : Effect.logWarning("Connection refresh failed", {
+                              operation: error.operation,
+                              kind: error.kind,
+                          })
+                )
+            );
         }
-    };
-    const startRefreshLoop = () => {
-        if (!isCoordinationHost(options.runtime.coordination)) return;
-        const host = options.runtime.coordination;
-        const refresh = Effect.tryPromise({
-            try: (signal) => host.runAsLeader(({ signal }) => refreshDueConnections(signal), { signal }),
-            catch: (cause) => cause,
-        }).pipe(
-            Effect.withSpan("Connections.refresh"),
-            Effect.catch(() => Effect.void)
-        );
-        refreshTask = managed.runPromise(
-            Effect.forkIn(
-                Effect.forever(
-                    Effect.andThen(Effect.race(Queue.take(wake), Effect.sleep(REFRESH_POLL_MS)), refresh)
-                ),
-                owner
+    });
+    const base = options.egressHandlers ?? createDefaultConnectionEgressHandlers();
+    const logout = (userId: string, forget: boolean) =>
+        owned(
+            locked(
+                userId,
+                Effect.gen(function* () {
+                    const session = sessions.get(userId);
+                    // SDK logout may await a controller callback. Only local state transitions
+                    // take the state lock; commands serialize separately to avoid reentrancy deadlocks.
+                    yield* session?.disconnect() ?? Effect.void;
+                    yield* locked(
+                        userId,
+                        Effect.gen(function* () {
+                            const current = sessions.get(userId);
+                            if (current && current !== session) return;
+                            yield* releaseSession(userId);
+                            if (forget) {
+                                if (connections.has(userId))
+                                    yield* connectionOperation(
+                                        "forget",
+                                        () =>
+                                            connections.delete(userId, { optimistic: false }).isPersisted
+                                                .promise
+                                    );
+                            } else
+                                yield* updateConnection(userId, (row) => {
+                                    row.state = { status: "inactive" };
+                                });
+                            notify();
+                        })
+                    );
+                }),
+                "command"
             )
         );
-        void refreshTask.catch(() => undefined);
-        unsubscribeConnectivity = options.runtime.connectivity?.subscribe(notify);
-    };
-
-    await Effect.runPromise(
-        Scope.addFinalizer(
-            owner,
-            Effect.promise(async () => {
-                if (disposed) return;
-                disposed = true;
-                lifetime.abort();
-                unsubscribeConnectivity?.();
-                connectionDemand?.unsubscribe();
-                const results = await Promise.allSettled([
-                    refreshTask?.then((fiber) => Effect.runPromise(Fiber.interrupt(fiber))),
-                    Effect.runPromise(Queue.shutdown(wake)),
-                ]);
-                const users = [...sessions.keys()];
-                const released = await Promise.allSettled(users.map(releaseSession));
-                const remaining = await Promise.allSettled([
-                    Promise.resolve().then(() => adapter.cleanup?.()),
-                    connections.cleanup(),
-                ]);
-                const errors = [...results, ...released, ...remaining].flatMap((result) =>
-                    result.status === "rejected" ? [result.reason] : []
-                );
-                if (errors.length) throw new AggregateError(errors, "Connection cleanup failed.");
-            })
-        )
-    );
-
-    const controller: ConnectionController = {
-        async connect(connection) {
-            await applyEstablishedConnection(connection);
-            notify();
-        },
-        async disconnect(userId) {
-            await releaseSession(userId);
-            await updateConnection(userId, (connection) => {
-                connection.state = { status: "inactive" };
-            });
-            notify();
-        },
-    };
-    let authentication: AuthenticationClient;
-    try {
-        authentication = adapter.createAuthenticationClient(controller);
-    } catch (error) {
-        await close();
-        throw error;
-    }
-
-    const manager: ConnectionManager<AuthenticationClient> = {
+    const manager: ConnectionManagerService<A> = {
         installationId: options.installationId,
         authentication,
         connections,
-        async disconnect(userId) {
-            const session = sessions.get(userId);
-            if (session) {
-                await session.disconnect();
-            }
-            await controller.disconnect(userId);
-        },
-        async forget(userId) {
-            const session = sessions.get(userId);
-            if (session) {
-                await session.disconnect();
-            }
-            await releaseSession(userId);
-            if (!connections.get(userId)) {
-                return;
-            }
-            const transaction = connections.delete(userId, {
-                optimistic: false,
-            });
-            await transaction.isPersisted.promise;
-        },
         reportUnauthenticated,
+        disconnect: (userId) => logout(userId, false),
+        forget: (userId) => logout(userId, true),
         egress(userId) {
-            if (!sessions.get(userId)) return;
-            const getHandlers = (): ConnectionEgressHandlers => {
+            if (disposed || !sessions.has(userId)) return;
+            const handlers = () => {
                 const session = sessions.get(userId);
-                if (!session) {
-                    throw new Error(`Connection session for user "${userId}" is unavailable.`);
-                }
-                return session.egress ? session.egress(baseEgressHandlers) : baseEgressHandlers;
+                if (!session || disposed) throw closed();
+                return session.egress?.(base) ?? base;
             };
-            const handleError = async (error: unknown) => {
-                if (isUnauthenticatedError(error)) {
-                    await reportUnauthenticated(userId, error);
-                }
+            const handleError = async (cause: unknown, session: ConnectionSession | undefined) => {
+                const error = ConnectionError.from("egress", cause);
+                if (error.kind === "Unauthenticated" && !disposed)
+                    await run(
+                        owned(
+                            locked(
+                                userId,
+                                Effect.suspend(() =>
+                                    sessions.get(userId) === session
+                                        ? markUnauthenticated(userId, unauthenticated(error.message))
+                                        : Effect.void
+                                )
+                            )
+                        )
+                    );
+                throw cause;
             };
             return {
                 async fetch(input, init) {
+                    const session = sessions.get(userId);
                     try {
-                        if (disposed) throw new Error("Connection manager is closed.");
                         const request = new Request(input, init);
-                        return await getHandlers().fetch(
+                        return await handlers().fetch(
                             new Request(request, {
                                 signal: AbortSignal.any([request.signal, lifetime.signal]),
                             })
                         );
-                    } catch (error) {
-                        await handleError(error);
-                        throw error;
+                    } catch (cause) {
+                        return handleError(cause, session);
                     }
                 },
                 async createWebSocket(url, protocols) {
+                    const session = sessions.get(userId);
                     try {
-                        if (disposed) throw new Error("Connection manager is closed.");
-                        const socket = await getHandlers().createWebSocket(url, protocols);
-                        if (disposed || !sessions.has(userId)) {
+                        const socket = await handlers().createWebSocket(url, protocols);
+                        if (disposed || sessions.get(userId) !== session) {
                             socket.close();
-                            throw new Error("Connection session is closed.");
+                            throw closed();
                         }
                         let open = sockets.get(userId);
                         if (!open) sockets.set(userId, (open = new Set()));
                         open.add(socket);
                         socket.addEventListener("close", () => open.delete(socket), { once: true });
                         return socket;
-                    } catch (error) {
-                        await handleError(error);
-                        throw error;
+                    } catch (cause) {
+                        return handleError(cause, session);
                     }
                 },
             };
         },
-        cleanup: close,
     };
+    yield* Effect.acquireRelease(
+        Effect.sync(() => connections.subscribeChanges(() => {}, { includeInitialState: true })),
+        (demand) => Effect.sync(() => demand.unsubscribe())
+    );
+    yield* connectionOperation("restore", () => queryOnce((q) => q.from({ row: connections })));
+    // Register restored session ownership before any fallible metadata writes.
+    const restored = yield* adapter.restoreConnections();
+    for (const entry of restored) sessions.set(entry.connection.userId, entry.session);
+    for (const entry of restored) yield* applyEstablished(entry);
+    const restoredIds = new Set(restored.map((entry) => entry.connection.userId));
+    for (const connection of connections.values())
+        if (!restoredIds.has(connection.userId) && connection.state.status !== "needs-auth") {
+            yield* updateConnection(connection.userId, (row) => {
+                row.state = { status: "inactive" };
+            });
+        }
+    if (isCoordinationHost(runtime.adapter.coordination)) {
+        const host = runtime.adapter.coordination;
+        const asLeader = connectionOperation("refresh", (signal) =>
+            host.runAsLeader(({ signal }) => run(refresh(), { signal }), { signal })
+        ).pipe(
+            Effect.catch((error) =>
+                Effect.logWarning("Connection leader refresh failed", { kind: error.kind })
+            )
+        );
+        yield* Effect.forever(
+            Effect.andThen(Effect.race(Queue.take(wake), Effect.sleep(REFRESH_POLL_MS)), asLeader)
+        ).pipe(Effect.forkScoped);
+        yield* Stream.runForEach(runtime.connectivity, () => Effect.sync(notify)).pipe(Effect.forkScoped);
+    }
+    // Close the door before interrupting work and releasing sessions.
+    yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+            disposed = true;
+            lifetime.abort();
+        })
+    );
+    notify();
+    return manager;
+});
 
+/** Framework boundary: all implementation work above runs as scoped Effects. */
+export async function createConnectionManager<A extends object = object>(
+    options: CreateConnectionManagerOptions<A>
+): Promise<ConnectionManager<A>> {
+    const managed = runtimeEffects(options.runtime).runtime;
+    const owner = await managed.runPromise(
+        Effect.flatMap(Runtime, (runtime) => Scope.fork(options.scope ?? runtime.scope))
+    );
     try {
-        // This service consumes every private connection record for restoration
-        // and refresh. Keep that local demand alive for the service's scope.
-        connectionDemand = connections.subscribeChanges(() => {}, { includeInitialState: true });
-        await queryOnce((q) => q.from({ row: connections }));
-        const restored = await adapter.restoreConnections({ signal: lifetime.signal });
-        if (disposed) {
-            await Promise.allSettled(restored.map((entry) => Promise.resolve(entry.session.cleanup?.())));
-            throw new Error("Connection manager closed during restoration.");
-        }
-        const restoredUserIds = new Set<string>();
-        for (const established of restored) {
-            restoredUserIds.add(established.connection.userId);
-            await applyEstablishedConnection(established);
-        }
-        for (const connection of connections.values()) {
-            if (!restoredUserIds.has(connection.userId) && connection.state.status !== "needs-auth") {
-                await updateConnection(connection.userId, (draft) => {
-                    draft.state = { status: "inactive" };
-                });
-            }
-        }
-        startRefreshLoop();
-        notify();
-        return manager;
-    } catch (error) {
-        await close();
-        throw error;
+        const manager = await managed.runPromise(
+            Effect.flatMap(
+                Effect.forkIn(Scope.provide(makeConnectionManager(options), owner), owner),
+                Fiber.join
+            )
+        );
+        let closing: Promise<void> | undefined;
+        return {
+            ...manager,
+            disconnect: (id) => managed.runPromise(manager.disconnect(id)),
+            forget: (id) => managed.runPromise(manager.forget(id)),
+            reportUnauthenticated: (id, error) =>
+                managed.runPromise(manager.reportUnauthenticated(id, error)),
+            cleanup: () => (closing ??= Effect.runPromise(Scope.close(owner, Exit.void))),
+        };
+    } catch (cause) {
+        await Effect.runPromise(Scope.close(owner, Exit.fail(cause)));
+        throw cause;
     }
 }

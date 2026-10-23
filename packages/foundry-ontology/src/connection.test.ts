@@ -1,4 +1,28 @@
-import { createDefaultRuntime } from "@party-stack/runtime";
+import { Runtime, runtimeEffects, createDefaultRuntime, type RuntimeAdapter } from "@party-stack/runtime";
+import { Effect, Exit, Scope } from "effect";
+import type { BackendConnectionAdapterProvider } from "@party-stack/connect";
+const releaseAdapters: Array<() => Promise<void>> = [];
+afterEach(async () => {
+    for (const close of releaseAdapters.splice(0)) await close();
+});
+async function openAdapter<A extends object>(
+    provider: BackendConnectionAdapterProvider<A>,
+    options: { installationId: string; runtime?: RuntimeAdapter }
+) {
+    const runtime = options.runtime ?? createDefaultRuntime("installation", crypto.randomUUID());
+    const managed = runtimeEffects(runtime).runtime;
+    const owner = await managed.runPromise(Effect.flatMap(Runtime, (service) => Scope.fork(service.scope)));
+    releaseAdapters.push(async () => {
+        await Effect.runPromise(Scope.close(owner, Exit.void));
+        await runtime.cleanup?.();
+    });
+    const adapter = await managed.runPromise(
+        Scope.provide(provider({ ...options, runtime, scope: owner }), owner)
+    );
+    await Effect.runPromise(Scope.addFinalizer(owner, adapter.cleanup?.() ?? Effect.void));
+    return adapter;
+}
+
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { createFoundryConnectionAdapter } from "./connection.js";
 
@@ -30,11 +54,10 @@ describe("createFoundryConnectionAdapter", () => {
             baseUrl: "https://foundry.example.com",
             token,
         });
-        const adapter = await adapterProvider({
+        const adapter = await openAdapter(adapterProvider, {
             installationId: "foundry",
-            runtime: {} as never,
         });
-        const [established] = await adapter.restoreConnections();
+        const [established] = await Effect.runPromise(adapter.restoreConnections());
         if (!established?.session.egress) {
             throw new Error("Expected Foundry egress wrapper.");
         }
@@ -55,16 +78,18 @@ describe("createFoundryConnectionAdapter", () => {
 
     it("exposes API-token authentication through the connection controller", async () => {
         const token = foundryToken();
-        const adapter = await createFoundryConnectionAdapter({
-            baseUrl: "https://foundry.example.com",
-        })({
-            installationId: "foundry",
-            runtime: {} as never,
-        });
-        const connect = vi.fn(() => Promise.resolve());
+        const adapter = await openAdapter(
+            createFoundryConnectionAdapter({
+                baseUrl: "https://foundry.example.com",
+            }),
+            {
+                installationId: "foundry",
+            }
+        );
+        const connect = vi.fn(() => Effect.void);
         const authentication = adapter.createAuthenticationClient({
             connect,
-            disconnect: () => Promise.resolve(),
+            disconnect: () => Effect.void,
         });
 
         const connection = await authentication.signIn.apiToken({ token });
@@ -90,21 +115,23 @@ describe("createFoundryConnectionAdapter", () => {
                 })
             );
         });
-        const adapter = await createFoundryConnectionAdapter({
-            baseUrl: "https://foundry.example.com",
-            clientCredentials: {
-                clientId: "client",
-                clientSecret: "secret",
-                fetch,
-            },
-        })({
-            installationId: "foundry",
-            runtime: {} as never,
-        });
-        const connect = vi.fn(() => Promise.resolve());
+        const adapter = await openAdapter(
+            createFoundryConnectionAdapter({
+                baseUrl: "https://foundry.example.com",
+                clientCredentials: {
+                    clientId: "client",
+                    clientSecret: "secret",
+                    fetch,
+                },
+            }),
+            {
+                installationId: "foundry",
+            }
+        );
+        const connect = vi.fn(() => Effect.void);
         const authentication = adapter.createAuthenticationClient({
             connect,
-            disconnect: () => Promise.resolve(),
+            disconnect: () => Effect.void,
         });
 
         const connection = await authentication.signIn.clientCredentials();
@@ -150,29 +177,32 @@ describe("createFoundryConnectionAdapter", () => {
             },
         };
         const token = foundryToken();
-        const adapter = await createFoundryConnectionAdapter({
-            baseUrl: "https://foundry.example.com",
-            oauth: {
-                clientId: "client",
-                redirectUrl: "https://app.example/callback",
-                fetch: () =>
-                    Promise.resolve(
-                        Response.json({
-                            access_token: token,
-                            refresh_token: "refresh",
-                            token_type: "Bearer",
-                            expires_in: 3600,
-                        })
-                    ),
-            },
-        })({
-            installationId: "foundry",
-            runtime,
-        });
-        const connect = vi.fn(() => Promise.resolve());
+        const adapter = await openAdapter(
+            createFoundryConnectionAdapter({
+                baseUrl: "https://foundry.example.com",
+                oauth: {
+                    clientId: "client",
+                    redirectUrl: "https://app.example/callback",
+                    fetch: () =>
+                        Promise.resolve(
+                            Response.json({
+                                access_token: token,
+                                refresh_token: "refresh",
+                                token_type: "Bearer",
+                                expires_in: 3600,
+                            })
+                        ),
+                },
+            }),
+            {
+                installationId: "foundry",
+                runtime,
+            }
+        );
+        const connect = vi.fn(() => Effect.void);
         const authentication = adapter.createAuthenticationClient({
             connect,
-            disconnect: () => Promise.resolve(),
+            disconnect: () => Effect.void,
         });
 
         const connection = await authentication.signIn.oauth();
@@ -185,7 +215,7 @@ describe("createFoundryConnectionAdapter", () => {
         );
         expect([...values.values()].some((value) => value.includes("refresh"))).toBe(true);
 
-        await adapter.cleanup?.();
+        await Effect.runPromise(adapter.cleanup?.() ?? Effect.void);
         await runtime.cleanup?.();
     });
 });

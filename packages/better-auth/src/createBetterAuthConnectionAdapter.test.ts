@@ -1,4 +1,28 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { Runtime, runtimeEffects, createDefaultRuntime, type RuntimeAdapter } from "@party-stack/runtime";
+import { Effect, Exit, Scope } from "effect";
+import type { BackendConnectionAdapterProvider } from "@party-stack/connect";
+const releaseAdapters: Array<() => Promise<void>> = [];
+afterEach(async () => {
+    for (const close of releaseAdapters.splice(0)) await close();
+});
+async function openAdapter<A extends object>(
+    provider: BackendConnectionAdapterProvider<A>,
+    options: { installationId: string; runtime?: RuntimeAdapter }
+) {
+    const runtime = options.runtime ?? createDefaultRuntime("installation", crypto.randomUUID());
+    const managed = runtimeEffects(runtime).runtime;
+    const owner = await managed.runPromise(Effect.flatMap(Runtime, (service) => Scope.fork(service.scope)));
+    releaseAdapters.push(async () => {
+        await Effect.runPromise(Scope.close(owner, Exit.void));
+        await runtime.cleanup?.();
+    });
+    const adapter = await managed.runPromise(
+        Scope.provide(provider({ ...options, runtime, scope: owner }), owner)
+    );
+    await Effect.runPromise(Scope.addFinalizer(owner, adapter.cleanup?.() ?? Effect.void));
+    return adapter;
+}
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
     createBetterAuthConnectionAdapter,
     type BetterAuthConnectionClient,
@@ -83,14 +107,16 @@ describe("createBetterAuthConnectionAdapter", () => {
                 },
             },
         } satisfies BetterAuthConnectionClient;
-        const adapter = await createBetterAuthConnectionAdapter({
-            client,
-        })({
-            installationId: "better-auth",
-            runtime: {} as never,
-        });
+        const adapter = await openAdapter(
+            createBetterAuthConnectionAdapter({
+                client,
+            }),
+            {
+                installationId: "better-auth",
+            }
+        );
 
-        const restored = await adapter.restoreConnections();
+        const restored = await Effect.runPromise(adapter.restoreConnections());
 
         expect(restored.map(({ connection }) => connection.userId)).toEqual(["user-1", "user-2"]);
         const fetch = vi.fn((request: Request) => {
@@ -120,11 +146,11 @@ describe("createBetterAuthConnectionAdapter", () => {
         const connected: EstablishedConnection[] = [];
         const connect = vi.fn((connection: EstablishedConnection) => {
             connected.push(connection);
-            return Promise.resolve();
+            return Effect.void;
         });
         const authentication = adapter.createAuthenticationClient({
             connect,
-            disconnect: () => Promise.resolve(),
+            disconnect: () => Effect.void,
         });
         const result = await authentication.signIn.email({
             email: "ada@example.com",
@@ -135,7 +161,7 @@ describe("createBetterAuthConnectionAdapter", () => {
         expect(result.data?.user.id).toBe("user-1");
         expect(connect).toHaveBeenCalledTimes(2);
         expect(connected.map(({ connection }) => connection.userId)).toEqual(["user-1", "user-2"]);
-        await restored[1]!.session.disconnect();
+        await Effect.runPromise(restored[1]!.session.disconnect());
         expect(revoke).toHaveBeenCalledWith({
             sessionToken: "selector-2",
         });
@@ -146,7 +172,6 @@ it("restores offline session selectors across adapter recreation without storing
     const Memory = await import("@party-stack/ontology-storage/memory/tables");
     const { Table } = await import("@party-stack/ontology-storage/tables");
     const { createDefaultRuntime, defineRuntime } = await import("@party-stack/runtime");
-    const { Effect } = await import("effect");
     const tables = await Effect.runPromise(Memory.make());
     let online = true;
     const base = createDefaultRuntime("installation", "offline-better-auth");
@@ -186,9 +211,11 @@ it("restores offline session selectors across adapter recreation without storing
     } satisfies BetterAuthConnectionClient;
     const provider = createBetterAuthConnectionAdapter({ client });
     try {
-        const first = await provider({ installationId: "test", runtime });
-        expect((await first.restoreConnections()).map((value) => value.connection.userId)).toEqual(["user"]);
-        await first.cleanup?.();
+        const first = await openAdapter(provider, { installationId: "test", runtime });
+        expect(
+            (await Effect.runPromise(first.restoreConnections())).map((value) => value.connection.userId)
+        ).toEqual(["user"]);
+        await Effect.runPromise(first.cleanup?.() ?? Effect.void);
         const rows = await Effect.runPromise(
             tables.loadSubset(
                 Table.make({ name: JSON.stringify(["better-auth", "test", "session-selectors"]) })
@@ -199,8 +226,8 @@ it("restores offline session selectors across adapter recreation without storing
         expect(JSON.stringify(rows)).not.toContain("fixture@example.test");
         online = false;
         listDeviceSessions.mockClear();
-        const restored = await provider({ installationId: "test", runtime });
-        const connections = await restored.restoreConnections();
+        const restored = await openAdapter(provider, { installationId: "test", runtime });
+        const connections = await Effect.runPromise(restored.restoreConnections());
         expect(connections.map((value) => value.connection.userId)).toEqual(["user"]);
         expect(listDeviceSessions).not.toHaveBeenCalled();
         const fetch = vi.fn(async (_request: Request) => new Response());
@@ -212,7 +239,7 @@ it("restores offline session selectors across adapter recreation without storing
         expect(fetch.mock.calls[0]?.[0].headers.get("x-party-stack-connection-session")).toBe(
             "public-selector"
         );
-        await restored.cleanup?.();
+        await Effect.runPromise(restored.cleanup?.() ?? Effect.void);
     } finally {
         await runtime.cleanup?.();
     }

@@ -15,7 +15,62 @@ Applications reference connectors. The credential authority resolves their desig
 - `@party-stack/connect`: Effect service, native storage, OAuth provider integration, browser client, maintenance, and SDK/UI facades.
 - `@party-stack/connect/server`: mountable HTTP handlers for server-mediated authorization.
 
-The former `@party-stack/oauth` and `@party-stack/connections` packages have been consolidated here. Existing provider SDK and UI entry points remain Promise boundaries; OAuth storage and execution underneath them use Effect. The existing connection-manager status collections and installation selection API remain available while their higher-level lifecycle migration continues.
+The former `@party-stack/oauth` and `@party-stack/connections` packages have been consolidated here. Existing provider SDK and UI entry points remain Promise boundaries; OAuth storage and execution underneath them use Effect. The generic connection manager and installation lifecycle now run as scoped Effect services. Reactive connection status collections remain UI projections over native local storage.
+
+## Live sessions and installations
+
+`makeConnectionManager(options)` acquires the typed session manager in `Runtime | Scope`.
+Its `disconnect`, `forget` and `reportUnauthenticated` methods return Effects with
+`ConnectionError`. Adapter construction, restoration, session refresh, logout and
+cleanup also use Effect contracts. Adapters can use `Effect.acquireRelease` directly;
+partial acquisition failure releases what was already acquired.
+
+`makeOntologyBackendInstallation(options)` from `@party-stack/ontology` acquires an
+installation in the caller's Scope. Its open/close/disconnect/forget methods are
+Effects. Concurrent opens share one scoped cache entry; failed opens can be retried.
+Operations for one user serialize, while other users can open independently.
+
+```ts
+const app = Effect.gen(function* () {
+    const installation = yield* makeOntologyBackendInstallation({
+        installationId: "my-foundry",
+        runtime: createWebRuntime,
+        connections: createFoundryConnectionAdapter(foundryOptions),
+        routes,
+    });
+    // Provider authentication clients retain their SDK-specific UI methods.
+    const connection = yield* connectionOperation("sign-in", () =>
+        installation.authentication.signIn.oauth({ browserPresentation: "popup" })
+    );
+    const ontology = yield* installation.openOntology({
+        userId: connection.userId,
+        ontologyId,
+    });
+    // Use ontology.objects / actions, or expose them to your UI here.
+});
+// The host supplies a Scope for app; closing it releases every acquired resource.
+```
+
+An installation retains an opened ontology until explicit close or installation
+Scope closure. This preserves the existing cached-open semantics. It does not
+reference-count row retention; replica GC remains mark-and-sweep. Closing resources
+preserves credentials, rows and pending work. `disconnect` revokes/deactivates the
+session; `forget` additionally destroys that user's recorded local partitions.
+
+`Connections.layer(options)` and `OntologyInstallation.layer(options)` supply the
+services through Effect's Context. `make*` is useful when preserving a provider's
+generic authentication-client type. `createConnectionManager` and
+`createOntologyBackendInstallation` are thin Promise facades for framework callers;
+their cleanup methods close the same scopes. There is no second async implementation.
+Egress stays compatible with fetch/WebSocket APIs, and provider sign-in methods
+remain Promise boundaries. Runtime-provider, route-configuration and remote-placement
+callbacks also retain their current framework contracts.
+
+Refresh runs in a scoped fiber using Effect's Clock and connectivity stream. Session
+replacement is serialized with logout; a late refresh or old request failure cannot
+reactivate or invalidate a newer session. Unadopted sessions are released if their
+submitting fiber is interrupted. Teardown attempts all session finalizers even when
+one fails.
 
 ## Native authority
 
@@ -118,4 +173,4 @@ Tokens and expiry timestamps are flat properties because Foundry structs do not 
 
 The included authority store is the native ontology-storage implementation. Hosting these records in Foundry additionally needs trusted Foundry actions/Cipher writes implementing the same atomic claims and credential commits; ordinary independent SDK reads/writes are not an atomic transaction. That bridge is not supplied yet. Existing Foundry provider login uses native device storage, not Foundry-hosted Connect records.
 
-Public LiveOntology decryption/cache APIs, Better Auth's server database adapter, and the remaining installation/connection-manager lifecycle consolidation are separate migration work. This change does not encrypt action inputs in the outbox.
+Public LiveOntology decryption/cache APIs, Better Auth's server database adapter, centralized private-service ownership across browser contexts, and explicit per-purpose browser persistence consent remain migration work. This change does not encrypt action inputs in the outbox.

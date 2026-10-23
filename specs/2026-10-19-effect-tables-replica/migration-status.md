@@ -74,10 +74,12 @@ covered in [native-actions.md](./native-actions.md).
 
 ## What remains, in recommended order
 
-1. **Auth, connections and installations (next).** Move private records onto their
-   own ontology definitions/native storage. Finish explicit per-purpose browser
-   credential/key-persistence consent and key-access composition. Preserve working
-   OAuth callbacks, token refresh, installation selection and scoped cleanup.
+1. **Remaining Connect integration (next).** Better Auth's server database adapter
+   over ontology-storage; explicit per-purpose browser credential/key-persistence
+   consent and the public opt-in decrypt/cache API. A Foundry-hosted Connect store
+   needs trusted actions/Cipher writes for atomic claims and credential commits.
+   Native Connect records and scoped connection/installation lifecycle are implemented;
+   their remaining cross-context ownership belongs to the next platform step.
 2. **Platform ownership.** Finish scoped Node/Expo construction and credential/key
    composition. Private connection/installation services still use coordinated
    per-context ownership. SharedWorker application data ownership is already live;
@@ -263,3 +265,37 @@ without cache timestamps/TTL. Outbox input encryption remains explicitly deferre
 
 See [the Connect package](../../packages/connect/README.md) for concrete setup,
 extension and hosting examples.
+
+## Scoped connection/installation checkpoint (2026-10-22)
+
+The generic connection manager and installation lifecycle are now native Effects,
+not acquireRelease wrappers around their old async implementations. SDK-specific
+authentication clients remain generic (`signIn.oauth`, Better Auth `signIn.email`,
+etc.). Native adapter/session/controller contracts use Effects and a typed
+`ConnectionError`. Foundry, Salesforce and Better Auth implement those contracts.
+
+`makeConnectionManager` and `makeOntologyBackendInstallation` acquire resources in
+Scope; `Connections.layer` and `OntologyInstallation.layer` expose Context services.
+The existing create functions are thin UI Promise bridges that own those scopes.
+There are no parallel `/effect` entry points. Route configuration, runtime factories,
+egress and remote placement retain their framework/SDK callback boundaries.
+
+Installation resources use Effect ScopedCache for concurrent acquisition, retryable
+failed opens and per-entry cleanup. Each installation's Scope owns all open entries;
+explicit close still releases a cached entry. Per-user serialization orders open,
+close, disconnect and forget without blocking unrelated users. Runtime closure
+interrupts refresh, restoration and child operations. Failed or interrupted session
+handoff releases unadopted resources; stale refreshes and stale egress authentication
+errors cannot overwrite a newer login. Cleanup attempts all session/adapter resources
+even if an earlier finalizer fails. No logout or durable deletion occurs during
+ordinary Scope closure.
+
+This does not centralize private services across tabs or remove the remaining
+coordination host boundary. It also does not add the Better Auth server storage
+adapter, a Foundry-hosted Connect authority, or the public decrypt/cache API. Those
+remain explicit items above. Outbox input encryption remains deferred.
+
+Provider logout runs outside the local state lock because an SDK may await its
+own session-change callback. User commands serialize separately; callbacks and
+refreshes can make guarded state transitions without reentrancy deadlocks. The
+connection lifecycle suite includes that callback sequence as a regression test.

@@ -3,7 +3,10 @@ import type { ConnectionManager, ConnectionMonitor } from "./types.js";
 
 const INACTIVE = { status: "inactive" } as const;
 
-export function createConnectionMonitor(manager: ConnectionManager, userId: string): ConnectionMonitor {
+export function createConnectionMonitor(
+    manager: Pick<ConnectionManager, "connections" | "reportUnauthenticated">,
+    userId: string
+): ConnectionMonitor {
     const getState = () => manager.connections.get(userId)?.state ?? INACTIVE;
     return {
         get state() {

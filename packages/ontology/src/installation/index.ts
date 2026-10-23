@@ -8,5 +8,6 @@ export type {
     CreateOntologyBackendInstallationOptions,
     OntologyConfiguration,
     OntologyBackendInstallation,
+    OntologyBackendInstallationService,
     OntologyRoute,
 } from "./types.js";

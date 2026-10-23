@@ -1,10 +1,12 @@
 import type { CreateLiveOntologyOpts, LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 import type { OntologyBackendAdapterProvider } from "../live/OntologyBackendAdapter.js";
 import type { BackendConnectionAdapterProvider, Connection, ConnectionEgress } from "@party-stack/connect";
+import type { BackendError } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { MetaOntology } from "@party-stack/ontology-spec/meta";
 import type { RuntimeAdapterProvider } from "@party-stack/runtime";
 import type { Collection } from "@tanstack/db";
+import type { Effect } from "effect";
 
 export interface ConfigureOntologyOptions {
     connection: Connection<"active">;
@@ -88,4 +90,23 @@ export interface OntologyBackendInstallation<AuthenticationClient extends object
      * connections and reopen ontologies.
      */
     cleanup(): Promise<void>;
+}
+
+/** Effect service. The installation's Scope owns every cached ontology. */
+export interface OntologyBackendInstallationService<A extends object = object> {
+    readonly installationId: string;
+    readonly authentication: A;
+    readonly connections: Collection<Connection, string>;
+    openOntology<T extends OntologyDefinition = OntologyDefinition>(options: {
+        userId: string;
+        ontologyId: string;
+    }): Effect.Effect<LiveOntology<T>, BackendError>;
+    openMetaOntology(options: {
+        userId: string;
+        ontologyId: string;
+    }): Effect.Effect<LiveOntology<MetaOntology>, BackendError>;
+    closeOntology(options: { userId: string; ontologyId: string }): Effect.Effect<void, BackendError>;
+    closeMetaOntology(options: { userId: string; ontologyId: string }): Effect.Effect<void, BackendError>;
+    disconnect(userId: string): Effect.Effect<void, BackendError>;
+    forget(userId: string): Effect.Effect<void, BackendError>;
 }

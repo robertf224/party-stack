@@ -1,4 +1,6 @@
 import {
+    connectionOperation,
+    ConnectionError,
     type BackendConnectionAdapter,
     type BackendConnectionAdapterProvider,
     type Connection,
@@ -8,10 +10,10 @@ import {
     type EstablishedConnection,
     withHttpAuthenticationErrorHandling,
 } from "@party-stack/connect";
-import { unauthenticated, isUnauthenticatedError } from "@party-stack/errors";
+import { unauthenticated } from "@party-stack/errors";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Runtime, runtimeEffects } from "@party-stack/runtime";
-import { Effect, Predicate, Schema } from "effect";
+import { Runtime } from "@party-stack/runtime";
+import { Clock, Effect, Fiber, Predicate, Schema, Semaphore } from "effect";
 import { createPartyStackSessionProtocol, PARTY_STACK_SESSION_HEADER } from "./sessionSelection.js";
 import type { PartyStackClient } from "./partyStackClient.js";
 import type { Session, User } from "better-auth";
@@ -58,8 +60,10 @@ export interface CreateBetterAuthConnectionAdapterOptions<Client extends BetterA
 export function createBetterAuthConnectionAdapter<Client extends BetterAuthConnectionClient>(
     options: CreateBetterAuthConnectionAdapterOptions<Client>
 ): BackendConnectionAdapterProvider<Client> {
-    return ({ runtime, installationId }) => {
-        const effects = runtime.tables ? runtimeEffects(runtime).runtime : undefined;
+    return Effect.fn("BetterAuth.connections")(function* ({ installationId, scope }) {
+        const service = yield* Runtime;
+        const context = yield* Effect.context<never>();
+        const run = Effect.runPromiseWith(context);
         const table = Table.make<CachedSession>({
             name: JSON.stringify(["better-auth", installationId, "session-selectors"]),
             codec: {
@@ -67,54 +71,47 @@ export function createBetterAuthConnectionAdapter<Client extends BetterAuthConne
                 decode: Schema.decodeUnknownSync(CachedSessionSchema),
             },
         });
-        const cached = async () =>
-            effects
-                ? effects.runPromise(
-                      Effect.flatMap(Runtime, (service) => service.tables.loadSubset(table)).pipe(
-                          Effect.map((rows) => rows.map((row) => row.value))
-                      )
-                  )
-                : [];
-        const remember = async (selected: readonly DeviceSession[]) => {
-            if (!effects) return;
-            await effects.runPromise(
-                Effect.flatMap(Runtime, (service) =>
-                    service.tables.transaction((tx) =>
-                        Effect.gen(function* () {
-                            yield* tx.clear(table);
-                            for (const selectedSession of selected) {
-                                const { id, userId, expiresAt } = sessionHandle(selectedSession);
-                                // The selector is not a bearer credential; the server still requires its HttpOnly cookie.
-                                yield* tx.put(table, id, { id, userId, expiresAt });
-                            }
-                        })
-                    )
+        const cached = service.tables.loadSubset(table).pipe(
+            Effect.map((rows) => rows.map((row) => row.value)),
+            Effect.mapError((cause) => ConnectionError.from("restore", cause))
+        );
+        const remember = (selected: readonly DeviceSession[]) =>
+            service.tables
+                .transaction((tx) =>
+                    Effect.gen(function* () {
+                        yield* tx.clear(table);
+                        for (const selectedSession of selected) {
+                            const { id, userId, expiresAt } = sessionHandle(selectedSession);
+                            // A selector isn't a bearer credential; the server still requires its HttpOnly cookie.
+                            yield* tx.put(table, id, { id, userId, expiresAt });
+                        }
+                    })
                 )
-            );
-        };
-        const forget = async (id: string) => {
-            if (effects)
-                await effects.runPromise(
-                    Effect.flatMap(Runtime, (service) => service.tables.delete(table, id))
-                );
-        };
+                .pipe(Effect.mapError((cause) => ConnectionError.from("persist", cause)));
+        const forget = (id: string) =>
+            service.tables
+                .delete(table, id)
+                .pipe(Effect.mapError((cause) => ConnectionError.from("forget", cause)));
         const client = options.client;
         const knownUserIds = new Set<string>();
 
-        const listSessions = async (): Promise<DeviceSession[]> => {
-            const result = await client.multiSession.listDeviceSessions();
+        const listSessions = Effect.fn("BetterAuth.sessions")(function* () {
+            const result = yield* connectionOperation("list-sessions", () =>
+                client.multiSession.listDeviceSessions()
+            );
             if (result.error) {
-                if (
+                return yield* ConnectionError.from(
+                    "list-sessions",
                     Predicate.isObject(result.error) &&
-                    (result.error.status === 401 || result.error.status === 403)
-                )
-                    throw unauthenticated("Better Auth requires authentication.");
-                throw new Error("Failed to list Better Auth sessions.", { cause: result.error });
+                        (result.error.status === 401 || result.error.status === 403)
+                        ? unauthenticated("Better Auth requires authentication.")
+                        : result.error
+                );
             }
             const selected = result.data ?? [];
-            await remember(selected);
+            yield* remember(selected);
             return selected;
-        };
+        });
 
         const createEstablishedConnection = (selected: SessionHandle): EstablishedConnection => {
             const selector = selected.id;
@@ -131,30 +128,31 @@ export function createBetterAuthConnectionAdapter<Client extends BetterAuthConne
                 },
             };
             const session: ConnectionSession = {
-                async refresh() {
-                    const restored = (await listSessions()).find(
+                refresh: Effect.fn("BetterAuth.refresh")(function* () {
+                    const restored = (yield* listSessions()).find(
                         (candidate) => candidate.session.id === selector
                     );
-                    if (!restored) {
-                        throw unauthenticated("The Better Auth session requires authentication.");
-                    }
+                    if (!restored)
+                        return yield* ConnectionError.from(
+                            "refresh",
+                            unauthenticated("The Better Auth session requires authentication.")
+                        );
                     return createEstablishedConnection(sessionHandle(restored));
-                },
-                async disconnect() {
+                }),
+                disconnect: Effect.fn("BetterAuth.disconnect")(function* () {
                     const sessionToken =
                         token ??
-                        (await listSessions()).find((candidate) => candidate.session.id === selector)?.session
-                            .token;
+                        (yield* listSessions()).find((candidate) => candidate.session.id === selector)
+                            ?.session.token;
                     if (sessionToken) {
-                        const result = await client.multiSession.revoke({ sessionToken });
-                        if (result.error)
-                            throw new Error("Failed to revoke the Better Auth session.", {
-                                cause: result.error,
-                            });
+                        const result = yield* connectionOperation("revoke", () =>
+                            client.multiSession.revoke({ sessionToken })
+                        );
+                        if (result.error) return yield* ConnectionError.from("revoke", result.error);
                     }
-                    await forget(selector);
+                    yield* forget(selector);
                     knownUserIds.delete(userId);
-                },
+                }),
                 egress(handlers) {
                     return withHttpAuthenticationErrorHandling({
                         async fetch(request) {
@@ -183,63 +181,66 @@ export function createBetterAuthConnectionAdapter<Client extends BetterAuthConne
             return { connection, session };
         };
 
-        const restore = async () => {
-            if (runtime.connectivity?.isConnected === false)
-                return (await cached()).map(createEstablishedConnection);
-            try {
-                return (await listSessions()).map((selected) =>
-                    createEstablishedConnection(sessionHandle(selected))
-                );
-            } catch (cause) {
-                if (isUnauthenticatedError(cause)) throw cause;
-                const local = await cached();
-                if (!local.length) throw cause;
-                return local.map(createEstablishedConnection);
-            }
-        };
-
+        const localSessions = Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis;
+            return (yield* cached).filter((row) => row.expiresAt > now).map(createEstablishedConnection);
+        });
+        const restore = Effect.fn("BetterAuth.restore")(function* () {
+            if (!(yield* service.online)) return yield* localSessions;
+            return yield* listSessions().pipe(
+                Effect.map((sessions) =>
+                    sessions.map((selected) => createEstablishedConnection(sessionHandle(selected)))
+                ),
+                Effect.catch((error) =>
+                    error.kind === "Unauthenticated"
+                        ? Effect.fail(error)
+                        : Effect.flatMap(localSessions, (local) =>
+                              local.length ? Effect.succeed(local) : Effect.fail(error)
+                          )
+                )
+            );
+        });
         let controller: ConnectionController | undefined;
         let unsubscribeSynchronization: (() => void) | undefined;
-        const synchronize = async () => {
-            if (!controller) return;
-            const restored = await restore();
-            const restoredUserIds = new Set<string>();
-            for (const established of restored) {
-                restoredUserIds.add(established.connection.userId);
-                await controller.connect(established);
-            }
-            for (const userId of knownUserIds) {
-                if (!restoredUserIds.has(userId)) {
-                    await controller.disconnect(userId);
+        const synchronization = yield* Semaphore.make(1);
+        const synchronize = synchronization.withPermit(
+            Effect.gen(function* () {
+                if (!controller) return;
+                const restored = yield* restore();
+                const restoredUserIds = new Set<string>();
+                for (const established of restored) {
+                    restoredUserIds.add(established.connection.userId);
+                    yield* controller.connect(established);
                 }
-            }
-            knownUserIds.clear();
-            for (const userId of restoredUserIds) {
-                knownUserIds.add(userId);
-            }
-        };
-
+                for (const userId of knownUserIds)
+                    if (!restoredUserIds.has(userId)) yield* controller.disconnect(userId);
+                knownUserIds.clear();
+                for (const userId of restoredUserIds) knownUserIds.add(userId);
+            })
+        );
+        yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+                unsubscribeSynchronization?.();
+                unsubscribeSynchronization = undefined;
+            })
+        );
         const adapter: BackendConnectionAdapter<Client> = {
             name: "better-auth",
             createAuthenticationClient(connectionController) {
                 controller = connectionController;
                 unsubscribeSynchronization?.();
-                unsubscribeSynchronization = client.partyStack.subscribe(synchronize);
+                unsubscribeSynchronization = client.partyStack.subscribe(() =>
+                    run(Effect.flatMap(Effect.forkIn(synchronize, scope), Fiber.join))
+                );
                 return client;
             },
-            async restoreConnections() {
-                const restored = await restore();
+            restoreConnections: Effect.fn("BetterAuth.restoreConnections")(function* () {
+                const restored = yield* restore();
                 knownUserIds.clear();
-                for (const { connection } of restored) {
-                    knownUserIds.add(connection.userId);
-                }
+                for (const { connection } of restored) knownUserIds.add(connection.userId);
                 return restored;
-            },
-            cleanup() {
-                unsubscribeSynchronization?.();
-                unsubscribeSynchronization = undefined;
-            },
+            }),
         };
         return adapter;
-    };
+    });
 }
