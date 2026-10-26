@@ -119,23 +119,22 @@ export interface OntologyBackendAdapter {
         import("@party-stack/ontology-backend").BackendError,
         import("effect").Scope.Scope
     >;
-    /**
-     * Whether this adapter participates in long-lived synchronization.
-     *
-     * Defaults to true. Non-live adapters support confirmed request/response
-     * operations but cannot safely back optimistic actions.
-     */
-    live?: boolean;
     validateAction?: (
         name: string,
         parameters: Record<string, unknown>,
         live: ValidateActionLiveOpts
-    ) => Promise<Uncertain<v.Result<void, readonly ValidationIssue[]>>>;
+    ) => import("effect").Effect.Effect<
+        Uncertain<v.Result<void, readonly ValidationIssue[]>>,
+        import("@party-stack/ontology-backend").BackendError
+    >;
     validateActionDraft?: (
         name: string,
         parameters: Record<string, unknown>,
         live: ValidateActionDraftLiveOpts
-    ) => Promise<Uncertain<v.Result<void, readonly ValidationIssue[]>>>;
+    ) => import("effect").Effect.Effect<
+        Uncertain<v.Result<void, readonly ValidationIssue[]>>,
+        import("@party-stack/ontology-backend").BackendError
+    >;
     attachments?: OntologyAttachmentsAdapter;
     cleanup?: () => void | Promise<void>;
     // TODO: install/destroy

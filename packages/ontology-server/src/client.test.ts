@@ -178,7 +178,7 @@ describe("native remote backend binding", () => {
         const load = vi.fn(async (request) => ({ objectType: request.objectType, objects: [] }));
         const binding = createRemoteOntologyBackendAdapter({
             ir,
-            live: false,
+
             transport: transport({
                 loadSubset: load,
                 applyAction: async () => ({

@@ -1,4 +1,6 @@
 import { createLiveOntology } from "@party-stack/ontology";
+import { classifyBackendFailure } from "@party-stack/ontology-backend";
+import { Effect } from "effect";
 import { makeRemoteOntologyBackend } from "./backend.js";
 import type { RemoteOntologyTransport } from "./protocol.js";
 export { makeRemoteOntologyBackend } from "./backend.js";
@@ -23,7 +25,7 @@ export interface OntologyApplyActionClientResult extends OntologyApplyActionResu
 export interface CreateRemoteOntologyBackendAdapterOptions {
     ir: OntologyIR;
     transport: RemoteOntologyTransport;
-    live?: boolean;
+
     supportsIdempotency?: boolean;
     journal?: boolean;
 }
@@ -41,7 +43,6 @@ export type CreateRemoteOntologyBackendOptions<
           ) => RemoteOntologyTransport | Promise<RemoteOntologyTransport>;
       }
 ) & {
-    live?: boolean;
     supportsIdempotency?: boolean;
     journal?: boolean;
 };
@@ -88,15 +89,12 @@ export function createRemoteOntologyBackendAdapter(
     return {
         name: "remote",
         open: () => makeRemoteOntologyBackend(opts),
-        live: opts.live !== false,
-        validateAction: async (actionType, parameters) => {
-            return fromRemoteActionValidation(
-                await transport.validateAction({
-                    actionType,
-                    parameters,
-                })
-            );
-        },
+        validateAction: (actionType, parameters) =>
+            Effect.tryPromise({
+                try: async () =>
+                    fromRemoteActionValidation(await transport.validateAction({ actionType, parameters })),
+                catch: (cause) => classifyBackendFailure("remote.validateAction", cause),
+            }),
         attachments: {
             generateAttachmentId: () => crypto.randomUUID(),
             getAttachmentContent: (attachment, options) =>
@@ -114,7 +112,7 @@ export function createRemoteOntologyBackend<
         createRemoteOntologyBackendAdapter({
             ir,
             transport: "transport" in opts ? opts.transport : await opts.createTransport(ir, context),
-            live: opts.live,
+
             supportsIdempotency: opts.supportsIdempotency,
             journal: opts.journal,
         });

@@ -798,9 +798,6 @@ importers:
       '@party-stack/connect':
         specifier: workspace:*
         version: link:../connect
-      '@party-stack/errors':
-        specifier: workspace:*
-        version: link:../errors
       '@party-stack/ontology-backend':
         specifier: workspace:*
         version: link:../ontology-backend
@@ -857,9 +854,9 @@ importers:
 
   packages/connect:
     dependencies:
-      '@party-stack/errors':
+      '@party-stack/ontology-backend':
         specifier: workspace:*
-        version: link:../errors
+        version: link:../ontology-backend
       '@party-stack/ontology-spec':
         specifier: workspace:*
         version: link:../ontology-spec
@@ -962,18 +959,6 @@ importers:
       vite-plus:
         specifier: 'catalog:'
         version: 1.2.0(@types/node@24.10.1)(@vitest/browser-playwright@5.0.4(@voidzero-dev/vite-plus-core@1.2.0(@types/node@24.10.1)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.20.6)(typescript@7.0.2)(yaml@2.9.1))(playwright@1.61.1)(vitest@5.0.4))(@vitest/ui@5.0.4(vitest@5.0.4))(esbuild@0.28.2)(jiti@2.7.0)(jsdom@27.2.0)(playwright@1.61.1)(terser@5.51.2)(tsx@4.20.6)(typescript@7.0.2)(yaml@2.9.1)
-
-  packages/errors:
-    devDependencies:
-      '@party-stack/build-config':
-        specifier: workspace:*
-        version: link:../build-config
-      typescript:
-        specifier: ~7.0.2
-        version: 7.0.2
-      vite-plus:
-        specifier: 'catalog:'
-        version: 1.2.0(@types/node@24.10.1)(@vitest/browser-playwright@5.0.4)(@vitest/ui@5.0.4(vitest@5.0.4))(esbuild@0.28.2)(jiti@2.7.0)(jsdom@27.2.0)(playwright@1.61.1)(terser@5.51.2)(tsx@4.20.6)(typescript@7.0.2)(yaml@2.9.1)
 
   packages/expo-runtime:
     dependencies:
@@ -1115,9 +1100,6 @@ importers:
       '@party-stack/connect':
         specifier: workspace:*
         version: link:../connect
-      '@party-stack/errors':
-        specifier: workspace:*
-        version: link:../errors
       '@party-stack/foundry-client':
         specifier: workspace:*
         version: link:../foundry-client
@@ -1398,9 +1380,6 @@ importers:
       '@party-stack/connect':
         specifier: workspace:*
         version: link:../connect
-      '@party-stack/errors':
-        specifier: workspace:*
-        version: link:../errors
       '@party-stack/node-runtime':
         specifier: workspace:*
         version: link:../node-runtime
@@ -1788,9 +1767,6 @@ importers:
       '@party-stack/connect':
         specifier: workspace:*
         version: link:../connect
-      '@party-stack/errors':
-        specifier: workspace:*
-        version: link:../errors
       '@party-stack/icons-salesforce-lightning':
         specifier: workspace:*
         version: link:../icons-salesforce-lightning

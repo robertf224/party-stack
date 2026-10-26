@@ -1,9 +1,11 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { clientRegistry } from "@party-stack/ontology-backend/clients";
+import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o } from "@party-stack/ontology-spec";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Deferred, Effect, Exit, Scope, Stream } from "effect";
+import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
 import { connectReplicaParent, makeReplica, replicaStateSource } from "./index.js";
 import type { ClientSubmission, ReplicaOptions, ReplicaService, ReplicaStateSnapshot } from "./index.js";
@@ -52,7 +54,7 @@ const count = (replica: ReplicaService) => Effect.map(replica.get("Counter", "on
 const failure = () =>
     new BackendError({
         operation: "test",
-        kind: "Unsupported",
+        kind: "NotImplemented",
         message: "Child must not dispatch or fetch through a backend.",
         retryable: false,
     });
@@ -685,9 +687,44 @@ test("memory client restart retains handoff identity and never dispatches mirror
                 expect(yield* reopened.pending).toEqual([]);
                 expect(yield* count(reopened)).toBe(11);
                 const dispatch = yield* Effect.result(reopened.syncOnce);
-                expect(dispatch).toMatchObject({ _tag: "Failure", failure: { kind: "Unsupported" } });
+                expect(dispatch).toMatchObject({ _tag: "Failure", failure: { kind: "NotImplemented" } });
                 expect(f.submitted).toEqual([]);
             })
         )
+    );
+});
+
+test("an expired parent session renews without losing queued work or reusing its old sequence", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* makeOwnedBackend({
+                    namespace: "expired-parent",
+                    ir,
+                    tables: yield* Memory.make(),
+                    clients: { leaseMs: 100 },
+                    mutators: { increment: execute },
+                });
+                const child = yield* makeReplica({
+                    namespace: "expired-child",
+                    ir,
+                    tables: yield* Memory.make(),
+                    source: owned.protocol,
+                    execute,
+                    gc: false,
+                    startSync: false,
+                });
+                yield* child.demand({ objectType: "Counter" });
+                yield* child.syncOnce;
+                yield* child.enqueue(invocation("first", 1));
+                yield* child.syncOnce;
+                yield* TestClock.adjust(101);
+                yield* child.enqueue(invocation("second", 2));
+                yield* child.syncOnce;
+                expect(yield* child.pending).toEqual([]);
+                expect(yield* count(child)).toBe(3);
+                expect((yield* owned.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(3);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
     );
 });

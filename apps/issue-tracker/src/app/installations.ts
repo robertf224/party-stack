@@ -6,11 +6,10 @@ import {
     type CreateOntologyBackendInstallationOptions,
     type OntologyBackendInstallation,
 } from "@party-stack/ontology";
-import { createRemoteOntologyBackend } from "@party-stack/ontology-server/client";
-import { createHttpRemoteOntologyTransport } from "@party-stack/ontology-server/http";
-import { Runtime } from "@party-stack/runtime";
+import { connectOntologyBackendHttp } from "@party-stack/ontology-server/rpc/http";
 import { createWebRuntime } from "@party-stack/web-runtime";
 import { Effect } from "effect";
+import { FetchHttpClient } from "effect/http";
 import ontology from "../ontology/ontology";
 import { foundryUserToUser } from "../ontology/user";
 import { authClient } from "./auth";
@@ -112,14 +111,17 @@ async function createSqliteInstallation(openOntology?: OpenOntology) {
                 matches: (ontologyId) => ontologyId === "issue-tracker",
                 configure: ({ egress }) => ({
                     ir: ontology,
-                    backend: createRemoteOntologyBackend({
-                        supportsIdempotency: true,
-                        journal: true,
-                        transport: createHttpRemoteOntologyTransport({
-                            url: "/api/remote-ontology/",
-                            fetch: egress.fetch,
-                            ir: ontology,
-                        }),
+                    backend: () => ({
+                        name: "sqlite",
+                        open: () =>
+                            connectOntologyBackendHttp({
+                                url: new URL("/api/remote-ontology/rpc", globalThis.location.origin).href,
+                            }).pipe(
+                                Effect.provide(FetchHttpClient.layer),
+                                Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                                    egress.fetch(new Request(input, init))
+                                )
+                            ),
                     }),
                     persistObjects: true,
                     writes,

@@ -27,7 +27,7 @@ const setup = Effect.fnUntraced(function* () {
                         : Effect.fail(
                               new BackendError({
                                   operation: "authorize",
-                                  kind: "Rejected",
+                                  kind: "ValidationFailed",
                                   message: "Denied",
                                   retryable: false,
                               })
@@ -129,7 +129,7 @@ for (const invalid of ["sequence", "size"] as const) {
                                 end: true,
                             })
                         )
-                    ).toMatchObject({ _tag: "Failure", failure: { kind: "Rejected" } });
+                    ).toMatchObject({ _tag: "Failure", failure: { kind: "ValidationFailed" } });
                     expect(yield* Fiber.join(upload)).toMatchObject({ _tag: "Failure" });
                     expect(create).not.toHaveBeenCalled();
                 })
@@ -170,7 +170,7 @@ test("cancelling the owning stream releases an incomplete upload; later chunks c
                             end: true,
                         })
                     )
-                ).toMatchObject({ _tag: "Failure", failure: { kind: "Rejected" } });
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "ValidationFailed" } });
                 expect(create).not.toHaveBeenCalled();
             })
         )

@@ -22,7 +22,7 @@ export function publicBackend(backend: OntologyBackendService, ir: OntologyIR): 
     const rejected = () =>
         new BackendError({
             operation: "public-view",
-            kind: "Rejected",
+            kind: "ValidationFailed",
             message: "Operation is outside the public ontology view.",
             retryable: false,
         });

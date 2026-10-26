@@ -49,7 +49,7 @@ const error = (operation: string, kind: BackendError["kind"], message: string) =
         operation: `replica.client.${operation}`,
         kind,
         message,
-        retryable: kind === "Unavailable",
+        retryable: kind === "Unavailable" || kind === "RateLimited",
     });
 
 /** Transaction-local admission bookkeeping. The caller must use the SAME tx for
@@ -61,7 +61,7 @@ export const clientRegistry = (
     policy: ClientPolicy = {},
     hooks: ClientRegistryHooks = {}
 ) => {
-    const leaseMs = policy.leaseMs ?? 24 * 60 * 60 * 1000;
+    const leaseMs = policy.leaseMs ?? 7 * 24 * 60 * 60 * 1000;
     const maxClients = policy.maxClients ?? 256;
     const maxUnacknowledged = policy.maxUnacknowledged ?? 1024;
     const clients = Table.make({
@@ -83,7 +83,7 @@ export const clientRegistry = (
             !Number.isSafeInteger(maxUnacknowledged) ||
             maxUnacknowledged < 1
         )
-            return yield* error("policy", "Rejected", "Client retention bounds must be positive.");
+            return yield* error("policy", "ValidationFailed", "Client retention bounds must be positive.");
     });
     const initialize = (tx: Transaction) =>
         Effect.gen(function* () {
@@ -94,18 +94,22 @@ export const clientRegistry = (
     const validate = Effect.fnUntraced(function* (tx: Transaction, session: ClientSession) {
         const now = yield* Clock.currentTimeMillis;
         const stored = yield* tx.get(clients, session.client.clientId);
-        if (
-            !stored ||
-            session.client.sourceId !== sourceId ||
-            stored.client.sourceId !== sourceId ||
-            stored.client.resumeKey !== session.client.resumeKey ||
-            stored.connectionId !== session.connectionId ||
-            stored.expiresAt <= now
-        )
+        if (session.client.sourceId !== sourceId || (stored && stored.client.sourceId !== sourceId))
+            return yield* error("source", "SourceMismatch", "Client session belongs to a different source.");
+        if (!stored || stored.expiresAt <= now)
             return yield* error(
                 "expired",
-                "InvalidCursor",
-                "Client session expired, was fenced or belongs to a different source. Reconnect explicitly."
+                "SessionExpired",
+                "Client session expired. Open a new client while preserving unresolved work."
+            );
+        if (
+            stored.client.resumeKey !== session.client.resumeKey ||
+            stored.connectionId !== session.connectionId
+        )
+            return yield* error(
+                "replaced",
+                "SessionReplaced",
+                "A newer connection replaced this client session."
             );
         return { ...stored, expiresAt: now + leaseMs };
     });
@@ -136,13 +140,13 @@ export const clientRegistry = (
             )
                 return yield* error(
                     "expired",
-                    "InvalidCursor",
+                    "SessionExpired",
                     "Client identity cannot be resumed. Preserve unresolved local work and open a new client explicitly."
                 );
         } else {
             yield* expire(tx);
             if ((yield* tx.loadSubset(clients, { limit: maxClients })).length >= maxClients)
-                return yield* error("capacity", "Unavailable", "Active client limit reached.");
+                return yield* error("capacity", "RateLimited", "Active client limit reached.");
         }
         const record: ClientLease = {
             client: previous?.client ?? {
@@ -175,7 +179,7 @@ export const clientRegistry = (
         if (!Number.isSafeInteger(sequence) || sequence < 1)
             return yield* error(
                 "sequence",
-                "Rejected",
+                "ValidationFailed",
                 "Submission sequence must be a positive safe integer."
             );
         if (sequence <= record.acceptedThrough) {
@@ -183,7 +187,7 @@ export const clientRegistry = (
             if (!prior)
                 return yield* error(
                     "resultExpired",
-                    "InvalidCursor",
+                    "ResultExpired",
                     "Submission was already accepted and its acknowledgment record was compacted. It must not execute again."
                 );
             if (prior.fingerprint !== fingerprint)
@@ -204,7 +208,7 @@ export const clientRegistry = (
         if (record.acceptedThrough - record.acknowledgedThrough >= maxUnacknowledged)
             return yield* error(
                 "capacity",
-                "Unavailable",
+                "RateLimited",
                 "Unacknowledged submission limit reached; apply and acknowledge source state first."
             );
         const value = yield* accept();
@@ -220,10 +224,14 @@ export const clientRegistry = (
         const record = yield* validate(tx, session);
         const generation = view?.generation ?? 0;
         if (!Number.isSafeInteger(generation) || generation < (view ? 1 : 0))
-            return yield* error("view", "Rejected", "A selected view requires a positive safe generation.");
+            return yield* error(
+                "view",
+                "ValidationFailed",
+                "A selected view requires a positive safe generation."
+            );
         const identity = view ? Table.make({ name: "view-identity" }).encode(view.selection) : "all";
         if (generation < (record.viewGeneration ?? 0))
-            return yield* error("view", "InvalidCursor", "A newer selected view replaced this request.");
+            return yield* error("view", "ViewReplaced", "A newer selected view replaced this request.");
         if (
             generation === (record.viewGeneration ?? 0) &&
             record.viewIdentity !== undefined &&
@@ -261,7 +269,7 @@ export const clientRegistry = (
         )
             return yield* error(
                 "view",
-                "InvalidCursor",
+                "ViewReplaced",
                 "This acknowledgment belongs to a replaced or undelivered view."
             );
         if (
@@ -274,7 +282,7 @@ export const clientRegistry = (
         )
             return yield* error(
                 "acknowledgment",
-                "Rejected",
+                "ValidationFailed",
                 "Cannot acknowledge state or submissions that were not delivered."
             );
         // A delayed acknowledgment of an older snapshot cannot prove which newer

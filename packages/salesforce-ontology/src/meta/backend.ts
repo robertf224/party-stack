@@ -27,7 +27,7 @@ export function makeSalesforceMetadataBackend(
         Effect.fail(
             new BackendError({
                 operation,
-                kind: "Unsupported",
+                kind: "NotImplemented",
                 message: "Metadata is read-only.",
                 retryable: false,
             })
@@ -43,7 +43,7 @@ export function makeSalesforceMetadataBackend(
             if (!type)
                 return yield* new BackendError({
                     operation: "loadSubset",
-                    kind: "Rejected",
+                    kind: "ValidationFailed",
                     message: "Unknown metadata object type.",
                     retryable: false,
                 });

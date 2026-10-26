@@ -13,6 +13,10 @@ import type { TablesService } from "@party-stack/ontology-storage/tables";
 export interface StorageOntologyBackendOptions {
     readonly ir: OntologyIR;
     readonly namespace: string;
+    readonly clients?: import("@party-stack/ontology-backend/clients").ClientPolicy;
+    readonly history?: import("@party-stack/ontology-backend/owned").OwnedBackendOptions["history"];
+    readonly resultRetentionMs?: number;
+    readonly invocationScope?: string;
     readonly tables: TablesService;
     readonly blobs: BlobStorageService;
     /** Authority-owned keys, supplied by the deployment (KMS, secrets, or a platform key store). */
@@ -64,6 +68,9 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
     });
     const backend: OwnedBackendService = yield* makeOwnedBackend({
         namespace: options.namespace,
+        clients: options.clients,
+        history: options.history,
+        resultRetentionMs: options.resultRetentionMs,
         ir: options.ir,
         tables,
         blobs,
@@ -78,7 +85,7 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                           catch: () =>
                               new BackendError({
                                   operation: "decrypt",
-                                  kind: "Rejected",
+                                  kind: "ValidationFailed",
                                   message: "Invalid encrypted property handle.",
                                   retryable: false,
                               }),
@@ -124,7 +131,7 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                           catch: () =>
                               new BackendError({
                                   operation: "decrypt",
-                                  kind: "Rejected",
+                                  kind: "ValidationFailed",
                                   message: "Invalid decrypted plaintext.",
                                   retryable: false,
                               }),
@@ -132,7 +139,7 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                   }),
               }
             : undefined,
-        invocationScope: JSON.stringify(options.context?.user ?? "system"),
+        invocationScope: options.invocationScope ?? JSON.stringify(options.context?.user ?? "system"),
         mutators: Object.fromEntries(
             options.ir.actionTypes
                 .filter((action) => action.logic.length || options.mutators?.[action.name])
@@ -199,7 +206,7 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                         )
                             return yield* new BackendError({
                                 operation: "attachment.read",
-                                kind: "Rejected",
+                                kind: "ValidationFailed",
                                 message: "Invalid attachment range.",
                                 retryable: false,
                             });
@@ -231,6 +238,10 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
         ...backend,
         blobs,
         collectGarbage: (options?: { readonly orphanGraceMs?: number; readonly limit?: number }) =>
-            boundary(blobs.collectGarbage({ olderThanMs: 0, ...options })),
+            boundary(
+                (backend.maintenance ?? Effect.void).pipe(
+                    Effect.andThen(blobs.collectGarbage({ olderThanMs: 0, ...options }))
+                )
+            ),
     };
 });

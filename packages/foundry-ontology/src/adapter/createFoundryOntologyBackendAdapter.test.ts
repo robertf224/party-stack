@@ -183,7 +183,7 @@ describe("Foundry action API names", () => {
                 ],
                 queryFunctionTypes: [],
             },
-            live: false,
+            watch: false,
         });
 
         await applyNative(adapter, name, {}, { objects: {} });
@@ -305,7 +305,6 @@ describe("Foundry live behavior", () => {
                 ir,
             });
 
-            expect(adapter.live).toBe(true);
             const result = await applyNative(
                 adapter,
                 "updateTask",
@@ -336,10 +335,9 @@ describe("Foundry live behavior", () => {
                 ontologyRid: "ri.ontology.main.1",
             } as OntologyClient,
             ir,
-            live: false,
+            watch: false,
         });
 
-        expect(adapter.live).toBe(false);
         await applyNative(
             adapter,
             "updateTask",
@@ -361,12 +359,11 @@ describe("Foundry live behavior", () => {
             client: {
                 ontologyRid: "ri.ontology.main.1",
             } as OntologyClient,
-            live: false,
+            watch: false,
         });
 
         await expect(backend(ir, {})).resolves.toMatchObject({
             name: "foundry",
-            live: false,
         });
     });
 });
@@ -617,23 +614,33 @@ describe("Foundry media attachments", () => {
         });
 
         await expect(
-            adapter.validateAction!(
-                "createMedia",
-                {
-                    media: {
-                        id: encodeFoundryMediaId(mediaId),
-                        type: "image/png",
+            Effect.runPromise(
+                adapter.validateAction!(
+                    "createMedia",
+                    {
+                        media: {
+                            id: encodeFoundryMediaId(mediaId),
+                            type: "image/png",
+                        },
                     },
-                },
-                {
-                    objects: {},
-                }
+                    {
+                        objects: {},
+                    }
+                )
             )
         ).resolves.toEqual({
             certain: true,
             value: {
                 kind: "err",
-                value: [{ message: "Only administrators may submit." }],
+                value: [
+                    {
+                        message: "Only administrators may submit.",
+                        code: "custom",
+                        category: "custom",
+                        source: "submission",
+                        messageSource: "configured",
+                    },
+                ],
             },
         });
         const request = ontologyMocks.applyWithOverrides.mock.calls[0]?.[3] as unknown as {
@@ -696,16 +703,18 @@ describe("Foundry media attachments", () => {
         });
 
         await expect(
-            adapter.validateActionDraft!(
-                "createMedia",
-                {},
-                {
-                    objects: {},
-                    context: {
-                        user: "user-1",
-                    },
-                    knownParameters: [],
-                }
+            Effect.runPromise(
+                adapter.validateActionDraft!(
+                    "createMedia",
+                    {},
+                    {
+                        objects: {},
+                        context: {
+                            user: "user-1",
+                        },
+                        knownParameters: [],
+                    }
+                )
             )
         ).resolves.toEqual({
             certain: true,
@@ -723,13 +732,15 @@ describe("Foundry media attachments", () => {
 
     it("reports uncertain draft validation without a context user", async () => {
         await expect(
-            adapter.validateActionDraft!(
-                "createMedia",
-                {},
-                {
-                    objects: {},
-                    knownParameters: [],
-                }
+            Effect.runPromise(
+                adapter.validateActionDraft!(
+                    "createMedia",
+                    {},
+                    {
+                        objects: {},
+                        knownParameters: [],
+                    }
+                )
             )
         ).resolves.toEqual({
             certain: false,
@@ -740,16 +751,18 @@ describe("Foundry media attachments", () => {
 
     it("reports a known required parameter as missing", async () => {
         await expect(
-            adapter.validateActionDraft!(
-                "createMedia",
-                {},
-                {
-                    objects: {},
-                    context: {
-                        user: "user-1",
-                    },
-                    knownParameters: ["media"],
-                }
+            Effect.runPromise(
+                adapter.validateActionDraft!(
+                    "createMedia",
+                    {},
+                    {
+                        objects: {},
+                        context: {
+                            user: "user-1",
+                        },
+                        knownParameters: ["media"],
+                    }
+                )
             )
         ).resolves.toEqual({
             certain: true,
@@ -757,7 +770,11 @@ describe("Foundry media attachments", () => {
                 kind: "err",
                 value: [
                     {
-                        message: 'Required action parameter "media" is missing.',
+                        message: "A value is required.",
+                        code: "required",
+                        category: "input",
+                        source: "parameter",
+                        messageSource: "standard",
                         path: ["media"],
                     },
                 ],

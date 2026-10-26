@@ -41,7 +41,7 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
     )
         return yield* new BackendError({
             operation: "replica.connectParent",
-            kind: "Rejected",
+            kind: "ValidationFailed",
             message: "Parent retry and heartbeat intervals must be positive numbers.",
             retryable: false,
         });

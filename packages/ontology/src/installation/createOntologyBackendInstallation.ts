@@ -90,15 +90,6 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
             installationId: options.installationId,
             adapter: options.connections,
         }).pipe(Effect.mapError((cause) => failure("installation.connections", cause)));
-        const context = yield* Effect.context<never>();
-        const run = Effect.runPromiseWith(context);
-        const monitorManager = {
-            connections: connectionManager.connections,
-            reportUnauthenticated: (
-                id: string,
-                error: Parameters<typeof connectionManager.reportUnauthenticated>[1]
-            ) => run(connectionManager.reportUnauthenticated(id, error)),
-        };
         const partitions = yield* makeLocalCollection<LocalOntologyPartition, string>({
             name: "ontology-partitions",
             getKey: (row) => row.id,
@@ -186,7 +177,7 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                     },
                     persistObjects: configured.persistObjects,
                     writes: configured.writes,
-                    connection: createConnectionMonitor(monitorManager, userId),
+                    connection: createConnectionMonitor(connectionManager, userId),
                 };
                 if (!meta && options.openOntology)
                     return yield* Effect.acquireRelease(

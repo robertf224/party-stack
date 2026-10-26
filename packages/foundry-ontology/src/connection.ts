@@ -8,7 +8,6 @@ import {
     type ConnectionSession,
     type EstablishedConnection,
     withHttpAuthenticationErrorHandling,
-    withHttpRetryHandling,
 } from "@party-stack/connect";
 import {
     createClientCredentialsOAuthClient,
@@ -17,8 +16,8 @@ import {
     type OAuthSession,
     type PublicOAuthClient,
 } from "@party-stack/connect";
-import { unauthenticated } from "@party-stack/errors";
 import { createFoundryFetch, createFoundryWebSocket, getTokenDetails } from "@party-stack/foundry-client";
+import { unauthenticated } from "@party-stack/ontology-backend";
 import { Effect } from "effect";
 import type { BrowserAuthenticationPresentation } from "@party-stack/runtime";
 
@@ -92,12 +91,10 @@ function createFoundryEgressWrapper(options: {
             tokenProvider: options.tokenProvider,
             createWebSocket: (url, protocols) => handlers.createWebSocket(url, protocols),
         });
-        return withHttpAuthenticationErrorHandling(
-            withHttpRetryHandling({
-                fetch: (request) => fetch(request),
-                createWebSocket,
-            })
-        );
+        return withHttpAuthenticationErrorHandling({
+            fetch: (request) => fetch(request),
+            createWebSocket,
+        });
     };
 }
 

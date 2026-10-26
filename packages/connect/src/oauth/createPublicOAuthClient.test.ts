@@ -1,4 +1,4 @@
-import { isUnauthenticatedError } from "@party-stack/errors";
+import { isUnauthenticatedError } from "@party-stack/ontology-backend";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import {
     memoryRuntimeFixture,

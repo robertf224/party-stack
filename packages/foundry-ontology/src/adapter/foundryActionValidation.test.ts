@@ -280,6 +280,10 @@ describe("getFoundryValidationIssues", () => {
             {
                 message: "Enter a valid email address.",
                 path: ["email"],
+                code: "format",
+                category: "input",
+                source: "parameter",
+                messageSource: "configured",
             },
         ]);
     });

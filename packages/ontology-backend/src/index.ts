@@ -4,23 +4,31 @@ import type { attachment, Encrypted } from "@party-stack/ontology-spec/values";
 import type { Key, Query, Row } from "@party-stack/ontology-storage";
 import type { Effect, Stream } from "effect";
 
-export const BackendErrorKindSchema = Schema.Literals([
-    "Unsupported",
-    "NotFound",
-    "Conflict",
-    "Unavailable",
-    "Rejected",
-    "InvalidCursor",
-]);
-export class BackendError extends Schema.TaggedError<BackendError>()("BackendError", {
-    operation: Schema.String,
-    kind: BackendErrorKindSchema,
-    message: Schema.String,
-    retryable: Schema.Boolean,
-    /** Invocation failures only: explicit pre-dispatch/non-commit evidence permits safe retry. */
-    invocationOutcome: Schema.optional(Schema.Literals(["not-committed", "unknown"])),
-    cause: Schema.optional(Schema.Defect()),
-}) {}
+export {
+    schemaValidationIssues,
+    BackendError,
+    BackendErrorKindSchema,
+    ValidationIssueSchema,
+    ValidationReportSchema,
+    unauthenticated,
+    isUnauthenticatedError,
+    classifyBackendFailure,
+    projectBackendError,
+    projectValidationIssue,
+    isUnknownInvocationOutcome,
+} from "./errors.js";
+export type {
+    BackendErrorKind,
+    ErrorProjection,
+    ErrorProjectionContext,
+    ValidationReport,
+    ValidationIssue,
+    UnauthenticatedError,
+    ApplyActionError,
+    ValidateActionError,
+    LoadSubsetError,
+} from "./errors.js";
+import { BackendError } from "./errors.js";
 
 export interface BackendSubset {
     readonly objectType: string;
@@ -185,6 +193,8 @@ export interface OntologyBackendService {
      * Merely receiving an ID, or an action being naturally idempotent, is insufficient.
      */
     readonly supportsIdempotency: boolean;
+    /** Indexed bounded local maintenance; an enclosing server scope schedules it. */
+    readonly maintenance?: Effect.Effect<void, BackendError>;
     readonly loadSubset: (subset: BackendSubset) => Effect.Effect<BackendSnapshot, BackendError>;
     /** Demand-scoped invalidation hints, independent of a durable journal. Undefined
      * means this subset needs polling. Reconnect must invalidate to repair missed events.
@@ -195,6 +205,11 @@ export interface OntologyBackendService {
      * False keeps the installed snapshot until explicit invalidation or new demand.
      */
     readonly pollIntervalMs?: (subset: BackendSubset) => number | false | undefined;
+    readonly validateAction?: (
+        name: string,
+        parameters: Record<string, unknown>,
+        options?: { readonly knownParameters?: readonly string[] }
+    ) => Effect.Effect<import("./errors.js").ValidationReport, BackendError>;
     readonly invoke: (invocation: ActionInvocation) => Effect.Effect<ActionReceipt, BackendError>;
     readonly queryFunction: (
         name: string,

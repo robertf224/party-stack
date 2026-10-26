@@ -20,7 +20,7 @@
         }
     },
     "dependencies": {
-        "@party-stack/errors": "workspace:*",
+        "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-spec": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",

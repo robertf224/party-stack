@@ -88,17 +88,17 @@ covered in [native-actions.md](./native-actions.md).
 
 ## What remains, in recommended order
 
-For migration v0, finish recovery and bounded bookkeeping using the existing
-selected-snapshot protocol, followed by provider/browser acceptance and recovery
-presentation. Retained replica-state deltas, query IR/IVM, general untrusted remote
+Recovery and bounded bookkeeping now use the existing selected-snapshot protocol.
+The current checkpoint is documented in [checkpoint-recovery.md](./checkpoint-recovery.md).
+The remaining v0 work is provider acceptance and application recovery presentation. Retained replica-state deltas, query IR/IVM, general untrusted remote
 authorization, and advertised/versioned idempotency-window negotiation are not v0
 prerequisites. See [the agreed v0 scope](./recovery-v0.md) for vocabulary, retention
 semantics, and the distinction between generic uncertain outcomes and deferred
 idempotency-window tracking. The inventory below also includes post-v0 work.
 
-1. **Protocol hardening.** Retained delta history, source/session reset recovery
-   preserving local work, scoped returned-state authorization, completed receipt /
-   journal-history compaction, and protocol-child row/blob retention. Current
+1. **Protocol hardening.** Retained delta history, general scoped returned-state
+   authorization, and protocol-child row/blob retention. Source/session recovery and
+   configurable receipt/journal/session cleanup are implemented. Current
    selected snapshots replace atomically; they are not a retained delta stream.
    Protocol children require `gc:false` and no blob service. The issue-tracker
    placement is a trusted same-origin use, not a generic untrusted deployment.
@@ -428,3 +428,62 @@ Foundry v2 staged-write wrappers convert plaintext strings to {plaintext} and co
 portable Foundry encrypted values to {ciphertext}, preserving OSDK instances without
 decrypting. General native mutator auto-encryption/write types and outbox-parameter
 encryption remain separate follow-ups. See packages/ontology/encrypted-values.md.
+
+## Recovery/server checkpoint — October 26
+
+Shared normalized BackendError and Unauthenticated now live in ontology-backend;
+the errors package and generic HTTP retry wrapper are removed. Providers classify
+rejections, authentication, throttling and unknown execution outcomes. Validation
+hooks are Effects, preserving full/draft reports and uncertain preflight results.
+Public errors project exposed parameter paths and standard input/reference issues;
+authored submission messages require explicit disclosure. Projection is safe to
+compose repeatedly, and raw causes never reach RPC or replicated action failures.
+
+One scoped makeOntologyServer supports owned, proxy and replica roles. A proxy can
+share cached subset demand without a downstream session registry or its own outbox.
+Forwarded receipts invalidate affected coverage; incomplete targets invalidate broadly.
+Read-only access comes from authorization, without a writes flag. The stateless
+projection composes row/property/action/context restrictions before pagination.
+Row-filtered projections use snapshots until before/after visibility is supported;
+other projections can expose a filtered authoritative journal. Full replica-state
+inspection remains privileged.
+
+Issue-tracker's SQLite client now uses native Effect RPC for snapshots, incremental
+journal pulls, validation, actions and streamed attachment helpers. Its endpoint
+accepts Effect's trailing-slash HTTP URLs, keeps its logical source identity stable,
+and binds authenticated context per request. It no longer executes the older policy
+HTTP server. Browser acceptance passes offline edits, shared-worker handoff and
+reconnect, single-process fallback, navigation and demand attribution (4/4 cases).
+Provider live-service acceptance is still required separately.
+
+History gaps rebuild retained rows/demand from coordinated snapshots without losing
+the outbox. Expired sessions renew identity and submission counters while keeping
+snapshot generations monotonic. Missing accepted results become uncertain, and a
+rejected retry cannot erase an earlier lost reply. Incompatible source/schema errors
+remain explicit; a source reset is not disguised as an expired read-history cursor.
+
+Completed results default to seven days from completion; journal age/count and idle
+sessions have separate settings. Infinity is an explicit retention choice. A finite
+result window gives finite idempotency, documented on the backend contract. Cleanup
+uses indexed batches, acknowledgments remove submission fingerprints, and idle
+sessions release delivery records without deleting pending accepted actions. Protected
+old coverage/receipts cannot starve cleanup of unrelated expired metadata. Writes
+also advance owned cleanup, independently of idle server maintenance.
+
+State intentionally grows with authoritative rows, unresolved outboxes, explicit pins,
+active consumer demand, or configured infinite histories. Finite bookkeeping scales
+with traffic inside its retention window, rather than with all lifetime operations.
+Client/session and cached-subset admission bounds are configurable; stateless readers
+do not allocate a replication session. Transfer buffers and trace stores remain bounded.
+
+ConnectionMonitor exposes a scoped Effect stream; its authentication reporting is an
+Effect. Connect redacts decrypted credentials until SDK boundaries. The unused adapter
+live flag is removed; Foundry retains explicit watch configuration. Platform runtime
+resources remain scoped, with UI Promise facades only at application/SDK boundaries.
+
+Validation: full workspace CI 130/130 tasks, including real workerd tests and Worker
+bundle verification; browser acceptance 4/4. No Cloudflare deployment was performed.
+Remaining follow-up includes UI recovery controls for uncertain actions, live-provider
+acceptance, protocol-child GC/blobs, and UI consumer unmount ordering during pagehide
+(TanStack currently logs dependent-query disposal warnings there). General query
+watching/IVM, schema migrations and idempotency-window negotiation stay deferred.

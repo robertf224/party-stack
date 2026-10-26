@@ -163,7 +163,7 @@ test("cache requires keys and authenticates its authority, principal, property a
                 expect(yield* noKeys.service.decrypt(handle)).toEqual(decoded);
                 expect(
                     yield* noKeys.service.decrypt(handle, { cache: true }).pipe(Effect.flip)
-                ).toMatchObject({ kind: "Unsupported" });
+                ).toMatchObject({ kind: "NotImplemented" });
                 // Same authority/property, copied bytes, different identity partition and device key.
                 const other = yield* fixture({ owner: "bob" });
                 yield* other.tables.put(other.raw, "1", (yield* f.tables.get(f.raw, "1"))!);
@@ -201,7 +201,7 @@ test("unbound responses never cache; contradictory ciphertext is rejected and er
                         Effect.fail(
                             new BackendError({
                                 operation: "provider",
-                                kind: "Rejected",
+                                kind: "ValidationFailed",
                                 message: wire.token,
                                 cause: wire.token,
                                 retryable: false,

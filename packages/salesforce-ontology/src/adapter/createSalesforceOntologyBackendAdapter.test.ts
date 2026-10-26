@@ -175,7 +175,6 @@ describe("createSalesforceOntologyBackendAdapter", () => {
 
     function createAdapter(
         options: {
-            live?: boolean;
             client?: Partial<SalesforceClient>;
             subscribeToChangeEvents?: Parameters<
                 typeof createSalesforceOntologyBackendAdapter
@@ -184,7 +183,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
     ) {
         return createSalesforceOntologyBackendAdapter({
             ir,
-            live: options.live,
+
             subscribeToChangeEvents: options.subscribeToChangeEvents,
             client: {
                 instanceUrl: "https://example.my.salesforce.com",
@@ -249,7 +248,6 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             },
         ]);
         const adapter = createAdapter({
-            live: false,
             subscribeToChangeEvents,
         });
         await applyNative(
@@ -265,7 +263,6 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             }
         );
 
-        expect(adapter.live).toBe(false);
         expect(subscribeToChangeEvents).not.toHaveBeenCalled();
         expect(invalidate).not.toHaveBeenCalled();
     });
@@ -280,7 +277,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         const adapter = createAdapter();
 
         await expect(applyNative(adapter, "Create_Account", {}, { objects: {} })).rejects.toMatchObject({
-            kind: "Rejected",
+            kind: "ValidationFailed",
         });
     });
 
@@ -393,7 +390,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             applyNative(adapter, "Create_Account", { accountName: "Acme" }, { objects: {} })
         ).rejects.toEqual(
             expect.objectContaining({
-                kind: "Rejected",
+                kind: "ValidationFailed",
                 message: "Flow failed validation",
             })
         );
@@ -431,12 +428,10 @@ describe("createSalesforceOntologyBackendAdapter", () => {
                     describeStandardAction: vi.fn(),
                     invokeStandardAction,
                 }) as never,
-            live: false,
         });
 
         const adapter = await provider(ir, {});
         expect(adapter.name).toBe("salesforce");
-        expect(adapter.live).toBe(false);
         expect(adapter.open).toBeTypeOf("function");
     });
     function runNative<A>(
@@ -594,7 +589,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
 
     it("distinguishes rejected writes from unknown transport outcomes without retrying submission", async () => {
         for (const [cause, kind] of [
-            [new SalesforceApiError("Rejected", { statusCode: 400 }), "Rejected"],
+            [new SalesforceApiError("ValidationFailed", { statusCode: 400 }), "ValidationFailed"],
             [new Error("Lost response"), "Unavailable"],
         ] as const) {
             createRecord.mockRejectedValue(cause);

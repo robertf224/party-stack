@@ -1,5 +1,5 @@
 import { and, eq, field, lte, ne } from "@party-stack/ontology-storage";
-import { Clock, Context, Effect, Layer, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Schema, Redacted } from "effect";
 import * as oauth from "oauth4webapi";
 import { Temporal } from "temporal-polyfill";
 import { connectError, type ConnectError } from "./errors.js";
@@ -121,9 +121,10 @@ export const makeConnect = (options: ConnectOptions): Effect.Effect<ConnectServi
             return { connector, provider: yield* options.provider({ connector, installation }) };
         });
         const decrypt = (value: Encrypted<string>) =>
-            values
-                .decrypt(Schema.String, value)
-                .pipe(Effect.mapError(() => connectError("Storage", "Credential decryption failed.")));
+            values.decrypt(Schema.String, value).pipe(
+                Effect.map(Redacted.make),
+                Effect.mapError(() => connectError("Storage", "Credential decryption failed."))
+            );
         const encrypt = (value: string) =>
             values
                 .encrypt(Schema.String, value)
@@ -207,11 +208,11 @@ export const makeConnect = (options: ConnectOptions): Effect.Effect<ConnectServi
                             "NeedsAuthentication",
                             "Refresh credentials are unavailable or expired."
                         );
-                    tokens = yield* provider.refresh(yield* decrypt(record.refreshToken));
+                    tokens = yield* provider.refresh(Redacted.value(yield* decrypt(record.refreshToken)));
                     if (!tokens.refreshToken)
                         tokens = {
                             ...tokens,
-                            refreshToken: yield* decrypt(record.refreshToken),
+                            refreshToken: Redacted.value(yield* decrypt(record.refreshToken)),
                             refreshTokenExpiresAt: record.refreshTokenExpiresAt,
                         };
                 }
@@ -366,7 +367,7 @@ export const makeConnect = (options: ConnectOptions): Effect.Effect<ConnectServi
                         callbackUrl: input.callbackUrl,
                         state: id,
                         redirectUrl: attempt.redirectUrl,
-                        codeVerifier: yield* decrypt(attempt.codeVerifier),
+                        codeVerifier: Redacted.value(yield* decrypt(attempt.codeVerifier)),
                     });
                     const extra = options.connectionProperties
                         ? yield* options.connectionProperties(attempt)
@@ -475,11 +476,11 @@ export const makeConnect = (options: ConnectOptions): Effect.Effect<ConnectServi
                     !expired(current.accessTokenExpiresAt, now + 5_000) &&
                     current.status !== "inactive"
                 )
-                    return yield* decrypt(current.accessToken);
+                    return Redacted.value(yield* decrypt(current.accessToken));
                 current = yield* refresh(id);
                 if (!current.accessToken)
                     return yield* connectError("NeedsAuthentication", "Access credentials are unavailable.");
-                return yield* decrypt(current.accessToken);
+                return Redacted.value(yield* decrypt(current.accessToken));
             }),
             refresh,
             disconnect: Effect.fn("Connect.disconnect")(function* (id: string) {
@@ -508,7 +509,7 @@ export const makeConnect = (options: ConnectOptions): Effect.Effect<ConnectServi
                 );
                 if (record.plaintext) {
                     const { provider } = yield* configured(record.current.connector);
-                    if (provider.revoke) yield* provider.revoke(record.plaintext);
+                    if (provider.revoke) yield* provider.revoke(Redacted.value(record.plaintext));
                 }
             }),
             collectExpired: Effect.fn("Connect.collectExpired")(function* ({

@@ -4,8 +4,6 @@ import { GroupMemberships, Users } from "@osdk/foundry.admin";
 import {
     ActionTypesV2,
     type ParameterEvaluatedConstraint,
-    type StringRegexMatchConstraint,
-    type StructEvaluatedConstraint,
     type SyncApplyActionResponseV2,
 } from "@osdk/foundry.ontologies";
 import { certain, uncertain, type Uncertain, type ValidationIssue } from "@party-stack/ontology";
@@ -360,68 +358,155 @@ export async function validateFoundryActionDraftCriteria(options: {
         : uncertain();
 }
 
-function collectRegexIssue(
-    constraint: StringRegexMatchConstraint,
-    issues: ValidationIssue[],
-    path: readonly (string | number)[]
+function collectConstraintIssues(
+    constraints: readonly ParameterEvaluatedConstraint[],
+    value: unknown,
+    path: readonly (string | number)[],
+    issues: ValidationIssue[]
 ): void {
-    if (constraint.configuredFailureMessage) {
+    const add = (
+        code: string,
+        message: string,
+        category: "input" | "reference" | "custom" = "input",
+        configured = false
+    ) =>
         issues.push({
-            message: constraint.configuredFailureMessage,
+            code,
+            message,
             path,
+            category,
+            source: "parameter",
+            messageSource: configured ? "configured" : "standard",
         });
-    }
-}
-
-function collectStructIssues(
-    constraint: StructEvaluatedConstraint,
-    issues: ValidationIssue[],
-    path: readonly (string | number)[]
-): void {
-    for (const [fieldName, field] of Object.entries(constraint.structFields)) {
-        if (field.result !== "INVALID") continue;
-        for (const fieldConstraint of field.evaluatedConstraints) {
-            if (fieldConstraint.type === "stringRegexMatch") {
-                collectRegexIssue(fieldConstraint, issues, [...path, fieldName]);
+    for (const constraint of constraints) {
+        switch (constraint.type) {
+            case "struct":
+                for (const [key, field] of Object.entries(constraint.structFields)) {
+                    if (field.result !== "INVALID") continue;
+                    const item =
+                        value !== null && typeof value === "object"
+                            ? (value as Record<string, unknown>)[key]
+                            : undefined;
+                    collectConstraintIssues(field.evaluatedConstraints, item, [...path, key], issues);
+                }
+                break;
+            case "array":
+                for (const [index, entry] of constraint.entries.entries())
+                    collectConstraintIssues(
+                        [entry],
+                        Array.isArray(value) ? value[index] : undefined,
+                        [...path, index],
+                        issues
+                    );
+                break;
+            case "objectQueryResult":
+                add("InvalidObjectReference", "Choose a valid value.", "reference");
+                break;
+            case "groupMember":
+            case "objectPropertyValue":
+            case "oneOf":
+                add("selection", "The selected value is not valid.", "custom");
+                break;
+            case "stringRegexMatch":
+                add(
+                    "format",
+                    constraint.configuredFailureMessage ?? "Enter a value in the required format.",
+                    "input",
+                    Boolean(constraint.configuredFailureMessage)
+                );
+                break;
+            case "range":
+            case "stringLength":
+            case "arraySize": {
+                const size =
+                    constraint.type === "range"
+                        ? value
+                        : constraint.type === "stringLength" && typeof value === "string"
+                          ? value.length
+                          : constraint.type === "arraySize" && Array.isArray(value)
+                            ? value.length
+                            : undefined;
+                // These are applicable constraints, not individual failed results. Only report
+                // a particular bound when the submitted value proves it was violated.
+                const failed =
+                    typeof size === "number" &&
+                    ((typeof constraint.lt === "number" && size >= constraint.lt) ||
+                        (typeof constraint.lte === "number" && size > constraint.lte) ||
+                        (typeof constraint.gt === "number" && size <= constraint.gt) ||
+                        (typeof constraint.gte === "number" && size < constraint.gte));
+                if (failed)
+                    add(
+                        constraint.type,
+                        constraint.type === "range"
+                            ? "Enter a value within the allowed range."
+                            : constraint.type === "stringLength"
+                              ? "Enter text of an allowed length."
+                              : "Choose an allowed number of items."
+                    );
+                break;
             }
+            case "unevaluable":
+                break;
         }
     }
 }
 
-function collectParameterConstraintIssues(
-    constraint: ParameterEvaluatedConstraint,
-    issues: ValidationIssue[],
-    path: readonly (string | number)[]
-): void {
-    switch (constraint.type) {
-        case "stringRegexMatch":
-            collectRegexIssue(constraint, issues, path);
-            break;
-        case "struct":
-            collectStructIssues(constraint, issues, path);
-            break;
-        case "array":
-            for (const [index, entry] of constraint.entries.entries()) {
-                collectStructIssues(entry, issues, [...path, index]);
-            }
-            break;
-    }
-}
-
-export function getFoundryValidationIssues(result: SyncApplyActionResponseV2): ValidationIssue[] {
+export function getFoundryValidationIssues(
+    result: SyncApplyActionResponseV2,
+    parameters?: Record<string, unknown>
+): ValidationIssue[] {
     const validation = result.validation;
     if (!validation || validation.result !== "INVALID") return [];
-
-    const issues = validation.submissionCriteria.flatMap((criterion) =>
+    const issues: ValidationIssue[] = validation.submissionCriteria.flatMap((criterion) =>
         criterion.result === "INVALID" && criterion.configuredFailureMessage
-            ? [{ message: criterion.configuredFailureMessage }]
+            ? [
+                  {
+                      message: criterion.configuredFailureMessage,
+                      code: "custom",
+                      category: "custom" as const,
+                      source: "submission" as const,
+                      messageSource: "configured" as const,
+                  },
+              ]
             : []
     );
-    for (const [parameterName, parameter] of Object.entries(validation.parameters)) {
+    for (const [name, parameter] of Object.entries(validation.parameters)) {
         if (parameter.result !== "INVALID") continue;
-        for (const constraint of parameter.evaluatedConstraints) {
-            collectParameterConstraintIssues(constraint, issues, [parameterName]);
-        }
+        const before = issues.length;
+        if (
+            parameter.required &&
+            parameters &&
+            parameters[name] === undefined &&
+            parameter.defaultValue === undefined
+        )
+            issues.push({
+                message: "A value is required.",
+                path: [name],
+                code: "required",
+                category: "input",
+                source: "parameter",
+                messageSource: "standard",
+            });
+        else collectConstraintIssues(parameter.evaluatedConstraints, parameters?.[name], [name], issues);
+        if (issues.length === before)
+            issues.push({
+                message: "Enter a valid value.",
+                path: [name],
+                code: "invalid",
+                category: "input",
+                source: "parameter",
+                messageSource: "standard",
+            });
     }
-    return issues.length > 0 ? issues : [{ message: "Invalid Action arguments." }];
+    return issues.length
+        ? issues
+        : [
+              {
+                  message: "Submission failed validation.",
+                  code: "custom",
+                  category: "custom",
+                  source: "submission",
+                  messageSource: "standard",
+              },
+          ];
 }

@@ -83,13 +83,13 @@ export interface ReplicaViewOptions {
         name: string,
         parameters: Record<string, unknown>,
         objects: LiveOntology["objects"]
-    ) => ReturnType<LiveOntology["actions"][string]["validate"]>;
+    ) => Effect.Effect<import("@party-stack/ontology-backend").ValidationReport, BackendError>;
     readonly validateDraft?: (
         name: string,
         parameters: Record<string, unknown>,
         knownParameters: readonly string[],
         objects: LiveOntology["objects"]
-    ) => ReturnType<LiveOntology["actions"][string]["validate"]>;
+    ) => Effect.Effect<import("@party-stack/ontology-backend").ValidationReport, BackendError>;
 }
 
 /** Materialize a scoped UI view over an existing replica; engine ownership is independent. */
@@ -261,15 +261,17 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
                     return queued.completed;
                 },
                 validate: options.validate
-                    ? (name, parameters) => options.validate!(name, parameters, persistedObjects)
+                    ? (name, parameters) => run(options.validate!(name, parameters, persistedObjects))
                     : async () => ({ certain: false as const }),
                 validateDraft: options.validateDraft
                     ? (name, parameters, settings) =>
-                          options.validateDraft!(
-                              name,
-                              parameters,
-                              settings?.knownParameters ?? [],
-                              persistedObjects
+                          run(
+                              options.validateDraft!(
+                                  name,
+                                  parameters,
+                                  settings?.knownParameters ?? [],
+                                  persistedObjects
+                              )
                           )
                     : async () => ({ certain: false as const }),
             }),
@@ -292,7 +294,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
                               catch: () =>
                                   new BackendError({
                                       operation: "ontology.decrypt",
-                                      kind: "Rejected",
+                                      kind: "ValidationFailed",
                                       message: "Invalid decrypted value.",
                                       retryable: false,
                                   }),

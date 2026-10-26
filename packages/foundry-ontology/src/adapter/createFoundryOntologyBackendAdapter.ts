@@ -19,7 +19,7 @@ import {
     type OntologyIR,
     type ValidateActionDraftLiveOpts,
 } from "@party-stack/ontology";
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { resolveType, unwrapType } from "@party-stack/ontology/utils";
 import { Effect } from "effect";
 import { Temporal } from "temporal-polyfill";
@@ -173,7 +173,7 @@ export interface CreateFoundryOntologyBackendAdapterOptions {
     client: OntologyClient;
     ir: OntologyIR;
     users?: FoundryUsersIntegration;
-    live?: boolean;
+    watch?: boolean;
 }
 
 function withRequestSignal(client: OntologyClient, signal?: AbortSignal): OntologyClient {
@@ -356,7 +356,7 @@ export function createFoundryOntologyBackendAdapter(
         } catch (cause) {
             throw new BackendError({
                 operation: "foundry.prepare",
-                kind: "Rejected",
+                kind: "ValidationFailed",
                 retryable: false,
                 invocationOutcome: "not-committed",
                 message: cause instanceof Error ? cause.message : "Invalid action parameters.",
@@ -396,7 +396,14 @@ export function createFoundryOntologyBackendAdapter(
             throw error;
         }
         if (result.validation?.result === "INVALID") {
-            throw new NonRetryableError("Invalid Action arguments.");
+            throw new BackendError({
+                operation: "foundry.invoke",
+                kind: "ValidationFailed",
+                message: "Submission failed validation.",
+                issues: getFoundryValidationIssues(result, parameters),
+                retryable: false,
+                invocationOutcome: "not-committed",
+            });
         }
         return { result, attachmentIdMappings };
     };
@@ -448,7 +455,7 @@ export function createFoundryOntologyBackendAdapter(
                 client: opts.client,
                 ir: opts.ir,
                 context,
-                live: opts.live,
+                watch: opts.watch,
                 encrypted: makeFoundryEncryptedValues(opts.client, opts.ir),
                 users: opts.users && {
                     objectType: opts.users.objectType,
@@ -482,7 +489,7 @@ export function createFoundryOntologyBackendAdapter(
                             )
                                 return yield* new BackendError({
                                     operation: "attachment.read",
-                                    kind: "Rejected",
+                                    kind: "ValidationFailed",
                                     message: "Invalid byte range.",
                                     retryable: false,
                                 });
@@ -518,119 +525,121 @@ export function createFoundryOntologyBackendAdapter(
                             return { size: blob.size, type: blob.type, name: meta.name };
                         }),
                 },
-            }),
-        live: opts.live !== false,
-        validateAction: async (name: string, parameters: Record<string, unknown>) => {
-            const invocation = prepareFoundryActionInvocation({
-                ir: opts.ir,
-                name,
-                parameters,
-                codec,
+            }).pipe(
+                Effect.map((native) => ({
+                    ...native,
+                    validateAction: (
+                        name: string,
+                        parameters: Record<string, unknown>,
+                        settings?: { readonly knownParameters?: readonly string[] }
+                    ) =>
+                        settings?.knownParameters
+                            ? adapter.validateActionDraft!(name, parameters, {
+                                  objects: {},
+                                  context,
+                                  knownParameters: settings.knownParameters,
+                              })
+                            : adapter.validateAction!(name, parameters, { objects: {}, context }),
+                }))
+            ),
+        validateAction: Effect.fn("Foundry.validateAction")(function* (
+            name: string,
+            parameters: Record<string, unknown>
+        ) {
+            const invocation = yield* Effect.try({
+                try: () => prepareFoundryActionInvocation({ ir: opts.ir, name, parameters, codec }),
+                catch: (cause) => classifyBackendFailure("foundry.validateAction", cause),
             });
-
-            let result: ApplyActionResult;
-            try {
-                result = await Actions.applyWithOverrides(
-                    opts.client,
-                    opts.client.ontologyRid,
-                    toFoundryActionTypeName(name),
-                    {
-                        request: {
-                            options: {
-                                mode: "VALIDATE_ONLY",
+            const result = yield* Effect.tryPromise({
+                try: () =>
+                    Actions.applyWithOverrides(
+                        opts.client,
+                        opts.client.ontologyRid,
+                        toFoundryActionTypeName(name),
+                        {
+                            request: {
+                                options: { mode: "VALIDATE_ONLY" },
+                                parameters: invocation.parameters,
                             },
-                            parameters: invocation.parameters,
+                            overrides: invocation.overrides,
                         },
-                        overrides: invocation.overrides,
-                    },
-                    // oxlint-disable-next-line typescript/no-unsafe-argument
-                    {
-                        preview: true,
-                        // oxlint-disable-next-line typescript/no-explicit-any
-                    }
-                );
-            } catch (error) {
-                if (isFoundryNotFoundError(error)) {
-                    throw new NonRetryableError(
-                        error instanceof Error ? error.message : "Foundry action target was not found.",
-                        { cause: error }
-                    );
-                }
-                throw error;
-            }
-
-            if (!result.validation) {
-                throw new Error("Foundry validate action response did not include a validation result.");
-            }
-            return {
-                certain: true,
-                value:
-                    result.validation.result === "VALID"
-                        ? {
-                              kind: "ok",
-                              value: undefined,
-                          }
-                        : {
-                              kind: "err",
-                              value: getFoundryValidationIssues(result),
-                          },
-            };
-        },
-        validateActionDraft: async (
+                        { preview: true }
+                    ),
+                catch: (cause) => classifyBackendFailure("foundry.validateAction", cause),
+            });
+            if (!result.validation)
+                return yield* new BackendError({
+                    operation: "foundry.validateAction",
+                    kind: "Unavailable",
+                    message: "Validation response is missing.",
+                    retryable: true,
+                });
+            return certain(
+                result.validation.result === "VALID"
+                    ? { kind: "ok" as const, value: undefined }
+                    : { kind: "err" as const, value: getFoundryValidationIssues(result, parameters) }
+            );
+        }),
+        validateActionDraft: Effect.fn("Foundry.validateActionDraft")(function* (
             name: string,
             parameters: Record<string, unknown>,
             live: ValidateActionDraftLiveOpts
-        ) => {
-            const actionType = opts.ir.actionTypes.find((candidate) => candidate.name === name);
-            if (!actionType) {
-                throw new NonRetryableError(`Unknown Foundry action type "${name}".`);
-            }
+        ) {
+            const action = opts.ir.actionTypes.find((candidate) => candidate.name === name);
+            if (!action)
+                return yield* new BackendError({
+                    operation: "foundry.validateActionDraft",
+                    kind: "NotImplemented",
+                    message: "Unknown action type.",
+                    retryable: false,
+                });
             const knownParameters = new Set([
-                ...Object.entries(parameters).flatMap(([parameterName, value]) =>
-                    value === undefined ? [] : [parameterName]
-                ),
+                ...Object.entries(parameters).flatMap(([key, value]) => (value === undefined ? [] : [key])),
                 ...live.knownParameters,
             ]);
-            const missingKnownRequiredParameters = actionType.parameters.filter(
+            const missing = action.parameters.filter(
                 (parameter) =>
                     parameters[parameter.name] === undefined &&
                     knownParameters.has(parameter.name) &&
                     !unwrapType(resolveType(opts.ir, parameter.type)).isOptional
             );
-            if (missingKnownRequiredParameters.length > 0) {
+            if (missing.length)
                 return certain({
-                    kind: "err",
-                    value: missingKnownRequiredParameters.map((parameter) => ({
-                        message: `Required action parameter "${parameter.name}" is missing.`,
+                    kind: "err" as const,
+                    value: missing.map((parameter) => ({
+                        message: "A value is required.",
                         path: [parameter.name],
+                        code: "required",
+                        category: "input" as const,
+                        source: "parameter" as const,
+                        messageSource: "standard" as const,
                     })),
                 });
-            }
-            const hasUnknownParameters = actionType.parameters.some(
-                (parameter) =>
-                    parameters[parameter.name] === undefined && !knownParameters.has(parameter.name)
-            );
-            if (!hasUnknownParameters) {
-                return adapter.validateAction!(name, parameters, live);
-            }
-
+            if (
+                !action.parameters.some(
+                    (parameter) =>
+                        parameters[parameter.name] === undefined && !knownParameters.has(parameter.name)
+                )
+            )
+                return yield* adapter.validateAction!(name, parameters, live);
             const userId = typeof live.context?.user === "string" ? live.context.user : undefined;
-            if (!userId) {
-                return uncertain();
-            }
-            const criteria = await loadFoundrySubmissionCriteria({
-                client: opts.client,
-                actionTypeName: name,
-                userId,
+            if (!userId) return uncertain();
+            return yield* Effect.tryPromise({
+                try: async () =>
+                    validateFoundryActionDraftCriteria({
+                        client: opts.client,
+                        criteria: await loadFoundrySubmissionCriteria({
+                            client: opts.client,
+                            actionTypeName: name,
+                            userId,
+                        }),
+                        userId,
+                        parameters,
+                        knownParameters,
+                    }),
+                catch: (cause) => classifyBackendFailure("foundry.validateActionDraft", cause),
             });
-            return validateFoundryActionDraftCriteria({
-                client: opts.client,
-                criteria,
-                userId,
-                parameters,
-                knownParameters,
-            });
-        },
+        }),
         attachments,
     };
     return adapter;
@@ -647,7 +656,7 @@ export type CreateFoundryOntologyBackendOptions<
       }
 ) & {
     users?: FoundryUsersIntegration;
-    live?: boolean;
+    watch?: boolean;
 };
 
 export function createFoundryOntologyBackend<
@@ -658,6 +667,6 @@ export function createFoundryOntologyBackend<
             ir,
             client: "client" in opts ? opts.client : await opts.createClient(ir, context),
             users: opts.users,
-            live: opts.live,
+            watch: opts.watch,
         });
 }

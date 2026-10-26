@@ -4,6 +4,7 @@ import {
     type OntologyBackendAdapterProvider,
     type OntologyIR,
 } from "@party-stack/ontology";
+import { classifyBackendFailure } from "@party-stack/ontology-backend";
 import { SalesforceApiError, type SalesforceClient } from "@party-stack/salesforce-client";
 import { Effect } from "effect";
 import { getSalesforceActionMetadata } from "../actionMetadata.js";
@@ -54,7 +55,6 @@ export function createSalesforceOntologyBackendAdapter(opts: {
     client: SalesforceClient;
     ir: OntologyIR;
     subscribeToChangeEvents?: SubscribeToSalesforceChangeEvents;
-    live?: boolean;
 }): OntologyBackendAdapter {
     const codec = createSalesforceCodec(opts.ir);
     const encodeInvocableParameter = (
@@ -140,13 +140,7 @@ export function createSalesforceOntologyBackendAdapter(opts: {
                     ? await client.invokeStandardAction(actionApiName, [requestParameters])
                     : await client.invokeFlowAction(actionApiName, [requestParameters]);
         } catch (error) {
-            if (isNonRetryableSalesforceError(error)) {
-                throw new NonRetryableError(
-                    error instanceof Error ? error.message : "Salesforce action invocation failed.",
-                    { cause: error }
-                );
-            }
-            throw error;
+            throw classifyBackendFailure("salesforce.invoke", error);
         }
 
         const result = results[0];
@@ -216,7 +210,6 @@ export function createSalesforceOntologyBackendAdapter(opts: {
                         cause instanceof NonRetryableError || isNonRetryableSalesforceError(cause),
                 })
             ),
-        live: opts.live !== false,
     };
 }
 
@@ -231,9 +224,7 @@ export type CreateSalesforceOntologyBackendOptions<
           createClient: (ir: OntologyIR, context: Context) => SalesforceClient | Promise<SalesforceClient>;
           subscribeToChangeEvents?: SubscribeToSalesforceChangeEvents;
       }
-) & {
-    live?: boolean;
-};
+) & {};
 
 export function createSalesforceOntologyBackend<
     Context extends Record<string, unknown> = Record<string, unknown>,
@@ -243,6 +234,5 @@ export function createSalesforceOntologyBackend<
             ir,
             client: "client" in opts ? opts.client : await opts.createClient(ir, context),
             subscribeToChangeEvents: opts.subscribeToChangeEvents,
-            live: opts.live,
         });
 }

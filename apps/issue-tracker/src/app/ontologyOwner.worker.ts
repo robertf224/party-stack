@@ -80,7 +80,7 @@ Effect.runFork(
                     if (!opened.storage)
                         return yield* new BackendError({
                             operation: "owner.open",
-                            kind: "Unsupported",
+                            kind: "NotImplemented",
                             retryable: false,
                             message: "Shared ontology requires a replica.",
                         });
@@ -90,6 +90,7 @@ Effect.runFork(
             );
             const server = yield* serveOntologyWorker({
                 source: proxy,
+                errors: "forward",
                 get ontology() {
                     return ontology;
                 },

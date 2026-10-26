@@ -71,7 +71,7 @@ describe("createFoundryOntologyRoute", () => {
         const route = createFoundryOntologyRoute({
             ontologyId: "ri.ontology.main",
             ir,
-            live: false,
+            watch: false,
         })("https://foundry.example");
         const configuration = await route.configure!({
             connection: {
@@ -87,7 +87,6 @@ describe("createFoundryOntologyRoute", () => {
 
         await expect(configuration.backend(ir, {})).resolves.toMatchObject({
             name: "foundry",
-            live: false,
         });
     });
 });

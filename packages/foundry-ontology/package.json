@@ -32,7 +32,6 @@
         "@osdk/foundry.mediasets": "^2.77.0",
         "@osdk/foundry.ontologies": "^2.77.0",
         "@party-stack/connect": "workspace:*",
-        "@party-stack/errors": "workspace:*",
         "@party-stack/foundry-client": "workspace:*",
         "@party-stack/foundry-object-set-watcher": "workspace:*",
         "@party-stack/icons-blueprint": "workspace:*",

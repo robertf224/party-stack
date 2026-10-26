@@ -150,11 +150,11 @@ export function remoteOntologyErrorFromUnknown(error: unknown): RemoteOntologyEr
         const status =
             error.kind === "NotFound"
                 ? 404
-                : error.kind === "Rejected"
+                : error.kind === "ValidationFailed"
                   ? 422
-                  : error.kind === "Conflict" || error.kind === "InvalidCursor"
+                  : error.kind === "Conflict" || error.kind === "HistoryExpired"
                     ? 409
-                    : error.kind === "Unsupported"
+                    : error.kind === "NotImplemented"
                       ? 400
                       : 503;
         return new RemoteOntologyError({

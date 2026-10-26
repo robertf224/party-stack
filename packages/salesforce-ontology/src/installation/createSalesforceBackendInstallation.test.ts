@@ -42,7 +42,6 @@ describe("createSalesforceOntologyRoute", () => {
         const route = createSalesforceOntologyRoute({
             ontologyId: "salesforce:tasks",
             ir,
-            live: false,
         })(backend);
         const configuration = await route.configure!({
             connection: {
@@ -57,7 +56,6 @@ describe("createSalesforceOntologyRoute", () => {
 
         await expect(configuration.backend(ir, {})).resolves.toMatchObject({
             name: "salesforce",
-            live: false,
         });
     });
 });

@@ -69,7 +69,7 @@ export function createFoundryOntologyRoute(options: {
     ontologyId: string;
     ir?: OntologyIR;
     users?: FoundryUsersIntegration | ((userId: string) => FoundryUsersIntegration);
-    live?: boolean;
+    watch?: boolean;
     persistObjects?: boolean;
     writes?: LiveOntologyWrites;
     /** Metadata polling interval in milliseconds, or false to disable. Only applies when IR is omitted. */
@@ -91,7 +91,7 @@ export function createFoundryOntologyRoute(options: {
                             typeof options.users === "function"
                                 ? options.users(connection.userId)
                                 : options.users,
-                        live: options.live,
+                        watch: options.watch,
                     }),
                     persistObjects: options.persistObjects,
                     writes: options.writes,

@@ -1,6 +1,6 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { Runtime, getRuntime } from "@party-stack/runtime";
-import { Effect, Exit, Scope } from "effect";
+import { Effect, Scope } from "effect";
 import { createLiveOntologyAttachments } from "../live/attachments/createLiveOntologyAttachments.js";
 import { makeReplicaHost, type ReplicaHostOptions } from "./host.js";
 import { makeReplicaOntologyView } from "./view.js";
@@ -34,13 +34,22 @@ export const makeReplicaLiveOntology = Effect.fn("Ontology.open")(function* (
         encrypted: backend.encrypted,
         attachments: createLiveOntologyAttachments({ ir, attachmentsAdapter, blobManager }),
         traces: getRuntime(runtime).traces,
-        validate: backendAdapter.validateAction
-            ? (name, parameters, objects) =>
-                  backendAdapter.validateAction!(name, parameters, { objects, context })
-            : undefined,
-        validateDraft: backendAdapter.validateActionDraft
-            ? (name, parameters, knownParameters, objects) =>
-                  backendAdapter.validateActionDraft!(name, parameters, { objects, context, knownParameters })
-            : undefined,
+        validate: backend.validateAction
+            ? (name, parameters) => backend.validateAction!(name, parameters)
+            : backendAdapter.validateAction
+              ? (name, parameters, objects) =>
+                    backendAdapter.validateAction!(name, parameters, { objects, context })
+              : undefined,
+        validateDraft: backend.validateAction
+            ? (name, parameters, knownParameters) =>
+                  backend.validateAction!(name, parameters, { knownParameters })
+            : backendAdapter.validateActionDraft
+              ? (name, parameters, knownParameters, objects) =>
+                    backendAdapter.validateActionDraft!(name, parameters, {
+                        objects,
+                        context,
+                        knownParameters,
+                    })
+              : undefined,
     });
 });

@@ -104,6 +104,16 @@ describe("Portless Vite plugin", () => {
         expect((await get("my-app.localhost")).status).toBe(404);
     });
 
+    it("does not start a development proxy while resolving test configuration", async () => {
+        const config = await resolveConfig(
+            { root, configFile: false, plugins: [worktreeDev()] },
+            "serve",
+            "test"
+        );
+        expect(ensureProxy).not.toHaveBeenCalled();
+        expect(config.server.origin).toBeUndefined();
+    });
+
     it("supports an explicit app name", async () => {
         const dev = await server({ name: "dashboard" });
         await dev.listen();

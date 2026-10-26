@@ -8,7 +8,6 @@ import {
     type ConnectionSession,
     type EstablishedConnection,
     withHttpAuthenticationErrorHandling,
-    withHttpRetryHandling,
 } from "@party-stack/connect";
 import {
     createClientCredentialsOAuthClient,
@@ -17,7 +16,7 @@ import {
     type OAuthSession,
     type PublicOAuthClient,
 } from "@party-stack/connect";
-import { unauthenticated } from "@party-stack/errors";
+import { unauthenticated } from "@party-stack/ontology-backend";
 import {
     createSalesforceClient,
     type SalesforceChangeEvent,
@@ -135,30 +134,28 @@ function createSalesforceEgressWrapper(options: {
     refresh?: () => Promise<void>;
 }): (handlers: ConnectionEgressHandlers) => ConnectionEgressHandlers {
     return (handlers) =>
-        withHttpAuthenticationErrorHandling(
-            withHttpRetryHandling({
-                ...handlers,
-                async fetch(request) {
-                    assertSalesforceOrigin(request, options.instanceUrl);
-                    const retryRequest = request.clone();
-                    const send = async (current: Request) => {
-                        const headers = new Headers(current.headers);
-                        headers.set("Authorization", `Bearer ${await options.tokenProvider()}`);
-                        return handlers.fetch(
-                            new Request(current, {
-                                headers,
-                            })
-                        );
-                    };
-                    let response = await send(request);
-                    if (response.status === 401 && options.refresh) {
-                        await options.refresh();
-                        response = await send(retryRequest);
-                    }
-                    return response;
-                },
-            })
-        );
+        withHttpAuthenticationErrorHandling({
+            ...handlers,
+            async fetch(request) {
+                assertSalesforceOrigin(request, options.instanceUrl);
+                const retryRequest = request.clone();
+                const send = async (current: Request) => {
+                    const headers = new Headers(current.headers);
+                    headers.set("Authorization", `Bearer ${await options.tokenProvider()}`);
+                    return handlers.fetch(
+                        new Request(current, {
+                            headers,
+                        })
+                    );
+                };
+                let response = await send(request);
+                if (response.status === 401 && options.refresh) {
+                    await options.refresh();
+                    response = await send(retryRequest);
+                }
+                return response;
+            },
+        });
 }
 
 const createSalesforceConnectionAdapterInstance = Effect.fn("Salesforce.connections")(function* (

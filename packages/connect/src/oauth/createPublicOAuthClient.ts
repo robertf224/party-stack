@@ -1,4 +1,4 @@
-import { unauthenticated } from "@party-stack/errors";
+import { unauthenticated } from "@party-stack/ontology-backend";
 import { and, eq, field, ne } from "@party-stack/ontology-storage";
 import { Runtime, getRuntime } from "@party-stack/runtime";
 import { Clock, Effect, Exit, Fiber, Scope, Result, Schema } from "effect";

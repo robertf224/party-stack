@@ -12,7 +12,7 @@ import {
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Clock, Effect, PubSub, Schema, Stream } from "effect";
 import { clientRegistry } from "./clients.js";
-import { BackendError, ActionReceiptSchema, BackendCommitSchema } from "./index.js";
+import { schemaValidationIssues, BackendError, ActionReceiptSchema, BackendCommitSchema } from "./index.js";
 import type { ClientPolicy } from "./clients.js";
 import type {
     ActionInvocation,
@@ -66,7 +66,9 @@ export interface OwnedBackendOptions {
     readonly invocationScope?: string;
     readonly clients?: ClientPolicy;
     /** Bounded replay history. Cursors behind this floor require a fresh snapshot. */
-    readonly history?: { readonly maxCommits?: number };
+    readonly history?: { readonly maxCommits?: number; readonly maxAgeMs?: number };
+    /** Infinity retains results indefinitely; finite windows bound idempotency. */
+    readonly resultRetentionMs?: number;
     readonly mutators: Readonly<
         Record<
             string,
@@ -106,8 +108,16 @@ const boundary = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         )
     );
 const CursorSchema = Schema.Struct({ source: Schema.String, revision: Schema.Int });
-const ReceiptSchema = Schema.Struct({ fingerprint: Schema.String, receipt: ActionReceiptSchema });
-const JournalSchema = Schema.Struct({ revision: Schema.Int, commit: BackendCommitSchema });
+const ReceiptSchema = Schema.Struct({
+    fingerprint: Schema.String,
+    receipt: ActionReceiptSchema,
+    completedAt: Schema.Finite,
+});
+const JournalSchema = Schema.Struct({
+    revision: Schema.Int,
+    commit: BackendCommitSchema,
+    committedAt: Schema.Finite,
+});
 const stableValue = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(stableValue);
     if (value !== null && typeof value === "object")
@@ -125,7 +135,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
 ): Effect.fn.Return<OwnedBackendService, BackendError> {
     const schemas = yield* Effect.try({
         try: () => compileEffectSchemas(options.ir),
-        catch: (cause) => fault("definition", "Rejected", "Invalid ontology definition.", cause),
+        catch: (cause) => fault("definition", "ValidationFailed", "Invalid ontology definition.", cause),
     });
     // Backend protocols carry portable ontology values; Effect-facing clients may decode them at their boundary.
     const objectSchemas = Object.fromEntries(
@@ -137,13 +147,25 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     const storage = makeOntologyStorage(model, options.tables, { blobs: options.blobs });
     const tables = options.tables;
     const maxCommits = options.history?.maxCommits ?? 10_000;
-    if (!Number.isSafeInteger(maxCommits) || maxCommits < 1)
-        return yield* fault("history", "Rejected", "Journal retention requires a positive commit bound.");
+    if ((maxCommits !== Infinity && !Number.isSafeInteger(maxCommits)) || maxCommits < 1)
+        return yield* fault(
+            "history",
+            "ValidationFailed",
+            "Journal retention requires a positive commit bound."
+        );
+    const resultRetentionMs = options.resultRetentionMs ?? 7 * 24 * 60 * 60 * 1000;
+    if (resultRetentionMs <= 0 || Number.isNaN(resultRetentionMs))
+        return yield* fault("retention", "ValidationFailed", "Result retention must be positive.");
+    if (
+        options.history?.maxAgeMs !== undefined &&
+        (options.history.maxAgeMs < 0 || Number.isNaN(options.history.maxAgeMs))
+    )
+        return yield* fault("retention", "ValidationFailed", "Journal retention age must be nonnegative.");
     const receiptKey = (id: string) => JSON.stringify([options.invocationScope ?? "system", id]);
     const metadata = Table.make<{ revision: number; source: string; journalFloor?: number }>({
         name: JSON.stringify(["backend", options.namespace, "metadata"]),
     });
-    const receipts = Table.make<{ fingerprint: string; receipt: ActionReceipt }>({
+    const receipts = Table.make<{ fingerprint: string; receipt: ActionReceipt; completedAt: number }>({
         name: JSON.stringify(["backend", options.namespace, "receipts"]),
         codec: {
             encode: (value) => Schema.encodeSync(ReceiptSchema)(value),
@@ -151,35 +173,36 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 Schema.decodeUnknownSync(ReceiptSchema)(value) as {
                     fingerprint: string;
                     receipt: ActionReceipt;
+                    completedAt: number;
                 },
         },
     });
-    const journal = Table.make<{ revision: number; commit: BackendCommit }>({
+    const journal = Table.make<{ revision: number; commit: BackendCommit; committedAt: number }>({
         name: JSON.stringify(["backend", options.namespace, "journal"]),
         codec: {
             encode: (value) => Schema.encodeSync(JournalSchema)(value),
             decode: (value) =>
-                Schema.decodeUnknownSync(JournalSchema)(value) as { revision: number; commit: BackendCommit },
+                Schema.decodeUnknownSync(JournalSchema)(value) as {
+                    revision: number;
+                    commit: BackendCommit;
+                    committedAt: number;
+                },
         },
     });
     let source = "";
     const cursor = (revision: number) => JSON.stringify({ source, revision });
-    const parseCursor = (encoded: string | undefined, current: number) =>
-        Effect.try({
-            try: () => {
-                if (encoded === undefined) return 0;
-                const parsed = Schema.decodeUnknownSync(CursorSchema)(JSON.parse(encoded));
-                if (
-                    parsed.source !== source ||
-                    !Number.isSafeInteger(parsed.revision) ||
-                    parsed.revision < 0 ||
-                    parsed.revision > current
-                )
-                    throw new TypeError("Cursor does not belong to this source history.");
-                return parsed.revision;
-            },
-            catch: () => fault("changes", "InvalidCursor", "Invalid backend change cursor."),
+    const parseCursor = Effect.fnUntraced(function* (encoded: string | undefined, current: number) {
+        if (encoded === undefined) return 0;
+        const parsed = yield* Effect.try({
+            try: () => Schema.decodeUnknownSync(Schema.fromJsonString(CursorSchema))(encoded),
+            catch: () => fault("changes", "HistoryExpired", "Invalid backend change cursor."),
         });
+        if (parsed.source !== source)
+            return yield* fault("changes", "SourceMismatch", "Change cursor belongs to a different source.");
+        if (!Number.isSafeInteger(parsed.revision) || parsed.revision < 0 || parsed.revision > current)
+            return yield* fault("changes", "HistoryExpired", "Invalid backend change position.");
+        return parsed.revision;
+    });
     const current = Effect.map(tables.get(metadata, "head"), (value) => value?.revision ?? 0);
     const wakes = yield* PubSub.sliding<void>(1);
     yield* boundary(
@@ -206,7 +229,9 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         const store = model.objects[name];
         return store
             ? Effect.succeed(store)
-            : Effect.fail(fault("object", "Rejected", `Unknown object type ${JSON.stringify(name)}.`));
+            : Effect.fail(
+                  fault("object", "ValidationFailed", `Unknown object type ${JSON.stringify(name)}.`)
+              );
     };
     const read = (native: ReadStorageTransaction): OwnedReadTransaction => ({
         get: (name, key) => boundary(Effect.flatMap(object(name), (store) => native.get(store, key))),
@@ -257,10 +282,14 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             return yield* fault("commit", "Unavailable", "Backend journal revision exhausted.");
         const encodedCursor = cursor(revision);
         const commit: BackendCommit = { cursor: encodedCursor, invocationId, changes: [...changes.values()] };
-        yield* tables.put(journal, revision, { revision, commit });
+        yield* tables.put(journal, revision, {
+            revision,
+            commit,
+            committedAt: yield* Clock.currentTimeMillis,
+        });
         const journalFloor = Math.max(
             (yield* tables.get(metadata, "head"))?.journalFloor ?? 0,
-            revision - maxCommits
+            Number.isFinite(maxCommits) ? revision - maxCommits : 0
         );
         for (const row of yield* tables.loadSubset(journal, { where: lte(field("revision"), journalFloor) }))
             yield* tables.delete(journal, row.key);
@@ -306,16 +335,24 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         if (!parameterSchema || !options.mutators[invocation.name])
             return yield* fault(
                 "invoke",
-                "Unsupported",
+                "NotImplemented",
                 `No action implementation for ${JSON.stringify(invocation.name)}.`
             );
         if (!invocation.id)
-            return yield* fault("invoke", "Rejected", "Actions require a stable invocation ID.");
+            return yield* fault("invoke", "ValidationFailed", "Actions require a stable invocation ID.");
         const encodedParameters = yield* Schema.encodeEffect(
             Schema.toCodecJson(Schema.toEncoded(parameterSchema))
         )(invocation.parameters).pipe(
-            Effect.mapError(() =>
-                fault("invoke", "Rejected", "Action parameters do not match their definition.")
+            Effect.mapError(
+                (error) =>
+                    new BackendError({
+                        operation: "invoke",
+                        kind: "ValidationFailed",
+                        message: "Action parameters do not match their definition.",
+                        retryable: false,
+                        invocationOutcome: "not-committed",
+                        issues: schemaValidationIssues(error),
+                    })
             )
         );
         const attachmentIdentity = yield* Effect.tryPromise({
@@ -334,7 +371,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                         ).join(""),
                     }))
                 ),
-            catch: (cause) => fault("upload", "Rejected", "Cannot identify attachment bytes.", cause),
+            catch: (cause) => fault("upload", "ValidationFailed", "Cannot identify attachment bytes.", cause),
         });
         // A preflight avoids staging duplicate uploads on ordinary receipt retries. The
         // write transaction below rechecks identity to resolve concurrent invocations.
@@ -355,21 +392,29 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         if (!action || !mutator)
             return yield* fault(
                 "invoke",
-                "Unsupported",
+                "NotImplemented",
                 `No action implementation for ${JSON.stringify(invocation.name)}.`
             );
         if (!invocation.id)
-            return yield* fault("invoke", "Rejected", "Actions require a stable invocation ID.");
+            return yield* fault("invoke", "ValidationFailed", "Actions require a stable invocation ID.");
         const parameters = yield* Schema.decodeUnknownEffect(
             Schema.toEncoded(schemas.actionParameterSchemas[invocation.name]!)
         )(invocation.parameters).pipe(
-            Effect.mapError(() =>
-                fault("invoke", "Rejected", "Action parameters do not match their definition.")
+            Effect.mapError(
+                (error) =>
+                    new BackendError({
+                        operation: "invoke",
+                        kind: "ValidationFailed",
+                        message: "Action parameters do not match their definition.",
+                        retryable: false,
+                        invocationOutcome: "not-committed",
+                        issues: schemaValidationIssues(error),
+                    })
             )
         );
         const fingerprint = prepared.identity;
         const previous = retainReceipt ? yield* tables.get(receipts, receiptKey(invocation.id)) : undefined;
-        if (previous) {
+        if (previous && previous.completedAt > (yield* Clock.currentTimeMillis) - resultRetentionMs) {
             if (previous.fingerprint !== fingerprint)
                 return yield* fault(
                     "invoke",
@@ -381,12 +426,25 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         const { tx, changes } = mutation(native);
         yield* mutator(tx, { ...invocation, parameters });
         yield* commitUploads;
+        const affected = new Map<string, Set<Key>>();
+        for (const change of changes.values()) {
+            const keys = affected.get(change.objectType) ?? new Set<Key>();
+            keys.add(change.key);
+            affected.set(change.objectType, keys);
+        }
         const receipt: ActionReceipt = {
+            affected: [...affected].map(([objectType, keys]) => ({ objectType, keys: [...keys] })),
+            affectedComplete: true,
             invocationId: invocation.id,
             outcome: "committed",
             cursor: yield* append(changes, invocation.id),
         };
-        if (retainReceipt) yield* tables.put(receipts, receiptKey(invocation.id), { fingerprint, receipt });
+        if (retainReceipt)
+            yield* tables.put(receipts, receiptKey(invocation.id), {
+                fingerprint,
+                receipt,
+                completedAt: yield* Clock.currentTimeMillis,
+            });
         return {
             receipt,
             changed: true,
@@ -428,6 +486,52 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     const collectClientGarbage = boundary(tables.transaction((tx) => clients.expire(tx))).pipe(
         Effect.tap((expired) => (expired.length ? PubSub.publish(wakes, undefined) : Effect.void)),
         Effect.map((expired) => expired.length)
+    );
+    yield* boundary(
+        tables.transaction((tx) =>
+            Effect.gen(function* () {
+                yield* tx.ensureIndex(receipts, { name: "completedAt", field: field("completedAt") });
+                yield* tx.ensureIndex(journal, { name: "committedAt", field: field("committedAt") });
+                yield* tx.ensureIndex(results, { name: "completedAt", field: field("entry", "completedAt") });
+            })
+        )
+    );
+    const collectGarbage = boundary(
+        tables.transaction((tx) =>
+            Effect.gen(function* () {
+                yield* clients.expire(tx);
+                const now = yield* Clock.currentTimeMillis;
+                if (Number.isFinite(resultRetentionMs)) {
+                    for (const row of yield* tx.loadSubset(receipts, {
+                        where: lte(field("completedAt"), now - resultRetentionMs),
+                        limit: 100,
+                    }))
+                        yield* tx.delete(receipts, row.key);
+                    for (const row of yield* tx.loadSubset(results, {
+                        where: lte(field("entry", "completedAt"), now - resultRetentionMs),
+                        limit: 100,
+                    }))
+                        yield* tx.delete(results, row.key);
+                }
+                if (options.history?.maxAgeMs !== undefined && Number.isFinite(options.history.maxAgeMs)) {
+                    const expired = yield* tx.loadSubset(journal, {
+                        where: lte(field("committedAt"), now - options.history.maxAgeMs),
+                        orderBy: [{ field: field("revision") }],
+                        limit: 100,
+                    });
+                    const head = yield* tx.get(metadata, "head");
+                    if (head && expired.length)
+                        yield* tx.put(metadata, "head", {
+                            ...head,
+                            journalFloor: Math.max(
+                                head.journalFloor ?? 0,
+                                ...expired.map((row) => row.value.revision)
+                            ),
+                        });
+                    for (const row of expired) yield* tx.delete(journal, row.key);
+                }
+            })
+        )
     );
     const protocol: OntologySource = {
         sourceId: source,
@@ -488,7 +592,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             if (!request.invocation.id || request.invocation.attachmentUploads?.length)
                 return yield* fault(
                     "protocol",
-                    "Rejected",
+                    "ValidationFailed",
                     "Protocol submissions require an invocation ID and staged attachment handles."
                 );
             if (
@@ -498,7 +602,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             )
                 return yield* fault(
                     "protocol",
-                    "Rejected",
+                    "ValidationFailed",
                     "The submission view must include its action outcome."
                 );
             const prepared = yield* prepare(request.invocation);
@@ -526,6 +630,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                                             name: "identity",
                                         }).encode(request.invocation),
                                         createdAt: yield* Clock.currentTimeMillis,
+                                        completedAt: yield* Clock.currentTimeMillis,
                                         sequence: request.sequence,
                                         state: "acknowledged",
                                         optimistic: request.optimistic,
@@ -548,6 +653,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 )
             );
             if (!admission.duplicate) yield* PubSub.publish(wakes, undefined);
+            yield* collectGarbage.pipe(Effect.catch(() => Effect.void));
             return yield* protocol.read(request.session, request.view);
         }),
         acknowledge: Effect.fn("OwnedBackend.acknowledgeClient")(
@@ -584,6 +690,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         sourceId: source,
         protocol,
         collectClientGarbage,
+        maintenance: collectGarbage,
         supportsIdempotency: true,
         loadSubset: (subset) =>
             boundary(
@@ -606,7 +713,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         invoke: Effect.fn("OwnedBackend.invoke")(function* (invocation: ActionInvocation) {
             const prepared = yield* prepare(invocation);
             const prior = yield* boundary(tables.get(receipts, receiptKey(invocation.id)));
-            if (prior) {
+            if (prior && prior.completedAt > (yield* Clock.currentTimeMillis) - resultRetentionMs) {
                 if (prior.fingerprint !== prepared.identity)
                     return yield* fault(
                         "invoke",
@@ -620,7 +727,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                     ? yield* options.prepareUploads(invocation)
                     : yield* fault(
                           "invoke",
-                          "Unsupported",
+                          "NotImplemented",
                           "This owned backend has no attachment upload coordinator."
                       )
                 : Effect.void;
@@ -628,8 +735,42 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 storage.transaction((native) => invokeIn(native, prepared, commitUploads, true))
             );
             if (result.changed) yield* PubSub.publish(wakes, undefined);
+            // Keep cleanup throughput proportional to writes, in addition to idle maintenance.
+            // A maintenance failure cannot overwrite a successful commit outcome.
+            yield* collectGarbage.pipe(Effect.catch(() => Effect.void));
             return result.receipt;
         }),
+        validateAction: (name, parameters, settings) =>
+            Effect.gen(function* () {
+                const action = options.ir.actionTypes.find((action) => action.name === name);
+                if (!action) return yield* fault("validateAction", "NotImplemented", "Unknown action type.");
+                const known = settings?.knownParameters;
+                const definition = known
+                    ? {
+                          ...action,
+                          parameters: action.parameters.filter(
+                              (parameter) =>
+                                  known.includes(parameter.name) || parameters[parameter.name] !== undefined
+                          ),
+                      }
+                    : action;
+                const schema =
+                    definition === action
+                        ? schemas.actionParameterSchemas[name]!
+                        : compileEffectSchemas({ ...options.ir, actionTypes: [definition] })
+                              .actionParameterSchemas[name]!;
+                const result = yield* Effect.result(
+                    Schema.decodeUnknownEffect(Schema.toEncoded(schema))(parameters)
+                );
+                if (result._tag === "Failure")
+                    return {
+                        certain: true as const,
+                        value: { kind: "err" as const, value: schemaValidationIssues(result.failure) },
+                    };
+                // Shape validation cannot execute arbitrary mutator business logic, and
+                // successful preflight never promises a later transaction will commit.
+                return { certain: false as const };
+            }),
         queryFunction: (name, parameters) =>
             boundary(
                 storage.read((native) =>
@@ -641,14 +782,18 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                         if (!handler || !definition)
                             return yield* fault(
                                 "query",
-                                "Unsupported",
+                                "NotImplemented",
                                 `No query implementation for ${JSON.stringify(name)}.`
                             );
                         const parsed = yield* Schema.decodeUnknownEffect(
                             Schema.toEncoded(schemas.queryParameterSchemas[name]!)
                         )(parameters).pipe(
                             Effect.mapError(() =>
-                                fault("query", "Rejected", "Query parameters do not match their definition.")
+                                fault(
+                                    "query",
+                                    "ValidationFailed",
+                                    "Query parameters do not match their definition."
+                                )
                             )
                         );
                         const result = yield* handler(read(native), parsed);
@@ -656,7 +801,11 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                             Schema.toEncoded(schemas.queryReturnSchemas[name]!)
                         )(result).pipe(
                             Effect.mapError(() =>
-                                fault("query", "Rejected", "Query result does not match its definition.")
+                                fault(
+                                    "query",
+                                    "ValidationFailed",
+                                    "Query result does not match its definition."
+                                )
                             )
                         );
                     })
@@ -673,14 +822,14 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                             if (after < floor)
                                 return yield* fault(
                                     "changes",
-                                    "InvalidCursor",
+                                    "HistoryExpired",
                                     "Requested changes were compacted; acquire a fresh coordinated snapshot before resuming."
                                 );
                             const limit = request.limit ?? 100;
                             if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000)
                                 return yield* fault(
                                     "changes",
-                                    "Rejected",
+                                    "ValidationFailed",
                                     "Change page limit must be between 1 and 1000."
                                 );
                             const rows = yield* tables.loadSubset(journal, {

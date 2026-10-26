@@ -76,16 +76,17 @@ describe("remote ontology server policy projection", () => {
         const backendAdapter: OntologyBackendAdapter = testBinding({
             name: "test",
 
-            validateAction: async (_actionType, parameters) => {
-                validatedParameters = parameters;
-                return {
-                    certain: true,
-                    value: {
-                        kind: "ok",
-                        value: undefined,
-                    },
-                };
-            },
+            validateAction: (_actionType, parameters) =>
+                Effect.sync(() => {
+                    validatedParameters = parameters;
+                    return {
+                        certain: true,
+                        value: {
+                            kind: "ok",
+                            value: undefined,
+                        },
+                    } as const;
+                }),
 
             rows: [],
             apply: async (_actionType, parameters) => {
@@ -810,7 +811,7 @@ describe("authorized replica protocol", () => {
                         Effect.fail(
                             new BackendError({
                                 operation: "invoke",
-                                kind: "Unsupported",
+                                kind: "NotImplemented",
                                 message: "No actions",
                                 retryable: false,
                             })
@@ -822,7 +823,7 @@ describe("authorized replica protocol", () => {
                                 ? Effect.fail(
                                       new BackendError({
                                           operation: "pull",
-                                          kind: "InvalidCursor",
+                                          kind: "HistoryExpired",
                                           message: "Invalid source",
                                           retryable: false,
                                       })
@@ -869,7 +870,7 @@ describe("authorized replica protocol", () => {
         const page = await transport.pullChanges!({});
         expect(page.commits[0]?.changes[0]).toMatchObject({ kind: "put", value: { due: date } });
         await expect(transport.pullChanges!({ cursor: "invalid" })).rejects.toMatchObject({
-            name: "InvalidCursor",
+            name: "HistoryExpired",
             status: 409,
             retryable: false,
         });
@@ -897,7 +898,7 @@ function testBinding(
             catch: (cause) =>
                 new BackendError({
                     operation: "test",
-                    kind: "Rejected",
+                    kind: "ValidationFailed",
                     retryable: false,
                     message: cause instanceof Error ? cause.message : String(cause),
                     cause,

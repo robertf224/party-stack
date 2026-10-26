@@ -1,4 +1,4 @@
-import { Clock, Effect } from "effect";
+import { Clock, Effect, Redacted } from "effect";
 import * as oauth from "oauth4webapi";
 import { Temporal } from "temporal-polyfill";
 import { connectError } from "./errors.js";
@@ -12,7 +12,10 @@ export interface OAuthProviderOptions {
     clientId: string;
     clientAuthentication:
         | { method: "none" }
-        | { method: "client_secret_basic" | "client_secret_post"; secret: string };
+        | {
+              method: "client_secret_basic" | "client_secret_post";
+              secret: string | Redacted.Redacted<string>;
+          };
     scopes: readonly string[];
     resolveSubject(accessToken: string): Effect.Effect<string, import("./errors.js").ConnectError>;
     /** Provider-specific metadata, when refresh expiration is actually reported. */
@@ -35,8 +38,16 @@ export function makeOAuthProvider(options: OAuthProviderOptions): ConnectOAuthPr
         options.clientAuthentication.method === "none"
             ? oauth.None()
             : options.clientAuthentication.method === "client_secret_basic"
-              ? oauth.ClientSecretBasic(options.clientAuthentication.secret)
-              : oauth.ClientSecretPost(options.clientAuthentication.secret);
+              ? oauth.ClientSecretBasic(
+                    Redacted.isRedacted(options.clientAuthentication.secret)
+                        ? Redacted.value(options.clientAuthentication.secret)
+                        : options.clientAuthentication.secret
+                )
+              : oauth.ClientSecretPost(
+                    Redacted.isRedacted(options.clientAuthentication.secret)
+                        ? Redacted.value(options.clientAuthentication.secret)
+                        : options.clientAuthentication.secret
+                );
     const requestOptions = (signal: AbortSignal) => ({
         signal,
         [oauth.customFetch]: options.fetch ?? globalThis.fetch.bind(globalThis),

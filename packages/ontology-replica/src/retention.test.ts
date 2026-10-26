@@ -182,7 +182,7 @@ test("blocked replays keep previous dependencies, partial reads, and newly match
                         if (fail)
                             return yield* new BackendError({
                                 operation: "test",
-                                kind: "Rejected",
+                                kind: "ValidationFailed",
                                 message: "Blocked",
                                 retryable: false,
                             });

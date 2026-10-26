@@ -1,5 +1,5 @@
 import { makeObjectSetWatcher } from "@party-stack/foundry-object-set-watcher";
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
 import { Effect, Schema, Stream } from "effect";
@@ -19,14 +19,7 @@ import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { Query } from "@party-stack/ontology-storage";
 
 const KeySchema = Schema.Union([Schema.String, Schema.Finite]);
-const unavailable = (cause: unknown) =>
-    new BackendError({
-        operation: "foundry.sync",
-        kind: "Unavailable",
-        message: "Foundry synchronization could not be confirmed.",
-        retryable: true,
-        cause,
-    });
+const unavailable = (cause: unknown) => classifyBackendFailure("foundry.sync", cause);
 
 /** One scoped watcher multiplexes the live object types used by this binding.
  * Watch messages invalidate snapshots; they do not pretend to be durable journal cursors.
@@ -35,7 +28,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
     client: OntologyClient;
     ir: OntologyIR;
     context: Record<string, unknown>;
-    live?: boolean;
+    watch?: boolean;
     users?: {
         objectType: string;
         loadSubset: (query: Query, signal: AbortSignal) => Promise<BackendSnapshot>;
@@ -57,7 +50,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
     decodeObject: (objectType: string, value: Record<string, unknown>) => Record<string, unknown>;
 }) {
     const watcher =
-        options.live === false
+        options.watch === false
             ? undefined
             : yield* makeObjectSetWatcher(options.client).pipe(Effect.mapError(unavailable));
     return {
@@ -73,7 +66,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                 : Effect.fail(
                       new BackendError({
                           operation: "queryFunction",
-                          kind: "Unsupported",
+                          kind: "NotImplemented",
                           message: "No Foundry query function implementation.",
                           retryable: false,
                       })
@@ -91,7 +84,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
             if (!definition)
                 return yield* new BackendError({
                     operation: "foundry.loadSubset",
-                    kind: "Rejected",
+                    kind: "ValidationFailed",
                     message: "Unknown Foundry object type.",
                     retryable: false,
                 });
@@ -165,7 +158,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                         : cause instanceof Error && cause.name === "NonRetryableError"
                           ? new BackendError({
                                 operation: "foundry.invoke",
-                                kind: "Rejected",
+                                kind: "ValidationFailed",
                                 message: cause.message,
                                 retryable: false,
                                 cause,

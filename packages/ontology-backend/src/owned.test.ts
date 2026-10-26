@@ -33,7 +33,7 @@ const ir: OntologyIR = {
 const rejected = () =>
     new BackendError({
         operation: "invoke",
-        kind: "Rejected",
+        kind: "ValidationFailed",
         message: "Expected rejection",
         retryable: false,
     });
@@ -112,7 +112,7 @@ test("owned commits atomically persist rows, receipts, and ordered source-scoped
             const invalid = yield* Effect.result(
                 backend.changes!.pull({ cursor: JSON.stringify({ source: "other", revision: 1 }) })
             );
-            expect(Result.isFailure(invalid) && invalid.failure.kind).toBe("InvalidCursor");
+            expect(Result.isFailure(invalid) && invalid.failure.kind).toBe("SourceMismatch");
         })
     );
 });

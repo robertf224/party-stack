@@ -13,15 +13,15 @@ const failure = (operation: string, cause: unknown) =>
               operation,
               kind:
                   cause instanceof RemoteOntologyError && !cause.retryable
-                      ? cause.name === "InvalidCursor"
-                          ? "InvalidCursor"
+                      ? cause.name === "HistoryExpired"
+                          ? "HistoryExpired"
                           : cause.name === "Conflict"
                             ? "Conflict"
-                            : cause.name === "Unsupported"
-                              ? "Unsupported"
+                            : cause.name === "NotImplemented"
+                              ? "NotImplemented"
                               : cause.code === "NOT_FOUND"
                                 ? "NotFound"
-                                : "Rejected"
+                                : "ValidationFailed"
                       : "Unavailable",
               message:
                   cause instanceof RemoteOntologyError ? cause.message : "Remote ontology request failed.",
@@ -55,7 +55,7 @@ export function makeRemoteOntologyBackend(options: {
                         "loadSubset",
                         new BackendError({
                             operation: "loadSubset",
-                            kind: "Rejected",
+                            kind: "ValidationFailed",
                             message: "Unknown object type.",
                             retryable: false,
                         })
@@ -160,7 +160,7 @@ export function makeRemoteOntologyBackend(options: {
                     )
                         throw new BackendError({
                             operation: "attachment.read",
-                            kind: "Rejected",
+                            kind: "ValidationFailed",
                             message: "Invalid byte range.",
                             retryable: false,
                         });

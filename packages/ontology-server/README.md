@@ -6,6 +6,113 @@ The package was renamed from `@party-stack/remote-ontology`. The replica-state R
 streaming NDJSON over Fetch, rather than SSE/EventSource framing. The same Effect
 RPC definition can run over worker ports.
 
+## Server roles
+
+`makeOntologyServer` is a scoped Effect. Choose the role by where writes commit:
+
+```ts
+import { makeOntologyServer } from "@party-stack/ontology-server";
+
+// Authoritative storage; commits actions, receipts and journal atomically.
+const ownedServer =
+    yield *
+    makeOntologyServer({
+        kind: "owned",
+        backend: owned,
+        authorize,
+    });
+
+// Direct forwarding, with no local outbox or client-session registry.
+const proxyServer =
+    yield *
+    makeOntologyServer({
+        kind: "proxy",
+        backend: upstream,
+        authorize,
+    });
+
+// Confirmed read cache; writes still forward directly to upstream.
+const cachedServer =
+    yield *
+    makeOntologyServer({
+        kind: "proxy",
+        backend: upstream,
+        cache: readCache,
+        authorize,
+        demand: { idleDemandMs: 60_000, maxSubsets: 1_024 },
+    });
+
+// Intermediate replica: accepts durable local actions into its own outbox.
+const replicaServer =
+    yield *
+    makeOntologyServer({
+        kind: "replica",
+        backend: upstream,
+        replica,
+        authorize,
+    });
+```
+
+There is no writes flag. Authorization denies `Invoke` and `Submit` for read-only
+access. The role defines execution responsibility; it does not grant permission.
+A direct protocol proxy can also supply `source: upstreamSource` to delegate
+replication sessions without maintaining another registry.
+
+The read cache shares subset demand with scoped `RcMap` leases. Concurrent callers
+share one demand, idle leases expire, and capacity applies backpressure rather than
+deleting active demand. This is independent from mark-and-sweep row GC. Forwarded
+writes never enter the read cache's outbox. A successful receipt invalidates coverage
+for its affected types; incomplete targets invalidate all types. The next read repairs
+coverage. An invalidation IO failure cannot turn a committed action into a failed one.
+Use a dedicated read-cache replica, bound to the same trusted upstream identity.
+
+`kind: "replica"` serves composed state, including its optimistic overlay. Protocol
+`Submit` returns parent acceptance; stateless `Invoke` waits for upstream confirmation.
+The replica's surrounding scope must own its synchronization loop.
+
+## Stateless backend operations
+
+```ts
+import { connectOntologyBackendHttp } from "@party-stack/ontology-server/rpc/http";
+
+const backend = yield * connectOntologyBackendHttp({ url }).pipe(Effect.provide(FetchHttpClient.layer));
+const snapshot = yield * backend.loadSubset({ objectType: "Issue", query });
+const receipt = yield * backend.invoke(invocation);
+```
+
+Mount the endpoint so it accepts the trailing slash appended by Effect's HTTP
+client (`/rpc/` as well as `/rpc`). These typed RPC calls do not open a replication client session. Describe advertises
+whether incremental `PullChanges` and change hints are available; ordinary requests
+need no session acknowledgment/bookkeeping. The same transport supports full/draft
+validation, query functions and explicit attachment/decrypt operations.
+
+## Authorization and error disclosure
+
+Bind `projectOntologyBackend({ backend, ir, context, policy })` after authenticating
+the caller. Its policy supplies allowed object properties, optional row predicates,
+action/query visibility, fixed action parameters, context projection and operation
+authorization callbacks. Row predicates run before pagination; hidden properties
+cannot be probed in filters or sort keys. Query-function callbacks remain responsible
+for returned-value authorization. Attachment and decrypt capabilities require separate
+explicit authorization. Never reuse a principal-bound projection across users.
+
+A projection without row predicates can filter a journal to visible object types and
+properties. Row-filtered projections omit journal access: tracking deletes and moves
+across predicate boundaries requires before/after visibility or query watching.
+
+The server defaults to `errors: "projected"`: safe normalized messages, exposed
+parameter paths and standard input constraints. Configured input messages become
+standard wording. Reference failures become a generic invalid-reference issue; custom
+submission criteria remain hidden. `errors: "forward"` preserves normalized details
+for a trusted audience. A function can transform/filter errors, e.g. Forbidden to
+NotFound, without changing retry/outcome facts. Raw causes are never serialized.
+An upstream connector authentication failure becomes Unavailable for a downstream
+caller who cannot fix that connector by signing in.
+
+This projects stateless operations. Privileged replica-state access also exposes
+outbox parameters and confirmed base, so it requires an explicitly trusted,
+principal-bound source; this wrapper does not automatically secure that protocol.
+
 ## Replica-state Effect RPC
 
 The separate `./rpc` export defines typed client sessions, selected state reads,
@@ -52,8 +159,8 @@ This path is still being integrated. Authorization is mandatory per operation;
 sources must belong to the authenticated principal's partition. Restricted sources
 also need returned-state projection, including action parameters and confirmed base.
 The existing row/property policies below are not automatically applied to this new
-protocol. Selected snapshots currently replace membership in full; retained deltas,
-incremental transfer and the remaining private-service ownership migration are unfinished.
+protocol. Selected snapshots currently replace membership in full. Retained replica-state
+deltas and protocol-child row/blob GC remain follow-up work.
 Issue-tracker now uses the SharedWorker/memory-tab placement described below.
 
 ## Worker transport
@@ -97,7 +204,9 @@ that reference hidden types, and drops unreachable named types.
 
 ## Errors
 
-Error responses use versioned envelopes (`v: 1`) with stable codes. Legacy `{ error: string }` bodies remain parseable by clients.
+Effect RPC preserves the shared `BackendError` schema from ontology-backend. The
+older policy HTTP endpoints retain versioned envelopes (`v: 1`) and legacy body
+parsing while applications move to the common RPC server.
 
 ## Live view helpers
 
@@ -105,10 +214,8 @@ Connections additionally expose `.operations`: query functions, full/draft actio
 validation, attachment creation/metadata/bytes, owner outbox controls and trace
 subscriptions. Supplying `ontology` to the server binds these helpers to the
 owner's LiveOntology. They use named, schema-validated RPCs and mandatory per-call
-authorization; action submissions and row reads still go through replica state.
-Owned source-only servers can instead supply `backend` for query functions and
-attachment staging/reads/metadata. These helpers still require explicit authorization;
-row reads and action commits continue through the source protocol.
+authorization. Servers supplying a `backend` also expose authorized stateless
+subset reads, action commits and optional journal reads, without session allocation.
 
 Trace snapshots use a sliding buffer and are subscribed only while the consumer
 asks for them. Attachment downloads stream metadata followed by bounded byte frames.

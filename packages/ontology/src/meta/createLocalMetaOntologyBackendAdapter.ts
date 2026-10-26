@@ -45,7 +45,7 @@ export function createLocalMetaOntologyBackendAdapter(ir: OntologyIR): OntologyB
                             return Effect.fail(
                                 new BackendError({
                                     operation: "loadSubset",
-                                    kind: "Rejected",
+                                    kind: "ValidationFailed",
                                     message: "Unknown metadata object type.",
                                     retryable: false,
                                 })
@@ -65,7 +65,7 @@ export function createLocalMetaOntologyBackendAdapter(ir: OntologyIR): OntologyB
                     Effect.fail(
                         new BackendError({
                             operation: "invoke",
-                            kind: "Unsupported",
+                            kind: "NotImplemented",
                             message: "Metadata is read-only.",
                             retryable: false,
                         })
@@ -74,7 +74,7 @@ export function createLocalMetaOntologyBackendAdapter(ir: OntologyIR): OntologyB
                     Effect.fail(
                         new BackendError({
                             operation: "queryFunction",
-                            kind: "Unsupported",
+                            kind: "NotImplemented",
                             message: "Local metadata has no query functions.",
                             retryable: false,
                         })

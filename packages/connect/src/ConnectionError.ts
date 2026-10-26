@@ -1,4 +1,4 @@
-import { isUnauthenticatedError } from "@party-stack/errors";
+import { isUnauthenticatedError } from "@party-stack/ontology-backend";
 import { Effect, Schema } from "effect";
 
 export class ConnectionError extends Schema.TaggedError<ConnectionError>()("ConnectionError", {

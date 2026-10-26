@@ -1,4 +1,4 @@
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
 import { Effect, Schema } from "effect";
@@ -34,10 +34,12 @@ export function makeSalesforceBackend(options: {
 }): OntologyBackendService {
     const failure = (operation: string, cause: unknown) => {
         if (cause instanceof BackendError) return cause;
+        const classified = classifyBackendFailure(operation, cause);
+        if (classified.kind !== "Unavailable") return classified;
         const rejected = options.isRejected(cause);
         return new BackendError({
             operation,
-            kind: rejected ? "Rejected" : "Unavailable",
+            kind: rejected ? "ValidationFailed" : "Unavailable",
             message:
                 rejected && cause instanceof Error
                     ? cause.message
@@ -57,7 +59,7 @@ export function makeSalesforceBackend(options: {
             if (!definition)
                 return yield* new BackendError({
                     operation: "salesforce.loadSubset",
-                    kind: "Rejected",
+                    kind: "ValidationFailed",
                     message: "Unknown Salesforce object type.",
                     retryable: false,
                 });
@@ -119,7 +121,7 @@ export function makeSalesforceBackend(options: {
             if (invocation.attachmentUploads?.length)
                 return yield* new BackendError({
                     operation: "salesforce.invoke",
-                    kind: "Unsupported",
+                    kind: "NotImplemented",
                     message: "Salesforce attachment uploads are not supported.",
                     retryable: false,
                 });

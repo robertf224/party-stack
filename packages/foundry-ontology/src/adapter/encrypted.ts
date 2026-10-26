@@ -27,7 +27,7 @@ export const encodeFoundryCiphertext = (value: unknown): string =>
     Schema.decodeUnknownSync(Handle)(value).ciphertext;
 
 const rejected = (operation: string, message: string) =>
-    new BackendError({ operation, kind: "Rejected", message, retryable: false });
+    new BackendError({ operation, kind: "ValidationFailed", message, retryable: false });
 
 function requestError(operation: string, cause: unknown): BackendError {
     const status = Predicate.isObject(cause) ? cause.statusCode : undefined;
@@ -35,7 +35,12 @@ function requestError(operation: string, cause: unknown): BackendError {
     // classification, without attaching raw requests, ciphertext or plaintext to traces.
     return new BackendError({
         operation,
-        kind: status === 404 ? "NotFound" : status === 401 || status === 403 ? "Rejected" : "Unavailable",
+        kind:
+            status === 404
+                ? "NotFound"
+                : status === 401 || status === 403
+                  ? "ValidationFailed"
+                  : "Unavailable",
         message: "Foundry CipherText request failed.",
         retryable: status === undefined || status === 429 || (Predicate.isNumber(status) && status >= 500),
     });

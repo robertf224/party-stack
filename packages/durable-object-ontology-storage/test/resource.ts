@@ -70,7 +70,7 @@ const declare = Effect.fnUntraced(function* (bucket: R2Bucket, gc: OntologyDurab
                 : Effect.fail(
                       new BackendError({
                           operation: "authorize",
-                          kind: "Rejected",
+                          kind: "Forbidden",
                           message: "Denied",
                           retryable: false,
                       })
@@ -244,7 +244,7 @@ export const runOntologyResource: (
             )
         ),
         schemaDeferred: schemaBefore.length === 0,
-        denied: Result.isFailure(denied) && denied.failure.kind === "Rejected",
+        denied: Result.isFailure(denied) && denied.failure.kind === "Forbidden",
         firstAlarm: disabled ? firstAlarm === null : firstAlarm === earlier,
         scheduled: disabled ? afterAlarm === null : afterAlarm !== null && afterAlarm >= earlier,
         preservedAlarm: secondAlarm === afterAlarm,

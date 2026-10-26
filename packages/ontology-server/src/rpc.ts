@@ -1,4 +1,4 @@
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import {
     ClientLeaseSchema,
     ClientSessionSchema,
@@ -12,6 +12,12 @@ import {
 } from "@party-stack/ontology-backend/protocol";
 import { Context, Deferred, Effect, Schema, Stream, Layer, Scope } from "effect";
 import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcSchema } from "effect/rpc";
+import {
+    OntologyErrorProjection,
+    errorProjectionLayer,
+    projectStateFailures,
+    type ErrorProjectionOptions,
+} from "./errorProjection.js";
 import {
     OntologyOperationRpcs,
     ontologyOperationHandlers,
@@ -31,6 +37,8 @@ const Description = Schema.Struct({
     version: Schema.Literal(1),
     sourceId: Schema.NonEmptyString,
     supportsIdempotency: Schema.Boolean,
+    changes: Schema.optional(Schema.Boolean),
+    watchChanges: Schema.optional(Schema.Boolean),
 });
 const ReplicaRpcs = RpcGroup.make(
     Rpc.make("Describe", { success: Description, error: BackendError }),
@@ -63,7 +71,7 @@ const ReplicaRpcs = RpcGroup.make(
     Rpc.make("Changes", { success: Schema.Literal("invalidate"), error: BackendError, stream: true })
 );
 
-export const OntologyRpcs = ReplicaRpcs.merge(OntologyOperationRpcs);
+export const OntologyRpcs = ReplicaRpcs.merge(OntologyOperationRpcs).middleware(OntologyErrorProjection);
 
 // Client-only telemetry middleware: classification follows the RPC schema, not
 // method-name guesses or elapsed duration. The server wire contract is unchanged.
@@ -106,8 +114,8 @@ export type OntologyRpcRequest =
  * granting domain row access alone does not authorize action parameters or base
  * state inspection. Restricted sources must also project their returned state.
  */
-export interface OntologyRpcServerOptions<R = never> {
-    readonly source: OntologySource;
+export interface OntologyRpcServerOptions<R = never> extends ErrorProjectionOptions {
+    readonly source?: OntologySource;
     readonly ontology?: LiveOntology;
     readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
     /** Worker bootstrap may run while transport starts accepting requests. */
@@ -122,7 +130,26 @@ export interface OntologyRpcServerOptions<R = never> {
 }
 
 export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => {
-    const { source, authorize } = options;
+    const authorize = options.authorize;
+    const unavailableSource = () =>
+        Effect.fail(
+            new BackendError({
+                operation: "replication",
+                kind: "NotImplemented",
+                message: "This endpoint serves stateless operations only.",
+                retryable: false,
+            })
+        );
+    const source: OntologySource = options.source ?? {
+        sourceId: options.backend?.sourceId ?? "stateless",
+        supportsIdempotency: options.backend?.supportsIdempotency ?? false,
+        openClient: unavailableSource,
+        read: unavailableSource,
+        submit: unavailableSource,
+        acknowledge: unavailableSource,
+        demand: unavailableSource,
+        subscribeChanges: unavailableSource(),
+    };
     return ReplicaRpcs.toLayer({
         Describe: (_, context) =>
             authorize({ operation: "Describe" }, context.headers).pipe(
@@ -131,6 +158,8 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                     version: 1 as const,
                     sourceId: source.sourceId,
                     supportsIdempotency: source.supportsIdempotency,
+                    changes: Boolean(options.backend?.changes),
+                    watchChanges: Boolean(options.backend?.changes?.watch),
                 }))
             ),
         OpenClient: (request, context) =>
@@ -139,11 +168,25 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
             ),
         Read: (request, context) =>
             authorize({ operation: "Read", ...request }, context.headers).pipe(
-                Effect.andThen(() => source.read(request.session, request.view))
+                Effect.andThen(() =>
+                    source.read(request.session, request.view).pipe(
+                        Effect.map((result) => ({
+                            ...result,
+                            state: projectStateFailures(result.state, options),
+                        }))
+                    )
+                )
             ),
         Submit: (request, context) =>
             authorize({ operation: "Submit", submission: request }, context.headers).pipe(
-                Effect.andThen(() => source.submit(request))
+                Effect.andThen(() =>
+                    source.submit(request).pipe(
+                        Effect.map((result) => ({
+                            ...result,
+                            state: projectStateFailures(result.state, options),
+                        }))
+                    )
+                )
             ),
         Acknowledge: (request, context) =>
             authorize({ operation: "Acknowledge", ...request }, context.headers).pipe(
@@ -170,7 +213,10 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                 Effect.gen(function* () {
                     yield* Effect.annotateCurrentSpan("activity", "subscription");
                     yield* authorize({ operation: "Changes" }, context.headers);
-                    const changes = yield* source.subscribeChanges;
+                    const changes = options.source
+                        ? yield* source.subscribeChanges
+                        : options.backend?.changes?.watch;
+                    if (!changes) return yield* unavailableSource();
                     // A new stream is a repair boundary, not proof that no updates were missed.
                     return Stream.concat(
                         Stream.make("invalidate" as const),
@@ -178,20 +224,11 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                     );
                 })
             ),
-    }).pipe(Layer.merge(ontologyOperationHandlers(options)));
+    }).pipe(Layer.merge(ontologyOperationHandlers(options)), Layer.merge(errorProjectionLayer(options)));
 };
 
 type ProtocolClient = Effect.Success<ReturnType<typeof RpcClient.make<RpcGroup.Rpcs<typeof OntologyRpcs>>>>;
-const unavailable = (cause: unknown) =>
-    cause instanceof BackendError
-        ? cause
-        : new BackendError({
-              operation: "remote.protocol",
-              kind: "Unavailable",
-              message: "Ontology protocol transport failed.",
-              retryable: true,
-              cause,
-          });
+const unavailable = (cause: unknown) => classifyBackendFailure("remote.protocol", cause);
 
 /** Use the same source contract with Effect RPC's worker, HTTP or socket transport. */
 export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(function* (
@@ -202,7 +239,7 @@ export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(f
     if (!Number.isFinite(retryIntervalMs) || retryIntervalMs < 1)
         return yield* new BackendError({
             operation: "remote.protocol",
-            kind: "Rejected",
+            kind: "ValidationFailed",
             message: "Protocol retry interval must be positive.",
             retryable: false,
         });

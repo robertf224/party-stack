@@ -50,7 +50,7 @@ const setup = Effect.fnUntraced(function* (clients?: ClientPolicy, maxCommits?: 
                     if (name === "fail")
                         return yield* new BackendError({
                             operation: "test",
-                            kind: "Rejected",
+                            kind: "ValidationFailed",
                             message: "Reject after write.",
                             retryable: false,
                         });
@@ -79,7 +79,7 @@ test("owned replay history is bounded and expired cursors require a coordinated 
                 yield* f.source.acknowledge(f.session, batch.state.revision, batch.client.deliveredThrough);
             }
             const expired = yield* Effect.result(f.backend.changes!.pull({ cursor: before.cursor }));
-            expect(expired).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidCursor" } });
+            expect(expired).toMatchObject({ _tag: "Failure", failure: { kind: "HistoryExpired" } });
             expect((yield* Effect.result(f.backend.changes!.pull({})))._tag).toBe("Failure");
             const snapshot = yield* f.backend.loadSubset({ objectType: "Counter" });
             expect(snapshot.rows[0]?.value.count).toBe(5);
@@ -266,5 +266,37 @@ test("one client's acknowledgment never removes another client's undelivered res
             expect(state.state.completed.map((entry) => entry.invocation.id)).toEqual(["one"]);
             expect(state.state.objects[0]?.base[0]?.value.count).toBe(2);
         })
+    );
+});
+
+test("result and journal retention are independent of committed application rows", async () => {
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            const fixture = yield* setup();
+            const backend = yield* makeOwnedBackend({
+                ...fixture.options,
+                resultRetentionMs: 100,
+                history: { maxCommits: Infinity, maxAgeMs: 50 },
+            });
+            const before = yield* backend.loadSubset({ objectType: "Counter" });
+            yield* backend.invoke(invocation("one"));
+            yield* backend.invoke(invocation("one"));
+            expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(1);
+            yield* TestClock.adjust(101);
+            yield* backend.maintenance!;
+            expect(
+                yield* fixture.tables.loadSubset(
+                    Table.make({ name: JSON.stringify(["backend", "owned-protocol", "receipts"]) })
+                )
+            ).toEqual([]);
+            expect(yield* Effect.result(backend.changes!.pull({ cursor: before.cursor }))).toMatchObject({
+                _tag: "Failure",
+                failure: { kind: "HistoryExpired" },
+            });
+            expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(1);
+            // Finite idempotency is explicit: after retention the same ID is a new invocation.
+            yield* backend.invoke(invocation("one"));
+            expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(2);
+        }).pipe(Effect.provide(TestClock.layer()))
     );
 });

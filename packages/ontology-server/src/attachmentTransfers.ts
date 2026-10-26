@@ -77,7 +77,12 @@ export type AttachmentUpload = Schema.Schema.Type<typeof Upload>;
 export type AttachmentValue = Schema.Schema.Type<typeof Attachment>;
 type Frame = Pick<Schema.Schema.Type<typeof Chunk>, "bytes" | "end">;
 const rejected = (message: string) =>
-    new BackendError({ operation: "attachment.transfer", kind: "Rejected", message, retryable: false });
+    new BackendError({
+        operation: "attachment.transfer",
+        kind: "ValidationFailed",
+        message,
+        retryable: false,
+    });
 
 export const attachmentTransferHandlers = <R>(options: {
     authorizeUpload(request: AttachmentUpload, headers: Headers): Effect.Effect<void, BackendError, R>;

@@ -18,7 +18,7 @@ export const Ontology = OntologyDurableObject(
                     : Effect.fail(
                           new BackendError({
                               operation: "authorize",
-                              kind: "Rejected",
+                              kind: "Forbidden",
                               message: "Unauthorized.",
                               retryable: false,
                           })

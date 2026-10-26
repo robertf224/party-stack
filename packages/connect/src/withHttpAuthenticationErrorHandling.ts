@@ -1,4 +1,4 @@
-import { unauthenticated } from "@party-stack/errors";
+import { unauthenticated } from "@party-stack/ontology-backend";
 import type { ConnectionEgressHandlers } from "./types.js";
 
 export function withHttpAuthenticationErrorHandling(

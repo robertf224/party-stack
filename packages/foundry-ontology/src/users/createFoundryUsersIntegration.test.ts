@@ -64,7 +64,7 @@ describe("createFoundryUsersIntegration", () => {
                 queryFunctionTypes: [],
             },
             users: createFoundryUsersIntegration({ objectType: "User", lens }),
-            live: false,
+            watch: false,
         });
         const snapshot = await Effect.runPromise(
             Effect.scoped(

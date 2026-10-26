@@ -7,7 +7,7 @@ import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { Encrypted } from "@party-stack/ontology-spec/values";
 
-const rejected = (message: string, kind: BackendError["kind"] = "Rejected") =>
+const rejected = (message: string, kind: BackendError["kind"] = "ValidationFailed") =>
     new BackendError({ operation: "ontology.decrypt", kind, message, retryable: false });
 // Do not retain decoder issues, provider exceptions or inputs: all can contain secrets.
 const safe = <A, E>(effect: Effect.Effect<A, E>) =>
@@ -55,7 +55,7 @@ export const makeLiveDecryption = Effect.fnUntraced(function* (options: {
         if (settings?.cache && !runtime.encryptionKeyring)
             return yield* rejected(
                 "Caching decrypted values requires an explicitly configured encryption keyring.",
-                "Unsupported"
+                "NotImplemented"
             );
         if (settings?.cache) {
             const local = yield* safe(options.replica.encryptedCache.get(handle));
@@ -80,7 +80,7 @@ export const makeLiveDecryption = Effect.fnUntraced(function* (options: {
             }
         }
         if (!backend.encrypted)
-            return yield* rejected("The source does not support decryption.", "Unsupported");
+            return yield* rejected("The source does not support decryption.", "NotImplemented");
         const result = yield* safe(backend.encrypted.decrypt(handle));
         const decoded = yield* Effect.try({
             try: () => codec.decode(result.value),

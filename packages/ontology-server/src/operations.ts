@@ -1,10 +1,17 @@
 import {
     BackendError,
+    BackendSnapshotSchema,
+    BackendChangePageSchema,
+    ValidationReportSchema,
     ActionReceiptSchema,
     EncryptedValueSchema,
     encryptedPropertyCodec,
 } from "@party-stack/ontology-backend";
-import { ActionInvocationSchema, protocolValueCodec } from "@party-stack/ontology-backend/protocol";
+import {
+    ActionInvocationSchema,
+    BackendSubsetCodec,
+    protocolValueCodec,
+} from "@party-stack/ontology-backend/protocol";
 import { ReplicaStatusSchema, makeReplicaMonitor } from "@party-stack/ontology-replica";
 import { Effect, Queue, Schema, Stream, Fiber, Scope, Layer } from "effect";
 import { Rpc, RpcGroup, RpcClient } from "effect/rpc";
@@ -15,26 +22,10 @@ import {
     attachmentTransferHandlers,
     splitAttachmentChunk,
 } from "./attachmentTransfers.js";
+import { projectValidationReport, type ErrorProjectionOptions } from "./errorProjection.js";
 import type { LiveOntology } from "@party-stack/ontology";
 import type { Headers } from "effect/http/Headers";
-const Validation = Schema.Union([
-    Schema.Struct({ certain: Schema.Literal(false) }),
-    Schema.Struct({
-        certain: Schema.Literal(true),
-        value: Schema.Union([
-            Schema.Struct({ kind: Schema.Literal("ok"), value: Schema.Void }),
-            Schema.Struct({
-                kind: Schema.Literal("err"),
-                value: Schema.Array(
-                    Schema.Struct({
-                        message: Schema.String,
-                        path: Schema.optional(Schema.Array(Schema.Union([Schema.String, Schema.Number]))),
-                    })
-                ),
-            }),
-        ]),
-    }),
-]);
+const Validation = ValidationReportSchema;
 const Trace = Schema.Struct({
     id: Schema.String,
     traceId: Schema.String,
@@ -71,6 +62,24 @@ const Metadata = Schema.Struct({
 
 /** Explicit helper operations alongside replica transfer. These do not bypass row replication. */
 const HelperRpcs = RpcGroup.make(
+    Rpc.make("LoadSubset", {
+        payload: BackendSubsetCodec,
+        success: protocolValueCodec(BackendSnapshotSchema),
+        error: BackendError,
+    }),
+    Rpc.make("PullChanges", {
+        payload: Schema.Struct({
+            cursor: Schema.optional(Schema.String),
+            limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10_000 }))),
+        }),
+        success: protocolValueCodec(BackendChangePageSchema),
+        error: BackendError,
+    }),
+    Rpc.make("Invoke", {
+        payload: protocolValueCodec(ActionInvocationSchema),
+        success: ActionReceiptSchema,
+        error: BackendError,
+    }),
     Rpc.make("Decrypt", {
         payload: Schema.Struct({ value: EncryptedValueSchema, cache: Schema.optional(Schema.Boolean) }),
         success: protocolValueCodec(Schema.Unknown),
@@ -124,6 +133,15 @@ const HelperRpcs = RpcGroup.make(
 );
 export const OntologyOperationRpcs = HelperRpcs.merge(AttachmentTransferRpcs);
 export type OntologyOperationRequest =
+    | { readonly operation: "PullChanges"; readonly cursor?: string; readonly limit?: number }
+    | {
+          readonly operation: "LoadSubset";
+          readonly subset: import("@party-stack/ontology-backend").BackendSubset;
+      }
+    | {
+          readonly operation: "Invoke";
+          readonly invocation: import("@party-stack/ontology-backend").ActionInvocation;
+      }
     | {
           readonly operation: "Decrypt";
           readonly value: import("@party-stack/ontology/values").Encrypted;
@@ -176,22 +194,24 @@ const attempt = <A>(run: () => Promise<A>) => Effect.tryPromise({ try: run, catc
 const missing = (name: string) =>
     new BackendError({
         operation: name,
-        kind: "Unsupported",
+        kind: "NotImplemented",
         message: `Ontology operation ${name} is unavailable.`,
         retryable: false,
     });
 
-export const ontologyOperationHandlers = <R>(options: {
-    readonly ontology?: LiveOntology;
-    readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
-    readonly ready?: Effect.Effect<void, BackendError, R>;
-    readonly deleteLocalData?: Effect.Effect<void, BackendError, R>;
-    readonly releaseOwner?: Effect.Effect<void, BackendError, R>;
-    readonly authorize: (
-        request: OntologyOperationRequest,
-        headers: Headers
-    ) => Effect.Effect<void, BackendError, R>;
-}) => {
+export const ontologyOperationHandlers = <R>(
+    options: ErrorProjectionOptions & {
+        readonly ontology?: LiveOntology;
+        readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
+        readonly ready?: Effect.Effect<void, BackendError, R>;
+        readonly deleteLocalData?: Effect.Effect<void, BackendError, R>;
+        readonly releaseOwner?: Effect.Effect<void, BackendError, R>;
+        readonly authorize: (
+            request: OntologyOperationRequest,
+            headers: Headers
+        ) => Effect.Effect<void, BackendError, R>;
+    }
+) => {
     const live = () =>
         (options.ready ?? Effect.void).pipe(
             Effect.andThen(() =>
@@ -199,6 +219,27 @@ export const ontologyOperationHandlers = <R>(options: {
             )
         );
     return HelperRpcs.toLayer({
+        LoadSubset: (subset, context) =>
+            Effect.gen(function* () {
+                yield* options.authorize({ operation: "LoadSubset", subset }, context.headers);
+                yield* options.ready ?? Effect.void;
+                if (!options.backend) return yield* missing("LoadSubset");
+                return yield* options.backend.loadSubset(subset);
+            }),
+        PullChanges: (request, context) =>
+            Effect.gen(function* () {
+                yield* options.authorize({ operation: "PullChanges", ...request }, context.headers);
+                yield* options.ready ?? Effect.void;
+                if (!options.backend?.changes) return yield* missing("PullChanges");
+                return yield* options.backend.changes.pull(request);
+            }),
+        Invoke: (invocation, context) =>
+            Effect.gen(function* () {
+                yield* options.authorize({ operation: "Invoke", invocation }, context.headers);
+                yield* options.ready ?? Effect.void;
+                if (!options.backend) return yield* missing("Invoke");
+                return yield* options.backend.invoke(invocation);
+            }),
         Decrypt: (request, context) =>
             Effect.gen(function* () {
                 yield* options.authorize({ operation: "Decrypt", ...request }, context.headers);
@@ -225,7 +266,7 @@ export const ontologyOperationHandlers = <R>(options: {
                     catch: () =>
                         new BackendError({
                             operation: "decrypt",
-                            kind: "Rejected",
+                            kind: "ValidationFailed",
                             message: "Invalid decrypted value.",
                             retryable: false,
                         }),
@@ -249,6 +290,12 @@ export const ontologyOperationHandlers = <R>(options: {
         ValidateAction: (request, context) =>
             Effect.gen(function* () {
                 yield* options.authorize({ operation: "ValidateAction", ...request }, context.headers);
+                if (options.backend?.validateAction)
+                    return yield* options.backend
+                        .validateAction(request.name, request.parameters, {
+                            knownParameters: request.knownParameters,
+                        })
+                        .pipe(Effect.map((report) => projectValidationReport(report, options, request.name)));
                 const ontology = yield* live();
                 const action = Object.hasOwn(ontology.actions, request.name)
                     ? ontology.actions[request.name]
@@ -260,7 +307,7 @@ export const ontologyOperationHandlers = <R>(options: {
                               knownParameters: request.knownParameters,
                           })
                         : action.validate(request.parameters)
-                );
+                ).pipe(Effect.map((report) => projectValidationReport(report, options, request.name)));
             }),
         AttachmentMetadata: (request, context) =>
             Effect.gen(function* () {
@@ -434,7 +481,7 @@ export interface OntologyOperationsClient {
         name: string,
         parameters: Record<string, unknown>,
         knownParameters?: readonly string[]
-    ) => ReturnType<LiveOntology["actions"][string]["validate"]>;
+    ) => Effect.Effect<import("@party-stack/ontology-backend").ValidationReport, BackendError>;
     readonly attachments: LiveOntology["attachments"];
     readonly outbox: Pick<
         import("@party-stack/ontology-replica").ReplicaService,
@@ -580,7 +627,7 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
         queryFunction: (name, parameters) =>
             client.QueryFunction({ name, parameters }).pipe(Effect.mapError(failure)),
         validate: (name, parameters, knownParameters) =>
-            run(client.ValidateAction({ name, parameters, knownParameters })),
+            client.ValidateAction({ name, parameters, knownParameters }).pipe(Effect.mapError(failure)),
         attachments,
         outbox: {
             reconcile: (id, receipt) =>

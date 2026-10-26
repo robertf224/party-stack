@@ -1,4 +1,4 @@
-import { isUnauthenticatedError } from "@party-stack/errors";
+import { isUnauthenticatedError } from "@party-stack/ontology-backend";
 import { describe, expect, it } from "vite-plus/test";
 import { withHttpAuthenticationErrorHandling } from "./withHttpAuthenticationErrorHandling.js";
 

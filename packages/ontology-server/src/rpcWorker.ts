@@ -40,7 +40,7 @@ export const connectOntologyWorker = Effect.fn("OntologyServer.connectWorker")(f
     if (!Number.isFinite(timeout) || timeout < 1)
         return yield* new BackendError({
             operation: "worker.connect",
-            kind: "Rejected",
+            kind: "ValidationFailed",
             retryable: false,
             message: "Worker connection timeout must be positive.",
         });

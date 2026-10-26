@@ -1,6 +1,7 @@
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
+import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Exit, Fiber, Scope } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
@@ -21,7 +22,7 @@ const ir: OntologyIR = {
     ],
 };
 const invocation = (id: string) => ({ id, name: "write", parameters: { value: id } });
-const fail = (kind: "Unavailable" | "Rejected" = "Unavailable") =>
+const fail = (kind: "Unavailable" | "ValidationFailed" = "Unavailable") =>
     new BackendError({
         operation: "test",
         kind,
@@ -95,7 +96,7 @@ test("retry deadline and budget survive reopening; explicit retry resets budget,
 });
 
 test("discard-all abandons the queue for both definite failures and unknown outcomes", async () => {
-    for (const kind of ["Rejected", "Unavailable"] as const) {
+    for (const kind of ["ValidationFailed", "Unavailable"] as const) {
         await Effect.runPromise(
             Effect.scoped(
                 Effect.gen(function* () {
@@ -272,5 +273,84 @@ test("an explicit pre-dispatch failure permits automatic retry without backend i
                 expect(yield* replica.pending).toEqual([]);
             })
         )
+    );
+});
+
+test("a rejected retry does not erase an earlier unknown outcome", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                let calls = 0;
+                const replica = yield* makeReplica({
+                    namespace: "unknown-retry",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend: backend(() =>
+                        Effect.fail(
+                            ++calls === 1
+                                ? fail()
+                                : new BackendError({
+                                      operation: "invoke",
+                                      kind: "SessionExpired",
+                                      message: "Expired",
+                                      retryable: false,
+                                      invocationOutcome: "not-committed",
+                                  })
+                        )
+                    ),
+                    execute: () => Effect.void,
+                    startSync: false,
+                    outbox: { maxRetries: 1, retryDelayMs: 100 },
+                });
+                yield* replica.enqueue(invocation("one"));
+                yield* Effect.result(replica.syncOnce);
+                yield* TestClock.adjust(101);
+                yield* Effect.result(replica.syncOnce);
+                expect((yield* replica.pending)[0]).toMatchObject({
+                    state: "blocked",
+                    attempts: 2,
+                    failureOutcome: "unknown",
+                });
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
+});
+
+test("protected pending receipts cannot starve expired journal-hint cleanup", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const namespace = "hint-cleanup";
+                const replica = yield* makeReplica({
+                    namespace,
+                    ir,
+                    tables,
+                    backend: backend(() => Effect.die("offline")),
+                    execute: () => Effect.void,
+                    startSync: false,
+                    online: Effect.succeed(false),
+                    resultRetentionMs: 100,
+                });
+                const hints = Table.make({
+                    name: JSON.stringify(["replica", namespace, "journal-receipts"]),
+                });
+                for (let index = 0; index < 100; index++) {
+                    const id = `pending-${index}`;
+                    yield* replica.enqueue(invocation(id));
+                    yield* tables.put(hints, id, { invocationId: id, outcome: "committed", observedAt: 0 });
+                }
+                yield* tables.put(hints, "zz-orphan", {
+                    invocationId: "zz-orphan",
+                    outcome: "committed",
+                    observedAt: 0,
+                });
+                yield* TestClock.adjust(101);
+                yield* replica.syncOnce;
+                expect(yield* tables.get(hints, "zz-orphan")).toBeUndefined();
+                expect(yield* tables.loadSubset(hints)).toHaveLength(100);
+                expect(yield* replica.pending).toHaveLength(100);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
     );
 });

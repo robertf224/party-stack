@@ -62,7 +62,7 @@ test("Effect HTTP RPC explicitly authorizes decrypt and preserves plaintext repr
                             : Effect.fail(
                                   new BackendError({
                                       operation: "decrypt",
-                                      kind: "Rejected",
+                                      kind: "ValidationFailed",
                                       message: "Forbidden",
                                       retryable: false,
                                   })
@@ -143,16 +143,16 @@ test("policy HTTP requires a distinct decryption grant plus readable row/propert
                 const transport = createInProcessHttpRemoteOntologyTransport(server, { ir });
                 const backend = yield* makeRemoteOntologyBackend({ ir, transport });
                 const request = backend.encrypted!.decrypt(value);
-                expect(yield* request.pipe(Effect.flip)).toMatchObject({ kind: "Rejected" });
+                expect(yield* request.pipe(Effect.flip)).toMatchObject({ kind: "ValidationFailed" });
                 allowed = true;
                 readable = false;
-                expect(yield* request.pipe(Effect.flip)).toMatchObject({ kind: "Rejected" });
+                expect(yield* request.pipe(Effect.flip)).toMatchObject({ kind: "ValidationFailed" });
                 expect(decrypt).not.toHaveBeenCalled();
                 readable = true;
                 expect(yield* request).toEqual({ value: plaintext, ciphertext: value.ciphertext });
                 expect(
                     yield* backend.encrypted!.decrypt({ ...value, ciphertext: "other" }).pipe(Effect.flip)
-                ).toMatchObject({ kind: "Rejected" });
+                ).toMatchObject({ kind: "ValidationFailed" });
                 expect(decrypt).toHaveBeenCalledTimes(1);
             })
         )

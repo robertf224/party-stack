@@ -2,7 +2,7 @@ import { QuerySchema } from "@party-stack/ontology-storage";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Schema, SchemaGetter, SchemaIssue } from "effect";
 import { ClientLeaseSchema, ClientSessionSchema } from "./clients.js";
-import { ActionReceiptSchema, BackendErrorKindSchema } from "./index.js";
+import { ActionReceiptSchema, BackendErrorKindSchema, ValidationIssueSchema } from "./index.js";
 import type { ClientLease, ClientSession, ClientToken } from "./clients.js";
 import type { ActionInvocation, ActionReceipt, BackendError, BackendSubset } from "./index.js";
 import type { Row } from "@party-stack/ontology-storage";
@@ -22,6 +22,8 @@ export interface PendingAction {
     readonly retryFromAttempt?: number;
     readonly nextAttemptAt?: number;
     readonly failureMessage?: string;
+    readonly failureIssues?: readonly import("./errors.js").ValidationIssue[];
+    readonly completedAt?: number;
     readonly failureOutcome?: "not-committed" | "unknown";
     readonly failureRetryable?: boolean;
     readonly receipt?: ActionReceipt;
@@ -134,6 +136,8 @@ export const PendingActionSchema = Schema.Struct({
     retryFromAttempt: Schema.optional(Counter),
     nextAttemptAt: Schema.optional(Schema.Finite),
     failureMessage: Schema.optional(Schema.String),
+    failureIssues: Schema.optional(Schema.Array(ValidationIssueSchema)),
+    completedAt: Schema.optional(Schema.Finite),
     failureOutcome: Schema.optional(Schema.Literals(["not-committed", "unknown"])),
     failureRetryable: Schema.optional(Schema.Boolean),
     receipt: Schema.optional(ActionReceiptSchema),

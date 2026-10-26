@@ -579,7 +579,7 @@ function createPolicyReadBackendAdapter<Context, Ontology extends OntologyDefini
                         catch: (cause) =>
                             new BackendError({
                                 operation: "policy.read",
-                                kind: "Rejected",
+                                kind: "ValidationFailed",
                                 message: "Policy-filtered read failed.",
                                 retryable: false,
                                 cause,
@@ -589,7 +589,7 @@ function createPolicyReadBackendAdapter<Context, Ontology extends OntologyDefini
                     Effect.fail(
                         new BackendError({
                             operation: "invoke",
-                            kind: "Unsupported",
+                            kind: "NotImplemented",
                             message: "Policy read backend cannot apply actions.",
                             retryable: false,
                         })
@@ -598,7 +598,7 @@ function createPolicyReadBackendAdapter<Context, Ontology extends OntologyDefini
                     Effect.fail(
                         new BackendError({
                             operation: "queryFunction",
-                            kind: "Unsupported",
+                            kind: "NotImplemented",
                             message: "Policy read backend cannot run query functions.",
                             retryable: false,
                         })
@@ -1148,7 +1148,7 @@ export function createRemoteOntologyServer<
                                     if (!backend.encrypted)
                                         return yield* new BackendError({
                                             operation: "decrypt",
-                                            kind: "Unsupported",
+                                            kind: "NotImplemented",
                                             message: "Decryption is unavailable.",
                                             retryable: false,
                                         });

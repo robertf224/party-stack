@@ -515,7 +515,7 @@ describe("SQLite LiveOntology MVP acceptance", () => {
                 note: "note-1",
                 title: "After",
             })
-        ).rejects.toMatchObject({ _tag: "BackendError", kind: "Unsupported" });
+        ).rejects.toMatchObject({ _tag: "BackendError", kind: "NotImplemented" });
         await ontology.cleanup();
     });
 

@@ -102,7 +102,7 @@ describe("native LiveOntology construction", () => {
                         Effect.fail(
                             new BackendError({
                                 operation: "open",
-                                kind: "Rejected",
+                                kind: "ValidationFailed",
                                 message: "No access",
                                 retryable: false,
                             })
@@ -149,10 +149,12 @@ describe("native LiveOntology construction", () => {
 
     it("validation never dispatches an action and missing validation remains uncertain", async () => {
         const invoke = vi.fn(native().invoke);
-        const validate = vi.fn(async () => ({
-            certain: true as const,
-            value: { kind: "ok" as const, value: undefined },
-        }));
+        const validate = vi.fn(() =>
+            Effect.succeed({
+                certain: true as const,
+                value: { kind: "ok" as const, value: undefined },
+            })
+        );
         const live = await createLiveOntology({
             ir,
             backend: () => ({ ...adapter(native({ invoke })), validateAction: validate }),

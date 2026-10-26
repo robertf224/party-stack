@@ -91,7 +91,7 @@ describe("Foundry encrypted properties", () => {
                     const native = yield* createFoundryOntologyBackendAdapter({
                         client,
                         ir,
-                        live: false,
+                        watch: false,
                     }).open({});
                     expect(native.encrypted).toBeDefined();
                     expect(yield* native.encrypted!.decrypt({ ciphertext: cipher, source })).toEqual({
@@ -194,7 +194,7 @@ describe("Foundry encrypted properties", () => {
     });
 
     it.each([
-        [403, "Rejected", false],
+        [403, "ValidationFailed", false],
         [404, "NotFound", false],
         [429, "Unavailable", true],
         [503, "Unavailable", true],

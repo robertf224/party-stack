@@ -209,10 +209,11 @@ test("bootstrap failures reach the worker handshake as typed errors", async () =
                 yield* serveOntologyWorker({
                     source: owned.protocol,
                     authorize: () => Effect.void,
+                    errors: "forward",
                     ready: Effect.fail(
                         new BackendError({
                             operation: "owner.open",
-                            kind: "Rejected",
+                            kind: "ValidationFailed",
                             retryable: false,
                             message: "Principal partition is unavailable.",
                         })
@@ -223,7 +224,7 @@ test("bootstrap failures reach the worker handshake as typed errors", async () =
                 );
                 expect(result).toMatchObject({
                     _tag: "Failure",
-                    failure: { kind: "Rejected", message: "Principal partition is unavailable." },
+                    failure: { kind: "ValidationFailed", message: "Principal partition is unavailable." },
                 });
             })
         )

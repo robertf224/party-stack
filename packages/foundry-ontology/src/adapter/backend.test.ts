@@ -156,7 +156,7 @@ test("identity subsets use the shared search path with an IN predicate and propa
                     client: { ontologyRid: "ontology", fetch: vi.fn() } as unknown as OntologyClient,
                     ir,
                     context: {},
-                    live: false,
+                    watch: false,
 
                     submitAction: () => {
                         throw new Error("Unexpected action");
@@ -218,7 +218,7 @@ test("large-scale action receipts identify a type without pretending to enumerat
                     client: {} as OntologyClient,
                     ir,
                     context: {},
-                    live: false,
+                    watch: false,
 
                     submitAction,
                     decodeObject: (_type, value) => value,

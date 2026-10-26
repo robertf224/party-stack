@@ -1,4 +1,4 @@
-import { unauthenticated } from "@party-stack/errors";
+import { unauthenticated } from "@party-stack/ontology-backend";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { memoryRuntimeFixture, runtimeFixtureContext } from "@party-stack/runtime/testing";
@@ -61,7 +61,17 @@ describe("createConnectionManager", () => {
         expect(connection.state.status).toBe("active");
         expect(manager.connections.get("user-1")).toEqual(connection);
 
-        const monitor = createConnectionMonitor(manager, "user-1");
+        const monitor = createConnectionMonitor(
+            {
+                connections: manager.connections,
+                reportUnauthenticated: (id, error) =>
+                    Effect.tryPromise({
+                        try: () => manager.reportUnauthenticated(id, error),
+                        catch: (cause) => ConnectionError.from("reportUnauthenticated", cause),
+                    }),
+            },
+            "user-1"
+        );
         const listener = vi.fn();
         const unsubscribe = monitor.subscribe(listener);
         await manager.authentication.signIn("user-2");
@@ -77,7 +87,7 @@ describe("createConnectionManager", () => {
         });
         unsubscribe();
 
-        await monitor.reportUnauthenticated(unauthenticated("Session expired."));
+        await Effect.runPromise(monitor.reportUnauthenticated(unauthenticated("Session expired.")));
         expect(monitor.state).toEqual({
             status: "needs-auth",
             error: "Session expired.",

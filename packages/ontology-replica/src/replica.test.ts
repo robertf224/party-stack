@@ -40,7 +40,7 @@ const execute = (tx: OwnedTransaction, action: ActionInvocation) =>
         if (action.name === "reject")
             return yield* new BackendError({
                 operation: "test",
-                kind: "Rejected",
+                kind: "ValidationFailed",
                 message: "Expected",
                 retryable: false,
             });
@@ -797,6 +797,46 @@ test("bounded coverage is not whole-collection coverage and idle journal windows
                 yield* replica.demand({ objectType: "Counter" });
                 yield* replica.syncOnce;
                 expect(snapshots).toBe(3);
+            })
+        )
+    );
+});
+
+test("expired journal history rebuilds selected base while preserving and executing local intent once", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* makeOwnedBackend({
+                    namespace: "history-reset",
+                    ir,
+                    tables: yield* Memory.make(),
+                    history: { maxCommits: 1 },
+                    mutators: { increment: execute },
+                });
+                let submissions = 0;
+                const backend = {
+                    ...owned,
+                    invoke: (invocation: ActionInvocation) =>
+                        Effect.sync(() => submissions++).pipe(Effect.andThen(owned.invoke(invocation))),
+                };
+                const replica = yield* makeReplica({
+                    namespace: "history-client",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend,
+                    execute,
+                    startSync: false,
+                });
+                yield* replica.demand({ objectType: "Counter" });
+                yield* replica.syncOnce;
+                for (let index = 0; index < 3; index++)
+                    yield* owned.invoke({ id: `remote-${index}`, name: "increment", parameters: {} });
+                yield* replica.enqueue({ id: "local", name: "increment", parameters: {} });
+                yield* replica.syncOnce;
+                expect(submissions).toBe(1);
+                expect(yield* replica.pending).toEqual([]);
+                expect((yield* replica.get("Counter", "shared"))?.count).toBe(4);
+                expect((yield* owned.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(4);
             })
         )
     );

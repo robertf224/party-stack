@@ -1,7 +1,7 @@
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
 import { makeReplica, type ReplicaOptions, type ReplicaService } from "@party-stack/ontology-replica";
 import { Runtime } from "@party-stack/runtime";
-import { Effect, Queue, Scope, Stream } from "effect";
+import { Effect, Scope, Stream } from "effect";
 import { prepareActionParameters } from "../live/actions/prepareActionParameters.js";
 import { unsupportedOntologyAttachmentsAdapter } from "../live/attachments/unsupportedOntologyAttachmentsAdapter.js";
 import { createBlobManager } from "./blobs/createBlobManager.js";
@@ -36,6 +36,7 @@ export interface ReplicaHostOptions {
     readonly writes?: LiveOntologyWrites;
     readonly connection?: ConnectionMonitor;
     readonly gc?: ReplicaOptions["gc"];
+    readonly clients?: ReplicaOptions["clients"];
 }
 export interface ReplicaHostService {
     readonly replica: ReplicaService;
@@ -102,21 +103,11 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
     );
     yield* attempt(() => blobManager.ready);
     const connected = options.connection
-        ? Stream.callback<boolean>((queue) =>
-              Effect.acquireRelease(
-                  Effect.sync(() => {
-                      const unsubscribe = options.connection!.subscribe((state) => {
-                          Queue.offerUnsafe(queue, state.status === "active");
-                      });
-                      Queue.offerUnsafe(queue, options.connection!.state.status === "active");
-                      return unsubscribe;
-                  }),
-                  (unsubscribe) => Effect.sync(unsubscribe)
-              )
-          )
+        ? Stream.map(options.connection.changes, (state) => state.status === "active")
         : Stream.never;
     const replica = yield* makeReplica({
         namespace: runtime.namespace,
+        clients: options.clients ?? { leaseMs: 10 * 60_000 },
         ir,
         tables: services.tables,
         backend: {

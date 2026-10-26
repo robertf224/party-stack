@@ -188,7 +188,9 @@ test("runtime cleanup closes the ontology's DbClient collections and sync scope"
         Object.values(ontology.persistedObjects!).every((collection) => collection.status === "cleaned-up")
     ).toBe(true);
     expect(ontology.outbox.collection.status).toBe("cleaned-up");
-    await expect(Effect.runPromise(ontology.storage!.pending)).rejects.toMatchObject({ kind: "Rejected" });
+    await expect(Effect.runPromise(ontology.storage!.pending)).rejects.toMatchObject({
+        kind: "ValidationFailed",
+    });
     expect(cleanupBackend).toHaveBeenCalledOnce();
     await ontology.cleanup();
 });
@@ -249,7 +251,9 @@ test("a scoped replica host runs without application collections and outlives in
         await Effect.runPromise(Scope.close(owner, Exit.void));
         expect(released).toHaveBeenCalledOnce();
         await expect(host.blobManager.read("local")).rejects.toThrow("closed");
-        await expect(Effect.runPromise(host.replica.pending)).rejects.toMatchObject({ kind: "Rejected" });
+        await expect(Effect.runPromise(host.replica.pending)).rejects.toMatchObject({
+            kind: "ValidationFailed",
+        });
     } finally {
         await Effect.runPromise(Scope.close(firstSession, Exit.void));
         await Effect.runPromise(Scope.close(secondSession, Exit.void));

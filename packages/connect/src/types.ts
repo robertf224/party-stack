@@ -1,8 +1,8 @@
 import type { ConnectionError } from "./ConnectionError.js";
-import type { UnauthenticatedError } from "@party-stack/errors";
+import type { UnauthenticatedError } from "@party-stack/ontology-backend";
 import type { Runtime, RuntimeAdapter } from "@party-stack/runtime";
 import type { Collection } from "@tanstack/db";
-import type { Effect, Scope } from "effect";
+import type { Effect, Scope, Stream } from "effect";
 
 export type ConnectionState =
     | { status: "pending" }
@@ -38,7 +38,8 @@ export interface Connection<Status extends ConnectionStatus = ConnectionStatus> 
 export interface ConnectionMonitor {
     readonly state: ConnectionState;
     subscribe(callback: (state: ConnectionState) => void): () => void;
-    reportUnauthenticated(error: UnauthenticatedError): Promise<void>;
+    readonly changes: Stream.Stream<ConnectionState>;
+    reportUnauthenticated(error: UnauthenticatedError): Effect.Effect<void, ConnectionError>;
 }
 
 export interface ConnectionSession {

@@ -1,4 +1,4 @@
-import { unauthenticated, type UnauthenticatedError } from "@party-stack/errors";
+import { unauthenticated, type UnauthenticatedError } from "@party-stack/ontology-backend";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { makeLocalCollection, Runtime, getRuntime } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
