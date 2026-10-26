@@ -9,7 +9,17 @@ import { Effect } from "effect";
 import { getSalesforceActionMetadata } from "../actionMetadata.js";
 import { makeSalesforceBackend } from "./backend.js";
 import { createSalesforceCodec } from "./salesforceCodec.js";
-import type { SubscribeToSalesforceChangeEvents } from "./objectCollectionOptions.js";
+import type {
+    SalesforceChangeEvent,
+    SalesforceChangeEventSubscription,
+    SalesforceChangeEventSubscriptionOptions,
+} from "@party-stack/salesforce-client";
+
+export type SubscribeToSalesforceChangeEvents = (
+    objectType: string,
+    listener: (event: SalesforceChangeEvent) => void,
+    options?: SalesforceChangeEventSubscriptionOptions
+) => Promise<SalesforceChangeEventSubscription>;
 import type { ActionReceipt } from "@party-stack/ontology-backend";
 
 function isNonRetryableSalesforceError(error: unknown): boolean {

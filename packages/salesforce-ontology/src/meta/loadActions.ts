@@ -1,16 +1,14 @@
-import { QueryClient } from "@tanstack/query-core";
-import { queryCollectionOptions } from "@tanstack/query-db-collection";
 import { classifySalesforceStandardAction } from "../standardActions.js";
 import { salesforceCrudActionTypeId, salesforceCrudActionTypeName } from "../utils/ids.js";
 import {
     convertSalesforceMetaActionType,
     convertSalesforceMetaStandardActionType,
 } from "./convertMetaActionType.js";
-import { convertMetaNameQuery, matchesMetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
+import { matchesMetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
 import { synthesizeSalesforceCrudActionTypes } from "./synthesizeCrudActionTypes.js";
 import type { SalesforceCrudActionTypeSelection } from "../crud.js";
 import type { MetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
-import type { MetaActionType, OntologyCollectionOptions } from "@party-stack/ontology";
+import type { MetaActionType } from "@party-stack/ontology";
 import type { Query } from "@party-stack/ontology-storage";
 import type {
     SalesforceClient,
@@ -20,12 +18,11 @@ import type {
     SalesforceSObjectDescribe,
 } from "@party-stack/salesforce-client";
 
-export interface ActionTypeCollectionOpts {
+export interface ActionTypeLoadOptions {
     client: SalesforceClient;
     flowActionTypeNames?: string[];
     standardActionTypeNames?: string[];
     crudActionTypes?: readonly SalesforceCrudActionTypeSelection[];
-    queryClient?: QueryClient;
 }
 
 function normalizeFlowActionList(
@@ -126,30 +123,8 @@ async function loadSelectedActionDescribes(
     ]);
 }
 
-export function actionTypeCollectionOptions(opts: ActionTypeCollectionOpts): OntologyCollectionOptions {
-    return queryCollectionOptions<MetaActionType>({
-        queryClient: opts.queryClient ?? new QueryClient(),
-        getKey: (row) => row.name,
-        queryKey: [
-            "salesforce",
-            "ontology",
-            "actionTypes",
-            opts.flowActionTypeNames ?? "all",
-            opts.standardActionTypeNames ?? [],
-            opts.crudActionTypes ?? [],
-        ],
-        syncMode: "on-demand",
-        queryFn: async (ctx) =>
-            loadSalesforceActionTypes(
-                opts,
-                convertMetaNameQuery(ctx.meta?.loadSubsetOptions),
-                ctx.meta?.loadSubsetOptions
-            ),
-    }) as unknown as OntologyCollectionOptions;
-}
-
 export async function loadSalesforceActionTypes(
-    opts: ActionTypeCollectionOpts,
+    opts: ActionTypeLoadOptions,
     query: MetaNameQuery = { type: "list" },
     window?: Pick<Query, "offset" | "limit">
 ): Promise<MetaActionType[]> {

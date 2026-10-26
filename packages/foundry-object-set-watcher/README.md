@@ -32,3 +32,15 @@ have left a filter rather than been deleted. Reconnection requires a refresh.
 
 The main export retains the callback manager facade for application integration;
 its resources delegate to the same Effect service. Effection exports have been removed.
+
+# Callback consumers
+
+The main export exposes the Effect service and scoped constructor. Callback-based
+consumers can explicitly import the facade:
+
+```ts
+import { ObjectSetWatcherManager } from "@party-stack/foundry-object-set-watcher/callback";
+```
+
+The facade uses the same Effect implementation internally. Party Stack's native
+Foundry backend uses the scoped service directly.

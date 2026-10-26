@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { isNotDeclarativeActionType } from "./actionTypeCollectionOptions.js";
+import { isNotDeclarativeActionType } from "./loadActions.js";
 import type { ActionTypeV2 } from "@osdk/foundry.ontologies";
 
 function actionType(overrides: Partial<ActionTypeV2> = {}): ActionTypeV2 {

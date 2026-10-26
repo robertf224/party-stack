@@ -1,4 +1,4 @@
-# Migration status — October 23, 2026
+# Migration status — October 26, 2026
 
 Current inventory. The [execution log](./implementation.md) records historical
 checkpoints; this file describes the current implementation. The overall
@@ -31,8 +31,10 @@ covered in [native-actions.md](./native-actions.md).
   outbox executor, `makeAdapterBackend`, `backendAdapterFromEffect`, and collection-
   oriented backend methods. Bindings acquire a native service through scoped
   `open(context)`. Foundry and Salesforce metadata/query/attachment paths use native
-  SDK snapshots/services rather than private runtime collections. Some standalone
-  provider collection helper exports remain; runtime construction does not use them.
+  SDK snapshots/services rather than private runtime collections. Standalone
+  Foundry/Salesforce object, metadata, and user collection helpers are removed.
+  The Foundry watcher callback facade is isolated behind its explicit `/callback`
+  export; native backend execution uses the scoped Effect watcher.
 - **Collection integration:** scoped DbClient, demand-driven TanStack subsets,
   join/include forwarding, and persisted-only inspection. No explicit preloads or
   TanStack persistence coordinator. Initial demand attempts sync before its view
@@ -85,6 +87,14 @@ covered in [native-actions.md](./native-actions.md).
   mark-and-sweep. User-facing devtools refinement is complete for this checkpoint.
 
 ## What remains, in recommended order
+
+For migration v0, finish recovery and bounded bookkeeping using the existing
+selected-snapshot protocol, followed by provider/browser acceptance and recovery
+presentation. Retained replica-state deltas, query IR/IVM, general untrusted remote
+authorization, and advertised/versioned idempotency-window negotiation are not v0
+prerequisites. See [the agreed v0 scope](./recovery-v0.md) for vocabulary, retention
+semantics, and the distinction between generic uncertain outcomes and deferred
+idempotency-window tracking. The inventory below also includes post-v0 work.
 
 1. **Protocol hardening.** Retained delta history, source/session reset recovery
    preserving local work, scoped returned-state authorization, completed receipt /

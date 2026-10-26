@@ -14,7 +14,7 @@ createFoundryOntologyRoute({
 ```
 
 Calling `installation.openMetaOntology({ userId, ontologyId })` uses that route's
-interval for the shared object/value/link metadata collection, action types, and
+interval for native object/value/link metadata snapshots, action types, and
 query function types. The interval is in milliseconds; `false` disables polling,
 and omitting it preserves the default of no polling. Repeated opens return the
 cached meta ontology with the same route configuration. Routes with supplied `ir`
@@ -45,21 +45,14 @@ are preserved as suggestions. Object-query and struct-field prefills are omitted
 until the expression model supports them, and failures from the private endpoint
 do not prevent public action metadata from loading.
 
-## Refreshing objects
+## Native backend integration
 
-Foundry object collections expose an awaitable full-source refresh:
+Object, metadata, and Admin Users reads use the native backend's Effect-valued
+`loadSubset` interface. Replica owns demand, persistent rows, action receipts,
+confirmation reads, and optimistic state; TanStack collections materialize that
+state for applications. Provider collection-option helpers are no longer exported.
 
-```ts
-await ontology.objects.Employee.utils.refresh?.();
-```
-
-`refresh` is an optional adapter utility on the generic ontology collection API.
-Foundry fetches a fresh snapshot and replaces cached rows in one sync transaction,
-while keeping live subscriptions active and applying updates received during the
-fetch. The promise waits for the commit and rejects on failure. Ontology
-collections start their sync before refreshing; when using
-`objectCollectionOptions` directly, preload the collection first.
-
-When edit history is unavailable, reconnection and action acknowledgement also
-request a fresh snapshot. Acknowledgement waits for that snapshot's commit; it
-cannot confirm a specific edit-history operation ID in this mode.
+The Foundry backend uses the scoped Effect object-set watcher. Watch messages are
+invalidation hints; Replica refreshes the affected demand. They do not establish a
+durable edits-history cursor. Actions save receipts before confirmation reads, so
+a failed read does not cause the action to be submitted again.

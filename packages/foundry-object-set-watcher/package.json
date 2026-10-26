@@ -9,6 +9,10 @@
         ".": {
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
+        },
+        "./callback": {
+            "types": "./lib/callback.d.ts",
+            "default": "./lib/callback.js"
         }
     },
     "dependencies": {

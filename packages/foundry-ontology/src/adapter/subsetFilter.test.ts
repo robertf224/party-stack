@@ -1,4 +1,4 @@
-import { and, contains, eq, field, gt, inArray, ilike, not, or } from "@party-stack/ontology-storage";
+import { and, contains, eq, field, gt, inArray, ilike, like, not, or } from "@party-stack/ontology-storage";
 import { expect, test } from "vite-plus/test";
 import { analyzeSubsetFilter, subsetFilter } from "./subsetFilter.js";
 
@@ -71,4 +71,17 @@ test("range candidates include provider-null rows to preserve the storage orderi
         field: "id",
         value: ["one", "two"],
     });
+});
+
+test("LIKE candidates preserve wildcard structure and do not negate approximate substring searches", () => {
+    expect(subsetFilter(ilike(field("title"), "%FoO%"))).toEqual({
+        type: "containsAllTermsInOrder",
+        propertyIdentifier: { type: "property", apiName: "title" },
+        value: "foo",
+    });
+    expect(subsetFilter(like(field("title"), "A_B%C%"))).toMatchObject({
+        type: "wildcard",
+        value: "a?b*c*",
+    });
+    expect(subsetFilter(not(ilike(field("title"), "%foo%")))).toBeUndefined();
 });

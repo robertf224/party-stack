@@ -1,10 +1,8 @@
-import { QueryClient } from "@tanstack/query-core";
-import { queryCollectionOptions } from "@tanstack/query-db-collection";
 import { classifySalesforceStandardAction } from "../standardActions.js";
-import { convertMetaNameQuery, matchesMetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
+import { matchesMetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
 import { convertSalesforceMetaStandardQueryFunctionType } from "./convertMetaQueryFunctionType.js";
 import type { MetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
-import type { OntologyCollectionOptions, QueryFunctionTypeDef } from "@party-stack/ontology";
+import type { QueryFunctionTypeDef } from "@party-stack/ontology";
 import type { Query } from "@party-stack/ontology-storage";
 import type {
     SalesforceClient,
@@ -33,25 +31,6 @@ async function describeStandardActions(
             }
         })
     );
-}
-
-export function queryFunctionTypeCollectionOptions(opts: {
-    client: SalesforceClient;
-    standardQueryFunctionTypeNames?: string[];
-    queryClient?: QueryClient;
-}): OntologyCollectionOptions {
-    return queryCollectionOptions<QueryFunctionTypeDef>({
-        queryClient: opts.queryClient ?? new QueryClient(),
-        getKey: (row) => row.name,
-        queryKey: ["salesforce", "ontology", "queryFunctionTypes", opts.standardQueryFunctionTypeNames ?? []],
-        syncMode: "on-demand",
-        queryFn: async (ctx) =>
-            loadSalesforceQueryFunctionTypes(
-                opts,
-                convertMetaNameQuery(ctx.meta?.loadSubsetOptions),
-                ctx.meta?.loadSubsetOptions
-            ),
-    }) as unknown as OntologyCollectionOptions;
 }
 
 export async function loadSalesforceQueryFunctionTypes(

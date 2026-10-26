@@ -6,12 +6,12 @@ import { isField } from "@party-stack/ontology-storage/tables";
 import { Effect } from "effect";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
-import { loadActionTypesFullMetadata } from "./actionTypeCollectionOptions.js";
 import { convertFoundryMetaActionType } from "./convertMetaActionType.js";
 import { convertFoundryMetaQueryFunctionType } from "./convertMetaQueryFunctionType.js";
-import { loadFoundryMetaOntology } from "./entityCollectionOptions.js";
+import { loadActionTypesFullMetadata } from "./loadActions.js";
 import { loadActionTypeOmsMetadata } from "./loadActionTypeOmsMetadata.js";
-import { getQueryFunctionTypes, listQueryFunctionTypes } from "./queryFunctionTypeCollectionOptions.js";
+import { loadFoundryMetaOntology } from "./loadEntities.js";
+import { getQueryFunctionTypes, listQueryFunctionTypes } from "./loadQueryFunctions.js";
 import type { ActionTypeSearchJsonQueryV2 } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
 

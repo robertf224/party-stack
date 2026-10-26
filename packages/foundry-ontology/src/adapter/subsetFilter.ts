@@ -1,5 +1,5 @@
 import { isField } from "@party-stack/ontology-storage/tables";
-import { convertLikeFilter } from "./convertLoadSubsetOptions.js";
+import { convertLikeFilter } from "./likeFilter.js";
 import type { SearchJsonQueryV2 } from "@osdk/foundry.ontologies";
 import type { SourceQueryPlan } from "@party-stack/ontology-backend";
 import type { Predicate, Scalar } from "@party-stack/ontology-storage";

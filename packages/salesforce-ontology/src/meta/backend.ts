@@ -2,12 +2,12 @@ import { BackendError, type OntologyBackendService, type BackendSubset } from "@
 import metaOntology from "@party-stack/ontology-spec/meta";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
-import { loadSalesforceActionTypes } from "./actionTypeCollectionOptions.js";
 import { convertSalesforceMetaLinkTypes } from "./convertMetaLinkType.js";
 import { convertStorageMetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
 import { convertSalesforceMetaObjectType } from "./convertMetaObjectType.js";
-import { describeSObjects } from "./entityCollectionOptions.js";
-import { loadSalesforceQueryFunctionTypes } from "./queryFunctionTypeCollectionOptions.js";
+import { loadSalesforceActionTypes } from "./loadActions.js";
+import { describeSObjects } from "./loadEntities.js";
+import { loadSalesforceQueryFunctionTypes } from "./loadQueryFunctions.js";
 import type { CreateSalesforceMetaOntologyBackendAdapterOpts } from "./createSalesforceMetaOntologyBackendAdapter.js";
 
 const failure = (cause: unknown) =>
