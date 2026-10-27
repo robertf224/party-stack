@@ -37,6 +37,10 @@ export function createLiveOntologyAction(options: {
     action: OntologyIR["actionTypes"][number];
     context?: Record<string, unknown>;
     objects: Record<string, OntologyCollection<OntologyObject>>;
+    resolveParameters?: (
+        name: string,
+        parameters: Record<string, unknown>
+    ) => Promise<Record<string, unknown>>;
     submit(
         request: OntologyActionRequest,
         options?: LiveOntologyActionOptions
@@ -52,13 +56,15 @@ export function createLiveOntologyAction(options: {
     ): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>>;
 }): LiveOntologyAction {
     const resolveParameters = (providedParameters: Record<string, unknown>) =>
-        resolveActionParameters({
-            ir: options.ir,
-            actionTypeName: options.action.name,
-            initialParameters: providedParameters,
-            context: options.context ?? {},
-            tx: createReadTx(options.objects),
-        });
+        options.resolveParameters
+            ? options.resolveParameters(options.action.name, providedParameters)
+            : resolveActionParameters({
+                  ir: options.ir,
+                  actionTypeName: options.action.name,
+                  initialParameters: providedParameters,
+                  context: options.context ?? {},
+                  tx: createReadTx(options.objects),
+              });
     const apply: LiveOntologyAction = async (providedParameters, executionOptions) => {
         const idempotencyKey = executionOptions?.idempotencyKey ?? crypto.randomUUID();
         return options.submit(

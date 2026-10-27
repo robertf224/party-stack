@@ -65,6 +65,7 @@ export async function openSharedOntology(options: OpenOptions): Promise<LiveOnto
             writes: options.writes,
             attachments: helpers.attachments,
             queryFunction: helpers.queryFunction,
+            resolveActionParameters: helpers.resolveActionParameters,
             decrypt: helpers.decrypt,
             traces,
             diagnosticLabel: "This tab",

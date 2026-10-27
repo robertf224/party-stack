@@ -31,7 +31,10 @@ Do not describe the new predicate wrapper as a drop-in replacement yet. Verify:
 
 - Dynamic Describe includes the projected ontology definition and projected context.
   Native RPC currently describes source capabilities, while sample clients supply IR.
-- Server-side parameter/default resolution preserves prefills and hides fixed values.
+- Native ResolveActionParameters now preserves the LiveOntology resolveParameters API.
+  Storage bindings resolve through a read transaction; projected bindings evaluate
+  permitted defaults through authorized row/property reads and hide fixed parameters.
+  Verify gateway-specific prefill cases, including its join-based policies, during porting.
 - Existing join-based policies, implicit context scope and query restrictions work
   before ordering/pagination. Static storage predicates alone do not cover all cases.
 - Reference-input authorization, fixed/generated parameters, permitted query functions,
@@ -41,6 +44,21 @@ Do not describe the new predicate wrapper as a drop-in replacement yet. Verify:
 - Token/context/revision changes cannot reuse a previously authorized cached view.
 - Structured validation paths reach the downstream form field renderer. Automatic
   retries belong to Replica; a form must not introduce another independent executor.
+
+Describe currently reports protocol version, sourceId, supportsIdempotency, changes,
+watchChanges and actionParameterResolution. These are transport/source capabilities,
+not permission grants or a complete feature inventory. A Foundry subset watcher does
+not imply a resumable journal watch. sourceId identifies the upstream data/receipt
+domain; it is separate from schema and form revisions.
+
+Gateway's old bounded-body wrapper caps JSON at 1 MB and multipart at 25 MB. Party
+Stack owns native chunking/staging. The native port should expose configurable total
+request/upload and concurrent-transfer limits in the framework, with Gateway supplying
+authorization/configuration. Bind uploads to a principal/form/revision and target;
+reauthorize chunks and final action use. The public gateway currently has no standalone
+eager upload endpoint. Future reads of an unreferenced staged upload require explicit
+uploader authority; knowledge of an attachment ID alone is never sufficient. This is
+authorization, separate from orphan GC grace and ordinary write intents.
 
 The old HTTP APIs are deprecated but remain available until these gates pass. The
 remote-notes example now uses native RPC and ordinary row predicates, and is not

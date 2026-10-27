@@ -196,6 +196,11 @@ export interface OntologyBackendService {
     /** Indexed bounded local maintenance; an enclosing server scope schedules it. */
     readonly maintenance?: Effect.Effect<void, BackendError>;
     readonly loadSubset: (subset: BackendSubset) => Effect.Effect<BackendSnapshot, BackendError>;
+    /** Read-only defaults and edit prefills; never invokes the action. */
+    readonly resolveActionParameters?: (
+        name: string,
+        parameters: Record<string, unknown>
+    ) => Effect.Effect<Record<string, unknown>, BackendError>;
     /** Demand-scoped invalidation hints, independent of a durable journal. Undefined
      * means this subset needs polling. Reconnect must invalidate to repair missed events.
      */

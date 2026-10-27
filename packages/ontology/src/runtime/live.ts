@@ -30,6 +30,7 @@ export const makeReplicaLiveOntology = Effect.fn("Ontology.open")(function* (
         replica,
         writes: options.writes,
         queryFunction: backend.queryFunction,
+        resolveActionParameters: backend.resolveActionParameters,
         sourceId: backend.sourceId,
         encrypted: backend.encrypted,
         attachments: createLiveOntologyAttachments({ ir, attachmentsAdapter, blobManager }),

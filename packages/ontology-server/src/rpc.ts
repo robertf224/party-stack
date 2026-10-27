@@ -39,6 +39,7 @@ const Description = Schema.Struct({
     supportsIdempotency: Schema.Boolean,
     changes: Schema.optional(Schema.Boolean),
     watchChanges: Schema.optional(Schema.Boolean),
+    actionParameterResolution: Schema.optional(Schema.Boolean),
 });
 const ReplicaRpcs = RpcGroup.make(
     Rpc.make("Describe", { success: Description, error: BackendError }),
@@ -160,6 +161,9 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                     supportsIdempotency: source.supportsIdempotency,
                     changes: Boolean(options.backend?.changes),
                     watchChanges: Boolean(options.backend?.changes?.watch),
+                    actionParameterResolution: Boolean(
+                        options.backend?.resolveActionParameters || options.ontology
+                    ),
                 }))
             ),
         OpenClient: (request, context) =>

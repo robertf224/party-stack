@@ -55,12 +55,19 @@ lifecycle state. Devtools shows issue paths/codes and asks for explicit acknowle
 before unsafe retry/discard. Paused rejected actions can be corrected; parent edits
 and acknowledged removal keep child handoff records consistent.
 
-Issue-tracker uses discard-all. Its online create-issue form awaits the ordinary
-action call, catches field issues and leaves the form open. Terminal rejection removes
+Issue-tracker uses discard-all. Its create-issue form closes after optimistic
+acceptance and shows asynchronous rejection in a Base UI toast. Terminal rejection removes
 pending intent/overlay; bounded completed-result storage delivers the error across
 the SharedWorker boundary. Corrected input submits a new invocation. Owned actions
 validate declared object references in the commit transaction, covering deletion
 between preflight and submit. See [outbox recovery examples](../../packages/ontology/outbox-recovery.md).
+
+Native ResolveActionParameters transports read-only defaults and prefills, including
+portable values. LiveOntology retains action.resolveParameters; storage-backed calls
+use a read transaction. Projected resolution evaluates only permitted defaults, hides
+fixed parameters and routes object lookups through the authorized read view. It never
+invokes an action or creates outbox intent. Gateway's join policies and dynamic
+projected schema/context discovery remain separate port gates.
 
 Remote-notes now uses native Effect RPC over HTTP, scoped backend ownership, row
 projection and authorized finite Markdown attachment reads. It acquires its client

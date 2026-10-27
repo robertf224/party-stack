@@ -90,6 +90,11 @@ const HelperRpcs = RpcGroup.make(
         success: protocolValueCodec(Schema.Unknown),
         error: BackendError,
     }),
+    Rpc.make("ResolveActionParameters", {
+        payload: protocolValueCodec(Schema.Struct({ name: Schema.NonEmptyString, parameters: Parameters })),
+        success: protocolValueCodec(Parameters),
+        error: BackendError,
+    }),
     Rpc.make("ValidateAction", {
         payload: protocolValueCodec(
             Schema.Struct({
@@ -148,7 +153,7 @@ export type OntologyOperationRequest =
           readonly cache?: boolean;
       }
     | {
-          readonly operation: "QueryFunction" | "ValidateAction";
+          readonly operation: "QueryFunction" | "ValidateAction" | "ResolveActionParameters";
           readonly name: string;
           readonly parameters: Record<string, unknown>;
           readonly knownParameters?: readonly string[];
@@ -272,6 +277,25 @@ export const ontologyOperationHandlers = <R>(
                         }),
                 });
             }).pipe(Effect.mapError(decryptFailure)),
+        ResolveActionParameters: (request, context) =>
+            Effect.gen(function* () {
+                yield* options.authorize(
+                    { operation: "ResolveActionParameters", ...request },
+                    context.headers
+                );
+                yield* options.ready ?? Effect.void;
+                if (options.backend) {
+                    if (!options.backend.resolveActionParameters)
+                        return yield* missing("ResolveActionParameters");
+                    return yield* options.backend.resolveActionParameters(request.name, request.parameters);
+                }
+                const ontology = yield* live();
+                const action = Object.hasOwn(ontology.actions, request.name)
+                    ? ontology.actions[request.name]
+                    : undefined;
+                if (!action) return yield* missing("ResolveActionParameters");
+                return yield* attempt(() => action.resolveParameters(request.parameters));
+            }),
         QueryFunction: (request, context) =>
             Effect.gen(function* () {
                 yield* options.authorize({ operation: "QueryFunction", ...request }, context.headers);
@@ -483,6 +507,10 @@ export interface OntologyOperationsClient {
         name: string,
         parameters: Record<string, unknown>
     ) => Effect.Effect<unknown, BackendError>;
+    readonly resolveActionParameters: (
+        name: string,
+        parameters: Record<string, unknown>
+    ) => Effect.Effect<Record<string, unknown>, BackendError>;
     readonly validate: (
         name: string,
         parameters: Record<string, unknown>,
@@ -632,6 +660,8 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
         releaseOwner: client.ReleaseOwner(undefined, { discard: true }).pipe(Effect.mapError(failure)),
         queryFunction: (name, parameters) =>
             client.QueryFunction({ name, parameters }).pipe(Effect.mapError(failure)),
+        resolveActionParameters: (name, parameters) =>
+            client.ResolveActionParameters({ name, parameters }).pipe(Effect.mapError(failure)),
         validate: (name, parameters, knownParameters) =>
             client.ValidateAction({ name, parameters, knownParameters }).pipe(Effect.mapError(failure)),
         attachments,

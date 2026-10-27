@@ -3,6 +3,7 @@ import { ContextMenu } from "@base-ui/react/context-menu";
 import { Dialog } from "@base-ui/react/dialog";
 import { Menu } from "@base-ui/react/menu";
 import { Select } from "@base-ui/react/select";
+import { Toast } from "@base-ui/react/toast";
 import { Toggle } from "@base-ui/react/toggle";
 import { ToggleGroup } from "@base-ui/react/toggle-group";
 import { Tooltip } from "@base-ui/react/tooltip";
@@ -18,7 +19,7 @@ import {
     type DragEndEvent,
     type KeyboardCoordinateGetter,
 } from "@dnd-kit/core";
-import { BackendError, type ValidationIssue } from "@party-stack/ontology-backend";
+import { BackendError } from "@party-stack/ontology-backend";
 import { createOntologyDevtoolsPlugin, ontologyDevtoolsTrigger } from "@party-stack/ontology-devtools";
 import { eq, ilike, inArray, or, useLiveQuery } from "@tanstack/react-db";
 import { TanStackDevtools } from "@tanstack/react-devtools";
@@ -802,19 +803,10 @@ function IssueForm({
             name: `Attachment ${index + 1}`,
         }))
     );
-    const [issues, setIssues] = useState<readonly ValidationIssue[]>([]);
-    const [submissionError, setSubmissionError] = useState<string>();
     const [submitting, setSubmitting] = useState(false);
-    const fieldError = (name: string) =>
-        issues
-            .filter((issue) => issue.path?.[0] === name)
-            .map((issue) => issue.message)
-            .join(" ");
     async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!title.trim() || submitting) return;
-        setIssues([]);
-        setSubmissionError(undefined);
         setSubmitting(true);
         try {
             await onSave({
@@ -826,10 +818,6 @@ function IssueForm({
                 issueLabels: labels,
                 attachments: attachments.map((item) => item.attachment),
             });
-        } catch (error) {
-            if (error instanceof BackendError && error.kind === "ValidationFailed")
-                setIssues(error.issues ?? []);
-            setSubmissionError(error instanceof Error ? error.message : "Could not submit the issue.");
         } finally {
             setSubmitting(false);
         }
@@ -842,22 +830,11 @@ function IssueForm({
                     <span className="mb-1.5 block text-xs font-medium text-slate-600">Title</span>
                     <FormInput
                         id={`${formId}-field-1`}
-                        aria-invalid={Boolean(fieldError("title"))}
-                        aria-describedby={fieldError("title") ? `${formId}-title-error` : undefined}
                         data-dialog-initial-focus
                         onChange={(event) => setTitle(event.target.value)}
                         placeholder="Issue title"
                         value={title}
                     />
-                    {fieldError("title") ? (
-                        <span
-                            id={`${formId}-title-error`}
-                            role="alert"
-                            className="form-error-text mt-1 block text-sm"
-                        >
-                            {fieldError("title")}
-                        </span>
-                    ) : null}
                 </label>
                 <label htmlFor={`${formId}-field-2`} className="block">
                     <span className="mb-1.5 block text-xs font-medium text-slate-600">Description</span>
@@ -887,14 +864,7 @@ function IssueForm({
                         <FormSelect
                             id={`${formId}-field-4`}
                             aria-label="Project"
-                            aria-invalid={Boolean(fieldError("project"))}
-                            aria-describedby={fieldError("project") ? `${formId}-project-error` : undefined}
-                            onChange={(event) => {
-                                setProjectId(event.target.value);
-                                setIssues((current) =>
-                                    current.filter((issue) => issue.path?.[0] !== "project")
-                                );
-                            }}
+                            onChange={(event) => setProjectId(event.target.value)}
                             value={projectId}
                         >
                             <option value="">No project</option>
@@ -907,15 +877,6 @@ function IssueForm({
                                 </option>
                             ))}
                         </FormSelect>
-                        {fieldError("project") ? (
-                            <span
-                                id={`${formId}-project-error`}
-                                role="alert"
-                                className="form-error-text mt-1 block text-sm"
-                            >
-                                {fieldError("project")}
-                            </span>
-                        ) : null}
                     </label>
                     <label htmlFor={`${formId}-field-5`}>
                         <span className="mb-1.5 block text-xs font-medium text-slate-600">Assignee</span>
@@ -951,15 +912,6 @@ function IssueForm({
                     onChange={setAttachments}
                     ontology={ontology}
                 />
-                {submissionError ? (
-                    <div
-                        role="alert"
-                        data-testid="issue-form-error"
-                        className="form-error rounded border p-3 text-sm"
-                    >
-                        {submissionError}
-                    </div>
-                ) : null}
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
                 <Dialog.Close className={buttonClass}>Cancel</Dialog.Close>
@@ -1841,6 +1793,7 @@ function ConnectedIssueTracker({
     const [connectingProfile, setConnectingProfile] = useState(false);
     const activeProfile = profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0]!;
     const ontology = activeProfile.ontology;
+    const toastManager = Toast.useToastManager();
     const { deleteIssue, updateIssue, createProject, updateProject, deleteProject } = ontology.actions;
     const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId);
     const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
@@ -2043,13 +1996,37 @@ function ConnectedIssueTracker({
             attachments: values.attachments,
             completedAt: values.status === "Completed" ? Temporal.Now.instant() : null,
         };
-        // Online forms await confirmation; discarded rejections still carry field errors.
-        // Offline submissions return after acceptance. Replica owns retry scheduling.
-        await ontology.actions.createIssue(parameters, {
-            mode: navigator.onLine ? "direct" : "outbox",
-            visibility: "optimistic",
-        });
-        setCreateIssueOpen(false);
+        const showFailure = (error: unknown) => {
+            const descriptions =
+                error instanceof BackendError
+                    ? error.issues?.map((issue) => {
+                          const parameter = ontology.ir.actionTypes
+                              .find((action) => action.name === "createIssue")
+                              ?.parameters.find((parameter) => parameter.name === issue.path?.[0]);
+                          return `${parameter?.displayName ?? issue.path?.join(".") ?? "Submission"}: ${issue.message}`;
+                      })
+                    : undefined;
+            toastManager.add({
+                title: "Couldn’t create issue",
+                description: descriptions?.length
+                    ? descriptions.join(" ")
+                    : error instanceof Error
+                      ? error.message
+                      : "Please try again.",
+                type: "error",
+                priority: "high",
+            });
+        };
+        try {
+            const submission = await ontology.outbox.enqueue(
+                { actionTypeName: "createIssue", parameters },
+                { visibility: "optimistic" }
+            );
+            setCreateIssueOpen(false);
+            void submission.completed.catch(showFailure);
+        } catch (error) {
+            showFailure(error);
+        }
     }
 
     function changeIssueStatus(issue: IssueRow, status: IssueStatus) {

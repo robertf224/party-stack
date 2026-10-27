@@ -108,6 +108,9 @@ export const connectOntologyBackendHttp = Effect.fn("OntologyBackend.connectHttp
         name: "protocol",
         sourceId: description.sourceId,
         supportsIdempotency: description.supportsIdempotency,
+        resolveActionParameters: description.actionParameterResolution
+            ? helpers.resolveActionParameters
+            : undefined,
         changes: description.changes
             ? {
                   pull: (request) =>

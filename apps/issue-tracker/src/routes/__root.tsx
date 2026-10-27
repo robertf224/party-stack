@@ -2,6 +2,7 @@
 import { createRootRoute, HeadContent, Link, Outlet, Scripts } from "@tanstack/react-router";
 import { type ReactNode } from "react";
 import "../app/globals.css";
+import { AppToasts } from "../components/AppToasts";
 
 export const Route = createRootRoute({
     head: () => ({
@@ -44,7 +45,7 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
                 <HeadContent />
             </head>
             <body className="h-full antialiased">
-                {children}
+                <AppToasts>{children}</AppToasts>
                 <Scripts />
             </body>
         </html>

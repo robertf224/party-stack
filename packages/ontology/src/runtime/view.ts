@@ -63,6 +63,7 @@ export interface ReplicaViewOptions {
     readonly replica: ReplicaService;
     readonly attachments: LiveOntologyAttachments;
     readonly queryFunction: OntologyBackendService["queryFunction"];
+    readonly resolveActionParameters?: OntologyBackendService["resolveActionParameters"];
     readonly encrypted?: OntologyBackendService["encrypted"];
     readonly sourceId?: string;
     /** A memory tab forwards cache policy to its persistent owner. */
@@ -260,6 +261,9 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
                 action,
                 context,
                 objects,
+                resolveParameters: options.resolveActionParameters
+                    ? (name, parameters) => run(options.resolveActionParameters!(name, parameters))
+                    : undefined,
                 submit: async (request, settings) => {
                     const visibility =
                         settings?.visibility ?? options.writes?.defaultVisibility ?? "confirmed";

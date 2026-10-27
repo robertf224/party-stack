@@ -103,6 +103,48 @@ test("domain RPC carries selected state, resumable ordered actions and acknowled
     );
 });
 
+test("native HTTP advertises and transports read-only parameter resolution with portable values", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* setup();
+                const operations: string[] = [];
+                const { handleRequest } = yield* makeOntologyServer({
+                    kind: "owned",
+                    backend: {
+                        ...owned,
+                        resolveActionParameters: (name, parameters) =>
+                            Effect.succeed({
+                                ...parameters,
+                                name,
+                                at: Temporal.Instant.from("2026-10-26T00:00:00Z"),
+                            }),
+                    },
+                    authorize: (request) =>
+                        Effect.sync(() => {
+                            operations.push(request.operation);
+                        }),
+                });
+                yield* Effect.gen(function* () {
+                    const backend = yield* connectOntologyBackendHttp({ url: "https://ontology.test/rpc" });
+                    expect(backend.resolveActionParameters).toBeDefined();
+                    const result = yield* backend.resolveActionParameters!("increment", { count: 4 });
+                    expect(result).toMatchObject({ name: "increment", count: 4 });
+                    expect(String(result.at)).toBe("2026-10-26T00:00:00Z");
+                }).pipe(
+                    Effect.provide(FetchHttpClient.layer),
+                    Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                        handleRequest(new Request(input, init))
+                    )
+                );
+                expect(operations).toContain("ResolveActionParameters");
+                expect(operations).not.toContain("Invoke");
+                expect(yield* owned.storage.read((tx) => tx.get("Counter", "one"))).toBeUndefined();
+            })
+        )
+    );
+});
+
 test("RPC demand leases and change subscriptions close with the client scope", async () => {
     await Effect.runPromise(
         Effect.scoped(

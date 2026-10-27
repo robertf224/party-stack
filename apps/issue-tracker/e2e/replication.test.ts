@@ -347,7 +347,7 @@ test.skipIf(!url)("navigation preserves the devtools panel, selected tab and tra
 });
 
 test.skipIf(!url)(
-    "a deleted project produces a field error, discards the queue, and lets the form resubmit",
+    "optimistic issue creation closes the form and toasts rejection without retaining pending work",
     async () => {
         const context = await browser.newContext({ ignoreHTTPSErrors: true });
         const project = `Validation project ${crypto.randomUUID().slice(0, 8)}`;
@@ -376,22 +376,19 @@ test.skipIf(!url)(
                 .poll(() => second.getByRole("button", { name: project, exact: true }).count())
                 .toBe(0);
             await form.getByRole("button", { name: "Create issue", exact: true }).click();
+            await expect.poll(() => form.count()).toBe(0);
             await expect
-                .poll(() => form.getByLabel("Project", { exact: true }).getAttribute("aria-invalid"))
-                .toBe("true");
-            expect(await form.getByRole("alert").allTextContents()).toContain("Choose a valid value.");
-            const errorCard = form.getByTestId("issue-form-error");
-            const attachmentButton = await form
-                .getByRole("button", { name: "Attach files", exact: true })
-                .boundingBox();
-            const errorBounds = await errorCard.boundingBox();
-            expect(errorBounds!.y).toBeGreaterThanOrEqual(attachmentButton!.y + attachmentButton!.height);
+                .poll(() => first.locator(".app-toast").innerText())
+                .toContain("Couldn’t create issue");
+            expect(await first.locator(".app-toast").innerText()).toContain("Project: Choose a valid value.");
+            await first.locator(".app-toast-close").click();
             await second.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
             await second.getByRole("tab", { name: /^Outbox/ }).click();
             await expect
                 .poll(() => second.getByText("Queue is clear", { exact: true }).isVisible())
                 .toBe(true);
-            await form.getByLabel("Project", { exact: true }).selectOption("");
+            await first.getByRole("button", { name: "New issue", exact: true }).click();
+            await form.getByLabel("Title", { exact: true }).fill(title);
             await form.getByRole("button", { name: "Create issue", exact: true }).click();
             await expect.poll(() => form.count()).toBe(0);
             await first.getByPlaceholder("Search issues").fill(title);

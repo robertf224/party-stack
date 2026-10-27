@@ -1,5 +1,6 @@
+import { resolveReadActionParameters } from "@party-stack/ontology";
 import { BackendError, projectBackendError } from "@party-stack/ontology-backend";
-import { and } from "@party-stack/ontology-storage";
+import { and, eq, field } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
 import { errorContext, projectValidationReport } from "./errorProjection.js";
 import { applyFixedActionParameterValues, projectRemoteOntologyIR } from "./securedOntology.js";
@@ -41,7 +42,7 @@ export function projectOntologyBackend<Context>(options: {
         policy.clientContext === "forward"
             ? (options.context as Record<string, unknown>)
             : policy.clientContext?.(options.context);
-    const ir = projectRemoteOntologyIR({
+    const schemaPolicy = {
         ir: options.ir,
         serverContext: options.context,
         clientContext: context,
@@ -52,6 +53,11 @@ export function projectOntologyBackend<Context>(options: {
         fixedActionParameterValues: policy.fixedActionParameterValues,
         visibleActionTypes: policy.visibleActionTypes,
         visibleQueryFunctionTypes: policy.visibleQueryFunctionTypes,
+    } as const;
+    const ir = projectRemoteOntologyIR(schemaPolicy);
+    const resolutionIr = projectRemoteOntologyIR({
+        ...schemaPolicy,
+        projectFixedActionParameterValuesInDefaults: true,
     });
     const projection = { ir, errors: policy.errors, upstreamErrors: true };
     const denied = (operation: string) =>
@@ -79,6 +85,40 @@ export function projectOntologyBackend<Context>(options: {
         name: backend.name,
         sourceId: backend.sourceId,
         supportsIdempotency: backend.supportsIdempotency,
+        resolveActionParameters: (name, values) =>
+            expose(
+                name,
+                Effect.gen(function* () {
+                    const action = resolutionIr.actionTypes.find((action) => action.name === name);
+                    if (!action) return yield* denied("resolveActionParameters");
+                    const result = yield* resolveReadActionParameters({
+                        ir: resolutionIr,
+                        context: context ?? {},
+                        name,
+                        parameters: parameters(name, values),
+                        read: {
+                            get: (objectType, key) =>
+                                Effect.gen(function* () {
+                                    const definition = resolutionIr.objectTypes.find(
+                                        (type) => type.name === objectType
+                                    );
+                                    if (!definition) return yield* denied("resolveActionParameters");
+                                    const snapshot = yield* projected.loadSubset({
+                                        objectType,
+                                        query: { where: eq(field(definition.primaryKey), key), limit: 1 },
+                                    });
+                                    return snapshot.rows[0]?.value;
+                                }),
+                            loadSubset: (objectType, query) =>
+                                projected
+                                    .loadSubset({ objectType, query })
+                                    .pipe(Effect.map((snapshot) => snapshot.rows)),
+                        },
+                    });
+                    const visible = new Set(action.parameters.map((parameter) => parameter.name));
+                    return Object.fromEntries(Object.entries(result).filter(([key]) => visible.has(key)));
+                })
+            ),
         // Row predicates need before/after visibility tracking for deletes and moves.
         // Until query watching supplies it, those projections use subset snapshots.
         changes:

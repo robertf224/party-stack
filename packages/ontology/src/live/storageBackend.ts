@@ -3,6 +3,7 @@ import { makeOwnedBackend, type OwnedBackendService } from "@party-stack/ontolog
 import { makeEncryptedValues, type EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
 import { Effect, Schema } from "effect";
 import { executeTransactionMutator, withTransactionCollections } from "../runtime/index.js";
+import { resolveReadActionParameters } from "../runtime/resolveActionParameters.js";
 import { createReadTx } from "./mutators/createMutatorTx.js";
 import type { OntologyMutatorRegistry, OntologyQueryFunctionRegistry } from "./mutators/types.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -237,6 +238,16 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
     return {
         ...backend,
         blobs,
+        resolveActionParameters: (name: string, parameters: Record<string, unknown>) =>
+            backend.storage.read((read) =>
+                resolveReadActionParameters({
+                    ir: options.ir,
+                    read,
+                    name,
+                    parameters,
+                    context: options.context,
+                })
+            ),
         collectGarbage: (options?: { readonly orphanGraceMs?: number; readonly limit?: number }) =>
             boundary(
                 (backend.maintenance ?? Effect.void).pipe(

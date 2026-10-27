@@ -115,17 +115,19 @@ idempotency-window tracking. The inventory below also includes post-v0 work.
    separate follow-ups.
 4. **Recovery presentation and acceptance.** Devtools renders structured blocked-action
    errors and explicit unknown-outcome retry/discard acknowledgment. Issue-tracker uses
-   discard-all, catches submission errors in its form and submits corrected input as
+   discard-all, closes its form optimistically and toasts asynchronous failures. Corrected input is
    a new action. Terminal failures use bounded result delivery, not pending outbox
    entries. Independently verified provider receipts remain. Verify cold offline app-shell reload, broader browser /
    private-mode coverage and multi-client reset recovery. Continue focused subsystem
    review in chat.
 5. **Gateway transport parity.** The sample remote-notes uses native RPC. Streamline's
-   existing finite form workflow still needs dynamic schema/context discovery,
-   server-side default resolution and relationship-based authorization on the native
+   existing finite form workflow still needs dynamic schema/context discovery
+   and relationship-based authorization on the native
    path. Keep the deprecated request/response helpers until these gates pass. See
    [gateway-v0-parity.md](./gateway-v0-parity.md) for the inspected workflow and
    deferred untrusted/persistent child replica work.
+   Native action-parameter resolution is implemented through HTTP and LiveOntology,
+   with authorized row/property reads and fixed-parameter projection for prefills.
 
 Native outbox parity, native backend construction/metadata ports, and the current
 blob consolidation/streaming checkpoint are implemented. Attachment follow-ups are

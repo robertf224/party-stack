@@ -40,6 +40,28 @@ const platform = (online = true) => {
 };
 
 describe("native LiveOntology construction", () => {
+    it("keeps action.resolveParameters on the native backend path without submitting", async () => {
+        const resolve = vi.fn((name: string, parameters: Record<string, unknown>) =>
+            Effect.succeed({ ...parameters, title: `prefill-${name}` })
+        );
+        const invoke = vi.fn(() => Effect.die("must not submit"));
+        const live = await createLiveOntology({
+            ir,
+            runtime: asProvider(() => platform()),
+            backend: () => adapter(native({ resolveActionParameters: resolve, invoke })),
+        });
+        try {
+            expect(await live.actions.save!.resolveParameters({ id: "existing" })).toEqual({
+                id: "existing",
+                title: "prefill-save",
+            });
+            expect(resolve).toHaveBeenCalledWith("save", { id: "existing" });
+            expect(invoke).not.toHaveBeenCalled();
+            expect(live.outbox.collection.size).toBe(0);
+        } finally {
+            await live.cleanup();
+        }
+    });
     it("uses the native Replica even without persistent storage and owns its acquisition scope", async () => {
         const released = vi.fn();
         const runtime = platform();

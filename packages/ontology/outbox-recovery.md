@@ -80,8 +80,10 @@ write. A verified receipt can be supplied to reconcile instead. Ordinary remove/
 calls refuse an unsafe unknown-outcome decision. In-flight/reconciling actions cannot
 be discarded. Interrupting a wait does not cancel the action.
 
-Issue-tracker's new-issue form demonstrates waiting online, rendering the project
-parameter error beside its field, discarding rejected intent and submitting corrected
-input as a new action. The owned backend checks reference existence inside the commit
-transaction, even if an earlier preflight succeeded. Devtools shows the same structured
-issues and asks for acknowledgment before unsafe retry/discard.
+Issue-tracker closes its new-issue form after optimistic acceptance and observes
+submission.completed to show a failure toast. It uses discard-all; rejected intent
+is removed and corrected input is a new action. The field-rendering example above is
+available for forms that prefer awaiting confirmation. The owned backend checks
+reference existence inside the commit transaction, even if an earlier preflight
+succeeded. Devtools shows structured issues for paused work and asks for acknowledgment
+before unsafe retry/discard.
