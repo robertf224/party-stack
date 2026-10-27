@@ -2017,16 +2017,8 @@ function ConnectedIssueTracker({
                 priority: "high",
             });
         };
-        try {
-            const submission = await ontology.outbox.enqueue(
-                { actionTypeName: "createIssue", parameters },
-                { visibility: "optimistic" }
-            );
-            setCreateIssueOpen(false);
-            void submission.completed.catch(showFailure);
-        } catch (error) {
-            showFailure(error);
-        }
+        void ontology.actions.createIssue(parameters, { visibility: "optimistic" }).catch(showFailure);
+        setCreateIssueOpen(false);
     }
 
     function changeIssueStatus(issue: IssueRow, status: IssueStatus) {

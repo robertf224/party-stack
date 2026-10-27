@@ -34,6 +34,18 @@ OPFS access or signed object-store URLs. Grants need bounded authority, completi
 verification and the same metadata publication/intents as streamed uploads. Keep
 this optional; the standard RPC path must remain usable for workers and iframes.
 
+Signed reads are a possible implementation: authorize the current source row/property
+before issuing a short-lived, operation/object-scoped grant. A signature prevents
+tampering but does not itself prove that the caller can read the source. Bearer
+grants can be shared and may remain usable after row access changes until expiry;
+bind identity/revision where appropriate and keep the standard authenticated path.
+Do not add signed handles merely to avoid the source-row guard.
+
+RPC streaming does not supply staging, retention, sequencing or transfer budgets for
+free. The current handlers implement chunk order/size checks and scoped cancellation,
+but still assemble Blob values. Track total/concurrent byte limits and streaming
+sinks alongside [cache budgets](./cache-management.md).
+
 ## Drafts and optional blob versions
 
 Drafts remain ordinary object types with action identity/version and parameters.

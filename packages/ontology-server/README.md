@@ -59,8 +59,10 @@ A direct protocol proxy can also supply `source: upstreamSource` to delegate
 replication sessions without maintaining another registry.
 
 The read cache shares subset demand with scoped `RcMap` leases. Concurrent callers
-share one demand, idle leases expire, and capacity applies backpressure rather than
-deleting active demand. This is independent from mark-and-sweep row GC. Forwarded
+share one demand. The idle timeout restarts after the last request releases its lease.
+At capacity, the oldest idle demand is released first; RateLimited applies only when
+every slot is in use. Active reads are never evicted. These configurable demand-count
+bounds are independent from row GC and do not impose a byte budget. Forwarded
 writes never enter the read cache's outbox. A successful receipt invalidates coverage
 for its affected types; incomplete targets invalidate all types. The next read repairs
 coverage. An invalidation IO failure cannot turn a committed action into a failed one.
@@ -86,6 +88,18 @@ whether incremental `PullChanges` and change hints are available; ordinary reque
 need no session acknowledgment/bookkeeping. The same transport supports full/draft
 validation, query functions and explicit attachment/decrypt operations.
 
+Source identity is supplied by the server's backend/source in Describe. An owned
+backend generates and persists a namespace-scoped identity on initialization; deleting
+that state creates a new source. Adapter backends supply stable provider identities
+(Foundry base URL + ontology RID, Salesforce instance URL). A cached proxy retains
+its upstream identity, while an intermediate replica has its own persisted identity.
+Clients learn it from Describe; it is independent from schema revisions and login/session IDs.
+
+changes.watch is a wake-up hint for changes.pull(cursor), not a stream of row payloads.
+watchSubset supplies subset invalidations independently of a journal. Foundry uses
+watchSubset; Salesforce currently uses polling because its CDC client does not yet
+report reconnect gaps/stream health. Neither currently exposes a resumable native journal.
+
 ## Authorization and error disclosure
 
 Bind `projectOntologyBackend({ backend, ir, context, policy })` after authenticating
@@ -93,8 +107,16 @@ the caller. Its policy supplies allowed object properties, optional row predicat
 action/query visibility, fixed action parameters, context projection and operation
 authorization callbacks. Row predicates run before pagination; hidden properties
 cannot be probed in filters or sort keys. Query-function callbacks remain responsible
-for returned-value authorization. Attachment and decrypt capabilities require separate
-explicit authorization. Never reuse a principal-bound projection across users.
+for returned-value authorization. Base predicate values can also be functions of
+`{ctx, objectType}`; ctx is the authenticated server context bound to this projection.
+They still return flat predicates rather than relational queries.
+
+Projected attachment metadata and reads require a source row/property, load that row
+through the projected subset path, and re-find the ID through its declared attachment
+type (including containers). Hidden properties, inaccessible rows, detached or invented
+handles are denied without calling the byte provider. This does not grant staging or
+eager-upload access. Decrypt capabilities require separate explicit authorization.
+Never reuse a principal-bound projection across users.
 
 A projection without row predicates can filter a journal to visible object types and
 properties. Row-filtered projections omit journal access: tracking deletes and moves

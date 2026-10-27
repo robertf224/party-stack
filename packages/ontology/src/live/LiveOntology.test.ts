@@ -199,19 +199,68 @@ describe("native LiveOntology construction", () => {
         }
     });
 
-    it("outbox mode returns on local admission while direct mode waits for confirmation", async () => {
+    it("direct offline rejection is typed and outbox action Promises wait through offline queueing", async () => {
         const runtime = platform(false);
+        const invoke = vi.fn(native().invoke);
         const live = await createLiveOntology({
             ir,
             runtime: asProvider(() => runtime),
-            backend: () => adapter(),
+            backend: () => adapter(native({ invoke })),
         });
         try {
-            await expect(live.actions.save!({}, { mode: "direct" })).rejects.toThrow("connectivity");
-            await expect(
-                live.actions.save!({}, { mode: "outbox", idempotencyKey: "queued" })
-            ).resolves.toBeUndefined();
+            await expect(live.actions.save!({}, { mode: "direct" })).rejects.toMatchObject({
+                _tag: "BackendError",
+                kind: "Unavailable",
+                retryable: true,
+                invocationOutcome: "not-committed",
+            });
+            expect(await Effect.runPromise(live.storage!.pending)).toEqual([]);
+            const confirmed = vi.fn();
+            const applying = live.actions.save!({}, { mode: "outbox", idempotencyKey: "queued" }).then(
+                (result) => {
+                    confirmed();
+                    return result;
+                }
+            );
+            await vi.waitFor(async () => {
+                expect(await Effect.runPromise(live.storage!.pending)).toHaveLength(1);
+            });
             expect((await Effect.runPromise(live.storage!.pending))[0]?.invocation.id).toBe("queued");
+            expect(confirmed).not.toHaveBeenCalled();
+            expect(invoke).not.toHaveBeenCalled();
+            runtime.connectivity.isConnected = true;
+            await Effect.runPromise(live.storage!.syncOnce);
+            await expect(applying).resolves.toMatchObject({ receipt: { outcome: "committed" } });
+            expect(confirmed).toHaveBeenCalledOnce();
+        } finally {
+            await live.cleanup();
+        }
+    });
+
+    it("high-level outbox actions reject with the final structured error after discard-all", async () => {
+        const failure = new BackendError({
+            operation: "applyAction",
+            kind: "ValidationFailed",
+            message: "Submission failed validation.",
+            retryable: false,
+            invocationOutcome: "not-committed",
+            issues: [{ path: ["project"], code: "InvalidObjectReference", message: "Choose a valid value." }],
+        });
+        const invoke = vi.fn(() => Effect.fail(failure));
+        const live = await createLiveOntology({
+            ir,
+            runtime: asProvider(() => platform()),
+            backend: () => adapter(native({ invoke })),
+            writes: { defaultMode: "outbox", outbox: { failureStrategy: "discard-all" } },
+        });
+        try {
+            await expect(live.actions.save!({})).rejects.toMatchObject({
+                kind: "ValidationFailed",
+                invocationOutcome: "not-committed",
+                issues: failure.issues,
+            });
+            expect(await Effect.runPromise(live.storage!.pending)).toEqual([]);
+            expect(invoke).toHaveBeenCalledOnce();
         } finally {
             await live.cleanup();
         }

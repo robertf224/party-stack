@@ -17,6 +17,9 @@ export type { LiveOntologyAction, LiveOntologyActionOptions } from "./actions/cr
 export type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
 export type { OntologyCollection } from "./objects/types.js";
 
+/** Admission policy, not completion timing. Both modes await authoritative confirmation.
+ * Direct requires connectivity; outbox also accepts writes while offline.
+ */
 export type LiveOntologyWriteMode = "direct" | "outbox";
 
 export type LiveOntologyWriteVisibility = "confirmed" | "optimistic";
@@ -109,7 +112,6 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
      * handle; without identity evidence that response is never cached, even with cache:true.
      */
     decrypt: LiveOntologyDecrypt;
-    /** Remove this value's device-encrypted cached copy, without deleting its authoritative ciphertext. */
     outbox: OntologyOutbox;
     cleanup: () => Promise<void>;
     destroy: () => Promise<void>;

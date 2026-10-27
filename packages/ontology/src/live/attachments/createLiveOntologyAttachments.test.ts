@@ -1,7 +1,6 @@
 import { o } from "@party-stack/ontology-spec";
 import { MemoryBlobBytesStore } from "@party-stack/runtime";
 import { asProvider } from "@party-stack/runtime/testing";
-import { runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createLiveOntology } from "../LiveOntology.js";

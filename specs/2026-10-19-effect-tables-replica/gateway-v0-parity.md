@@ -39,6 +39,8 @@ Do not describe the new predicate wrapper as a drop-in replacement yet. Verify:
   before ordering/pagination. Static storage predicates alone do not cover all cases.
 - Reference-input authorization, fixed/generated parameters, permitted query functions,
   and attachment permissions are rechecked per call, including on apply.
+  Native attachment reads/metadata now re-find the handle in a projected source
+  row/property. Staging authority, principal-bound transfers and upload limits remain gates.
 - Form-token binding, revision fencing, request/transfer bounds, no-store behavior,
   validation issue projection and unknown-outcome handling survive the transport port.
 - Token/context/revision changes cannot reuse a previously authorized cached view.

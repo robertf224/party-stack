@@ -225,7 +225,7 @@ describe("LiveOntologyAction submission", () => {
     it("submits provided parameters without resolving defaults", async () => {
         const submit = vi.fn((request: OntologyActionRequest) => {
             void request;
-            return Promise.resolve();
+            return Promise.resolve({});
         });
         const actionWithDefaults = createLiveOntologyAction({
             ir,

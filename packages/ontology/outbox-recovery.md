@@ -37,7 +37,7 @@ there is a receipt or an explicit recovery decision. Paused work does not expire
 import { BackendError } from "@party-stack/ontology-backend";
 
 try {
-    // "direct" awaits upstream confirmation through the same Replica executor.
+    // Both modes await confirmation. "direct" additionally requires connectivity.
     await ontology.actions.createIssue(parameters, { mode: "direct" });
     closeForm();
 } catch (error) {
@@ -57,9 +57,22 @@ error. A bounded terminal result delivers it across SharedWorker/tab boundaries 
 the existing resultRetentionMs policy. It is not an executable outbox entry. Corrected
 form submissions use a new invocation. Issue-tracker uses this policy.
 
-An offline form can use mode:"outbox" to return after local/parent acceptance;
-completion may occur much later. outbox.enqueue also exposes accepted/completed
-promises separately when those are useful.
+An offline form can use mode:"outbox" to allow offline admission. Its action Promise
+stays pending until authoritative confirmation and local reconciliation, possibly much
+later. Visibility does not change that waiting contract. For an optimistic UI:
+
+```ts
+void ontology.actions
+    .createIssue(parameters, { visibility: "optimistic", mode: "outbox" })
+    .catch(showActionErrorToast);
+closeForm();
+```
+
+No manual enqueue is needed. Expected failures reject with BackendError; direct
+admission while offline is Unavailable with invocationOutcome:"not-committed" and
+does not enqueue anything. A lost response after dispatch may instead have an unknown
+outcome. Low-level outbox.enqueue still exposes accepted/completed observations for
+administrative and recovery tools. The ordinary action API has one confirmation Promise.
 
 For apps using failureStrategy:"pause", a definitely rejected action remains pending.
 Update it without creating a second queued copy:
@@ -80,8 +93,8 @@ write. A verified receipt can be supplied to reconcile instead. Ordinary remove/
 calls refuse an unsafe unknown-outcome decision. In-flight/reconciling actions cannot
 be discarded. Interrupting a wait does not cancel the action.
 
-Issue-tracker closes its new-issue form after optimistic acceptance and observes
-submission.completed to show a failure toast. It uses discard-all; rejected intent
+Issue-tracker closes its new-issue form optimistically and observes the normal
+actions.createIssue Promise to show a failure toast. It uses discard-all; rejected intent
 is removed and corrected input is a new action. The field-rendering example above is
 available for forms that prefer awaiting confirmation. The owned backend checks
 reference existence inside the commit transaction, even if an earlier preflight

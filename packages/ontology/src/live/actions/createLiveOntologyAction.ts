@@ -14,6 +14,9 @@ export interface LiveOntologyActionOptions {
     idempotencyKey?: string;
     /** Portable inputs supplied by a forwarding ontology. */
     replay?: import("../expression.js").ExpressionReplay;
+    /** Direct requires connectivity before admission; outbox permits offline queueing.
+     * Both modes return a Promise of authoritative confirmation and local reconciliation.
+     */
     mode?: LiveOntologyWriteMode;
     visibility?: LiveOntologyWriteVisibility;
 }
@@ -23,7 +26,8 @@ export interface LiveOntologyActionDraftValidationOptions<Parameters extends Rec
 }
 
 export type LiveOntologyAction<Parameters extends Record<string, unknown> = Record<string, unknown>> = {
-    (parameters: Parameters, options?: LiveOntologyActionOptions): Promise<OntologyApplyActionResult | void>;
+    /** Optimistic visibility is independent of waiting: the Promise resolves after confirmation. */
+    (parameters: Parameters, options?: LiveOntologyActionOptions): Promise<OntologyApplyActionResult>;
     resolveParameters(parameters: Partial<Parameters>): Promise<Partial<Parameters>>;
     validate(parameters: Parameters): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>>;
     validateDraft(
@@ -44,7 +48,7 @@ export function createLiveOntologyAction(options: {
     submit(
         request: OntologyActionRequest,
         options?: LiveOntologyActionOptions
-    ): Promise<OntologyApplyActionResult | void>;
+    ): Promise<OntologyApplyActionResult>;
     validate(
         actionTypeName: string,
         parameters: Record<string, unknown>

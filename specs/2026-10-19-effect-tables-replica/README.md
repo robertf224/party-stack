@@ -40,6 +40,10 @@ overlap rules, subset translation, and watcher repair behavior.
 See [query IR direction](./query-ir.md) for correlated subqueries, relationship
 helpers, and their connection to demand and retention.
 
+See [the public API checkpoint](./public-api-checkpoint.md) for action confirmation
+semantics, vocabulary review and remaining Gateway gates, and
+[cache management](./cache-management.md) for idle admission and future byte budgets.
+
 ## Intended outcome
 
 Build a reusable transactional table-storage abstraction first, with SQL and

@@ -1,6 +1,7 @@
 import { resolveReadActionParameters } from "@party-stack/ontology";
 import { BackendError, projectBackendError } from "@party-stack/ontology-backend";
 import { and, eq, field } from "@party-stack/ontology-storage";
+import { collectAttachments } from "@party-stack/ontology-storage/blobs";
 import { Effect } from "effect";
 import { errorContext, projectValidationReport } from "./errorProjection.js";
 import { applyFixedActionParameterValues, projectRemoteOntologyIR } from "./securedOntology.js";
@@ -11,8 +12,12 @@ import type { Query } from "@party-stack/ontology-storage";
 
 export interface BackendProjectionPolicy<Context> {
     readonly allowedObjectTypeProperties: Readonly<Record<string, readonly string[]>>;
-    /** Portable row predicates compose before source pagination. */
-    readonly baseObjectTypeQueries?: Readonly<Record<string, Query["where"]>>;
+    /** Portable row predicates compose before source pagination. Functions bind trusted
+     * server context once when constructing this principal's projection.
+     */
+    readonly baseObjectTypeQueries?: Readonly<
+        Record<string, Query["where"] | ((args: { ctx: Context; objectType: string }) => Query["where"])>
+    >;
     readonly visibleActionTypes?: readonly string[] | "all";
     readonly visibleQueryFunctionTypes?: readonly string[] | "all";
     readonly fixedActionParameterValues?: FixedActionParameterValues;
@@ -38,6 +43,12 @@ export function projectOntologyBackend<Context>(options: {
     readonly policy: BackendProjectionPolicy<Context>;
 }) {
     const { backend, policy } = options;
+    const baseQueries = Object.fromEntries(
+        Object.entries(policy.baseObjectTypeQueries ?? {}).map(([objectType, query]) => [
+            objectType,
+            typeof query === "function" ? query({ ctx: options.context, objectType }) : query,
+        ])
+    );
     const context =
         policy.clientContext === "forward"
             ? (options.context as Record<string, unknown>)
@@ -85,6 +96,24 @@ export function projectOntologyBackend<Context>(options: {
         name: backend.name,
         sourceId: backend.sourceId,
         supportsIdempotency: backend.supportsIdempotency,
+        attachments: backend.attachments
+            ? {
+                  read: (value, settings) =>
+                      expose(
+                          "attachment.read",
+                          readableAttachment(value).pipe(
+                              Effect.andThen(() => backend.attachments!.read(value, settings))
+                          )
+                      ),
+                  metadata: (value) =>
+                      expose(
+                          "attachment.metadata",
+                          readableAttachment(value).pipe(
+                              Effect.andThen(() => backend.attachments!.metadata(value))
+                          )
+                      ),
+              }
+            : undefined,
         resolveActionParameters: (name, values) =>
             expose(
                 name,
@@ -122,7 +151,7 @@ export function projectOntologyBackend<Context>(options: {
         // Row predicates need before/after visibility tracking for deletes and moves.
         // Until query watching supplies it, those projections use subset snapshots.
         changes:
-            backend.changes && !Object.values(policy.baseObjectTypeQueries ?? {}).some(Boolean)
+            backend.changes && !Object.values(baseQueries).some(Boolean)
                 ? {
                       watch: backend.changes.watch,
                       pull: (request) =>
@@ -175,7 +204,7 @@ export function projectOntologyBackend<Context>(options: {
                         return Object.values(value).every(fieldsAllowed);
                     };
                     if (!fieldsAllowed(subset.query)) return yield* denied("loadSubset");
-                    const base = policy.baseObjectTypeQueries?.[subset.objectType];
+                    const base = baseQueries[subset.objectType];
                     const response = yield* backend.loadSubset({
                         ...subset,
                         query: {
@@ -263,5 +292,25 @@ export function projectOntologyBackend<Context>(options: {
                 })
             ),
     };
+    const readableAttachment = Effect.fn("Ontology.authorizeAttachment")(function* (
+        value: Parameters<NonNullable<OntologyBackendService["attachments"]>["read"]>[0]
+    ) {
+        const source = value.source;
+        const definition = ir.objectTypes.find((type) => type.name === source?.objectType);
+        const property = definition?.properties.find((property) => property.name === source?.property);
+        if (!source || !definition || !property) return yield* denied("attachment.read");
+        const snapshot = yield* projected.loadSubset({
+            objectType: definition.name,
+            query: { where: eq(field(definition.primaryKey), source.primaryKey), limit: 1 },
+        });
+        const row = snapshot.rows.find((row) => row.key === source.primaryKey);
+        if (
+            !row ||
+            !collectAttachments(ir, property.type, row.value[property.name]).some(
+                (entry) => entry.attachment.id === value.id
+            )
+        )
+            return yield* denied("attachment.read");
+    });
     return { backend: projected, ir, context };
 }

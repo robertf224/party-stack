@@ -1,9 +1,114 @@
 import { o, type OntologyIR } from "@party-stack/ontology";
 import { eq, field, evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { projectOntologyBackend } from "./authorization.js";
 import type { ActionInvocation, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { attachment } from "@party-stack/ontology/values";
+
+test("attachment reads re-find the handle in an authorized source row and declared property", async () => {
+    const ir: OntologyIR = {
+        types: [],
+        linkTypes: [],
+        actionTypes: [],
+        queryFunctionTypes: [],
+        objectTypes: [
+            {
+                name: "Item",
+                displayName: "Item",
+                pluralDisplayName: "Items",
+                primaryKey: "id",
+                properties: [
+                    { name: "id", displayName: "ID", type: o.string({}) },
+                    { name: "owner", displayName: "Owner", type: o.string({}) },
+                    { name: "files", displayName: "Files", type: o.list({ elementType: o.attachment({}) }) },
+                    { name: "private", displayName: "Private", type: o.attachment({}) },
+                    { name: "title", displayName: "Title", type: o.string({}) },
+                ],
+            },
+        ],
+    };
+    let files = [{ id: "visible-file" }];
+    const read = vi.fn(() => Effect.succeed(new Blob(["allowed"])));
+    const metadata = vi.fn(() => Effect.succeed({ size: 7, type: "text/plain" }));
+    const stage = vi.fn(() => Effect.die("Staging is not granted by row visibility"));
+    const backend: OntologyBackendService = {
+        name: "test",
+        sourceId: "test",
+        supportsIdempotency: false,
+        invoke: () => Effect.die("Unexpected action"),
+        queryFunction: () => Effect.void,
+        attachments: { read, metadata, stage },
+        loadSubset: (subset) =>
+            Effect.succeed({
+                complete: true,
+                rows: evaluateQuery(
+                    [
+                        {
+                            key: "hidden",
+                            value: { id: "hidden", owner: "bob", files: [{ id: "hidden-file" }] },
+                        },
+                        {
+                            key: "visible",
+                            value: {
+                                id: "visible",
+                                owner: "alice",
+                                files,
+                                private: { id: "secret" },
+                                title: "visible-file",
+                            },
+                        },
+                    ],
+                    subset.query ?? {}
+                ),
+            }),
+    };
+    const projected = projectOntologyBackend({
+        backend,
+        ir,
+        context: { user: "alice" },
+        policy: {
+            allowedObjectTypeProperties: { Item: ["id", "owner", "files", "title"] },
+            baseObjectTypeQueries: { Item: ({ ctx }) => eq(field("owner"), ctx.user) },
+        },
+    }).backend;
+    const visible: attachment = {
+        id: "visible-file",
+        source: { objectType: "Item", primaryKey: "visible", property: "files" },
+    };
+    expect(projected.attachments?.stage).toBeUndefined();
+    expect(await Effect.runPromise(projected.attachments!.read(visible)).then((blob) => blob.text())).toBe(
+        "allowed"
+    );
+    expect(await Effect.runPromise(projected.attachments!.metadata(visible))).toEqual({
+        size: 7,
+        type: "text/plain",
+    });
+    const forged: attachment[] = [
+        { id: "visible-file" },
+        { ...visible, id: "unrelated-file" },
+        { id: "hidden-file", source: { ...visible.source!, primaryKey: "hidden" } },
+        { id: "secret", source: { ...visible.source!, property: "private" } },
+        { ...visible, source: { ...visible.source!, property: "title" } },
+        { ...visible, source: { ...visible.source!, primaryKey: "missing" } },
+        { ...visible, source: { ...visible.source!, objectType: "Private" } },
+    ];
+    for (const value of forged) {
+        await expect(Effect.runPromise(projected.attachments!.read(value))).rejects.toMatchObject({
+            kind: "NotFound",
+        });
+        await expect(Effect.runPromise(projected.attachments!.metadata(value))).rejects.toMatchObject({
+            kind: "NotFound",
+        });
+    }
+    files = [];
+    await expect(Effect.runPromise(projected.attachments!.read(visible))).rejects.toMatchObject({
+        kind: "NotFound",
+    });
+    expect(read).toHaveBeenCalledOnce();
+    expect(metadata).toHaveBeenCalledOnce();
+    expect(stage).not.toHaveBeenCalled();
+});
 
 test("projection filters rows before limits, blocks hidden-field probes, and owns fixed parameters", async () => {
     const ir: OntologyIR = {
@@ -68,7 +173,12 @@ test("projection filters rows before limits, blocks hidden-field probes, and own
         context: { user: "alice", secret: "private" },
         policy: {
             allowedObjectTypeProperties: { Item: ["id", "owner"] },
-            baseObjectTypeQueries: { Item: eq(field("owner"), "alice") },
+            baseObjectTypeQueries: {
+                Item: ({ ctx, objectType }) => {
+                    expect(objectType).toBe("Item");
+                    return eq(field("owner"), ctx.user);
+                },
+            },
             clientContext: (context) => ({ user: context.user }),
             fixedActionParameterValues: {
                 save: { owner: { kind: "contextReference", value: { name: "user" } } },

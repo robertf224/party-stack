@@ -201,7 +201,17 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         );
         const accepted = run(wait(entry.invocation.id, "accepted")).then(() => undefined);
         void accepted.catch(() => undefined);
-        const completed = run(wait(entry.invocation.id));
+        const completed = run(wait(entry.invocation.id)).then((result) => {
+            if (!result)
+                throw new BackendError({
+                    operation: "applyAction",
+                    kind: "ResultExpired",
+                    message: "Action result is unavailable.",
+                    retryable: false,
+                    invocationOutcome: "unknown",
+                });
+            return result;
+        });
         void completed.catch(() => undefined);
         if (options.awaitParentAcceptance) await accepted;
         return { entry: toEntry(entry, replica.mode === "protocol"), accepted, completed };
@@ -269,13 +279,14 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
                         settings?.visibility ?? options.writes?.defaultVisibility ?? "confirmed";
                     const mode = settings?.mode ?? options.writes?.defaultMode ?? "direct";
                     if (mode === "direct" && !(await run(services.online)))
-                        throw new Error(
-                            "Direct actions require connectivity. Use outbox mode to queue offline."
-                        );
+                        throw new BackendError({
+                            operation: "applyAction",
+                            kind: "Unavailable",
+                            message: "Direct actions require connectivity. Use outbox mode to queue offline.",
+                            retryable: true,
+                            invocationOutcome: "not-committed",
+                        });
                     const queued = await enqueue(request, visibility);
-                    // Outbox submission completes when its intent and projection are durable.
-                    // Call outbox.enqueue directly when the caller needs the remote completion promise.
-                    if (mode === "outbox") return;
                     return queued.completed;
                 },
                 validate: options.validate
