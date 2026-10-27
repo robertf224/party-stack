@@ -74,5 +74,5 @@ not a limit on stateless readers. SharedWorker hosts use a shorter ten-minute le
 Journal expiry raises HistoryExpired. A replica rebuilds retained/active demand from
 coordinated snapshots, atomically installs base/cursor, preserves its local outbox
 and replays optimistic work. Expired parent sessions establish a new identity while
-preserving queued work; an unresolved accepted result becomes uncertain rather than
+preserving queued work; an unresolved accepted result becomes blocked with an unknown outcome rather than
 being submitted again silently.

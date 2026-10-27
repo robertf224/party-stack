@@ -1,6 +1,6 @@
 import type { Collection } from "@tanstack/db";
 
-export type OntologyOutboxStatus = "queued" | "executing" | "failed";
+export type OntologyOutboxStatus = import("@party-stack/ontology-backend/protocol").PendingAction["state"];
 
 export class NonRetryableError extends Error {
     constructor(message: string, options?: ErrorOptions) {
@@ -30,10 +30,9 @@ export interface OntologyOutboxEntry {
     retryable: boolean;
     nextAttemptAt: number;
     executionId?: string;
-    lastError?: {
-        name: string;
-        message: string;
-    };
+    /** Retry may duplicate a previous remote execution unless the caller acknowledges it. */
+    retryRequiresAcknowledgement?: boolean;
+    lastError?: import("@party-stack/ontology-backend").BackendError;
 }
 
 export interface EnqueuedOntologyAction<Result = unknown> {
@@ -56,10 +55,10 @@ export interface OntologyOutbox {
         }
     ): Promise<EnqueuedOntologyAction<Result>>;
     edit(id: string, update: (request: OntologyActionRequest) => void): Promise<OntologyOutboxEntry>;
-    remove(id: string): Promise<void>;
+    remove(id: string, options?: { allowUnknownOutcome?: boolean }): Promise<void>;
     /** Supply an independently verified remote receipt; read-back still runs normally. */
     reconcile(id: string, receipt: import("@party-stack/ontology-backend").ActionReceipt): Promise<void>;
-    retry(id: string, options?: { allowAmbiguous?: boolean }): Promise<void>;
+    retry(id: string, options?: { allowUnknownOutcome?: boolean }): Promise<void>;
     /** Cancel/timeout the observation with an AbortSignal; the action remains queued. */
     wait<Result = unknown>(
         id: string,

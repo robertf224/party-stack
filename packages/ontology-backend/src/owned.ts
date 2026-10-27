@@ -12,6 +12,7 @@ import {
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Clock, Effect, PubSub, Schema, Stream } from "effect";
 import { clientRegistry } from "./clients.js";
+import { actionReferenceIssues } from "./references.js";
 import { schemaValidationIssues, BackendError, ActionReceiptSchema, BackendCommitSchema } from "./index.js";
 import type { ClientPolicy } from "./clients.js";
 import type {
@@ -423,6 +424,16 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 );
             return { receipt: previous.receipt, changed: false };
         }
+        const issues = yield* actionReferenceIssues(options.ir, action.parameters, parameters, read(native));
+        if (issues.length)
+            return yield* new BackendError({
+                operation: "invoke",
+                kind: "ValidationFailed",
+                message: "Submission failed validation.",
+                retryable: false,
+                invocationOutcome: "not-committed",
+                issues,
+            });
         const { tx, changes } = mutation(native);
         yield* mutator(tx, { ...invocation, parameters });
         yield* commitUploads;
@@ -766,6 +777,16 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                     return {
                         certain: true as const,
                         value: { kind: "err" as const, value: schemaValidationIssues(result.failure) },
+                    };
+                const referenceIssues = yield* boundary(
+                    storage.read((native) =>
+                        actionReferenceIssues(options.ir, definition.parameters, result.success, read(native))
+                    )
+                );
+                if (referenceIssues.length)
+                    return {
+                        certain: true as const,
+                        value: { kind: "err" as const, value: referenceIssues },
                     };
                 // Shape validation cannot execute arbitrary mutator business logic, and
                 // successful preflight never promises a later transaction will commit.

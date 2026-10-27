@@ -73,6 +73,7 @@ export const persistedCollectionOptions = Effect.fnUntraced(function* <
             sync: ({ begin, write, commit, markReady, markError, collection }) => {
                 let alive = true;
                 let tail = Promise.resolve();
+                const releasing = new Set<Promise<void>>();
                 const demands = new Map<
                     LoadSubsetOptions,
                     {
@@ -156,7 +157,15 @@ export const persistedCollectionOptions = Effect.fnUntraced(function* <
                                     subset.signal?.removeEventListener("abort", demand!.release);
                                     if (demands.get(key) !== demand) return;
                                     demands.delete(key);
-                                    void Effect.runPromise(Scope.close(child, Exit.void));
+                                    const closing = Effect.runPromise(Scope.close(child, Exit.void));
+                                    releasing.add(closing);
+                                    void closing.then(
+                                        () => releasing.delete(closing),
+                                        (error) => {
+                                            releasing.delete(closing);
+                                            if (alive && active) markError(error);
+                                        }
+                                    );
                                     if (alive && active && demands.size) void load().catch(markError);
                                 },
                             };
@@ -187,12 +196,13 @@ export const persistedCollectionOptions = Effect.fnUntraced(function* <
                             (fiber) => Effect.runPromise(Fiber.interrupt(fiber)),
                             () => undefined
                         );
-                        await Promise.all(
-                            [...demands.values()].map((demand) => {
+                        await Promise.all([
+                            ...releasing,
+                            ...[...demands.values()].map((demand) => {
                                 demand.subset.signal?.removeEventListener("abort", demand.release);
                                 return Effect.runPromise(Scope.close(demand.scope, Exit.void));
-                            })
-                        );
+                            }),
+                        ]);
                         demands.clear();
                     },
                 };

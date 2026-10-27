@@ -246,10 +246,12 @@ function statusLabel(entry: OntologyOutboxEntry): string {
     switch (entry.status) {
         case "queued":
             return "Waiting";
-        case "executing":
-            return "Running";
-        case "failed":
-            return "Failed";
+        case "sending":
+            return "Sending";
+        case "acknowledged":
+            return "Reconciling";
+        case "blocked":
+            return entry.lastError?.invocationOutcome === "unknown" ? "Outcome unknown" : "Blocked";
     }
 }
 
@@ -288,7 +290,7 @@ function cardClass(entry: OntologyOutboxEntry): string {
     return `ps-outbox-card ps-card-${entry.status}`;
 }
 
-function OutboxEntryCard({
+export function OutboxEntryCard({
     entry,
     outbox,
     now,
@@ -299,20 +301,32 @@ function OutboxEntryCard({
 }) {
     const [pending, setPending] = useState<"retry" | "remove" | undefined>();
     const [actionError, setActionError] = useState<string>();
+    const [confirmation, setConfirmation] = useState<"retry" | "remove">();
+    const busy = entry.status === "sending" || entry.status === "acknowledged";
+    const choose = (action: "retry" | "remove") => {
+        if (
+            action === "retry"
+                ? entry.retryRequiresAcknowledgement
+                : entry.lastError?.invocationOutcome === "unknown"
+        )
+            setConfirmation(action);
+        else void run(action);
+    };
 
     const run = async (action: "retry" | "remove"): Promise<void> => {
         setPending(action);
         setActionError(undefined);
         try {
             if (action === "retry") {
-                await outbox.retry(entry.id);
+                await outbox.retry(entry.id, { allowUnknownOutcome: confirmation === "retry" });
             } else {
-                await outbox.remove(entry.id);
+                await outbox.remove(entry.id, { allowUnknownOutcome: confirmation === "remove" });
             }
         } catch (error) {
             setActionError(error instanceof Error ? error.message : String(error));
         } finally {
             setPending(undefined);
+            setConfirmation(undefined);
         }
     };
 
@@ -348,7 +362,27 @@ function OutboxEntryCard({
                 </span>
                 {!entry.retryable ? <span className="ps-outbox-permanent">Won&apos;t retry</span> : null}
             </div>
-            {entry.lastError ? <div className="ps-outbox-error">{entry.lastError.message}</div> : null}
+            {entry.lastError ? (
+                <div className="ps-outbox-error" role="alert">
+                    <strong>{entry.lastError.kind}</strong>
+                    <div>{entry.lastError.message}</div>
+                    {entry.lastError.invocationOutcome === "unknown" ? (
+                        <p>
+                            The previous attempt may have committed. No definitive result has been received.
+                        </p>
+                    ) : null}
+                    {entry.lastError.issues?.length ? (
+                        <ul>
+                            {entry.lastError.issues.map((issue, index) => (
+                                <li key={index}>
+                                    <code>{issue.path?.join(".") || "Submission"}</code>: {issue.message}{" "}
+                                    <code>({issue.code})</code>
+                                </li>
+                            ))}
+                        </ul>
+                    ) : null}
+                </div>
+            ) : null}
             <details className="ps-outbox-details">
                 <DisclosureSummary>Parameters</DisclosureSummary>
                 <pre>{JSON.stringify(entry.request.parameters, null, 2)}</pre>
@@ -357,9 +391,9 @@ function OutboxEntryCard({
                 <button
                     className="ps-button ps-button-primary"
                     type="button"
-                    disabled={!entry.retryable || entry.status === "executing" || pending !== undefined}
+                    disabled={busy || pending !== undefined}
                     onClick={() => {
-                        void run("retry");
+                        choose("retry");
                     }}
                 >
                     <ArrowPathIcon aria-hidden="true" />
@@ -368,15 +402,42 @@ function OutboxEntryCard({
                 <button
                     className="ps-button ps-button-danger"
                     type="button"
-                    disabled={entry.status === "executing" || pending !== undefined}
+                    disabled={busy || pending !== undefined}
                     onClick={() => {
-                        void run("remove");
+                        choose("remove");
                     }}
                 >
                     <TrashIcon aria-hidden="true" />
                     {pending === "remove" ? "Removing…" : "Remove"}
                 </button>
             </div>
+            {confirmation ? (
+                <div className="ps-outbox-error" role="alert">
+                    <p>
+                        {confirmation === "retry"
+                            ? "Retrying may execute the action again."
+                            : "Discarding removes local intent; it does not cancel a remote execution."}
+                    </p>
+                    <button
+                        className="ps-button"
+                        type="button"
+                        disabled={pending !== undefined}
+                        onClick={() => setConfirmation(undefined)}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        className="ps-button ps-button-danger"
+                        type="button"
+                        disabled={pending !== undefined}
+                        onClick={() => {
+                            void run(confirmation);
+                        }}
+                    >
+                        {confirmation === "retry" ? "Retry anyway" : "Discard local action"}
+                    </button>
+                </div>
+            ) : null}
             {actionError ? <div className="ps-outbox-action-error">{actionError}</div> : null}
         </article>
     );
@@ -423,7 +484,7 @@ type OutboxActivity = "idle" | "draining" | "paused";
 export function getOutboxActivity(entries: OntologyOutboxEntry[]): OutboxActivity {
     if (entries.length === 0) return "idle";
     const head = entries.reduce((first, entry) => (entry.sequence < first.sequence ? entry : first));
-    if (head.status === "failed") return "paused";
+    if (head.status === "blocked") return "paused";
     return "draining";
 }
 

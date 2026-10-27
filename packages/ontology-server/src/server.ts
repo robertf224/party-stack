@@ -1062,6 +1062,7 @@ async function withReadablePropertyValue<
 const runBackend = <A, E>(effect: Effect.Effect<A, E>, signal?: AbortSignal) =>
     Effect.runPromise(Effect.result(effect), { signal }).then(EffectResult.getOrThrow);
 
+/** @deprecated Use makeOntologyServer / connectOntologyBackendHttp with scoped native backends. */
 export function createRemoteOntologyServer<
     Context = Record<string, unknown>,
     Ontology extends OntologyDefinition = OntologyDefinition,

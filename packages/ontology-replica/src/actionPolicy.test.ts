@@ -119,12 +119,12 @@ test("discard-all abandons the queue for both definite failures and unknown outc
     }
 });
 
-test("pause preserves uncertain intent until a verified receipt is reconciled", async () => {
+test("pause preserves unknown-outcome intent until a verified receipt is reconciled", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const replica = yield* makeReplica({
-                    namespace: "uncertain",
+                    namespace: "blocked",
                     ir,
                     tables: yield* Memory.make(),
                     backend: backend(() => Effect.fail(fail()), false),
@@ -133,7 +133,7 @@ test("pause preserves uncertain intent until a verified receipt is reconciled", 
                 });
                 yield* replica.enqueue(invocation("one"));
                 yield* Effect.result(replica.syncOnce);
-                expect((yield* replica.pending)[0]?.state).toBe("uncertain");
+                expect((yield* replica.pending)[0]?.state).toBe("blocked");
                 expect((yield* Effect.result(replica.retry("one")))._tag).toBe("Failure");
                 expect((yield* Effect.result(replica.remove("one")))._tag).toBe("Failure");
                 yield* replica.reconcile("one", { invocationId: "one", outcome: "committed", affected: [] });
@@ -141,6 +141,41 @@ test("pause preserves uncertain intent until a verified receipt is reconciled", 
                 expect((yield* replica.receipt("one"))?.outcome).toBe("committed");
             })
         )
+    );
+});
+
+test("discarded rejection results deliver errors without retaining intent and expire with result retention", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                let calls = 0;
+                const replica = yield* makeReplica({
+                    namespace: "discarded-results",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend: backend(() => {
+                        calls++;
+                        return Effect.fail(fail("ValidationFailed"));
+                    }),
+                    execute: () => Effect.void,
+                    startSync: false,
+                    outbox: { failureStrategy: "discard-all" },
+                    resultRetentionMs: 100,
+                });
+                yield* replica.enqueue(invocation("one"));
+                yield* replica.enqueue(invocation("two"));
+                yield* Effect.result(replica.syncOnce);
+                expect(yield* replica.pendingActions).toEqual([]);
+                expect((yield* replica.actionStatus("one")).error?.kind).toBe("ValidationFailed");
+                expect((yield* replica.actionStatus("two")).error?.kind).toBe("Conflict");
+                expect(calls).toBe(1);
+                yield* TestClock.adjust(101);
+                yield* replica.syncOnce;
+                expect((yield* replica.actionStatus("one")).error).toBeUndefined();
+                expect((yield* replica.actionStatus("two")).error).toBeUndefined();
+                expect(calls).toBe(1);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
     );
 });
 
@@ -353,4 +388,37 @@ test("protected pending receipts cannot starve expired journal-hint cleanup", as
             })
         ).pipe(Effect.provide(TestClock.layer()))
     );
+});
+
+test("unknown outcome is separate from pause and explicit retry/discard acknowledgment", async () => {
+    for (const idempotent of [true, false])
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const replica = yield* makeReplica({
+                        namespace: `unknown-${idempotent}`,
+                        ir,
+                        tables: yield* Memory.make(),
+                        backend: backend(() => Effect.fail(fail()), idempotent),
+                        execute: () => Effect.void,
+                        startSync: false,
+                    });
+                    yield* replica.enqueue(invocation("one"));
+                    yield* Effect.result(replica.syncOnce);
+                    expect((yield* replica.pending)[0]).toMatchObject({
+                        state: idempotent ? "queued" : "blocked",
+                        failureOutcome: "unknown",
+                        retryRequiresAcknowledgement: !idempotent,
+                    });
+                    if (!idempotent) {
+                        expect((yield* Effect.result(replica.retry("one")))._tag).toBe("Failure");
+                        yield* replica.retry("one", { allowUnknownOutcome: true });
+                        expect((yield* replica.pending)[0]?.state).toBe("queued");
+                    }
+                    expect((yield* Effect.result(replica.remove("one")))._tag).toBe("Failure");
+                    yield* replica.remove("one", { allowUnknownOutcome: true });
+                    expect(yield* replica.pending).toEqual([]);
+                })
+            )
+        );
 });

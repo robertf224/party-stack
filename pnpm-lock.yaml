@@ -339,6 +339,9 @@ importers:
       '@party-stack/ontology-server':
         specifier: workspace:*
         version: link:../../packages/ontology-server
+      '@party-stack/ontology-storage':
+        specifier: workspace:*
+        version: link:../../packages/ontology-storage
       '@party-stack/sql-ontology-storage':
         specifier: workspace:*
         version: link:../../packages/sql-ontology-storage
@@ -1515,6 +1518,9 @@ importers:
       '@tailwindcss/postcss':
         specifier: ^4.1.17
         version: 4.1.17
+      '@party-stack/ontology-backend':
+        specifier: workspace:*
+        version: link:../ontology-backend
       '@tanstack/db':
         specifier: 0.14.0
         version: 0.14.0(typescript@7.0.2)

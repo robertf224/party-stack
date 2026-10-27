@@ -308,10 +308,11 @@
         content: "";
         background: #38bdf8;
     }
-    .ps-card-executing::before {
+    .ps-card-sending::before,
+    .ps-card-acknowledged::before {
         background: #f59e0b;
     }
-    .ps-card-failed::before {
+    .ps-card-blocked::before {
         background: #ef4444;
     }
     .ps-outbox-card-header {
@@ -351,11 +352,12 @@
         color: #7dd3fc;
         background: rgba(12, 74, 110, 0.45);
     }
-    .ps-status-executing {
+    .ps-status-sending,
+    .ps-status-acknowledged {
         color: #fcd34d;
         background: rgba(120, 53, 15, 0.42);
     }
-    .ps-status-failed {
+    .ps-status-blocked {
         color: #fca5a5;
         background: rgba(127, 29, 29, 0.42);
     }
@@ -389,6 +391,21 @@
     .ps-outbox-time {
         cursor: help;
         font-variant-numeric: tabular-nums;
+    }
+    .ps-outbox-error strong {
+        display: block;
+        margin-bottom: 4px;
+    }
+    .ps-outbox-error ul {
+        list-style: none;
+        padding: 0;
+        margin: 8px 0 0;
+        display: grid;
+        gap: 4px;
+    }
+    .ps-outbox-error code {
+        font-size: 11px;
+        color: var(--ps-text);
     }
     .ps-outbox-error {
         margin-top: 11px;

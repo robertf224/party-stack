@@ -1,6 +1,6 @@
 import { evaluateQuery, eq as storageEq, field } from "@party-stack/ontology-storage";
 import { IR, compileSingleRowExpression, queryOnce, eq, gte } from "@tanstack/db";
-import { Deferred, Effect, PubSub, Stream } from "effect";
+import { Deferred, Effect, PubSub, Stream, Fiber } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { expect, test } from "vite-plus/test";
 import { makeReplicatedCollection, persistedCollectionOptions, scopedCollection } from "./collections.js";
@@ -460,6 +460,48 @@ test("an unloaded in-flight subset cannot install rows or retain its lease", asy
                 });
                 expect(collection.size).toBe(0);
                 expect(released).toBe(1);
+            })
+        )
+    );
+});
+
+test("collection cleanup awaits a subset release already detached from its parent scope", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const releasing = yield* Deferred.make<void>();
+                const finish = yield* Deferred.make<void>();
+                const collection = yield* scopedCollection(
+                    yield* persistedCollectionOptions({
+                        id: "await-unloaded-release",
+                        getKey: (row: { id: string }) => row.id,
+                        changes: Stream.never,
+                        load: Effect.succeed([]),
+                        acquireDemand: Effect.acquireRelease(Effect.void, () =>
+                            Deferred.succeed(releasing, undefined).pipe(
+                                Effect.andThen(Deferred.await(finish))
+                            )
+                        ),
+                    })
+                );
+                const subset = {};
+                yield* Effect.promise(async () => {
+                    await collection._sync.loadSubset(subset);
+                });
+                collection._sync.unloadSubset(subset);
+                yield* Deferred.await(releasing);
+                let cleaned = false;
+                const cleanup = yield* Effect.forkChild(
+                    Effect.promise(async () => {
+                        await collection.cleanup();
+                        cleaned = true;
+                    })
+                );
+                yield* Effect.yieldNow;
+                expect(cleaned).toBe(false);
+                yield* Deferred.succeed(finish, undefined);
+                yield* Fiber.join(cleanup);
+                expect(cleaned).toBe(true);
             })
         )
     );

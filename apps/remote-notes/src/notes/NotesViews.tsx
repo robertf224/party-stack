@@ -1,12 +1,13 @@
 import { createOntologyDevtoolsPlugin, ontologyDevtoolsTrigger } from "@party-stack/ontology-devtools";
-import { createRemoteOntologyBackend } from "@party-stack/ontology-server/client";
-import { createHttpRemoteOntologyTransport } from "@party-stack/ontology-server/http";
+import { connectOntologyBackendHttp } from "@party-stack/ontology-server/rpc/http";
 import { createWebRuntime } from "@party-stack/web-runtime";
 import { ilike, or } from "@tanstack/db";
 import { debounceStrategy, useLiveQuery, usePacedMutations } from "@tanstack/react-db";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { use, useEffect, useMemo, useState, type DragEvent } from "react";
+import { Effect } from "effect";
+import { FetchHttpClient } from "effect/http";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Temporal } from "temporal-polyfill";
@@ -61,19 +62,23 @@ function markdownImage(alt: string, url: string): string {
 }
 
 function createClientOntology(userEmail: string) {
-    const backend = createRemoteOntologyBackend({
-        createTransport: (ir) =>
-            createHttpRemoteOntologyTransport({
-                url: "/api/remote-ontology/",
-                ir,
-                headers: () => ({
-                    "x-demo-user-email": userEmail,
-                }),
-            }),
+    const backend = () => ({
+        name: "remote-notes",
+        open: () =>
+            connectOntologyBackendHttp({
+                url: new URL("/api/remote-ontology/rpc", location.origin).href,
+            }).pipe(
+                Effect.provide(FetchHttpClient.layer),
+                Effect.provideService(FetchHttpClient.Fetch, (input, init) => {
+                    const request = new Request(input, init);
+                    request.headers.set("x-demo-user-email", userEmail);
+                    return fetch(request);
+                })
+            ),
     });
     return createRemoteNotesLiveOntology({
         backend,
-        id: "remote-notes",
+        id: "remote-notes-rpc",
         runtime: createWebRuntime,
         persistObjects: true,
         writes: {
@@ -200,18 +205,63 @@ export function NotePage({ noteId }: { noteId: string }) {
 }
 
 function NotesLayout({ selectedNoteId, showEditor, hideListOnMobile = false }: NotesLayoutProps) {
-    const navigate = useNavigate();
     const [userEmail, setUserEmail] = useState(getInitialUserEmail);
-    const [searchQuery, setSearchQuery] = useState("");
-    const ontology = use(useMemo(() => createClientOntology(userEmail), [userEmail]));
-    const ontologyDevtoolsPlugin = useMemo(() => createOntologyDevtoolsPlugin({ ontology }), [ontology]);
-
-    useEffect(
-        () => () => {
-            void ontology.cleanup();
-        },
-        [ontology]
+    const [resource, setResource] = useState<{
+        userEmail: string;
+        ontology?: Awaited<ReturnType<typeof createClientOntology>>;
+        error?: string;
+    }>();
+    useEffect(() => {
+        let cancelled = false;
+        let ontology: Awaited<ReturnType<typeof createClientOntology>> | undefined;
+        void createClientOntology(userEmail).then(
+            (opened) => {
+                ontology = opened;
+                if (cancelled) void opened.cleanup();
+                else setResource({ userEmail, ontology: opened });
+            },
+            (error: unknown) => {
+                if (!cancelled)
+                    setResource({
+                        userEmail,
+                        error: error instanceof Error ? error.message : "Could not open notes.",
+                    });
+            }
+        );
+        return () => {
+            cancelled = true;
+            if (ontology) void ontology.cleanup();
+        };
+    }, [userEmail]);
+    if (resource?.userEmail !== userEmail) return <p>Loading remote notes...</p>;
+    if (!resource.ontology) return <p role="alert">{resource.error}</p>;
+    return (
+        <NotesContent
+            selectedNoteId={selectedNoteId}
+            showEditor={showEditor}
+            hideListOnMobile={hideListOnMobile}
+            userEmail={userEmail}
+            setUserEmail={setUserEmail}
+            ontology={resource.ontology}
+        />
     );
+}
+
+function NotesContent({
+    selectedNoteId,
+    showEditor,
+    hideListOnMobile,
+    userEmail,
+    setUserEmail,
+    ontology,
+}: NotesLayoutProps & {
+    userEmail: string;
+    setUserEmail: (email: string) => void;
+    ontology: Awaited<ReturnType<typeof createClientOntology>>;
+}) {
+    const navigate = useNavigate();
+    const [searchQuery, setSearchQuery] = useState("");
+    const ontologyDevtoolsPlugin = useMemo(() => createOntologyDevtoolsPlugin({ ontology }), [ontology]);
 
     const trimmedSearchQuery = searchQuery.trim();
     const { data: notes } = useLiveQuery(

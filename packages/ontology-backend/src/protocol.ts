@@ -15,7 +15,7 @@ export interface PendingAction {
     readonly requestIdentity: string;
     readonly createdAt: number;
     readonly sequence: number;
-    readonly state: "queued" | "sending" | "acknowledged" | "blocked" | "uncertain";
+    readonly state: "queued" | "sending" | "acknowledged" | "blocked";
     readonly optimistic: boolean;
     readonly attempts: number;
     /** Total attempts at the last explicit retry; automatic retry budgets start here. */
@@ -24,6 +24,8 @@ export interface PendingAction {
     readonly failureMessage?: string;
     readonly failureIssues?: readonly import("./errors.js").ValidationIssue[];
     readonly completedAt?: number;
+    /** The upstream cannot safely deduplicate another attempt; caller acknowledgment is required. */
+    readonly retryRequiresAcknowledgement?: boolean;
     readonly failureOutcome?: "not-committed" | "unknown";
     readonly failureRetryable?: boolean;
     readonly receipt?: ActionReceipt;
@@ -130,7 +132,7 @@ export const PendingActionSchema = Schema.Struct({
     requestIdentity: Schema.String,
     createdAt: Schema.Finite,
     sequence: PositiveCounter,
-    state: Schema.Literals(["queued", "sending", "acknowledged", "blocked", "uncertain"]),
+    state: Schema.Literals(["queued", "sending", "acknowledged", "blocked"]),
     optimistic: Schema.Boolean,
     attempts: Counter,
     retryFromAttempt: Schema.optional(Counter),
@@ -138,6 +140,7 @@ export const PendingActionSchema = Schema.Struct({
     failureMessage: Schema.optional(Schema.String),
     failureIssues: Schema.optional(Schema.Array(ValidationIssueSchema)),
     completedAt: Schema.optional(Schema.Finite),
+    retryRequiresAcknowledgement: Schema.optional(Schema.Boolean),
     failureOutcome: Schema.optional(Schema.Literals(["not-committed", "unknown"])),
     failureRetryable: Schema.optional(Schema.Boolean),
     receipt: Schema.optional(ActionReceiptSchema),

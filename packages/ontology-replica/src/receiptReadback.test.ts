@@ -433,7 +433,7 @@ test.each([false, true])(
                     const reopened = yield* makeReplica(options);
                     yield* reopened.syncOnce;
                     expect((yield* reopened.pending)[0]).toMatchObject({
-                        state: supportsIdempotency ? "acknowledged" : "uncertain",
+                        state: supportsIdempotency ? "acknowledged" : "blocked",
                         attempts: supportsIdempotency ? 2 : 1,
                     });
                     yield* reopened.syncOnce;

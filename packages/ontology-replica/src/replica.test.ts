@@ -184,7 +184,7 @@ test("ambiguous non-deduplicated actions survive restart without automatic dupli
                 const first = yield* makeReplica(options);
                 yield* first.enqueue({ id: "ambiguous", name: "increment", parameters: {} });
                 expect(Result.isFailure(yield* Effect.result(first.syncOnce))).toBe(true);
-                expect((yield* first.pending)[0]?.state).toBe("uncertain");
+                expect((yield* first.pending)[0]?.state).toBe("blocked");
                 const reopened = yield* makeReplica(options);
                 yield* reopened.syncOnce;
                 expect(dispatches).toBe(1);

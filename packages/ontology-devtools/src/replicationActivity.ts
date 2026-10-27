@@ -53,7 +53,7 @@ export function replicationState(status: ReplicationStatus | undefined, error?: 
     if (status.online === false) return "Offline";
     if (status.syncing) return "Syncing";
     if (status.lastSync?.outcome === "failure") return "Sync failed";
-    if ((status.outbox.blocked ?? 0) + (status.outbox.uncertain ?? 0) > 0) return "Outbox paused";
+    if ((status.outbox.blocked ?? 0) > 0) return "Outbox paused";
     return (status.outbox.acknowledged ?? 0) > 0 ? "Awaiting confirmation" : "Idle";
 }
 

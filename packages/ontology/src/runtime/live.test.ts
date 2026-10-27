@@ -58,7 +58,7 @@ test("LiveOntology persists and restores offline projections, exposes local-only
         })
     );
     await Effect.runPromise(
-        backend.invoke({ id: "seed", name: "rename", parameters: { note: "one", title: "Before" } })
+        backend.storage.transaction((tx) => tx.put("Note", { id: "one", title: "Before" }))
     );
     let online = true;
     const listeners = new Set<(value: boolean) => void>();

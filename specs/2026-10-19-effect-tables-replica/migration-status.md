@@ -18,7 +18,7 @@ covered in [native-actions.md](./native-actions.md).
   source-coordinated snapshots. SQLite and Durable Object paths use this backend.
   Authoritative attachments support inline SQL bytes and external byte stores.
 - **Replica:** confirmed base, optimistic overlay, ordered durable outbox,
-  persisted-only transactional replay and explicit uncertain outcomes. Successful
+  persisted-only transactional replay and explicit unknown outcomes. Successful
   receipts survive local mapping/read-back failure and restart without resubmission.
   Confirmed row publication and optimistic settlement are atomic.
 - **Native action policy:** persisted retry deadlines/budgets, pause/discard-all,
@@ -93,7 +93,7 @@ The current checkpoint is documented in [checkpoint-recovery.md](./checkpoint-re
 The remaining v0 work is provider acceptance and application recovery presentation. Retained replica-state deltas, query IR/IVM, general untrusted remote
 authorization, and advertised/versioned idempotency-window negotiation are not v0
 prerequisites. See [the agreed v0 scope](./recovery-v0.md) for vocabulary, retention
-semantics, and the distinction between generic uncertain outcomes and deferred
+semantics, and the distinction between unknown invocation outcomes and deferred
 idempotency-window tracking. The inventory below also includes post-v0 work.
 
 1. **Protocol hardening.** Retained delta history, general scoped returned-state
@@ -113,11 +113,19 @@ idempotency-window tracking. The inventory below also includes post-v0 work.
    Cipher writes for atomic refresh claims and credential commits. General native
    mutator auto-encryption, generated write types and outbox-parameter protection are
    separate follow-ups.
-4. **Recovery presentation and acceptance.** Engine retry/reconcile/wait APIs now
-   exist; application UX for uncertain/blocked work and independently verified
-   provider receipts remains. Verify cold offline app-shell reload, broader browser /
+4. **Recovery presentation and acceptance.** Devtools renders structured blocked-action
+   errors and explicit unknown-outcome retry/discard acknowledgment. Issue-tracker uses
+   discard-all, catches submission errors in its form and submits corrected input as
+   a new action. Terminal failures use bounded result delivery, not pending outbox
+   entries. Independently verified provider receipts remain. Verify cold offline app-shell reload, broader browser /
    private-mode coverage and multi-client reset recovery. Continue focused subsystem
    review in chat.
+5. **Gateway transport parity.** The sample remote-notes uses native RPC. Streamline's
+   existing finite form workflow still needs dynamic schema/context discovery,
+   server-side default resolution and relationship-based authorization on the native
+   path. Keep the deprecated request/response helpers until these gates pass. See
+   [gateway-v0-parity.md](./gateway-v0-parity.md) for the inspected workflow and
+   deferred untrusted/persistent child replica work.
 
 Native outbox parity, native backend construction/metadata ports, and the current
 blob consolidation/streaming checkpoint are implemented. Attachment follow-ups are

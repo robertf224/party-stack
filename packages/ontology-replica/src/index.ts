@@ -175,6 +175,8 @@ export interface ReplicaService extends OwnedReadTransaction {
         {
             readonly pending?: PendingAction;
             readonly receipt?: ActionReceipt;
+            /** A retained terminal rejection, separate from the pending outbox. */
+            readonly error?: BackendError;
             /** The installed state establishes immediate-parent acceptance. Storage
              * durability and the business completion boundary are source guarantees.
              */
@@ -193,9 +195,17 @@ export interface ReplicaService extends OwnedReadTransaction {
         invocation: ActionInvocation,
         options?: { optimistic?: boolean }
     ) => Effect.Effect<PendingAction, BackendError>;
-    readonly remove: (id: string) => Effect.Effect<void, BackendError>;
+    /** Release handoff bookkeeping only after an owning parent acknowledges removal. */
+    readonly acknowledgeParentRemoval: (id: string) => Effect.Effect<void, BackendError>;
+    readonly remove: (
+        id: string,
+        options?: { allowUnknownOutcome?: boolean }
+    ) => Effect.Effect<void, BackendError>;
     readonly edit: (id: string, invocation: ActionInvocation) => Effect.Effect<void, BackendError>;
-    readonly retry: (id: string, options?: { allowAmbiguous?: boolean }) => Effect.Effect<void, BackendError>;
+    readonly retry: (
+        id: string,
+        options?: { allowUnknownOutcome?: boolean }
+    ) => Effect.Effect<void, BackendError>;
     readonly demand: (
         subset: BackendSubset
     ) => Effect.Effect<void, BackendError, import("effect").Scope.Scope>;
@@ -736,7 +746,22 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         };
     });
     const discardFailedTail = Effect.fnUntraced(function* (tx: Transaction) {
-        for (const candidate of yield* pendingIn(tx)) yield* deletePending(tx, candidate.invocation.id);
+        for (const candidate of yield* pendingIn(tx)) {
+            // Deliver the rejection to waiting clients after removing executable intent.
+            // This uses the same bounded result retention as successful completions.
+            yield* tx.put(completed, candidate.invocation.id, {
+                ...candidate,
+                state: "blocked",
+                completedAt: yield* Clock.currentTimeMillis,
+                failure: candidate.failure ?? "Conflict",
+                failureMessage:
+                    candidate.failureMessage ?? "An earlier action failed; this queued action was discarded.",
+                failureRetryable: candidate.failureRetryable ?? false,
+                failureOutcome:
+                    candidate.failureOutcome ?? (candidate.attempts === 0 ? "not-committed" : "unknown"),
+            });
+            yield* deletePending(tx, candidate.invocation.id);
+        }
         // A subsequent demand must obtain confirmed data again after abandoning local intent.
         for (const row of yield* tx.loadSubset(coverage)) yield* tx.delete(coverage, row.key);
     });
@@ -748,13 +773,17 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     ) {
         // A rejected retry does not resolve an earlier dispatch whose reply was lost.
         const ambiguous = entry.failureOutcome === "unknown" || isUnknownInvocationOutcome(error);
-        const uncertain = ambiguous && !idempotent;
+        const requiresAcknowledgement =
+            ambiguous && (!idempotent || entry.retryRequiresAcknowledgement === true);
         const retry =
-            !uncertain && error.retryable && entry.attempts - (entry.retryFromAttempt ?? 0) <= maxRetries;
+            !requiresAcknowledgement &&
+            error.retryable &&
+            entry.attempts - (entry.retryFromAttempt ?? 0) <= maxRetries;
         const now = yield* Clock.currentTimeMillis;
         const failed: PendingAction = {
             ...entry,
-            state: uncertain ? "uncertain" : retry ? "queued" : "blocked",
+            state: retry ? "queued" : "blocked",
+            retryRequiresAcknowledgement: requiresAcknowledgement,
             failure: error.kind,
             failureMessage: error.message,
             failureIssues: error.issues,
@@ -791,7 +820,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 // Failed replay must not erase evidence of an unresolved remote outcome.
                 const possibleRemoteOutcome =
                     entry.receipt ||
-                    entry.state === "uncertain" ||
+                    entry.retryRequiresAcknowledgement === true ||
                     entry.state === "sending" ||
                     (entry.attempts > 0 &&
                         entry.failure === "Unavailable" &&
@@ -1273,7 +1302,18 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             Effect.gen(function* () {
                 const done = yield* tx.get(completed, entry.invocation.id);
                 if (done) yield* tx.put(completed, entry.invocation.id, { ...done, receipt });
-                else yield* tx.put(outbox, entry.invocation.id, { ...entry, state: "acknowledged", receipt });
+                else
+                    yield* tx.put(outbox, entry.invocation.id, {
+                        ...entry,
+                        state: "acknowledged",
+                        receipt,
+                        failure: undefined,
+                        failureMessage: undefined,
+                        failureIssues: undefined,
+                        failureOutcome: undefined,
+                        failureRetryable: undefined,
+                        retryRequiresAcknowledgement: false,
+                    });
                 if (bindings) yield* bindReceiptBlobs(tx, receipt);
             })
         );
@@ -1297,7 +1337,9 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             }
                             yield* tx.put(outbox, entry.invocation.id, {
                                 ...entry,
-                                state: backend.supportsIdempotency ? "queued" : "uncertain",
+                                state: backend.supportsIdempotency ? "queued" : "blocked",
+                                failureOutcome: "unknown",
+                                retryRequiresAcknowledgement: !backend.supportsIdempotency,
                                 failure: "Unavailable",
                                 failureMessage: "Dispatch was interrupted before its result was recorded.",
                             });
@@ -1397,7 +1439,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         for (;;) {
             const entries = yield* boundary(tables.read(pendingIn));
             const first = entries[0];
-            if (!first || first.state === "blocked" || first.state === "uncertain") return;
+            if (!first || first.state === "blocked") return;
             if (first.nextAttemptAt !== undefined && first.nextAttemptAt > (yield* Clock.currentTimeMillis))
                 return;
             let head: PendingAction = first;
@@ -1677,7 +1719,9 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                         yield* tx.put(outbox, row.invocation.id, {
                                             ...row,
                                             submission: undefined,
-                                            state: unknown ? "uncertain" : row.state,
+                                            state: unknown ? "blocked" : row.state,
+                                            retryRequiresAcknowledgement:
+                                                unknown || row.retryRequiresAcknowledgement,
                                             failure: unknown ? "SessionExpired" : row.failure,
                                             failureOutcome: unknown ? "unknown" : row.failureOutcome,
                                             failureMessage: unknown
@@ -2098,13 +2142,34 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             yield* tx.put(forwarded, entry.invocation.id, entry);
                             yield* deletePending(tx, entry.invocation.id);
                         }
+                        for (const row of yield* tx.loadSubset(forwarded)) {
+                            const observed = snapshot.pending.find(
+                                (entry) => entry.invocation.id === row.key
+                            );
+                            if (
+                                observed &&
+                                Table.make({ name: "invocation" }).encode(observed.invocation) !==
+                                    Table.make({ name: "invocation" }).encode(row.value.invocation)
+                            )
+                                yield* tx.put(forwarded, row.key, {
+                                    ...row.value,
+                                    invocation: observed.invocation,
+                                    requestIdentity: observed.requestIdentity,
+                                });
+                        }
                         for (const entry of snapshot.completed) {
                             const local = yield* tx.get(forwarded, entry.invocation.id);
-                            if (local && entry.receipt) {
+                            if (local && (entry.receipt || entry.failure)) {
                                 yield* tx.put(completed, entry.invocation.id, {
-                                    ...local,
+                                    ...entry,
+                                    requestIdentity:
+                                        Table.make({ name: "invocation" }).encode(entry.invocation) ===
+                                        Table.make({ name: "invocation" }).encode(local.invocation)
+                                            ? local.requestIdentity
+                                            : entry.requestIdentity,
+                                    sequence: local.sequence,
                                     completedAt: yield* Clock.currentTimeMillis,
-                                    state: "acknowledged",
+                                    state: entry.receipt ? "acknowledged" : "blocked",
                                     receipt: entry.receipt,
                                 });
                                 yield* tx.delete(forwarded, entry.invocation.id);
@@ -2119,7 +2184,8 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                     continue;
                                 yield* tx.put(outbox, row.key, {
                                     ...row.value,
-                                    state: "uncertain",
+                                    state: "blocked",
+                                    retryRequiresAcknowledgement: true,
                                     optimistic: false,
                                     failure: "ResultExpired",
                                     failureOutcome: "unknown",
@@ -2264,11 +2330,23 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         const parent = yield* tx.get(imported, "head");
                         const observed =
                             (yield* tx.get(importedPending, id)) ?? (yield* tx.get(importedCompleted, id));
+                        const terminal =
+                            (yield* tx.get(completed, id)) ?? (yield* tx.get(importedCompleted, id));
                         return {
                             pending: (yield* tx.get(outbox, id)) ?? (yield* tx.get(importedPending, id)),
                             receipt:
                                 (yield* tx.get(completed, id))?.receipt ??
                                 (yield* tx.get(importedCompleted, id))?.receipt,
+                            error: terminal?.failure
+                                ? new BackendError({
+                                      operation: "action.wait",
+                                      kind: terminal.failure,
+                                      message: terminal.failureMessage ?? "Action was discarded.",
+                                      retryable: terminal.failureRetryable ?? false,
+                                      invocationOutcome: terminal.failureOutcome,
+                                      issues: terminal.failureIssues,
+                                  })
+                                : undefined,
                             parentAcceptance:
                                 parent && (observed || (yield* tx.get(forwarded, id)))
                                     ? { sourceId: parent.sourceId }
@@ -2292,18 +2370,21 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                 (!options.source && status.pending))
                         )
                             return status.pending?.receipt;
+                        if (status.error) return yield* status.error;
                         const entry = status.pending;
                         if (!entry) return yield* fault("NotFound", "Action is no longer retained.");
-                        if (entry.state === "blocked" || entry.state === "uncertain")
+                        if (entry.state === "blocked")
                             return yield* new BackendError({
                                 operation: "action.wait",
                                 kind: entry.failure ?? "ValidationFailed",
                                 message:
                                     entry.failureMessage ??
-                                    (entry.state === "uncertain"
+                                    (entry.retryRequiresAcknowledgement === true
                                         ? "Remote outcome is unknown; reconcile or explicitly acknowledge a retry."
                                         : "Action is blocked; resolve its cause and retry or remove it."),
-                                retryable: entry.state !== "uncertain" && (entry.failureRetryable ?? false),
+                                retryable: entry.failureRetryable ?? false,
+                                invocationOutcome: entry.failureOutcome,
+                                issues: entry.failureIssues,
                             });
                         yield* pull.pipe(
                             Effect.mapError((cause) =>
@@ -2353,7 +2434,9 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             yield* wake;
             return entry;
         }),
-        remove: (id) =>
+        acknowledgeParentRemoval: (id) =>
+            access(tables.transaction((tx) => tx.delete(forwarded, id))).pipe(Effect.tap(() => notify)),
+        remove: (id, settings) =>
             Effect.suspend(() =>
                 access(
                     tables.transaction((tx) =>
@@ -2361,12 +2444,10 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             const entry = yield* tx.get(outbox, id);
                             if (
                                 entry &&
-                                ((options.source && entry.attempts > 0) ||
-                                    entry.state === "sending" ||
+                                (entry.state === "sending" ||
                                     entry.state === "acknowledged" ||
-                                    entry.state === "uncertain" ||
-                                    (entry.attempts > 0 &&
-                                        entry.failure === "Unavailable" &&
+                                    (!settings?.allowUnknownOutcome &&
+                                        entry.attempts > 0 &&
                                         entry.failureOutcome !== "not-committed"))
                             )
                                 return yield* fault(
@@ -2390,15 +2471,15 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             const entry = yield* tx.get(outbox, id);
                             if (
                                 !entry ||
-                                entry.attempts ||
+                                (entry.attempts > 0 && entry.failureOutcome !== "not-committed") ||
                                 invocation.id !== id ||
                                 entry.state === "sending" ||
                                 entry.state === "acknowledged" ||
-                                entry.state === "uncertain"
+                                entry.retryRequiresAcknowledgement === true
                             )
                                 return yield* fault(
                                     "Conflict",
-                                    "Only undispatched queued actions can be edited."
+                                    "Only queued actions or actions rejected without committing can be edited."
                                 );
                             if (options.blobs)
                                 yield* options.blobs
@@ -2415,6 +2496,13 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                 }).encode(invocation),
                                 state: "queued",
                                 failure: undefined,
+                                failureMessage: undefined,
+                                failureIssues: undefined,
+                                failureOutcome: undefined,
+                                failureRetryable: undefined,
+                                retryRequiresAcknowledgement: false,
+                                nextAttemptAt: undefined,
+                                retryFromAttempt: entry.attempts,
                             });
                             yield* rebase(tx);
                         })
@@ -2434,7 +2522,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             if (entry.receipt || entry.state === "acknowledged") return;
                             if (entry.state === "sending")
                                 return yield* fault("Conflict", "An action is currently being dispatched.");
-                            if (entry.state === "uncertain" && !settings?.allowAmbiguous)
+                            if (entry.retryRequiresAcknowledgement === true && !settings?.allowUnknownOutcome)
                                 return yield* fault(
                                     "Conflict",
                                     "This source cannot deduplicate an ambiguous invocation; explicit retry acknowledgement is required."
@@ -2446,7 +2534,9 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                 nextAttemptAt: undefined,
                                 failure: undefined,
                                 failureMessage: undefined,
+                                failureIssues: undefined,
                                 failureRetryable: undefined,
+                                retryRequiresAcknowledgement: false,
                             });
                             yield* rebase(tx);
                         })

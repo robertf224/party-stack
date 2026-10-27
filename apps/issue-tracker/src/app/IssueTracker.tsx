@@ -18,6 +18,7 @@ import {
     type DragEndEvent,
     type KeyboardCoordinateGetter,
 } from "@dnd-kit/core";
+import { BackendError, type ValidationIssue } from "@party-stack/ontology-backend";
 import { createOntologyDevtoolsPlugin, ontologyDevtoolsTrigger } from "@party-stack/ontology-devtools";
 import { eq, ilike, inArray, or, useLiveQuery } from "@tanstack/react-db";
 import { TanStackDevtools } from "@tanstack/react-devtools";
@@ -783,7 +784,7 @@ function IssueForm({
         assignee?: string;
         issueLabels: string[];
         attachments: IssueAttachment[];
-    }) => void;
+    }) => void | Promise<void>;
 }) {
     const formId = useId();
     const labelsInputId = useId();
@@ -801,18 +802,37 @@ function IssueForm({
             name: `Attachment ${index + 1}`,
         }))
     );
-    function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    const [issues, setIssues] = useState<readonly ValidationIssue[]>([]);
+    const [submissionError, setSubmissionError] = useState<string>();
+    const [submitting, setSubmitting] = useState(false);
+    const fieldError = (name: string) =>
+        issues
+            .filter((issue) => issue.path?.[0] === name)
+            .map((issue) => issue.message)
+            .join(" ");
+    async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (!title.trim()) return;
-        onSave({
-            title: title.trim(),
-            description: description.trim(),
-            status,
-            projectId: projectId || undefined,
-            assignee: assignee || undefined,
-            issueLabels: labels,
-            attachments: attachments.map((item) => item.attachment),
-        });
+        if (!title.trim() || submitting) return;
+        setIssues([]);
+        setSubmissionError(undefined);
+        setSubmitting(true);
+        try {
+            await onSave({
+                title: title.trim(),
+                description: description.trim(),
+                status,
+                projectId: projectId || undefined,
+                assignee: assignee || undefined,
+                issueLabels: labels,
+                attachments: attachments.map((item) => item.attachment),
+            });
+        } catch (error) {
+            if (error instanceof BackendError && error.kind === "ValidationFailed")
+                setIssues(error.issues ?? []);
+            setSubmissionError(error instanceof Error ? error.message : "Could not submit the issue.");
+        } finally {
+            setSubmitting(false);
+        }
     }
 
     return (
@@ -822,11 +842,22 @@ function IssueForm({
                     <span className="mb-1.5 block text-xs font-medium text-slate-600">Title</span>
                     <FormInput
                         id={`${formId}-field-1`}
+                        aria-invalid={Boolean(fieldError("title"))}
+                        aria-describedby={fieldError("title") ? `${formId}-title-error` : undefined}
                         data-dialog-initial-focus
                         onChange={(event) => setTitle(event.target.value)}
                         placeholder="Issue title"
                         value={title}
                     />
+                    {fieldError("title") ? (
+                        <span
+                            id={`${formId}-title-error`}
+                            role="alert"
+                            className="mt-1 block text-sm text-red-600"
+                        >
+                            {fieldError("title")}
+                        </span>
+                    ) : null}
                 </label>
                 <label htmlFor={`${formId}-field-2`} className="block">
                     <span className="mb-1.5 block text-xs font-medium text-slate-600">Description</span>
@@ -855,16 +886,36 @@ function IssueForm({
                         <span className="mb-1.5 block text-xs font-medium text-slate-600">Project</span>
                         <FormSelect
                             id={`${formId}-field-4`}
-                            onChange={(event) => setProjectId(event.target.value)}
+                            aria-label="Project"
+                            aria-invalid={Boolean(fieldError("project"))}
+                            aria-describedby={fieldError("project") ? `${formId}-project-error` : undefined}
+                            onChange={(event) => {
+                                setProjectId(event.target.value);
+                                setIssues((current) =>
+                                    current.filter((issue) => issue.path?.[0] !== "project")
+                                );
+                            }}
                             value={projectId}
                         >
                             <option value="">No project</option>
+                            {projectId && !projects.some((project) => project.projectId === projectId) ? (
+                                <option value={projectId}>Project no longer available</option>
+                            ) : null}
                             {projects.map((project) => (
                                 <option key={project.projectId} value={project.projectId}>
                                     {project.projectTitle}
                                 </option>
                             ))}
                         </FormSelect>
+                        {fieldError("project") ? (
+                            <span
+                                id={`${formId}-project-error`}
+                                role="alert"
+                                className="mt-1 block text-sm text-red-600"
+                            >
+                                {fieldError("project")}
+                            </span>
+                        ) : null}
                     </label>
                     <label htmlFor={`${formId}-field-5`}>
                         <span className="mb-1.5 block text-xs font-medium text-slate-600">Assignee</span>
@@ -894,6 +945,14 @@ function IssueForm({
                         Press Enter or comma to add a label.
                     </span>
                 </div>
+                {submissionError ? (
+                    <div
+                        role="alert"
+                        className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+                    >
+                        {submissionError}
+                    </div>
+                ) : null}
                 <AttachmentPicker
                     actionType={issue ? "updateIssue" : "createIssue"}
                     attachments={attachments}
@@ -903,8 +962,8 @@ function IssueForm({
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
                 <Dialog.Close className={buttonClass}>Cancel</Dialog.Close>
-                <Button className={primaryButtonClass} disabled={!title.trim()} type="submit">
-                    {issue ? "Save issue" : "Create issue"}
+                <Button className={primaryButtonClass} disabled={!title.trim() || submitting} type="submit">
+                    {submitting ? "Submitting…" : issue ? "Save issue" : "Create issue"}
                 </Button>
             </div>
         </form>
@@ -1781,8 +1840,7 @@ function ConnectedIssueTracker({
     const [connectingProfile, setConnectingProfile] = useState(false);
     const activeProfile = profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0]!;
     const ontology = activeProfile.ontology;
-    const { createIssue, deleteIssue, updateIssue, createProject, updateProject, deleteProject } =
-        ontology.actions;
+    const { deleteIssue, updateIssue, createProject, updateProject, deleteProject } = ontology.actions;
     const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId);
     const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
     const [search, setSearch] = useState("");
@@ -1965,7 +2023,7 @@ function ConnectedIssueTracker({
         setCreateIssueOpen(true);
     }
 
-    function saveNewIssue(values: {
+    async function saveNewIssue(values: {
         title: string;
         description: string;
         status: IssueStatus;
@@ -1974,7 +2032,7 @@ function ConnectedIssueTracker({
         issueLabels: string[];
         attachments: IssueAttachment[];
     }) {
-        void createIssue({
+        const parameters = {
             title: values.title,
             description: values.description || null,
             status: values.status,
@@ -1983,8 +2041,12 @@ function ConnectedIssueTracker({
             issueLabels: values.issueLabels,
             attachments: values.attachments,
             completedAt: values.status === "Completed" ? Temporal.Now.instant() : null,
-        }).catch((error: unknown) => {
-            console.error("Failed to create issue", error);
+        };
+        // Online forms await confirmation; discarded rejections still carry field errors.
+        // Offline submissions return after acceptance. Replica owns retry scheduling.
+        await ontology.actions.createIssue(parameters, {
+            mode: navigator.onLine ? "direct" : "outbox",
+            visibility: "optimistic",
         });
         setCreateIssueOpen(false);
     }

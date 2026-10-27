@@ -1,113 +1,163 @@
 import { mkdirSync } from "node:fs";
 import { makeStorageOntologyBackend } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
-import { createRemoteOntologyServer } from "@party-stack/ontology-server/server";
+import { makeOntologyServer, projectOntologyBackend } from "@party-stack/ontology-server";
+import { and, eq, field } from "@party-stack/ontology-storage";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
-import { eq, queryOnce, type Collection } from "@tanstack/db";
 import { createFileRoute } from "@tanstack/react-router";
 import Database from "better-sqlite3";
-import { Effect } from "effect";
+import { Context, Effect, Layer, ManagedRuntime, Schema } from "effect";
 import { notesOntology } from "../ontology/ontology";
-import type { Note, RemoteNotesOntology } from "../ontology/generated/types";
 
-interface NotesContext {
-    user: string;
-}
-
-mkdirSync("temp", { recursive: true });
-const database = new Database("temp/remote-notes.sqlite");
 const namespace = "remote-notes-sqlite";
-
-async function userOwnsNote(opts: {
-    email: string;
-    noteId: string;
-    notes: Collection<Note>;
-}): Promise<boolean> {
-    const note = (await queryOnce((q) =>
-        q
-            .from({ note: opts.notes })
-            .where(({ note }) => eq(note.id, opts.noteId))
-            .select(({ note }) => note)
-            .findOne()
-    )) as unknown as Note | undefined;
-    return note?.ownerEmail === opts.email;
-}
-
-function getDemoEmail(request: Request): string {
-    const queryEmail = new URL(request.url).searchParams.get("user")?.trim();
-    if (queryEmail && queryEmail.includes("@")) return queryEmail;
-    const headerEmail = request.headers.get("x-demo-user-email")?.trim();
-    return headerEmail && headerEmail.includes("@") ? headerEmail : "ada@example.com";
-}
-
-const remoteServer = createRemoteOntologyServer<NotesContext, RemoteNotesOntology>({
-    ir: notesOntology,
-    backendAdapter: {
-        name: namespace,
-        open: (context) =>
-            Effect.gen(function* () {
-                const storage = yield* SQLite.makeStorage(database, { namespace, mode: "authoritative" });
-                return yield* makeStorageOntologyBackend({
-                    ir: notesOntology,
-                    namespace,
-                    context,
-                    ...storage,
-                });
-            }).pipe(
-                Effect.mapError((cause) =>
-                    cause instanceof BackendError
-                        ? cause
-                        : new BackendError({
-                              operation: "sqlite.open",
-                              kind: "Unavailable",
-                              message: "SQLite storage failed.",
-                              retryable: false,
-                              cause,
-                          })
-                )
-            ),
-    },
-    getContext: (request) => ({
-        user: getDemoEmail(request),
-    }),
-    policy: {
-        clientContext: "forward",
-        baseObjectTypeQueries: {
-            Note: ({ ctx, q, collection }) =>
-                q.from({ object: collection }).where(({ object }) => eq(object.ownerEmail, ctx.user)),
-            NoteAttachment: ({ ctx, q, collection }) =>
-                q.from({ object: collection }).where(({ object }) => eq(object.ownerEmail, ctx.user)),
-        },
-        allowedObjectTypeProperties: {
-            Note: ["id", "ownerEmail", "title", "bodyMarkdown", "createdAt", "updatedAt"],
-            NoteAttachment: ["id", "noteId", "ownerEmail", "attachment", "createdAt"],
-        },
-        canApplyAction: async (ctx, request, { objects }) => {
-            switch (request.actionType) {
-                case "createNote":
-                    return true;
-                case "updateNote":
-                case "deleteNote":
-                case "createNoteAttachment": {
-                    const noteId = request.parameters.note;
-                    return userOwnsNote({
-                        email: ctx.user,
-                        noteId,
-                        notes: objects.Note,
-                    });
-                }
-                default:
-                    return false;
-            }
-        },
-    },
+const storage = Effect.gen(function* () {
+    const database = yield* Effect.acquireRelease(
+        Effect.sync(() => {
+            mkdirSync("temp", { recursive: true });
+            return new Database("temp/remote-notes.sqlite");
+        }),
+        (database) => Effect.sync(() => database.close())
+    );
+    return yield* SQLite.makeStorage(database, { namespace, mode: "authoritative" });
 });
+// Demo identity selection only. A production app must authenticate this principal.
+function user(request: Request) {
+    return (
+        new URL(request.url).searchParams.get("user")?.trim() ||
+        request.headers.get("x-demo-user-email")?.trim() ||
+        "ada@example.com"
+    );
+}
+const denied = () =>
+    new BackendError({
+        operation: "authorize",
+        kind: "NotFound",
+        message: "Resource not found.",
+        retryable: false,
+        invocationOutcome: "not-committed",
+    });
 
+// These three demo principals are bounded; a real server binds authenticated
+// principals per request and shares its transfer service within an application scope.
+const makePrincipal = Effect.fnUntraced(function* (
+    native: Effect.Success<typeof storage>,
+    context: { user: string }
+) {
+    const owned = yield* makeStorageOntologyBackend({
+        ir: notesOntology,
+        namespace,
+        context,
+        ...native,
+    });
+    const canReadAttachment = (id: string) =>
+        owned.storage
+            .read((tx) =>
+                tx.loadSubset("NoteAttachment", {
+                    where: and(eq(field("ownerEmail"), context.user), eq(field("attachment", "id"), id)),
+                    limit: 1,
+                })
+            )
+            .pipe(Effect.map((rows) => rows.length > 0));
+    const attachments = owned.attachments && {
+        ...owned.attachments,
+        read: (value: Parameters<NonNullable<typeof owned.attachments>["read"]>[0]) =>
+            Effect.gen(function* () {
+                if (!(yield* canReadAttachment(value.id))) return yield* denied();
+                return yield* owned.attachments!.read(value);
+            }),
+        metadata: (value: Parameters<NonNullable<typeof owned.attachments>["metadata"]>[0]) =>
+            Effect.gen(function* () {
+                if (!(yield* canReadAttachment(value.id))) return yield* denied();
+                return yield* owned.attachments!.metadata(value);
+            }),
+    };
+    const view = projectOntologyBackend({
+        backend: owned,
+        ir: notesOntology,
+        context,
+        policy: {
+            clientContext: "forward",
+            baseObjectTypeQueries: {
+                Note: eq(field("ownerEmail"), context.user),
+                NoteAttachment: eq(field("ownerEmail"), context.user),
+            },
+            allowedObjectTypeProperties: Object.fromEntries(
+                notesOntology.objectTypes.map((type) => [
+                    type.name,
+                    type.properties.map((property) => property.name),
+                ])
+            ),
+            canApplyAction: (name, parameters) =>
+                name === "createNote"
+                    ? Effect.succeed(true)
+                    : owned.storage
+                          .read((tx) => tx.get("Note", String(parameters.note)))
+                          .pipe(Effect.map((note) => note?.ownerEmail === context.user)),
+        },
+    });
+    const { handleRequest: serve } = yield* makeOntologyServer({
+        kind: "proxy",
+        ir: view.ir,
+        backend: {
+            ...view.backend,
+            sourceId: `/api/remote-ontology/:${context.user}`,
+            attachments,
+        },
+        authorize: (operation) =>
+            [
+                "Describe",
+                "LoadSubset",
+                "Invoke",
+                "ValidateAction",
+                "CreateAttachment",
+                "ReadAttachment",
+                "AttachmentMetadata",
+            ].includes(operation.operation)
+                ? Effect.void
+                : Effect.fail(denied()),
+    });
+    return { serve, attachments };
+});
+const acquire = Effect.gen(function* () {
+    const native = yield* storage;
+    const servers = new Map<string, Effect.Success<ReturnType<typeof makePrincipal>>>();
+    for (const email of ["ada@example.com", "grace@example.com", "linus@example.com"])
+        servers.set(email, yield* makePrincipal(native, { user: email }));
+    return servers;
+});
+class Persistence extends Context.Service<Persistence, Effect.Success<typeof acquire>>()(
+    "remote-notes/Persistence"
+) {}
+const runtime = ManagedRuntime.make(Layer.effect(Persistence, acquire));
+if (import.meta.hot) import.meta.hot.dispose(() => runtime.dispose());
+
+async function handleRequest(request: Request): Promise<Response> {
+    const server = (await runtime.runPromise(Persistence)).get(user(request));
+    if (!server) return new Response("Not found.", { status: 404 });
+    const path = new URL(request.url).pathname.replace(/\/+$/, "");
+    // Return the stream immediately: uploads send a ready event before chunk calls.
+    if (path.endsWith("/rpc")) return server.serve(request);
+    if (!path.endsWith("/attachment-content")) return new Response("Not found.", { status: 404 });
+    // Stable Markdown content URLs remain a finite read with the same row policy.
+    return runtime.runPromise(
+        Effect.gen(function* () {
+            const input = yield* Schema.decodeUnknownEffect(
+                Schema.fromJsonString(
+                    Schema.Struct({ attachment: Schema.Struct({ id: Schema.NonEmptyString }) })
+                )
+            )(new URL(request.url).searchParams.get("attachment") ?? "").pipe(
+                Effect.mapError(() => denied())
+            );
+            if (!server.attachments) return yield* denied();
+            return new Response(yield* server.attachments.read(input.attachment));
+        }).pipe(Effect.catch(() => Effect.succeed(new Response("Not found.", { status: 404 }))))
+    );
+}
 export const Route = createFileRoute("/api/remote-ontology/$endpoint")({
     server: {
         handlers: {
-            POST: ({ request }) => remoteServer.handleRequest(request),
-            GET: ({ request }) => remoteServer.handleRequest(request),
+            POST: ({ request }) => handleRequest(request),
+            GET: ({ request }) => handleRequest(request),
         },
     },
 });

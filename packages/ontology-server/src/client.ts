@@ -81,6 +81,7 @@ function fromRemoteActionValidation(
     };
 }
 
+/** @deprecated Use makeOntologyServer / connectOntologyBackendHttp with scoped native backends. */
 export function createRemoteOntologyBackendAdapter(
     opts: CreateRemoteOntologyBackendAdapterOptions
 ): OntologyBackendAdapter {
@@ -105,6 +106,7 @@ export function createRemoteOntologyBackendAdapter(
     };
 }
 
+/** @deprecated Use makeOntologyServer / connectOntologyBackendHttp with scoped native backends. */
 export function createRemoteOntologyBackend<
     Context extends Record<string, unknown> = Record<string, unknown>,
 >(opts: CreateRemoteOntologyBackendOptions<Context>): OntologyBackendAdapterProvider<Context> {

@@ -474,6 +474,7 @@ describe("SQLite LiveOntology MVP acceptance", () => {
                 }),
         });
 
+        await ontology.actions.createAuthor!({ id: "author-1", email: "alice@example.com" });
         await ontology.actions.createNote!({
             id: "note-1",
             title: "Before",

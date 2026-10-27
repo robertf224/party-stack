@@ -141,6 +141,7 @@ async function postBlob(
     return response.blob();
 }
 
+/** @deprecated Use makeOntologyServer / connectOntologyBackendHttp with scoped native backends. */
 export function createHttpRemoteOntologyTransport(
     opts: HttpRemoteOntologyTransportOptions
 ): ResolvableRemoteOntologyTransport {

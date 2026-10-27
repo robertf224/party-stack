@@ -31,27 +31,24 @@ const toEntry = (entry: PendingAction, forwarding = false): OntologyOutboxEntry 
         idempotencyKey: entry.invocation.id,
     },
     visibility: entry.optimistic ? "optimistic" : "confirmed",
-    status:
-        entry.state === "blocked" || entry.state === "uncertain"
-            ? "failed"
-            : !forwarding && (entry.state === "sending" || entry.state === "acknowledged")
-              ? "executing"
-              : "queued",
+    status: entry.state,
     createdAt: entry.createdAt,
     updatedAt: entry.createdAt,
     attempts: entry.attempts,
     attemptStage: forwarding ? "forwarding" : "execution",
-    retryable: entry.state !== "uncertain" && (entry.failureRetryable ?? true),
+    retryable: entry.failureRetryable ?? true,
+    retryRequiresAcknowledgement: entry.retryRequiresAcknowledgement,
     nextAttemptAt: entry.nextAttemptAt ?? 0,
     lastError: entry.failure
-        ? {
-              name: entry.state === "uncertain" ? "AmbiguousInvocation" : entry.failure,
+        ? new BackendError({
+              operation: "invoke",
+              kind: entry.failure,
               message:
-                  entry.failureMessage ??
-                  (entry.state === "uncertain"
-                      ? "The remote outcome is unknown. Check it before retrying."
-                      : "Action is waiting for retry or reconciliation."),
-          }
+                  entry.failureMessage ?? "Action is blocked; resolve its cause and retry or discard it.",
+              retryable: entry.failureRetryable ?? false,
+              invocationOutcome: entry.failureOutcome,
+              issues: entry.failureIssues,
+          })
         : undefined,
 });
 const actionResult = (receipt: ActionReceipt): OntologyApplyActionResult => ({
@@ -218,7 +215,24 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
             const result = await enqueue(request, settings?.visibility);
             return { ...result, completed: result.completed as Promise<A> };
         },
-        remove: (id) => run(command(id, (target) => target.remove(id))),
+        remove: (id, settings) =>
+            run(
+                control(id).pipe(
+                    Effect.flatMap((target) =>
+                        target
+                            .remove(id, settings)
+                            .pipe(
+                                Effect.andThen(
+                                    target === replica
+                                        ? Effect.void
+                                        : replica
+                                              .acknowledgeParentRemoval(id)
+                                              .pipe(Effect.andThen(replica.syncOnce))
+                                )
+                            )
+                    )
+                )
+            ),
         reconcile: (id, receipt) => run(command(id, (target) => target.reconcile(id, receipt))),
         retry: (id, settings) => run(command(id, (target) => target.retry(id, settings))),
         wait: <A>(id: string, settings?: { until?: "accepted" | "confirmed"; signal?: AbortSignal }) =>

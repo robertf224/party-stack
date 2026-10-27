@@ -18,6 +18,7 @@ import { migrateLinkMetadata } from "./migrateLinkMetadata";
 const writes = {
     defaultMode: "outbox" as const,
     defaultVisibility: "optimistic" as const,
+    outbox: { failureStrategy: "discard-all" as const },
 };
 
 function requiredEnv(name: string, value: string | undefined): string {

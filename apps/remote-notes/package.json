@@ -11,6 +11,7 @@
         "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-devtools": "workspace:*",
         "@party-stack/ontology-server": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/sql-ontology-storage": "workspace:*",
         "@party-stack/web-runtime": "workspace:*",
         "@tanstack/db": "0.14.0",

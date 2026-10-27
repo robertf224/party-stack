@@ -345,3 +345,56 @@ test.skipIf(!url)("navigation preserves the devtools panel, selected tab and tra
         await context.close();
     }
 });
+
+test.skipIf(!url)(
+    "a deleted project produces a field error, discards the queue, and lets the form resubmit",
+    async () => {
+        const context = await browser.newContext({ ignoreHTTPSErrors: true });
+        const project = `Validation project ${crypto.randomUUID().slice(0, 8)}`;
+        const title = `Validation issue ${crypto.randomUUID().slice(0, 8)}`;
+        try {
+            const first = await context.newPage();
+            await first.goto(url!);
+            await visible(first, "heading", "Connect profile");
+            await first.getByRole("button", { name: "Connect", exact: true }).click();
+            await visible(first, "button", "New issue");
+            await first.getByRole("button", { name: "Create project", exact: true }).click();
+            const projectForm = first.getByRole("dialog", { name: "Create project", exact: true });
+            await projectForm.getByLabel("Project name", { exact: true }).fill(project);
+            await projectForm.getByRole("button", { name: "Create project", exact: true }).click();
+            await visible(first, "button", project);
+            const second = await context.newPage();
+            await second.goto(url!);
+            await visible(second, "button", project);
+            await first.getByRole("button", { name: "New issue", exact: true }).click();
+            const form = first.getByRole("dialog", { name: "Create issue", exact: true });
+            await form.getByLabel("Title", { exact: true }).fill(title);
+            await form.getByLabel("Project", { exact: true }).selectOption({ label: project });
+            await second.getByRole("button", { name: project, exact: true }).click({ button: "right" });
+            await second.getByRole("menuitem", { name: "Delete project", exact: true }).click();
+            await expect
+                .poll(() => second.getByRole("button", { name: project, exact: true }).count())
+                .toBe(0);
+            await form.getByRole("button", { name: "Create issue", exact: true }).click();
+            await expect
+                .poll(() => form.getByLabel("Project", { exact: true }).getAttribute("aria-invalid"))
+                .toBe("true");
+            expect(await form.getByRole("alert").allTextContents()).toContain("Choose a valid value.");
+            await second.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
+            await second.getByRole("tab", { name: /^Outbox/ }).click();
+            await expect
+                .poll(() => second.getByText("Queue is clear", { exact: true }).isVisible())
+                .toBe(true);
+            await form.getByLabel("Project", { exact: true }).selectOption("");
+            await form.getByRole("button", { name: "Create issue", exact: true }).click();
+            await expect.poll(() => form.count()).toBe(0);
+            await first.getByPlaceholder("Search issues").fill(title);
+            await visible(first, "button", new RegExp(title));
+            await expect
+                .poll(() => second.getByText("Queue is clear", { exact: true }).isVisible())
+                .toBe(true);
+        } finally {
+            await context.close();
+        }
+    }
+);

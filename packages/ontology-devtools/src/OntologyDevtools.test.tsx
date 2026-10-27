@@ -263,10 +263,10 @@ describe("getOutboxActivity", () => {
         expect(getOutboxActivity([])).toBe("idle");
         expect(getOutboxActivity([entry()])).toBe("draining");
         expect(getOutboxActivity([entry({ nextAttemptAt: Date.now() + 60_000 })])).toBe("draining");
-        expect(getOutboxActivity([entry({ status: "executing" })])).toBe("draining");
+        expect(getOutboxActivity([entry({ status: "sending" })])).toBe("draining");
         expect(
             getOutboxActivity([
-                entry({ id: "blocked", sequence: 1, status: "failed" }),
+                entry({ id: "blocked", sequence: 1, status: "blocked" }),
                 entry({ id: "behind", sequence: 2 }),
             ])
         ).toBe("paused");
@@ -282,4 +282,46 @@ describe("moveColumn", () => {
             "third",
         ]);
     });
+});
+
+it("shows field paths and unknown outcomes in the outbox error display", async () => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { createElement } = await import("react");
+    const { BackendError } = await import("@party-stack/ontology-backend");
+    const { OutboxEntryCard } = await import("./OntologyDevtools.js");
+    const markup = renderToStaticMarkup(
+        createElement(OutboxEntryCard, {
+            entry: {
+                id: "example",
+                sequence: 1,
+                status: "blocked",
+                createdAt: 0,
+                updatedAt: 0,
+                attempts: 1,
+                retryable: false,
+                nextAttemptAt: 0,
+                request: { actionTypeName: "createIssue", idempotencyKey: "example", parameters: {} },
+                lastError: new BackendError({
+                    operation: "invoke",
+                    kind: "ValidationFailed",
+                    message: "Submission failed validation.",
+                    retryable: false,
+                    invocationOutcome: "not-committed",
+                    issues: [
+                        {
+                            path: ["project"],
+                            code: "InvalidObjectReference",
+                            message: "Choose a valid value.",
+                        },
+                    ],
+                }),
+            },
+            outbox: {} as import("@party-stack/ontology").OntologyOutbox,
+            now: 0,
+        })
+    );
+    expect(markup).toContain("ValidationFailed");
+    expect(markup).toContain("project");
+    expect(markup).toContain("Choose a valid value.");
+    expect(markup).toContain("Blocked");
 });

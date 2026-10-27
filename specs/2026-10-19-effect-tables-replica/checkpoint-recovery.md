@@ -46,3 +46,35 @@ Known follow-up: TanStack can log dependent-query cleanup warnings during pagehi
 while React consumers are still mounted. Scoped resources close and browser recovery
 passes; review UI unmount versus DbClient disposal order separately. This checkpoint
 does not claim general protocol-child GC or untrusted replica-state authorization.
+
+## Application recovery and gateway inspection
+
+LiveOntology outbox status preserves queued/sending/acknowledged/blocked. Unknown
+invocation outcome is carried on the structured error, not a second uncertain
+lifecycle state. Devtools shows issue paths/codes and asks for explicit acknowledgment
+before unsafe retry/discard. Paused rejected actions can be corrected; parent edits
+and acknowledged removal keep child handoff records consistent.
+
+Issue-tracker uses discard-all. Its online create-issue form awaits the ordinary
+action call, catches field issues and leaves the form open. Terminal rejection removes
+pending intent/overlay; bounded completed-result storage delivers the error across
+the SharedWorker boundary. Corrected input submits a new invocation. Owned actions
+validate declared object references in the commit transaction, covering deletion
+between preflight and submit. See [outbox recovery examples](../../packages/ontology/outbox-recovery.md).
+
+Remote-notes now uses native Effect RPC over HTTP, scoped backend ownership, row
+projection and authorized finite Markdown attachment reads. It acquires its client
+resource after mounting rather than during a suspended render. Collection cleanup
+waits for already-unloaded demand releases before storage can close.
+
+Browser acceptance passes five cases, including a project deleted in another tab,
+field-error delivery, queue discard and successful corrected submission. Manual
+Foundry acceptance verified sign-in, issue creation, status change and a clear outbox;
+native remote-notes creation, autosave/navigation and Ada/Grace row isolation also
+passed. The notes endpoint additionally passed attachment staging/streamed read,
+stable Markdown content reads, concurrent duplicate invocation and cross-user denial
+checks. Servers live in the application scope so upload response streams can deliver
+ready events and share transfer state with subsequent chunk calls. This does not establish Salesforce live acceptance or exhaustive provider
+recovery. Gateway was inspected read-only; its native transport migration remains
+gated by [gateway-v0-parity.md](./gateway-v0-parity.md), including dynamic discovery,
+server parameter resolution and relationship-based authorization.

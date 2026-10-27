@@ -115,7 +115,7 @@ const HelperRpcs = RpcGroup.make(
                 operation: Schema.Literals(["remove", "retry", "edit", "reconcile"]),
                 id: Schema.NonEmptyString,
                 invocation: Schema.optional(ActionInvocationSchema),
-                allowAmbiguous: Schema.optional(Schema.Boolean),
+                allowUnknownOutcome: Schema.optional(Schema.Boolean),
                 receipt: Schema.optional(ActionReceiptSchema),
             })
         ),
@@ -354,10 +354,16 @@ export const ontologyOperationHandlers = <R>(
                         return yield* missing("matching receipt");
                     yield* attempt(() => ontology.outbox.reconcile(request.id, request.receipt!));
                 } else if (request.operation === "remove")
-                    yield* attempt(() => ontology.outbox.remove(request.id));
+                    yield* attempt(() =>
+                        ontology.outbox.remove(request.id, {
+                            allowUnknownOutcome: request.allowUnknownOutcome,
+                        })
+                    );
                 else
                     yield* attempt(() =>
-                        ontology.outbox.retry(request.id, { allowAmbiguous: request.allowAmbiguous })
+                        ontology.outbox.retry(request.id, {
+                            allowUnknownOutcome: request.allowUnknownOutcome,
+                        })
                     );
             }),
         ReplicaStatus: (_, context) =>
@@ -632,10 +638,21 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
         outbox: {
             reconcile: (id, receipt) =>
                 client.ControlOutbox({ operation: "reconcile", id, receipt }).pipe(Effect.mapError(failure)),
-            remove: (id) => client.ControlOutbox({ operation: "remove", id }).pipe(Effect.mapError(failure)),
+            remove: (id, settings) =>
+                client
+                    .ControlOutbox({
+                        operation: "remove",
+                        id,
+                        allowUnknownOutcome: settings?.allowUnknownOutcome,
+                    })
+                    .pipe(Effect.mapError(failure)),
             retry: (id, settings) =>
                 client
-                    .ControlOutbox({ operation: "retry", id, allowAmbiguous: settings?.allowAmbiguous })
+                    .ControlOutbox({
+                        operation: "retry",
+                        id,
+                        allowUnknownOutcome: settings?.allowUnknownOutcome,
+                    })
                     .pipe(Effect.mapError(failure)),
             edit: (id, invocation) =>
                 client.ControlOutbox({ operation: "edit", id, invocation }).pipe(Effect.mapError(failure)),

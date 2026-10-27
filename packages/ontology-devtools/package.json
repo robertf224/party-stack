@@ -36,6 +36,7 @@
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/ontology-backend": "workspace:*",
         "@tailwindcss/postcss": "^4.1.17",
         "@tanstack/db": "0.14.0",
         "@tanstack/react-db": "0.5.9",

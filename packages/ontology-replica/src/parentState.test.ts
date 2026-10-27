@@ -217,7 +217,7 @@ test("a protocol source without keyed idempotency pauses an ambiguous submission
                 };
                 yield* child.enqueue(invocation("B", 1));
                 expect((yield* Effect.result(child.syncParent(source)))._tag).toBe("Failure");
-                expect((yield* child.pending)[0]?.state).toBe("uncertain");
+                expect((yield* child.pending)[0]?.state).toBe("blocked");
                 yield* child.syncParent(source);
                 expect(effects).toBe(1);
                 expect((yield* Effect.result(child.retry("B")))._tag).toBe("Failure");
