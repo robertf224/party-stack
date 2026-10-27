@@ -88,6 +88,13 @@ covered in [native-actions.md](./native-actions.md).
 
 ## What remains, in recommended order
 
+The [October 27 incremental-state proposal](./incremental-state-proposal.md)
+describes scoped browser composition, shared incoming-state installation,
+bounded selected-state diffs, protocol-child GC/blobs and the later query-IVM
+extension. These are proposed changes, not implemented capabilities. The new
+`apps/website` embeds this same document in its Fumadocs design section so it can
+be reviewed alongside the current architecture/runtime/storage documentation.
+
 Recovery and bounded bookkeeping now use the existing selected-snapshot protocol.
 The current checkpoint is documented in [checkpoint-recovery.md](./checkpoint-recovery.md).
 The remaining v0 gates are finishing the streaming/recovery acceptance checkpoint,

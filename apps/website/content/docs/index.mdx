@@ -1,0 +1,46 @@
+---
+title: Party Stack
+description: An ontology-aware stack for local interaction and connected data.
+---
+
+Party Stack brings together domain definitions, storage, optimistic actions,
+replication, and application collections. Its infrastructure uses Effect for
+services, errors, and scoped lifetimes. TanStack DB is an application query layer
+over the replica.
+
+This project is in **early development**. The documentation describes the current
+migration branch. Design pages explicitly mark proposals that have not been
+implemented.
+
+## Start with the concepts
+
+- [Architecture](/docs/architecture): what the backend, replica, and server each own.
+- [Browser runtimes](/docs/runtimes): persistent workers and memory tab replicas.
+- [Storage and attachments](/docs/storage): transactions, byte streams, and retention.
+- [Replication proposal](/docs/design/replication): incremental updates, shared installation,
+  protocol-child GC, and the path to query IVM.
+
+## Follow a write
+
+1. An application applies an action, such as changing an issue's status.
+2. The local replica records it in its outbox and computes an optimistic overlay.
+3. The replica forwards the action upstream. A persistent intermediate can accept
+   it durably before the authoritative backend finishes.
+4. An authoritative result is reconciled with the base rows. Removing the settled
+   local prediction and publishing the new view happen transactionally.
+
+The normal UI can respond optimistically while the action's completion Promise
+waits for confirmation. Offline action replay reads persisted data; replay does
+not trigger remote query loads.
+
+## Effect in this stack
+
+A **service** is an interface available through an Effect context, such as Runtime.
+A **Layer** constructs services and supplies their dependencies. A **Scope** owns
+their lifetime: closing it interrupts fibers and releases acquired resources.
+
+See Effect's guides to [services](https://effect.website/docs/v4/requirements-management/services/),
+[layers](https://effect.website/docs/v4/requirements-management/layers/), and
+[scoped resources](https://effect.website/docs/v4/resource-management/scope/).
+The higher application API can expose ordinary collections and Promises while
+the infrastructure uses scoped Effects underneath.

@@ -1,0 +1,56 @@
+---
+title: Storage and attachments
+description: One transactional metadata store, composed with a platform byte service.
+---
+
+## Tables
+
+`ontology-storage` supplies row transactions and subset queries. Memory,
+IndexedDB, and SQL implementations support the common interface. IndexedDB uses
+user-space indexes and a subset planner; SQLite and PostgreSQL push supported
+predicates and ordering into the database.
+
+The SQL implementation currently uses a shared-row/JSON layout. Native application
+columns and general schema migrations are future work.
+
+## Attachment metadata and bytes
+
+Blob metadata, aliases, reverse references, retention roots, and write/delete
+intents share the transactional table store. External bytes can live in OPFS,
+files, or object storage. A byte service reads, writes, and deletes immutable
+storage keys using byte streams.
+
+External IO cannot participate in a SQL or IndexedDB transaction. Durable intents
+and generation checks make interrupted writes/deletes recoverable. Metadata is
+published only after successful byte completion. Outbox roots and scoped readers
+protect bytes while they are needed.
+
+## End-developer API
+
+```ts
+const { attachment } = await ontology.attachments.create(file);
+const source = await ontology.attachments.source(attachment);
+```
+
+Creation accepts Blob/File and streaming inputs. A streaming input carries
+optional size, media type, and name. Unknown-length streams are supported;
+resumable uploads and range caches remain future work.
+
+## Browser placement today
+
+In issue-tracker, tab attachment operations delegate to the SharedWorker over RPC.
+The worker manages durable staging, upload, and cached bytes. The tab does not have
+an independent durable attachment cache.
+
+## Garbage collection
+
+Adapter-backed replicas use an age-based bounded mark-and-sweep for rows. Demand,
+explicit pins, and pending-action dependencies are retention roots. Blob identity
+retention and byte retention can differ, so cached remote bytes can be evicted
+without losing an attachment's identity.
+
+Protocol children currently require row GC disabled and no independent blob
+service. Their selected snapshots still replace old imported membership, and
+action/session history has separate bounded retention. Supporting independent
+persistent protocol children is part of the
+[replication proposal](/docs/design/replication).
