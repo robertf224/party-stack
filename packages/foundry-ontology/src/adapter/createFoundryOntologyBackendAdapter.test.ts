@@ -85,6 +85,52 @@ describe("isFoundryNotFoundError", () => {
     });
 });
 
+it("delivers action 404 reference details through native apply and validation", async () => {
+    const adapter = createFoundryOntologyBackendAdapter({
+        client: { ontologyRid: "ontology" } as OntologyClient,
+        watch: false,
+        ir: {
+            types: [],
+            objectTypes: [],
+            linkTypes: [],
+            queryFunctionTypes: [],
+            actionTypes: [
+                {
+                    name: "create",
+                    displayName: "Create",
+                    logic: [],
+                    parameters: [
+                        {
+                            name: "project",
+                            displayName: "Project",
+                            type: o.objectReference({ objectType: "Project" }),
+                        },
+                    ],
+                },
+            ],
+        },
+    });
+    ontologyMocks.applyWithOverrides.mockRejectedValue(
+        Object.assign(new Error("Failed to fetch: 404"), {
+            statusCode: 404,
+            errorName: "ActionParameterObjectNotFound",
+            parameters: { parameterId: "project" },
+        })
+    );
+    const error = {
+        kind: "ValidationFailed",
+        invocationOutcome: "not-committed",
+        issues: [{ path: ["project"], code: "InvalidObjectReference" }],
+    };
+    await expect(applyNative(adapter, "create", { project: "deleted" }, {})).rejects.toMatchObject(error);
+    await expect(
+        Effect.runPromise(
+            adapter.validateAction!("create", { project: "deleted" }, { objects: {}, context: {} })
+        )
+    ).rejects.toMatchObject(error);
+    expect(ontologyMocks.applyWithOverrides).toHaveBeenCalledTimes(2);
+});
+
 describe("Foundry action execution time overrides", () => {
     const adapter = createFoundryOntologyBackendAdapter({
         client: {

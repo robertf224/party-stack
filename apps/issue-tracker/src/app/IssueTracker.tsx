@@ -853,7 +853,7 @@ function IssueForm({
                         <span
                             id={`${formId}-title-error`}
                             role="alert"
-                            className="mt-1 block text-sm text-red-600"
+                            className="form-error-text mt-1 block text-sm"
                         >
                             {fieldError("title")}
                         </span>
@@ -911,7 +911,7 @@ function IssueForm({
                             <span
                                 id={`${formId}-project-error`}
                                 role="alert"
-                                className="mt-1 block text-sm text-red-600"
+                                className="form-error-text mt-1 block text-sm"
                             >
                                 {fieldError("project")}
                             </span>
@@ -945,25 +945,26 @@ function IssueForm({
                         Press Enter or comma to add a label.
                     </span>
                 </div>
-                {submissionError ? (
-                    <div
-                        role="alert"
-                        className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700"
-                    >
-                        {submissionError}
-                    </div>
-                ) : null}
                 <AttachmentPicker
                     actionType={issue ? "updateIssue" : "createIssue"}
                     attachments={attachments}
                     onChange={setAttachments}
                     ontology={ontology}
                 />
+                {submissionError ? (
+                    <div
+                        role="alert"
+                        data-testid="issue-form-error"
+                        className="form-error rounded border p-3 text-sm"
+                    >
+                        {submissionError}
+                    </div>
+                ) : null}
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
                 <Dialog.Close className={buttonClass}>Cancel</Dialog.Close>
                 <Button className={primaryButtonClass} disabled={!title.trim() || submitting} type="submit">
-                    {submitting ? "Submitting…" : issue ? "Save issue" : "Create issue"}
+                    {submitting ? (issue ? "Saving…" : "Creating…") : issue ? "Save issue" : "Create issue"}
                 </Button>
             </div>
         </form>

@@ -380,6 +380,12 @@ test.skipIf(!url)(
                 .poll(() => form.getByLabel("Project", { exact: true }).getAttribute("aria-invalid"))
                 .toBe("true");
             expect(await form.getByRole("alert").allTextContents()).toContain("Choose a valid value.");
+            const errorCard = form.getByTestId("issue-form-error");
+            const attachmentButton = await form
+                .getByRole("button", { name: "Attach files", exact: true })
+                .boundingBox();
+            const errorBounds = await errorCard.boundingBox();
+            expect(errorBounds!.y).toBeGreaterThanOrEqual(attachmentButton!.y + attachmentButton!.height);
             await second.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
             await second.getByRole("tab", { name: /^Outbox/ }).click();
             await expect

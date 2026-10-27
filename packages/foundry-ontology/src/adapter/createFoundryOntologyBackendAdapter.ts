@@ -28,6 +28,7 @@ import { getFoundryAttachmentKind } from "../meta/foundryAttachmentMetadata.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import { makeFoundryBackend } from "./backend.js";
 import { makeFoundryEncryptedValues } from "./encrypted.js";
+import { foundryActionError } from "./foundryActionError.js";
 import {
     getFoundryValidationIssues,
     loadFoundrySubmissionCriteria,
@@ -387,13 +388,7 @@ export function createFoundryOntologyBackendAdapter(
                 }
             );
         } catch (error) {
-            if (isFoundryNotFoundError(error)) {
-                throw new NonRetryableError(
-                    error instanceof Error ? error.message : "Foundry action target was not found.",
-                    { cause: error }
-                );
-            }
-            throw error;
+            throw foundryActionError("foundry.invoke", error, opts.ir, name, parameters);
         }
         if (result.validation?.result === "INVALID") {
             throw new BackendError({
@@ -548,7 +543,8 @@ export function createFoundryOntologyBackendAdapter(
         ) {
             const invocation = yield* Effect.try({
                 try: () => prepareFoundryActionInvocation({ ir: opts.ir, name, parameters, codec }),
-                catch: (cause) => classifyBackendFailure("foundry.validateAction", cause),
+                catch: (cause) =>
+                    foundryActionError("foundry.validateAction", cause, opts.ir, name, parameters),
             });
             const result = yield* Effect.tryPromise({
                 try: () =>
@@ -565,7 +561,8 @@ export function createFoundryOntologyBackendAdapter(
                         },
                         { preview: true }
                     ),
-                catch: (cause) => classifyBackendFailure("foundry.validateAction", cause),
+                catch: (cause) =>
+                    foundryActionError("foundry.validateAction", cause, opts.ir, name, parameters),
             });
             if (!result.validation)
                 return yield* new BackendError({
@@ -637,7 +634,8 @@ export function createFoundryOntologyBackendAdapter(
                         parameters,
                         knownParameters,
                     }),
-                catch: (cause) => classifyBackendFailure("foundry.validateActionDraft", cause),
+                catch: (cause) =>
+                    foundryActionError("foundry.validateActionDraft", cause, opts.ir, name, parameters),
             });
         }),
         attachments,

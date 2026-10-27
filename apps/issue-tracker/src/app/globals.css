@@ -9,6 +9,9 @@
     --surface-raised: #ffffff;
     --surface-overlay: #ffffff;
     --surface-border: #e2e8f0;
+    --error-background: #fff1f2;
+    --error-border: #fecdd3;
+    --error-text: #9f1239;
 }
 
 body {
@@ -52,6 +55,16 @@ select {
 
 .surface-base {
     background-color: var(--surface-base);
+}
+
+.form-error {
+    background-color: var(--error-background);
+    border-color: var(--error-border);
+    color: var(--error-text);
+}
+
+.form-error-text {
+    color: var(--error-text);
 }
 
 .surface-sunken {
@@ -149,6 +162,9 @@ select {
         --surface-raised: #1a1e27;
         --surface-overlay: #222833;
         --surface-border: #334155;
+        --error-background: #2b151c;
+        --error-border: #6b2638;
+        --error-text: #fda4af;
     }
 
     ::selection {
