@@ -8,7 +8,7 @@ import {
     encryptedPropertyCodec,
 } from "@party-stack/ontology-backend";
 import {
-    ActionInvocationSchema,
+    ActionRequestSchema,
     BackendSubsetCodec,
     protocolValueCodec,
 } from "@party-stack/ontology-backend/protocol";
@@ -75,8 +75,8 @@ const HelperRpcs = RpcGroup.make(
         success: protocolValueCodec(BackendChangePageSchema),
         error: BackendError,
     }),
-    Rpc.make("Invoke", {
-        payload: protocolValueCodec(ActionInvocationSchema),
+    Rpc.make("ApplyAction", {
+        payload: protocolValueCodec(ActionRequestSchema),
         success: ActionReceiptSchema,
         error: BackendError,
     }),
@@ -119,7 +119,7 @@ const HelperRpcs = RpcGroup.make(
             Schema.Struct({
                 operation: Schema.Literals(["remove", "retry", "edit", "reconcile"]),
                 id: Schema.NonEmptyString,
-                invocation: Schema.optional(ActionInvocationSchema),
+                invocation: Schema.optional(ActionRequestSchema),
                 allowUnknownOutcome: Schema.optional(Schema.Boolean),
                 receipt: Schema.optional(ActionReceiptSchema),
             })
@@ -144,8 +144,8 @@ export type OntologyOperationRequest =
           readonly subset: import("@party-stack/ontology-backend").BackendSubset;
       }
     | {
-          readonly operation: "Invoke";
-          readonly invocation: import("@party-stack/ontology-backend").ActionInvocation;
+          readonly operation: "ApplyAction";
+          readonly invocation: import("@party-stack/ontology-backend").ActionRequest;
       }
     | {
           readonly operation: "Decrypt";
@@ -174,7 +174,7 @@ export type OntologyOperationRequest =
           readonly operation: "ControlOutbox";
           readonly id: string;
           readonly command: "remove" | "retry" | "edit" | "reconcile";
-          readonly invocation?: Schema.Schema.Type<typeof ActionInvocationSchema>;
+          readonly invocation?: Schema.Schema.Type<typeof ActionRequestSchema>;
       }
     | { readonly operation: "ReplicaStatus" | "Traces" | "ClearTraces" | "DeleteLocalData" | "ReleaseOwner" };
 
@@ -238,12 +238,12 @@ export const ontologyOperationHandlers = <R>(
                 if (!options.backend?.changes) return yield* missing("PullChanges");
                 return yield* options.backend.changes.pull(request);
             }),
-        Invoke: (invocation, context) =>
+        ApplyAction: (invocation, context) =>
             Effect.gen(function* () {
-                yield* options.authorize({ operation: "Invoke", invocation }, context.headers);
+                yield* options.authorize({ operation: "ApplyAction", invocation }, context.headers);
                 yield* options.ready ?? Effect.void;
-                if (!options.backend) return yield* missing("Invoke");
-                return yield* options.backend.invoke(invocation);
+                if (!options.backend) return yield* missing("ApplyAction");
+                return yield* options.backend.applyAction(invocation);
             }),
         Decrypt: (request, context) =>
             Effect.gen(function* () {
@@ -339,7 +339,9 @@ export const ontologyOperationHandlers = <R>(
                 if (options.backend) {
                     yield* options.ready ?? Effect.void;
                     if (!options.backend.attachments?.metadata) return yield* missing("AttachmentMetadata");
-                    return yield* options.backend.attachments.metadata(request.attachment);
+                    return yield* options.backend.attachments.metadata(request.attachment, {
+                        select: request.select,
+                    });
                 }
                 const ontology = yield* live();
                 return yield* attempt(() =>
@@ -374,7 +376,7 @@ export const ontologyOperationHandlers = <R>(
                         })
                     );
                 } else if (request.operation === "reconcile") {
-                    if (!request.receipt || request.receipt.invocationId !== request.id)
+                    if (!request.receipt || request.receipt.operationId !== request.id)
                         return yield* missing("matching receipt");
                     yield* attempt(() => ontology.outbox.reconcile(request.id, request.receipt!));
                 } else if (request.operation === "remove")

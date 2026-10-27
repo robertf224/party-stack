@@ -16,7 +16,7 @@ import { actionReferenceIssues } from "./references.js";
 import { schemaValidationIssues, BackendError, ActionReceiptSchema, BackendCommitSchema } from "./index.js";
 import type { ClientPolicy } from "./clients.js";
 import type {
-    ActionInvocation,
+    ActionRequest,
     ActionReceipt,
     BackendCommit,
     ObjectChange,
@@ -64,17 +64,14 @@ export interface OwnedBackendOptions {
     readonly tables: TablesService;
     readonly blobs?: import("@party-stack/ontology-storage/blobs").BlobStorageService;
     /** A trusted principal binding; invocation IDs are deduplicated within this authority scope. */
-    readonly invocationScope?: string;
+    readonly actionScope?: string;
     readonly clients?: ClientPolicy;
     /** Bounded replay history. Cursors behind this floor require a fresh snapshot. */
     readonly history?: { readonly maxCommits?: number; readonly maxAgeMs?: number };
     /** Infinity retains results indefinitely; finite windows bound idempotency. */
     readonly resultRetentionMs?: number;
     readonly mutators: Readonly<
-        Record<
-            string,
-            (tx: OwnedTransaction, invocation: ActionInvocation) => Effect.Effect<void, BackendError>
-        >
+        Record<string, (tx: OwnedTransaction, invocation: ActionRequest) => Effect.Effect<void, BackendError>>
     >;
     readonly queryFunctions?: Readonly<
         Record<
@@ -89,7 +86,7 @@ export interface OwnedBackendOptions {
     readonly encrypted?: OntologyBackendService["encrypted"];
     /** Stage external bytes before opening the object transaction; returned metadata work joins its commit. */
     readonly prepareUploads?: (
-        invocation: ActionInvocation
+        invocation: ActionRequest
     ) => Effect.Effect<Effect.Effect<void, BackendError>, BackendError>;
 }
 export interface OwnedBackendService extends OntologyBackendService {
@@ -162,7 +159,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         (options.history.maxAgeMs < 0 || Number.isNaN(options.history.maxAgeMs))
     )
         return yield* fault("retention", "ValidationFailed", "Journal retention age must be nonnegative.");
-    const receiptKey = (id: string) => JSON.stringify([options.invocationScope ?? "system", id]);
+    const receiptKey = (id: string) => JSON.stringify([options.actionScope ?? "system", id]);
     const metadata = Table.make<{ revision: number; source: string; journalFloor?: number }>({
         name: JSON.stringify(["backend", options.namespace, "metadata"]),
     });
@@ -276,13 +273,13 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     };
     const append = Effect.fnUntraced(function* (
         changes: ReadonlyMap<string, ObjectChange>,
-        invocationId?: string
+        operationId?: string
     ) {
         const revision = (yield* current) + 1;
         if (!Number.isSafeInteger(revision))
             return yield* fault("commit", "Unavailable", "Backend journal revision exhausted.");
         const encodedCursor = cursor(revision);
-        const commit: BackendCommit = { cursor: encodedCursor, invocationId, changes: [...changes.values()] };
+        const commit: BackendCommit = { cursor: encodedCursor, operationId, changes: [...changes.values()] };
         yield* tables.put(journal, revision, {
             revision,
             commit,
@@ -331,27 +328,27 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 return result.value;
             }),
     };
-    const prepare = Effect.fn("OwnedBackend.prepare")(function* (invocation: ActionInvocation) {
+    const prepare = Effect.fn("OwnedBackend.prepare")(function* (invocation: ActionRequest) {
         const parameterSchema = schemas.actionParameterSchemas[invocation.name];
         if (!parameterSchema || !options.mutators[invocation.name])
             return yield* fault(
-                "invoke",
+                "applyAction",
                 "NotImplemented",
                 `No action implementation for ${JSON.stringify(invocation.name)}.`
             );
         if (!invocation.id)
-            return yield* fault("invoke", "ValidationFailed", "Actions require a stable invocation ID.");
+            return yield* fault("applyAction", "ValidationFailed", "Actions require a stable invocation ID.");
         const encodedParameters = yield* Schema.encodeEffect(
             Schema.toCodecJson(Schema.toEncoded(parameterSchema))
         )(invocation.parameters).pipe(
             Effect.mapError(
                 (error) =>
                     new BackendError({
-                        operation: "invoke",
+                        operation: "applyAction",
                         kind: "ValidationFailed",
                         message: "Action parameters do not match their definition.",
                         retryable: false,
-                        invocationOutcome: "not-committed",
+                        actionOutcome: "not-committed",
                         issues: schemaValidationIssues(error),
                     })
             )
@@ -383,7 +380,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     });
     const invokeIn = Effect.fnUntraced(function* (
         native: StorageTransaction,
-        prepared: { invocation: ActionInvocation; identity: string },
+        prepared: { invocation: ActionRequest; identity: string },
         commitUploads: Effect.Effect<void, BackendError>,
         retainReceipt: boolean
     ) {
@@ -392,23 +389,23 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         const mutator = options.mutators[invocation.name];
         if (!action || !mutator)
             return yield* fault(
-                "invoke",
+                "applyAction",
                 "NotImplemented",
                 `No action implementation for ${JSON.stringify(invocation.name)}.`
             );
         if (!invocation.id)
-            return yield* fault("invoke", "ValidationFailed", "Actions require a stable invocation ID.");
+            return yield* fault("applyAction", "ValidationFailed", "Actions require a stable invocation ID.");
         const parameters = yield* Schema.decodeUnknownEffect(
             Schema.toEncoded(schemas.actionParameterSchemas[invocation.name]!)
         )(invocation.parameters).pipe(
             Effect.mapError(
                 (error) =>
                     new BackendError({
-                        operation: "invoke",
+                        operation: "applyAction",
                         kind: "ValidationFailed",
                         message: "Action parameters do not match their definition.",
                         retryable: false,
-                        invocationOutcome: "not-committed",
+                        actionOutcome: "not-committed",
                         issues: schemaValidationIssues(error),
                     })
             )
@@ -418,7 +415,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         if (previous && previous.completedAt > (yield* Clock.currentTimeMillis) - resultRetentionMs) {
             if (previous.fingerprint !== fingerprint)
                 return yield* fault(
-                    "invoke",
+                    "applyAction",
                     "Conflict",
                     "An invocation ID was reused with different parameters."
                 );
@@ -427,11 +424,11 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         const issues = yield* actionReferenceIssues(options.ir, action.parameters, parameters, read(native));
         if (issues.length)
             return yield* new BackendError({
-                operation: "invoke",
+                operation: "applyAction",
                 kind: "ValidationFailed",
                 message: "Submission failed validation.",
                 retryable: false,
-                invocationOutcome: "not-committed",
+                actionOutcome: "not-committed",
                 issues,
             });
         const { tx, changes } = mutation(native);
@@ -446,7 +443,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         const receipt: ActionReceipt = {
             affected: [...affected].map(([objectType, keys]) => ({ objectType, keys: [...keys] })),
             affectedComplete: true,
-            invocationId: invocation.id,
+            operationId: invocation.id,
             outcome: "committed",
             cursor: yield* append(changes, invocation.id),
         };
@@ -462,7 +459,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             touchedTypes: [...new Set([...changes.values()].map((change) => change.objectType))],
         };
     });
-    const clientNamespace = JSON.stringify(["owned", options.namespace, options.invocationScope ?? "system"]);
+    const clientNamespace = JSON.stringify(["owned", options.namespace, options.actionScope ?? "system"]);
     const results = Table.make<{ clientId: string; sequence: number; entry: PendingAction }>({
         name: JSON.stringify(["backend", clientNamespace, "client-results"]),
     });
@@ -488,7 +485,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 yield* clients.initialize(tx);
                 yield* tx.ensureIndex(results, { name: "clientId", field: field("clientId") });
                 yield* tx.ensureIndex(results, {
-                    name: "invocationId",
+                    name: "operationId",
                     field: field("entry", "invocation", "id"),
                 });
             })
@@ -637,7 +634,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                                     const committed = yield* invokeIn(native, prepared, Effect.void, false);
                                     const entry: PendingAction = {
                                         invocation: request.invocation,
-                                        requestIdentity: Table.make<ActionInvocation>({
+                                        requestIdentity: Table.make<ActionRequest>({
                                             name: "identity",
                                         }).encode(request.invocation),
                                         createdAt: yield* Clock.currentTimeMillis,
@@ -721,13 +718,13 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                     );
                 })
             ),
-        invoke: Effect.fn("OwnedBackend.invoke")(function* (invocation: ActionInvocation) {
+        applyAction: Effect.fn("OwnedBackend.applyAction")(function* (invocation: ActionRequest) {
             const prepared = yield* prepare(invocation);
             const prior = yield* boundary(tables.get(receipts, receiptKey(invocation.id)));
             if (prior && prior.completedAt > (yield* Clock.currentTimeMillis) - resultRetentionMs) {
                 if (prior.fingerprint !== prepared.identity)
                     return yield* fault(
-                        "invoke",
+                        "applyAction",
                         "Conflict",
                         "An invocation ID was reused with different parameters."
                     );
@@ -737,7 +734,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 ? options.prepareUploads
                     ? yield* options.prepareUploads(invocation)
                     : yield* fault(
-                          "invoke",
+                          "applyAction",
                           "NotImplemented",
                           "This owned backend has no attachment upload coordinator."
                       )

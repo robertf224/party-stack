@@ -362,8 +362,8 @@ describe("createInProcessHttpRemoteOntologyTransport", () => {
                         sourceId: "test",
                         supportsIdempotency: false,
                         loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                        invoke: (action) =>
-                            Effect.succeed({ invocationId: action.id, outcome: "committed", affected: [] }),
+                        applyAction: (action) =>
+                            Effect.succeed({ operationId: action.id, outcome: "committed", affected: [] }),
                         queryFunction: () => Effect.void,
                     }),
             },

@@ -151,7 +151,7 @@ export const executeTransactionMutator = Effect.fn("Ontology.executeMutator")(fu
     readonly tx: OwnedTransaction;
     readonly name: string;
     readonly parameters: Record<string, unknown>;
-    readonly invocationId: string;
+    readonly operationId: string;
     readonly replay?: import("../live/expression.js").ExpressionReplay;
     /** Resolve portable inputs without constructing a local optimistic result. Authoritative execution omits this flag. */
     readonly resolveOnly?: boolean;
@@ -202,7 +202,7 @@ export const executeTransactionMutator = Effect.fn("Ontology.executeMutator")(fu
                             replay: options.replay,
                             transaction,
                             objects,
-                            idempotencyKey: options.invocationId,
+                            idempotencyKey: options.operationId,
                             mutators: options.mutators,
                             ensureLoaded,
                         });

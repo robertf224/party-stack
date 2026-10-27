@@ -6,7 +6,7 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect, Scope, Exit, Result } from "effect";
 import { expect, test } from "vitest";
 import { makeReplica, type ReplicaService } from "./index.js";
-import type { ActionInvocation, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { ActionRequest, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OwnedTransaction } from "@party-stack/ontology-backend/owned";
 
 const ir: OntologyIR = {
@@ -32,7 +32,7 @@ const ir: OntologyIR = {
         logic: [],
     })),
 };
-const execute = (tx: OwnedTransaction, action: ActionInvocation) =>
+const execute = (tx: OwnedTransaction, action: ActionRequest) =>
     Effect.gen(function* () {
         const previous = yield* tx.get("Counter", "shared");
         yield* tx.put("Counter", { id: "shared", count: Number(previous?.count ?? 0) + 1 });
@@ -68,11 +68,11 @@ test("offline enqueue, restart, ordered rebase and reconnect never require netwo
                             if (!online) throw new Error("Replay attempted a network load");
                             return backend.loadSubset(subset);
                         }),
-                    invoke: (action) =>
+                    applyAction: (action) =>
                         Effect.suspend(() => {
                             requests++;
                             if (!online) throw new Error("Replay attempted dispatch offline");
-                            return backend.invoke(action);
+                            return backend.applyAction(action);
                         }),
                     changes: {
                         pull: (query) =>
@@ -92,7 +92,7 @@ test("offline enqueue, restart, ordered rebase and reconnect never require netwo
                     startSync: false,
                     online: Effect.sync(() => online),
                 };
-                yield* backend.invoke({ id: "seed", name: "increment", parameters: {} });
+                yield* backend.applyAction({ id: "seed", name: "increment", parameters: {} });
                 const firstScope = yield* Scope.make();
                 const first = yield* Scope.provide(makeReplica(settings), firstScope);
                 yield* first.syncOnce;
@@ -112,7 +112,7 @@ test("offline enqueue, restart, ordered rebase and reconnect never require netwo
                 yield* reopened.syncOnce;
                 expect(requests).toBe(before);
                 online = true;
-                yield* backend.invoke({ id: "another-client", name: "increment", parameters: {} });
+                yield* backend.applyAction({ id: "another-client", name: "increment", parameters: {} });
                 yield* reopened.syncOnce;
                 expect(yield* reopened.pending).toEqual([]);
                 expect((yield* reopened.confirmed.get("Counter", "shared"))?.count).toBe(4);
@@ -169,11 +169,11 @@ test("ambiguous non-deduplicated actions survive restart without automatic dupli
                     ...owned,
                     supportsIdempotency: false,
                     changes: undefined,
-                    invoke: () =>
+                    applyAction: () =>
                         Effect.gen(function* () {
                             dispatches++;
                             return yield* new BackendError({
-                                operation: "invoke",
+                                operation: "applyAction",
                                 kind: "Unavailable",
                                 message: "Response lost",
                                 retryable: true,
@@ -208,8 +208,8 @@ test("bounded GC advances past pinned candidates and honors persisted reader lea
                         increment: (tx, invocation) => tx.put("Counter", { id: invocation.id, count: 1 }),
                     },
                 });
-                yield* backend.invoke({ id: "first", name: "increment", parameters: {} });
-                yield* backend.invoke({ id: "second", name: "increment", parameters: {} });
+                yield* backend.applyAction({ id: "first", name: "increment", parameters: {} });
+                yield* backend.applyAction({ id: "second", name: "increment", parameters: {} });
                 const options = { namespace: "gc-local", ir, tables, backend, execute, startSync: false };
                 const first = yield* makeReplica(options);
                 yield* first.syncOnce;
@@ -332,8 +332,8 @@ test("a deduplicated receipt already behind the local journal head settles witho
                     parameters: {},
                     replay: { now: "2026-10-21T00:00:00Z", seed: "already-committed" },
                 };
-                yield* backend.invoke(invocation);
-                yield* backend.invoke({ ...invocation, id: "later" });
+                yield* backend.applyAction(invocation);
+                yield* backend.applyAction({ ...invocation, id: "later" });
                 const replica = yield* makeReplica({
                     namespace: "old-receipt-local",
                     ir,
@@ -453,7 +453,7 @@ test("scoped watcher hints replace idle snapshot polling and repair invalidation
                 yield* replica.syncOnce;
                 yield* replica.syncOnce;
                 expect(reads).toBe(1);
-                yield* server.invoke({ id: "other-client", name: "increment", parameters: {} });
+                yield* server.applyAction({ id: "other-client", name: "increment", parameters: {} });
                 yield* Queue.offer(hints, undefined);
                 yield* Effect.sleep(1);
                 invalidateDuringLoad = true;
@@ -485,10 +485,10 @@ test("another principal's colliding journal invocation ID cannot acknowledge our
                     tables: serverTables,
                     mutators: { increment: execute },
                 };
-                const alice = yield* makeOwnedBackend({ ...options, invocationScope: "alice" });
-                const bob = yield* makeOwnedBackend({ ...options, invocationScope: "bob" });
+                const alice = yield* makeOwnedBackend({ ...options, actionScope: "alice" });
+                const bob = yield* makeOwnedBackend({ ...options, actionScope: "bob" });
                 const invocation = { id: "principal-local-id", name: "increment", parameters: {} };
-                yield* alice.invoke(invocation);
+                yield* alice.applyAction(invocation);
                 let dispatches = 0;
                 const replica = yield* makeReplica({
                     namespace: "bob-local",
@@ -498,10 +498,10 @@ test("another principal's colliding journal invocation ID cannot acknowledge our
                     startSync: false,
                     backend: {
                         ...bob,
-                        invoke: (request) =>
+                        applyAction: (request) =>
                             Effect.gen(function* () {
                                 dispatches++;
-                                return yield* bob.invoke(request);
+                                return yield* bob.applyAction(request);
                             }),
                     },
                 });
@@ -533,7 +533,7 @@ test("journal-maintained whole-collection coverage satisfies new primary-key and
                             }),
                     },
                 });
-                yield* backend.invoke({ id: "first", name: "increment", parameters: {} });
+                yield* backend.applyAction({ id: "first", name: "increment", parameters: {} });
                 let snapshots = 0;
                 const replica = yield* makeReplica({
                     namespace: "coverage-local",
@@ -561,7 +561,7 @@ test("journal-maintained whole-collection coverage satisfies new primary-key and
                     objectType: "Counter",
                     query: { orderBy: [{ field: field("count"), direction: "desc" }], limit: 1 },
                 });
-                yield* backend.invoke({ id: "second", name: "increment", parameters: { count: 2 } });
+                yield* backend.applyAction({ id: "second", name: "increment", parameters: { count: 2 } });
                 yield* replica.syncOnce;
                 expect(snapshots).toBe(1);
                 expect((yield* replica.get("Counter", "second"))?.count).toBe(2);
@@ -615,8 +615,16 @@ test("watch-only filtered snapshots repair rows that leave a filter without trea
                             }),
                     },
                 });
-                yield* server.invoke({ id: "seed-a", name: "increment", parameters: { id: "a", count: 1 } });
-                yield* server.invoke({ id: "seed-b", name: "increment", parameters: { id: "b", count: 1 } });
+                yield* server.applyAction({
+                    id: "seed-a",
+                    name: "increment",
+                    parameters: { id: "a", count: 1 },
+                });
+                yield* server.applyAction({
+                    id: "seed-b",
+                    name: "increment",
+                    parameters: { id: "b", count: 1 },
+                });
                 const subset = { objectType: "Counter", query: { where: eq(field("count"), 1) } };
                 yield* replica.demand(subset);
                 yield* Effect.yieldNow;
@@ -625,8 +633,12 @@ test("watch-only filtered snapshots repair rows that leave a filter without trea
                     "a",
                     "b",
                 ]);
-                yield* server.invoke({ id: "move-a", name: "increment", parameters: { id: "a", count: 2 } });
-                yield* server.invoke({
+                yield* server.applyAction({
+                    id: "move-a",
+                    name: "increment",
+                    parameters: { id: "a", count: 2 },
+                });
+                yield* server.applyAction({
                     id: "delete-b",
                     name: "increment",
                     parameters: { id: "b", deleted: true },
@@ -687,7 +699,7 @@ test("primary-key coverage includes known absence and stays current through jour
                     objectType: "Counter",
                     query: { where: eq("new", field("id")), limit: 1 },
                 });
-                yield* backend.invoke({ id: "create", name: "increment", parameters: { id: "new" } });
+                yield* backend.applyAction({ id: "create", name: "increment", parameters: { id: "new" } });
                 yield* replica.syncOnce;
                 yield* replica.syncOnce;
                 expect(snapshots).toBe(1);
@@ -707,7 +719,7 @@ test("a confirmed key reuses subset coverage until garbage collection invalidate
                     tables: yield* Memory.make(),
                     mutators: { increment: execute },
                 });
-                yield* backend.invoke({ id: "seed", name: "increment", parameters: {} });
+                yield* backend.applyAction({ id: "seed", name: "increment", parameters: {} });
                 let snapshots = 0;
                 const replica = yield* makeReplica({
                     namespace: "key-coverage-local",
@@ -737,7 +749,7 @@ test("a confirmed key reuses subset coverage until garbage collection invalidate
                 yield* replica.syncOnce;
                 expect(snapshots).toBe(1);
                 yield* Scope.close(reader, Exit.void);
-                yield* backend.invoke({ id: "move-out-of-filter", name: "increment", parameters: {} });
+                yield* backend.applyAction({ id: "move-out-of-filter", name: "increment", parameters: {} });
                 yield* replica.syncOnce;
                 expect(yield* replica.collectGarbage({ olderThanMs: 0 })).toBe(1);
                 expect(yield* replica.get("Counter", "shared")).toBeUndefined();
@@ -788,7 +800,7 @@ test("bounded coverage is not whole-collection coverage and idle journal windows
                 yield* replica.syncOnce;
                 yield* replica.syncOnce;
                 expect(snapshots).toBe(1);
-                yield* backend.invoke({ id: "new", name: "increment", parameters: {} });
+                yield* backend.applyAction({ id: "new", name: "increment", parameters: {} });
                 yield* replica.syncOnce;
                 expect(snapshots).toBe(2);
                 yield* replica.syncOnce;
@@ -816,8 +828,8 @@ test("expired journal history rebuilds selected base while preserving and execut
                 let submissions = 0;
                 const backend = {
                     ...owned,
-                    invoke: (invocation: ActionInvocation) =>
-                        Effect.sync(() => submissions++).pipe(Effect.andThen(owned.invoke(invocation))),
+                    applyAction: (invocation: ActionRequest) =>
+                        Effect.sync(() => submissions++).pipe(Effect.andThen(owned.applyAction(invocation))),
                 };
                 const replica = yield* makeReplica({
                     namespace: "history-client",
@@ -830,7 +842,7 @@ test("expired journal history rebuilds selected base while preserving and execut
                 yield* replica.demand({ objectType: "Counter" });
                 yield* replica.syncOnce;
                 for (let index = 0; index < 3; index++)
-                    yield* owned.invoke({ id: `remote-${index}`, name: "increment", parameters: {} });
+                    yield* owned.applyAction({ id: `remote-${index}`, name: "increment", parameters: {} });
                 yield* replica.enqueue({ id: "local", name: "increment", parameters: {} });
                 yield* replica.syncOnce;
                 expect(submissions).toBe(1);

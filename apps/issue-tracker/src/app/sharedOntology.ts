@@ -50,7 +50,7 @@ export async function openSharedOntology(options: OpenOptions): Promise<LiveOnto
                     tx,
                     name: invocation.name,
                     parameters: invocation.parameters,
-                    invocationId: invocation.id,
+                    operationId: invocation.id,
                     replay: invocation.replay,
                     resolveOnly: settings?.optimistic === false,
                     context: options.context ?? {},

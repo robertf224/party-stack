@@ -3,25 +3,25 @@ import { describe, expect, it } from "vitest";
 import {
     BackendError,
     classifyBackendFailure,
-    isUnknownInvocationOutcome,
+    isUnknownActionOutcome,
     projectBackendError,
 } from "./errors.js";
 
 describe("normalized failures", () => {
     it("distinguishes Salesforce quota failures from permissions and authentication", () => {
         expect(
-            classifyBackendFailure("invoke", { statusCode: 403, errorCode: "REQUEST_LIMIT_EXCEEDED" })
-        ).toMatchObject({ kind: "RateLimited", retryable: true, invocationOutcome: "not-committed" });
+            classifyBackendFailure("applyAction", { statusCode: 403, errorCode: "REQUEST_LIMIT_EXCEEDED" })
+        ).toMatchObject({ kind: "RateLimited", retryable: true, actionOutcome: "not-committed" });
         expect(
-            classifyBackendFailure("invoke", { statusCode: 401, errorCode: "INVALID_SESSION_ID" }).kind
+            classifyBackendFailure("applyAction", { statusCode: 401, errorCode: "INVALID_SESSION_ID" }).kind
         ).toBe("Unauthenticated");
-        expect(classifyBackendFailure("invoke", { statusCode: 403 }).kind).toBe("Forbidden");
-        expect(isUnknownInvocationOutcome(classifyBackendFailure("invoke", { statusCode: 503 }))).toBe(true);
+        expect(classifyBackendFailure("applyAction", { statusCode: 403 }).kind).toBe("Forbidden");
+        expect(isUnknownActionOutcome(classifyBackendFailure("applyAction", { statusCode: 503 }))).toBe(true);
     });
     it("classifies nested HTTP transport statuses without exposing response bodies", () => {
         expect(
-            classifyBackendFailure("invoke", { reason: { response: { status: 401, headers: {} } } })
-        ).toMatchObject({ kind: "Unauthenticated", invocationOutcome: "not-committed" });
+            classifyBackendFailure("applyAction", { reason: { response: { status: 401, headers: {} } } })
+        ).toMatchObject({ kind: "Unauthenticated", actionOutcome: "not-committed" });
         expect(
             classifyBackendFailure("load", {
                 cause: { response: { status: 429, headers: { "retry-after": "2" } } },
@@ -29,7 +29,7 @@ describe("normalized failures", () => {
         ).toMatchObject({ kind: "RateLimited", retryAfterMs: 2_000 });
     });
     it("retains explicit authored failures without treating runtime messages as user-facing", () => {
-        const error = classifyBackendFailure("invoke", {
+        const error = classifyBackendFailure("applyAction", {
             errorName: "FunctionEncounteredUserFacingError",
             parameters: { message: "Choose another date.", functionRid: "private" },
         });
@@ -43,7 +43,7 @@ describe("normalized failures", () => {
             },
         ]);
         expect(
-            classifyBackendFailure("invoke", {
+            classifyBackendFailure("applyAction", {
                 errorName: "FunctionExecutionFailed",
                 parameters: { message: "password=secret" },
             }).issues
@@ -51,11 +51,11 @@ describe("normalized failures", () => {
     });
     it("projects structured field issues and never encodes raw causes", () => {
         const privateError = new BackendError({
-            operation: "invoke",
+            operation: "applyAction",
             kind: "ValidationFailed",
             message: "private detail",
             retryable: false,
-            invocationOutcome: "not-committed",
+            actionOutcome: "not-committed",
             cause: new Error("password=secret"),
             issues: [
                 {
@@ -134,24 +134,24 @@ describe("normalized failures", () => {
     });
     it("custom projection may conceal existence but cannot invent a safe write outcome", () => {
         const error = new BackendError({
-            operation: "invoke",
+            operation: "applyAction",
             kind: "Unavailable",
             message: "upstream",
             retryable: true,
-            invocationOutcome: "unknown",
+            actionOutcome: "unknown",
         });
         const shown = projectBackendError(
             error,
             () =>
                 new BackendError({
-                    operation: "invoke",
+                    operation: "applyAction",
                     kind: "NotFound",
                     message: "Not found.",
                     retryable: false,
-                    invocationOutcome: "not-committed",
+                    actionOutcome: "not-committed",
                 })
         );
-        expect(shown).toMatchObject({ kind: "NotFound", retryable: true, invocationOutcome: "unknown" });
+        expect(shown).toMatchObject({ kind: "NotFound", retryable: true, actionOutcome: "unknown" });
         expect(
             projectBackendError(classifyBackendFailure("load", { statusCode: 401 }), "projected", {
                 upstream: true,

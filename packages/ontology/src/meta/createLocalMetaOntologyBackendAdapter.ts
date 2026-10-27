@@ -61,10 +61,10 @@ export function createLocalMetaOntologyBackendAdapter(ir: OntologyIR): OntologyB
                             complete: true,
                         });
                     }),
-                invoke: () =>
+                applyAction: () =>
                     Effect.fail(
                         new BackendError({
-                            operation: "invoke",
+                            operation: "applyAction",
                             kind: "NotImplemented",
                             message: "Metadata is read-only.",
                             retryable: false,

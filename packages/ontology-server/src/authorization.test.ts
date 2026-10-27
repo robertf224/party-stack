@@ -3,7 +3,7 @@ import { eq, field, evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { projectOntologyBackend } from "./authorization.js";
-import type { ActionInvocation, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { ActionRequest, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { attachment } from "@party-stack/ontology/values";
 
 test("attachment reads re-find the handle in an authorized source row and declared property", async () => {
@@ -36,7 +36,7 @@ test("attachment reads re-find the handle in an authorized source row and declar
         name: "test",
         sourceId: "test",
         supportsIdempotency: false,
-        invoke: () => Effect.die("Unexpected action"),
+        applyAction: () => Effect.die("Unexpected action"),
         queryFunction: () => Effect.void,
         attachments: { read, metadata, stage },
         loadSubset: (subset) =>
@@ -140,7 +140,7 @@ test("projection filters rows before limits, blocks hidden-field probes, and own
             },
         ],
     };
-    let applied: ActionInvocation | undefined;
+    let applied: ActionRequest | undefined;
     const backend: OntologyBackendService = {
         name: "test",
         sourceId: "test",
@@ -156,11 +156,11 @@ test("projection filters rows before limits, blocks hidden-field probes, and own
                 ),
                 complete: true,
             }),
-        invoke: (invocation) =>
+        applyAction: (invocation) =>
             Effect.sync(() => {
                 applied = invocation;
                 return {
-                    invocationId: invocation.id,
+                    operationId: invocation.id,
                     outcome: "committed" as const,
                     affected: [{ objectType: "Private", keys: ["secret"] }],
                 };
@@ -201,7 +201,7 @@ test("projection filters rows before limits, blocks hidden-field probes, and own
                     })
                 )
             ).toMatchObject({ _tag: "Failure", failure: { kind: "NotFound" } });
-            const receipt = yield* view.backend.invoke({
+            const receipt = yield* view.backend.applyAction({
                 id: "one",
                 name: "save",
                 parameters: { id: "visible", owner: "bob" },
@@ -289,10 +289,10 @@ test("parameter resolution uses projected defaults and authorized row/property r
                     subset.query ?? {}
                 ),
             }),
-        invoke: (invocation) =>
+        applyAction: (invocation) =>
             Effect.sync(() => {
                 invoked = true;
-                return { invocationId: invocation.id, outcome: "committed" as const };
+                return { operationId: invocation.id, outcome: "committed" as const };
             }),
         queryFunction: () => Effect.void,
     };

@@ -1,6 +1,4 @@
 import { createLiveOntology } from "@party-stack/ontology";
-import { classifyBackendFailure } from "@party-stack/ontology-backend";
-import { Effect } from "effect";
 import { makeRemoteOntologyBackend } from "./backend.js";
 import type { RemoteOntologyTransport } from "./protocol.js";
 export { makeRemoteOntologyBackend } from "./backend.js";
@@ -13,10 +11,7 @@ import type {
     OntologyBackendAdapterProvider,
     OntologyIR,
     OntologyApplyActionResult,
-    Uncertain,
-    ValidationIssue,
 } from "@party-stack/ontology";
-import type { Result } from "@party-stack/ontology/values";
 
 export interface OntologyApplyActionClientResult extends OntologyApplyActionResult {
     invalidatedObjectTypes?: string[];
@@ -57,53 +52,11 @@ export interface CreateRemoteLiveOntologyOptions<
     writes?: CreateLiveOntologyOpts<Context>["writes"];
 }
 
-function fromRemoteActionValidation(
-    validation: Uncertain<Result<null, readonly ValidationIssue[]>>
-): Uncertain<Result<void, readonly ValidationIssue[]>> {
-    if (!validation.certain) {
-        return validation;
-    }
-    if (validation.value.kind === "err") {
-        return {
-            certain: true,
-            value: {
-                kind: "err",
-                value: validation.value.value,
-            },
-        };
-    }
-    return {
-        certain: true,
-        value: {
-            kind: "ok",
-            value: undefined,
-        },
-    };
-}
-
 /** @deprecated Use makeOntologyServer / connectOntologyBackendHttp with scoped native backends. */
 export function createRemoteOntologyBackendAdapter(
     opts: CreateRemoteOntologyBackendAdapterOptions
 ): OntologyBackendAdapter {
-    const { transport } = opts;
-
-    return {
-        name: "remote",
-        open: () => makeRemoteOntologyBackend(opts),
-        validateAction: (actionType, parameters) =>
-            Effect.tryPromise({
-                try: async () =>
-                    fromRemoteActionValidation(await transport.validateAction({ actionType, parameters })),
-                catch: (cause) => classifyBackendFailure("remote.validateAction", cause),
-            }),
-        attachments: {
-            generateAttachmentId: () => crypto.randomUUID(),
-            getAttachmentContent: (attachment, options) =>
-                transport.getAttachmentContent({ attachment }, options),
-            getAttachmentMetadata: (attachment, selection, options) =>
-                transport.getAttachmentMetadata({ attachment, selection }, options),
-        },
-    };
+    return { name: "remote", open: () => makeRemoteOntologyBackend(opts) };
 }
 
 /** @deprecated Use makeOntologyServer / connectOntologyBackendHttp with scoped native backends. */

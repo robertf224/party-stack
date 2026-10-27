@@ -585,10 +585,10 @@ function createPolicyReadBackendAdapter<Context, Ontology extends OntologyDefini
                                 cause,
                             }),
                     }),
-                invoke: () =>
+                applyAction: () =>
                     Effect.fail(
                         new BackendError({
-                            operation: "invoke",
+                            operation: "applyAction",
                             kind: "NotImplemented",
                             message: "Policy read backend cannot apply actions.",
                             retryable: false,

@@ -5,7 +5,7 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect } from "effect";
 import { expect, test } from "vitest";
 import { makeReplica } from "./index.js";
-import type { ActionInvocation } from "@party-stack/ontology-backend";
+import type { ActionRequest } from "@party-stack/ontology-backend";
 import type { ClientSubmission, OntologySource } from "@party-stack/ontology-backend/protocol";
 
 const ir: OntologyIR = {
@@ -30,7 +30,7 @@ const execute = Effect.fnUntraced(function* (tx: OwnedTransaction) {
     const previous = yield* tx.get("Counter", "one");
     yield* tx.put("Counter", { id: "one", count: Number(previous?.count ?? 0) + 1 });
 });
-const action = (id: string): ActionInvocation => ({ id, name: "increment", parameters: {} });
+const action = (id: string): ActionRequest => ({ id, name: "increment", parameters: {} });
 
 test("the ordinary memory Replica connects directly to owned storage and preserves receipts after source compaction", async () => {
     await Effect.runPromise(

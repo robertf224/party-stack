@@ -192,9 +192,9 @@ describe("native remote backend binding", () => {
                 Effect.gen(function* () {
                     const backend = yield* binding.open({});
                     expect(
-                        yield* backend.invoke({ id: "one", name: "createNote", parameters: {} })
+                        yield* backend.applyAction({ id: "one", name: "createNote", parameters: {} })
                     ).toMatchObject({
-                        invocationId: "one",
+                        operationId: "one",
                         outcome: "committed",
                         attachmentIdMappings: [{ localId: "local", remoteId: "remote" }],
                     });

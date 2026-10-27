@@ -17,7 +17,7 @@ import type { LiveOntology, LiveOntologyWrites } from "../live/LiveOntology.js";
 import type { OntologyApplyActionResult } from "../live/OntologyBackendAdapter.js";
 import type { OntologyOutbox, OntologyOutboxEntry, OntologyActionRequest } from "../live/outbox/types.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
-import type { ActionInvocation, ActionReceipt } from "@party-stack/ontology-backend";
+import type { ActionRequest, ActionReceipt } from "@party-stack/ontology-backend";
 import type { PendingAction, ReplicaService } from "@party-stack/ontology-replica";
 import type { OntologyIR, OntologyObject } from "@party-stack/ontology-spec";
 import type { RuntimeTraceStore } from "@party-stack/runtime";
@@ -41,12 +41,12 @@ const toEntry = (entry: PendingAction, forwarding = false): OntologyOutboxEntry 
     nextAttemptAt: entry.nextAttemptAt ?? 0,
     lastError: entry.failure
         ? new BackendError({
-              operation: "invoke",
+              operation: "applyAction",
               kind: entry.failure,
               message:
                   entry.failureMessage ?? "Action is blocked; resolve its cause and retry or discard it.",
               retryable: entry.failureRetryable ?? false,
-              invocationOutcome: entry.failureOutcome,
+              actionOutcome: entry.failureOutcome,
               issues: entry.failureIssues,
           })
         : undefined,
@@ -188,7 +188,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         request: Omit<OntologyActionRequest, "idempotencyKey"> & { idempotencyKey?: string },
         visibility?: "confirmed" | "optimistic"
     ) => {
-        const invocation: ActionInvocation = {
+        const invocation: ActionRequest = {
             id: request.idempotencyKey ?? crypto.randomUUID(),
             name: request.actionTypeName,
             parameters: request.parameters,
@@ -208,7 +208,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
                     kind: "ResultExpired",
                     message: "Action result is unavailable.",
                     retryable: false,
-                    invocationOutcome: "unknown",
+                    actionOutcome: "unknown",
                 });
             return result;
         });
@@ -284,7 +284,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
                             kind: "Unavailable",
                             message: "Direct actions require connectivity. Use outbox mode to queue offline.",
                             retryable: true,
-                            invocationOutcome: "not-committed",
+                            actionOutcome: "not-committed",
                         });
                     const queued = await enqueue(request, visibility);
                     return queued.completed;

@@ -69,7 +69,7 @@ async function handleRequest(request: Request): Promise<Response> {
                                 "Describe",
                                 "LoadSubset",
                                 "PullChanges",
-                                "Invoke",
+                                "ApplyAction",
                                 "ValidateAction",
                                 "QueryFunction",
                                 "CreateAttachment",
@@ -83,7 +83,7 @@ async function handleRequest(request: Request): Promise<Response> {
                                           kind: "Forbidden",
                                           message: "This operation is not exposed.",
                                           retryable: false,
-                                          invocationOutcome: "not-committed",
+                                          actionOutcome: "not-committed",
                                       })
                                   ),
                     });

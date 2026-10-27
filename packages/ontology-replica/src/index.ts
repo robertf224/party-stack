@@ -1,4 +1,4 @@
-import { isUnknownInvocationOutcome } from "@party-stack/ontology-backend";
+import { isUnknownActionOutcome } from "@party-stack/ontology-backend";
 export { makeCachedProxy } from "./proxy.js";
 import { BackendError } from "@party-stack/ontology-backend";
 import { clientRegistry } from "@party-stack/ontology-backend/clients";
@@ -39,7 +39,7 @@ export type { ReplicaStatus, ReplicaLoad, ReplicaMonitor } from "./status.js";
 import { connectReplicaParent } from "./parent.js";
 import { affectsCoverage, markQuery, retentionQuery } from "./retention.js";
 import type {
-    ActionInvocation,
+    ActionRequest,
     ActionReceipt,
     BackendSubset,
     OntologyBackendService,
@@ -192,7 +192,7 @@ export interface ReplicaService extends OwnedReadTransaction {
     /** Install an independently verified receipt, then use ordinary read-back/journal settlement. */
     readonly reconcile: (id: string, receipt: ActionReceipt) => Effect.Effect<void, BackendError>;
     readonly enqueue: (
-        invocation: ActionInvocation,
+        invocation: ActionRequest,
         options?: { optimistic?: boolean }
     ) => Effect.Effect<PendingAction, BackendError>;
     /** Release handoff bookkeeping only after an owning parent acknowledges removal. */
@@ -201,7 +201,7 @@ export interface ReplicaService extends OwnedReadTransaction {
         id: string,
         options?: { allowUnknownOutcome?: boolean }
     ) => Effect.Effect<void, BackendError>;
-    readonly edit: (id: string, invocation: ActionInvocation) => Effect.Effect<void, BackendError>;
+    readonly edit: (id: string, invocation: ActionRequest) => Effect.Effect<void, BackendError>;
     readonly retry: (
         id: string,
         options?: { allowUnknownOutcome?: boolean }
@@ -238,7 +238,7 @@ interface ReplicaCommonOptions {
     /** Receives only a persisted local transaction. Return resolved defaults to freeze them at enqueue. */
     readonly execute: (
         tx: OwnedTransaction,
-        invocation: ActionInvocation,
+        invocation: ActionRequest,
         options?: { readonly optimistic: boolean }
     ) => Effect.Effect<void | ObjectValue, BackendError>;
     /** Idempotent local receipt application. Runs only after the receipt is durable; failures retry without dispatch. */
@@ -620,7 +620,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             yield* tx.delete(actionQueries, row.key);
     });
     const blobOwner = (id: string) => JSON.stringify(["replica", options.namespace, "outbox", id]);
-    const attachmentIds = (invocation: ActionInvocation) =>
+    const attachmentIds = (invocation: ActionRequest) =>
         collectActionAttachments(options.ir, invocation.name, invocation.parameters).map(
             (entry) => entry.attachment.id
         );
@@ -772,7 +772,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         idempotent: boolean
     ) {
         // A rejected retry does not resolve an earlier dispatch whose reply was lost.
-        const ambiguous = entry.failureOutcome === "unknown" || isUnknownInvocationOutcome(error);
+        const ambiguous = entry.failureOutcome === "unknown" || isUnknownActionOutcome(error);
         const requiresAcknowledgement =
             ambiguous && (!idempotent || entry.retryRequiresAcknowledgement === true);
         const retry =
@@ -1092,28 +1092,28 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                 }
                             }
                             yield* clearBarrier(commit.cursor);
-                            if (commit.invocationId) {
+                            if (commit.operationId) {
                                 yield* tx.put(
                                     journalReceipts,
-                                    JSON.stringify([commit.invocationId, commit.cursor]),
+                                    JSON.stringify([commit.operationId, commit.cursor]),
                                     {
-                                        invocationId: commit.invocationId,
+                                        operationId: commit.operationId,
                                         observedAt: yield* Clock.currentTimeMillis,
                                         outcome: "committed",
                                         cursor: commit.cursor,
                                     }
                                 );
-                                const entry = yield* tx.get(outbox, commit.invocationId);
+                                const entry = yield* tx.get(outbox, commit.operationId);
                                 // IDs may be deduplicated within a principal rather than globally.
                                 // Only a receipt from our invocation proves which commit is ours.
                                 if (entry?.receipt?.cursor === commit.cursor) {
-                                    yield* tx.put(completed, commit.invocationId, {
+                                    yield* tx.put(completed, commit.operationId, {
                                         ...entry,
                                         completedAt: yield* Clock.currentTimeMillis,
                                         state: "acknowledged",
                                         receipt: { ...entry.receipt, outcome: "committed" },
                                     });
-                                    yield* deletePending(tx, commit.invocationId);
+                                    yield* deletePending(tx, commit.operationId);
                                 }
                             }
                         }
@@ -1283,8 +1283,8 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     limit: 100 + protectedHints,
                 }))
                     if (
-                        !(yield* tx.get(outbox, row.value.invocationId)) &&
-                        !(yield* tx.get(forwarded, row.value.invocationId))
+                        !(yield* tx.get(outbox, row.value.operationId)) &&
+                        !(yield* tx.get(forwarded, row.value.operationId))
                     )
                         yield* tx.delete(journalReceipts, row.key);
                 for (const row of yield* tx.loadSubset(coverage, {
@@ -1472,7 +1472,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 head = claimed;
                 yield* notify;
                 const result = yield* Effect.result(
-                    backend.invoke(head.invocation).pipe(Effect.withSpan("Replica.dispatch"))
+                    backend.applyAction(head.invocation).pipe(Effect.withSpan("Replica.dispatch"))
                 );
                 if (result._tag === "Failure") {
                     const error = result.failure;
@@ -1491,7 +1491,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     return yield* error;
                 }
                 receipt = result.success;
-                if (receipt.invocationId !== head.invocation.id)
+                if (receipt.operationId !== head.invocation.id)
                     return yield* fault(
                         "ValidationFailed",
                         "Backend returned a receipt for another invocation."
@@ -1639,10 +1639,10 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     });
     const enqueueIn = Effect.fnUntraced(function* (
         tx: Transaction,
-        invocation: ActionInvocation,
+        invocation: ActionRequest,
         settings?: { optimistic?: boolean }
     ) {
-        const requestIdentity = Table.make<ActionInvocation>({ name: "identity" }).encode(invocation);
+        const requestIdentity = Table.make<ActionRequest>({ name: "identity" }).encode(invocation);
         const existing =
             (yield* tx.get(outbox, invocation.id)) ??
             (yield* tx.get(completed, invocation.id)) ??
@@ -1656,7 +1656,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             (yield* tx.get(importedPending, invocation.id)) ??
             (yield* tx.get(importedCompleted, invocation.id));
         if (observed) {
-            const resolvedIdentity = Table.make<ActionInvocation>({
+            const resolvedIdentity = Table.make<ActionRequest>({
                 name: "identity",
             }).encode(observed.invocation);
             if (observed.requestIdentity !== requestIdentity && resolvedIdentity !== requestIdentity)
@@ -2128,7 +2128,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         for (const entry of yield* pendingIn(tx)) {
                             const observed = known.get(entry.invocation.id);
                             if (!observed) continue;
-                            const identity = Table.make<ActionInvocation>({ name: "invocation" }).encode(
+                            const identity = Table.make<ActionRequest>({ name: "invocation" }).encode(
                                 entry.invocation
                             );
                             if (
@@ -2343,7 +2343,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                       kind: terminal.failure,
                                       message: terminal.failureMessage ?? "Action was discarded.",
                                       retryable: terminal.failureRetryable ?? false,
-                                      invocationOutcome: terminal.failureOutcome,
+                                      actionOutcome: terminal.failureOutcome,
                                       issues: terminal.failureIssues,
                                   })
                                 : undefined,
@@ -2383,7 +2383,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                         ? "Remote outcome is unknown; reconcile or explicitly acknowledge a retry."
                                         : "Action is blocked; resolve its cause and retry or remove it."),
                                 retryable: entry.failureRetryable ?? false,
-                                invocationOutcome: entry.failureOutcome,
+                                actionOutcome: entry.failureOutcome,
                                 issues: entry.failureIssues,
                             });
                         yield* pull.pipe(
@@ -2400,7 +2400,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     Effect.gen(function* () {
                         const entry = yield* tx.get(outbox, id);
                         if (!entry) return yield* fault("NotFound", "Action is no longer pending.");
-                        if (entry.state === "sending" || receipt.invocationId !== id)
+                        if (entry.state === "sending" || receipt.operationId !== id)
                             return yield* fault("Conflict", "Receipt does not match a recoverable action.");
                         yield* tx.put(outbox, id, {
                             ...entry,
@@ -2419,7 +2419,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         wake,
         syncOnce,
         enqueue: Effect.fn("Replica.enqueue", { root: true })(function* (
-            invocation: ActionInvocation,
+            invocation: ActionRequest,
             settings?: { optimistic?: boolean }
         ) {
             yield* open;
@@ -2491,7 +2491,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             yield* tx.put(outbox, id, {
                                 ...entry,
                                 invocation: { ...invocation, replay: entry.invocation.replay },
-                                requestIdentity: Table.make<ActionInvocation>({
+                                requestIdentity: Table.make<ActionRequest>({
                                     name: "identity",
                                 }).encode(invocation),
                                 state: "queued",

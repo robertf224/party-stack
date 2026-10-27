@@ -23,12 +23,19 @@ Keep validate versus validateDraft and resolveParameters: preflight validity,
 partial-draft validity and default/prefill evaluation are different operations.
 Keep unknown execution outcome distinct from Uncertain preflight validation.
 
-The lower-level contracts still contain ActionInvocation, invoke/Invoke,
-invocationId/invocationOutcome, and low-level accepted/completed names. A coordinated
-follow-up can rename these to ActionRequest, applyAction/ApplyAction, actionId/
-actionOutcome and accepted/confirmed across adapters, protocol schemas, storage and
-tests. Avoid aliases that leave two permanent public vocabularies. This checkpoint
-does not claim those wire/storage names have already been changed.
+October 27 cleanup: the native API now uses ActionRequest, applyAction/ApplyAction,
+operationId on receipts/journal correlation, and providerOperationId for optional
+upstream metadata. The app-facing idempotencyKey supplies ActionRequest.id and the
+receipt's operationId; it is stable across retries, not the action type's name.
+BackendError.actionOutcome keeps unknown/not-committed execution evidence separate
+from retry scheduling. No aliases retain the old method or receipt-field vocabulary.
+Low-level outbox accepted/completed observations remain distinct from this naming.
+
+Backend adapters now acquire one native service through scoped open(context).
+Parallel adapter-level validation, Promise attachment hooks and cleanup callbacks
+are removed. Host attachment preparation only gathers locally staged bytes. Native
+provider action execution owns uploads/parameter encoding and returns mappings in
+its receipt. Native attachment staging remains available for explicitly eager use.
 
 The current direct/outbox mode labels also deserve review: both use the outbox and
 wait for confirmation, so an explicit offline-admission option may be clearer. Do
@@ -37,15 +44,16 @@ not mix that future naming decision with optimistic visibility or a second execu
 ## Query work and v0 gates
 
 Context binding is available now through baseObjectTypeQueries callbacks receiving
-{ctx, objectType}. Full Query IR would also need lexical/correlated scopes, exists,
+{ctx, objectType}. Full Query IR also needs lexical/correlated scopes, relationships,
 joins, nested results and per-parent pagination; execution and authorization must
 agree across memory, IndexedDB, SQL and adapted sources. Implementing a builder alone
 does not provide safe policy execution. See query-ir.md for the existing direction.
 
-Prefer a first relational slice (correlated exists + context bindings + related
-lowering) over making server IVM/query watching a prerequisite. The immediate driver
-is Gateway's existing context-path/join authorization, not live hierarchical query
-subscription. A TanStack-based policy executor remains a possible parity bridge.
+Pull hierarchical query/context-binding work into the final Gateway phase of v0.
+Do not introduce an exists-first public policy API. Relationships and correlated
+subqueries belong in the shared Query IR; existence checks can be an execution
+lowering detail. Live query watching/IVM and subscribeSubset remain deferred. See
+subset-subscriptions.md for the owned journal's support and remaining membership work.
 
 Remaining Gateway gates are dynamic projected Describe/context discovery, relational
 read policies and reference-input authorization through those same views, bounded

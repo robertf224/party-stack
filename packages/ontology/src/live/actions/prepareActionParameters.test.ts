@@ -1,10 +1,9 @@
 import { o } from "@party-stack/ontology-spec";
 import { memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { createBlobManager } from "../../runtime/blobs/createBlobManager.js";
 import { prepareActionParameters } from "./prepareActionParameters.js";
-import type { OntologyBackendAdapter } from "../OntologyBackendAdapter.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
@@ -28,24 +27,6 @@ const ir: OntologyIR = {
     queryFunctionTypes: [],
 };
 
-const backendAdapter: OntologyBackendAdapter = {
-    name: "test",
-    open: () =>
-        Effect.succeed({
-            name: "test",
-            sourceId: "test",
-            supportsIdempotency: false,
-            loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-            invoke: () => Effect.die("Unexpected action"),
-            queryFunction: () => Effect.die("Unexpected query"),
-        }),
-
-    attachments: {
-        getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
-        getAttachmentMetadata: () => Promise.reject(new Error("unexpected metadata read")),
-    },
-};
-
 describe("prepareActionParameters", () => {
     it("collects action attachment uploads with resolved attachment type targets", async () => {
         const runtime = memoryRuntimeFixture("test", "prepare-action");
@@ -58,15 +39,16 @@ describe("prepareActionParameters", () => {
         });
         await blobManager.stage("attachment-1", new Blob(["hello"]));
 
-        const prepared = await prepareActionParameters({
-            ir,
-            actionTypeName: "uploadDocument",
-            parameters: {
-                file: { id: "attachment-1" },
-            },
-            backendAdapter,
-            blobManager,
-        });
+        const prepared = await Effect.runPromise(
+            prepareActionParameters({
+                ir,
+                actionTypeName: "uploadDocument",
+                parameters: {
+                    file: { id: "attachment-1" },
+                },
+                blobManager,
+            })
+        );
 
         expect(prepared.attachmentUploads).toHaveLength(1);
         expect(prepared.attachmentUploads[0]).toMatchObject({
@@ -78,93 +60,27 @@ describe("prepareActionParameters", () => {
         await runtime.cleanup();
     });
 
-    it("replaces materialized attachments and records id mappings", async () => {
-        const runtime = memoryRuntimeFixture("test", "materialize-action");
-        const blobManager = createBlobManager({
-            runtime,
-            remote: {
-                metadata: (id) =>
-                    Promise.resolve({
-                        id,
-                        size: 0,
-                        type: "",
-                    }),
-                read: () => Promise.reject(new Error("unexpected remote read")),
-            },
-        });
-        await blobManager.stage(
-            "local-id",
-            new Blob(["hello"], {
-                type: "image/png",
-            })
-        );
-        const materializingAdapter: OntologyBackendAdapter = {
-            ...backendAdapter,
-            attachments: {
-                ...backendAdapter.attachments!,
-                materializeAttachment: async (attachment, blob) => {
-                    await expect(blob.text()).resolves.toBe("hello");
-                    return {
-                        ...attachment,
-                        id: "remote-id",
-                    };
-                },
-            },
-        };
-        const parameters = {
-            file: { id: "local-id" },
-        };
-
-        const prepared = await prepareActionParameters({
-            ir,
-            actionTypeName: "uploadDocument",
-            parameters,
-            backendAdapter: materializingAdapter,
-            blobManager,
-        });
-
-        expect(prepared.parameters).toEqual({
-            file: { id: "remote-id" },
-        });
-        expect(parameters).toEqual({
-            file: { id: "local-id" },
-        });
-        expect(prepared.attachmentIdMappings).toEqual([
-            {
-                localId: "local-id",
-                remoteId: "remote-id",
-            },
-        ]);
-        expect(
-            (await Effect.runPromise((await blobManager.storage).metadata("local-id")))?.remoteId
-        ).toBeUndefined();
-
-        await blobManager.stage("upload-id", new Blob(["upload"]));
-        const uploadAdapter: OntologyBackendAdapter = {
-            ...materializingAdapter,
-            attachments: {
-                ...materializingAdapter.attachments!,
-                canMaterializeAttachment: () => false,
-            },
-        };
-        const uploaded = await prepareActionParameters({
-            ir,
-            actionTypeName: "uploadDocument",
-            parameters: {
-                file: { id: "upload-id" },
-            },
-            backendAdapter: uploadAdapter,
-            blobManager,
-        });
-
-        expect(uploaded.parameters).toEqual({
-            file: { id: "upload-id" },
-        });
-        expect(uploaded.attachmentIdMappings).toEqual([]);
-        expect(uploaded.attachmentUploads).toHaveLength(1);
-        await expect(uploaded.attachmentUploads[0]!.blob.text()).resolves.toBe("upload");
-
-        await blobManager.cleanup();
+    it("leaves remote handles unchanged without downloading cached or unseen bytes", async () => {
+        const runtime = memoryRuntimeFixture("test", "remote-action");
+        const remoteRead = vi.fn(() => Promise.reject(new Error("must not download")));
+        const manager = createBlobManager({ runtime, remote: { read: remoteRead } });
+        await manager.stage("local-id", new Blob(["hello"]));
+        await manager.bindRemoteId("local-id", "remote-id");
+        for (const id of ["remote-id", "unseen-remote-id"]) {
+            const parameters = { file: { id } };
+            const prepared = await Effect.runPromise(
+                prepareActionParameters({
+                    ir,
+                    actionTypeName: "uploadDocument",
+                    parameters,
+                    blobManager: manager,
+                })
+            );
+            expect(prepared.parameters).toEqual(parameters);
+            expect(prepared.attachmentUploads).toEqual([]);
+        }
+        expect(remoteRead).not.toHaveBeenCalled();
+        await manager.cleanup();
         await runtime.cleanup();
     });
 });

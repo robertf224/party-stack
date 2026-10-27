@@ -15,11 +15,9 @@ import {
     type OntologyAttachmentIdMapping,
     type OntologyBackendAdapter,
     type OntologyBackendAdapterProvider,
-    type OntologyAttachmentsAdapter,
     type OntologyIR,
-    type ValidateActionDraftLiveOpts,
 } from "@party-stack/ontology";
-import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
+import { BackendError } from "@party-stack/ontology-backend";
 import { resolveType, unwrapType } from "@party-stack/ontology/utils";
 import { Effect } from "effect";
 import { Temporal } from "temporal-polyfill";
@@ -37,7 +35,7 @@ import {
 import { createFoundryCodec } from "./foundryCodec.js";
 import { decodeFoundryMediaId, mediaReferenceToFoundryMediaId } from "./foundryMediaId.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
-import type { BackendSnapshot } from "@party-stack/ontology-backend";
+import type { BackendSnapshot, ValidationReport } from "@party-stack/ontology-backend";
 import type { Query } from "@party-stack/ontology-storage";
 import type { attachment } from "@party-stack/ontology/values";
 
@@ -194,19 +192,13 @@ export function createFoundryOntologyBackendAdapter(
     opts: CreateFoundryOntologyBackendAdapterOptions
 ): OntologyBackendAdapter {
     const codec = createFoundryCodec(opts.ir);
-    const attachments: OntologyAttachmentsAdapter = {
-        generateAttachmentId: (_, { target }) => {
-            invariant(
-                target,
-                "A property target must be passed to generateAttachmentId in the Foundry adapter so that we know whether to target attachments or media."
-            );
-            if (getFoundryAttachmentKind(target.meta) === "attachment") {
-                return `ri.attachments.main.attachment.${crypto.randomUUID()}`;
-            }
-            return crypto.randomUUID();
-        },
-        canMaterializeAttachment: (_, { target }) => getAttachmentProviderType(target) !== "media",
-        materializeAttachment: async (attachment, blob, { target }) => {
+    const attachments = {
+        materializeAttachment: async (
+            attachment: attachment,
+            blob: Blob,
+            { target }: { target?: import("@party-stack/ontology-spec").AttachmentTypeDef },
+            client = opts.client
+        ) => {
             invariant(
                 target,
                 "A property target must be passed to materializeAttachment in the Foundry adapter so that we know whether to target attachments or media."
@@ -217,26 +209,26 @@ export function createFoundryOntologyBackendAdapter(
             );
             const filename = getAttachmentName(blob) ?? "";
             if (!isFoundryAttachmentRid(attachment.id)) {
-                const uploaded = await Attachments.upload(opts.client, blob, { filename });
+                const uploaded = await Attachments.upload(client, blob, { filename });
                 return {
                     ...attachment,
                     id: uploaded.rid,
                 };
             }
             try {
-                await Attachments.get(opts.client, attachment.id);
+                await Attachments.get(client, attachment.id);
                 return;
             } catch (error) {
                 if (!isFoundryNotFoundError(error)) {
                     throw error;
                 }
             }
-            await Attachments.uploadWithRid(opts.client, attachment.id, blob, {
+            await Attachments.uploadWithRid(client, attachment.id, blob, {
                 filename,
                 preview: true,
             });
         },
-        getAttachmentContent: async (attachment, readOptions) => {
+        getAttachmentContent: async (attachment: attachment, readOptions?: { signal?: AbortSignal }) => {
             const client = withRequestSignal(opts.client, readOptions?.signal);
             const userContent = await opts.users?.getAttachmentContent?.(client, attachment);
             if (userContent) return userContent;
@@ -260,7 +252,11 @@ export function createFoundryOntologyBackendAdapter(
             const contents = await Attachments.read(client, attachment.id);
             return contents.blob();
         },
-        getAttachmentMetadata: async (attachment, selection, readOptions) => {
+        getAttachmentMetadata: async (
+            attachment: attachment,
+            selection: readonly (keyof PartialAttachmentMetadata)[],
+            readOptions?: { signal?: AbortSignal }
+        ): Promise<PartialAttachmentMetadata> => {
             const client = withRequestSignal(opts.client, readOptions?.signal);
             const userMetadata = await opts.users?.getAttachmentMetadata?.(client, attachment, selection);
             if (userMetadata) return userMetadata;
@@ -306,7 +302,6 @@ export function createFoundryOntologyBackendAdapter(
             }
             const metadata = await Attachments.get(client, attachment.id);
             return {
-                id: attachment.id,
                 size: Number(metadata.sizeBytes),
                 type: metadata.mediaType,
                 name: metadata.filename,
@@ -318,21 +313,33 @@ export function createFoundryOntologyBackendAdapter(
     const submitAction = async (
         name: string,
         parameters: Record<string, unknown>,
-        context: import("@party-stack/ontology").ApplyActionLiveOpts,
+        context: { attachmentUploads?: readonly import("@party-stack/ontology-backend").AttachmentUpload[] },
         client = opts.client
     ) => {
         const mediaReferences = new Map<string, Awaited<ReturnType<typeof MediaSets.uploadMedia>>>();
         const attachmentIdMappings: OntologyAttachmentIdMapping[] = [];
+        const attachmentIds = new Map<string, string>();
         await Promise.all(
             [
                 ...new Map(
                     (context.attachmentUploads ?? []).map((upload) => [upload.attachment.id, upload])
                 ).values(),
             ].map(async (upload) => {
-                invariant(
-                    getAttachmentProviderType(upload.target) === "media",
-                    `Foundry attachment "${upload.attachment.id}" was not materialized before action execution.`
-                );
+                if (getAttachmentProviderType(upload.target) !== "media") {
+                    const result = await attachments.materializeAttachment(
+                        upload.attachment,
+                        upload.blob,
+                        {
+                            target: upload.target,
+                        },
+                        client
+                    );
+                    const id = result?.id ?? upload.attachment.id;
+                    attachmentIds.set(upload.attachment.id, id);
+                    if (id !== upload.attachment.id)
+                        attachmentIdMappings.push({ localId: upload.attachment.id, remoteId: id });
+                    return;
+                }
                 const reference = await MediaSets.uploadMedia(client, upload.blob, {
                     filename: getAttachmentName(upload.blob) ?? upload.attachment.id,
                 });
@@ -342,9 +349,21 @@ export function createFoundryOntologyBackendAdapter(
                     remoteId: mediaReferenceToFoundryMediaId(reference),
                 });
             })
-        );
+        ).catch((cause) => {
+            const error = foundryActionError("foundry.upload", cause, opts.ir, name, parameters);
+            throw new BackendError({
+                operation: error.operation,
+                kind: error.kind,
+                message: error.message,
+                retryable: error.retryable,
+                issues: error.issues,
+                cause: error.cause,
+                actionOutcome: "not-committed",
+            });
+        });
         const actionCodec = createFoundryCodec(opts.ir, {
             resolveMediaReference: (id) => mediaReferences.get(id),
+            resolveAttachmentId: (id) => attachmentIds.get(id),
         });
         let invocation: ReturnType<typeof prepareFoundryActionInvocation>;
         try {
@@ -359,7 +378,7 @@ export function createFoundryOntologyBackendAdapter(
                 operation: "foundry.prepare",
                 kind: "ValidationFailed",
                 retryable: false,
-                invocationOutcome: "not-committed",
+                actionOutcome: "not-committed",
                 message: cause instanceof Error ? cause.message : "Invalid action parameters.",
                 cause,
             });
@@ -388,16 +407,16 @@ export function createFoundryOntologyBackendAdapter(
                 }
             );
         } catch (error) {
-            throw foundryActionError("foundry.invoke", error, opts.ir, name, parameters);
+            throw foundryActionError("foundry.applyAction", error, opts.ir, name, parameters);
         }
         if (result.validation?.result === "INVALID") {
             throw new BackendError({
-                operation: "foundry.invoke",
+                operation: "foundry.applyAction",
                 kind: "ValidationFailed",
                 message: "Submission failed validation.",
                 issues: getFoundryValidationIssues(result, parameters),
                 retryable: false,
-                invocationOutcome: "not-committed",
+                actionOutcome: "not-committed",
             });
         }
         return { result, attachmentIdMappings };
@@ -435,14 +454,115 @@ export function createFoundryOntologyBackendAdapter(
         Effect.tryPromise({
             try: run,
             catch: (cause) =>
-                new BackendError({
-                    operation,
-                    kind: "Unavailable",
-                    message: "Foundry helper request failed.",
-                    retryable: true,
-                    cause,
-                }),
+                cause instanceof BackendError
+                    ? cause
+                    : new BackendError({
+                          operation,
+                          kind: "Unavailable",
+                          message: "Foundry helper request failed.",
+                          retryable: true,
+                          cause,
+                      }),
         });
+    const validateAction = Effect.fn("Foundry.validateAction")(function* (
+        name: string,
+        parameters: Record<string, unknown>
+    ): Effect.fn.Return<ValidationReport, BackendError> {
+        const invocation = yield* Effect.try({
+            try: () => prepareFoundryActionInvocation({ ir: opts.ir, name, parameters, codec }),
+            catch: (cause) => foundryActionError("foundry.validateAction", cause, opts.ir, name, parameters),
+        });
+        const result = yield* Effect.tryPromise({
+            try: () =>
+                Actions.applyWithOverrides(
+                    opts.client,
+                    opts.client.ontologyRid,
+                    toFoundryActionTypeName(name),
+                    {
+                        request: {
+                            options: { mode: "VALIDATE_ONLY" },
+                            parameters: invocation.parameters,
+                        },
+                        overrides: invocation.overrides,
+                    },
+                    { preview: true }
+                ),
+            catch: (cause) => foundryActionError("foundry.validateAction", cause, opts.ir, name, parameters),
+        });
+        if (!result.validation)
+            return yield* new BackendError({
+                operation: "foundry.validateAction",
+                kind: "Unavailable",
+                message: "Validation response is missing.",
+                retryable: true,
+            });
+        return certain(
+            result.validation.result === "VALID"
+                ? { kind: "ok" as const, value: undefined }
+                : { kind: "err" as const, value: getFoundryValidationIssues(result, parameters) }
+        );
+    });
+    const validateActionDraft = Effect.fn("Foundry.validateActionDraft")(function* (
+        name: string,
+        parameters: Record<string, unknown>,
+        live: { knownParameters: readonly string[]; context?: Record<string, unknown> }
+    ): Effect.fn.Return<ValidationReport, BackendError> {
+        const action = opts.ir.actionTypes.find((candidate) => candidate.name === name);
+        if (!action)
+            return yield* new BackendError({
+                operation: "foundry.validateActionDraft",
+                kind: "NotImplemented",
+                message: "Unknown action type.",
+                retryable: false,
+            });
+        const knownParameters = new Set([
+            ...Object.entries(parameters).flatMap(([key, value]) => (value === undefined ? [] : [key])),
+            ...live.knownParameters,
+        ]);
+        const missing = action.parameters.filter(
+            (parameter) =>
+                parameters[parameter.name] === undefined &&
+                knownParameters.has(parameter.name) &&
+                !unwrapType(resolveType(opts.ir, parameter.type)).isOptional
+        );
+        if (missing.length)
+            return certain({
+                kind: "err" as const,
+                value: missing.map((parameter) => ({
+                    message: "A value is required.",
+                    path: [parameter.name],
+                    code: "required",
+                    category: "input" as const,
+                    source: "parameter" as const,
+                    messageSource: "standard" as const,
+                })),
+            });
+        if (
+            !action.parameters.some(
+                (parameter) =>
+                    parameters[parameter.name] === undefined && !knownParameters.has(parameter.name)
+            )
+        )
+            return yield* validateAction(name, parameters);
+        const userId = typeof live.context?.user === "string" ? live.context.user : undefined;
+        if (!userId) return uncertain();
+        return yield* Effect.tryPromise({
+            try: async () =>
+                validateFoundryActionDraftCriteria({
+                    client: opts.client,
+                    criteria: await loadFoundrySubmissionCriteria({
+                        client: opts.client,
+                        actionTypeName: name,
+                        userId,
+                    }),
+                    userId,
+                    parameters,
+                    knownParameters,
+                }),
+            catch: (cause) =>
+                foundryActionError("foundry.validateActionDraft", cause, opts.ir, name, parameters),
+        });
+    });
     const adapter: OntologyBackendAdapter = {
         name: "foundry",
         open: (context) =>
@@ -461,8 +581,6 @@ export function createFoundryOntologyBackendAdapter(
                         invocation.name,
                         invocation.parameters,
                         {
-                            objects: {},
-                            context,
                             attachmentUploads: invocation.attachmentUploads
                                 ? [...invocation.attachmentUploads]
                                 : undefined,
@@ -473,6 +591,26 @@ export function createFoundryOntologyBackendAdapter(
                 queryFunction: (name, parameters, signal) =>
                     runQueryFunction(name, parameters, withRequestSignal(opts.client, signal)),
                 attachments: {
+                    stage: (value, blob, settings) =>
+                        attempt("attachment.stage", async (signal) => {
+                            const target = settings?.target;
+                            if (!target || getAttachmentProviderType(target) === "media")
+                                throw new BackendError({
+                                    operation: "attachment.stage",
+                                    kind: "NotImplemented",
+                                    retryable: false,
+                                    message:
+                                        "This attachment target must be uploaded during action execution.",
+                                });
+                            return (
+                                (await attachments.materializeAttachment(
+                                    value,
+                                    blob,
+                                    { target },
+                                    withRequestSignal(opts.client, signal)
+                                )) ?? value
+                            );
+                        }),
                     read: (value, range) =>
                         Effect.gen(function* () {
                             if (
@@ -501,23 +639,33 @@ export function createFoundryOntologyBackendAdapter(
                                   )
                                 : blob;
                         }),
-                    metadata: (value) =>
+                    metadata: (value, settings) =>
                         Effect.gen(function* () {
                             const meta = yield* attempt(
                                 "attachment.metadata",
                                 async (signal) =>
                                     (await attachments.getAttachmentMetadata?.(
                                         value,
-                                        ["size", "type", "name"],
+                                        settings?.select ?? ["size", "type", "name"],
                                         { signal }
                                     )) ?? {}
                             );
-                            if (meta.size !== undefined && meta.type !== undefined)
-                                return { size: meta.size, type: meta.type, name: meta.name };
+                            if (settings?.select || (meta.size !== undefined && meta.type !== undefined))
+                                return {
+                                    size: meta.size,
+                                    type: meta.type,
+                                    name: meta.name,
+                                    dimensions: meta.dimensions ?? undefined,
+                                };
                             const blob = yield* attempt("attachment.read", (signal) =>
                                 attachments.getAttachmentContent(value, { signal })
                             );
-                            return { size: blob.size, type: blob.type, name: meta.name };
+                            return {
+                                size: blob.size,
+                                type: blob.type,
+                                name: meta.name,
+                                dimensions: meta.dimensions ?? undefined,
+                            };
                         }),
                 },
             }).pipe(
@@ -529,116 +677,13 @@ export function createFoundryOntologyBackendAdapter(
                         settings?: { readonly knownParameters?: readonly string[] }
                     ) =>
                         settings?.knownParameters
-                            ? adapter.validateActionDraft!(name, parameters, {
-                                  objects: {},
+                            ? validateActionDraft(name, parameters, {
                                   context,
                                   knownParameters: settings.knownParameters,
                               })
-                            : adapter.validateAction!(name, parameters, { objects: {}, context }),
+                            : validateAction(name, parameters),
                 }))
             ),
-        validateAction: Effect.fn("Foundry.validateAction")(function* (
-            name: string,
-            parameters: Record<string, unknown>
-        ) {
-            const invocation = yield* Effect.try({
-                try: () => prepareFoundryActionInvocation({ ir: opts.ir, name, parameters, codec }),
-                catch: (cause) =>
-                    foundryActionError("foundry.validateAction", cause, opts.ir, name, parameters),
-            });
-            const result = yield* Effect.tryPromise({
-                try: () =>
-                    Actions.applyWithOverrides(
-                        opts.client,
-                        opts.client.ontologyRid,
-                        toFoundryActionTypeName(name),
-                        {
-                            request: {
-                                options: { mode: "VALIDATE_ONLY" },
-                                parameters: invocation.parameters,
-                            },
-                            overrides: invocation.overrides,
-                        },
-                        { preview: true }
-                    ),
-                catch: (cause) =>
-                    foundryActionError("foundry.validateAction", cause, opts.ir, name, parameters),
-            });
-            if (!result.validation)
-                return yield* new BackendError({
-                    operation: "foundry.validateAction",
-                    kind: "Unavailable",
-                    message: "Validation response is missing.",
-                    retryable: true,
-                });
-            return certain(
-                result.validation.result === "VALID"
-                    ? { kind: "ok" as const, value: undefined }
-                    : { kind: "err" as const, value: getFoundryValidationIssues(result, parameters) }
-            );
-        }),
-        validateActionDraft: Effect.fn("Foundry.validateActionDraft")(function* (
-            name: string,
-            parameters: Record<string, unknown>,
-            live: ValidateActionDraftLiveOpts
-        ) {
-            const action = opts.ir.actionTypes.find((candidate) => candidate.name === name);
-            if (!action)
-                return yield* new BackendError({
-                    operation: "foundry.validateActionDraft",
-                    kind: "NotImplemented",
-                    message: "Unknown action type.",
-                    retryable: false,
-                });
-            const knownParameters = new Set([
-                ...Object.entries(parameters).flatMap(([key, value]) => (value === undefined ? [] : [key])),
-                ...live.knownParameters,
-            ]);
-            const missing = action.parameters.filter(
-                (parameter) =>
-                    parameters[parameter.name] === undefined &&
-                    knownParameters.has(parameter.name) &&
-                    !unwrapType(resolveType(opts.ir, parameter.type)).isOptional
-            );
-            if (missing.length)
-                return certain({
-                    kind: "err" as const,
-                    value: missing.map((parameter) => ({
-                        message: "A value is required.",
-                        path: [parameter.name],
-                        code: "required",
-                        category: "input" as const,
-                        source: "parameter" as const,
-                        messageSource: "standard" as const,
-                    })),
-                });
-            if (
-                !action.parameters.some(
-                    (parameter) =>
-                        parameters[parameter.name] === undefined && !knownParameters.has(parameter.name)
-                )
-            )
-                return yield* adapter.validateAction!(name, parameters, live);
-            const userId = typeof live.context?.user === "string" ? live.context.user : undefined;
-            if (!userId) return uncertain();
-            return yield* Effect.tryPromise({
-                try: async () =>
-                    validateFoundryActionDraftCriteria({
-                        client: opts.client,
-                        criteria: await loadFoundrySubmissionCriteria({
-                            client: opts.client,
-                            actionTypeName: name,
-                            userId,
-                        }),
-                        userId,
-                        parameters,
-                        knownParameters,
-                    }),
-                catch: (cause) =>
-                    foundryActionError("foundry.validateActionDraft", cause, opts.ir, name, parameters),
-            });
-        }),
-        attachments,
     };
     return adapter;
 }

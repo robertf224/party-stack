@@ -32,7 +32,7 @@ const quietBackend: OntologyBackendService = {
     sourceId: "cache-lifetime",
     supportsIdempotency: false,
     loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-    invoke: () => Effect.die("Unexpected action"),
+    applyAction: () => Effect.die("Unexpected action"),
     queryFunction: () => Effect.void,
     pollIntervalMs: () => false,
 };
@@ -170,19 +170,19 @@ test("cached proxy shares demand, forwards writes, and never enqueues them local
                     replica,
                     backend: {
                         ...backend,
-                        invoke: (action) =>
+                        applyAction: (action) =>
                             Effect.succeed({
-                                invocationId: action.id,
+                                operationId: action.id,
                                 outcome: "committed",
                                 affected: [{ objectType: "Telemetry" }],
                                 affectedComplete: true,
                             }),
                     },
                 });
-                yield* quietProxy.invoke({ id: "event", name: "recordEvent", parameters: {} });
+                yield* quietProxy.applyAction({ id: "event", name: "recordEvent", parameters: {} });
                 yield* proxy.loadSubset(subset);
                 expect(loads).toBe(1);
-                const receipt = yield* proxy.invoke({ id: "one", name: "save", parameters: {} });
+                const receipt = yield* proxy.applyAction({ id: "one", name: "save", parameters: {} });
                 expect(receipt.outcome).toBe("committed");
                 expect(yield* replica.pending).toEqual([]);
                 expect((yield* proxy.loadSubset(subset)).rows[0]?.value.count).toBe(1);
@@ -205,7 +205,7 @@ test("cached proxy never promotes an incomplete source snapshot to complete cove
                             rows: [{ key: "one", value: { id: "one", count: 1 } }],
                             complete: false,
                         }),
-                    invoke: () => Effect.die("unused"),
+                    applyAction: () => Effect.die("unused"),
                     queryFunction: () => Effect.void,
                 };
                 const replica = yield* makeReplica({

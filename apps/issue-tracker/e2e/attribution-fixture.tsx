@@ -47,7 +47,7 @@ const backend = await Effect.runPromise(
         },
     })
 );
-await Effect.runPromise(backend.invoke({ id: "seed", name: "seed", parameters: {} }));
+await Effect.runPromise(backend.applyAction({ id: "seed", name: "seed", parameters: {} }));
 let loads = 0;
 const fixtureRuntime = defineRuntimeFixture((owner, namespace) => ({
     ...memoryRuntimeFixture(owner, namespace),

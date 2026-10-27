@@ -3,7 +3,7 @@
 LiveOntology.outbox.collection contains the engine's lifecycle status: queued,
 sending, acknowledged (receipt saved; reconciling), or blocked. It does not flatten
 all failures into a generic failed status. lastError is the shared BackendError,
-including kind, message, issues, retryable and invocationOutcome; raw causes are
+including kind, message, issues, retryable and actionOutcome; raw causes are
 not included. Example:
 
 ```ts
@@ -15,7 +15,7 @@ not included. Example:
   lastError: {
     _tag: "BackendError", kind: "ValidationFailed", operation: "invoke",
     message: "Submission failed validation.", retryable: false,
-    invocationOutcome: "not-committed",
+    actionOutcome: "not-committed",
     issues: [{ path: ["project"], code: "InvalidObjectReference", message: "Choose a valid value." }],
   },
 }
@@ -69,7 +69,7 @@ closeForm();
 ```
 
 No manual enqueue is needed. Expected failures reject with BackendError; direct
-admission while offline is Unavailable with invocationOutcome:"not-committed" and
+admission while offline is Unavailable with actionOutcome:"not-committed" and
 does not enqueue anything. A lost response after dispatch may instead have an unknown
 outcome. Low-level outbox.enqueue still exposes accepted/completed observations for
 administrative and recovery tools. The ordinary action API has one confirmation Promise.

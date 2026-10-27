@@ -84,7 +84,7 @@ delete interface as owned mutators; write callbacks additionally support
 Object changes and one journal batch commit in the same native transaction, then
 subscribers receive a wake-up hint. Multiple writes to a row coalesce to its final
 change. A failed callback or journal append rolls everything back. Index-only
-transactions do not add change batches. Integration commits have no invocation ID
+transactions do not add change batches. Integration commits have no operation ID
 or action receipt; native transaction success determines their outcome.
 
 Better Auth's callback transaction binds all its adapter operations to that one

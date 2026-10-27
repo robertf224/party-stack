@@ -9,7 +9,7 @@ import type { Actions } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type {
     OntologyBackendService,
-    ActionInvocation,
+    ActionRequest,
     ActionReceipt,
     BackendSubset,
     SourceQueryPlan,
@@ -34,7 +34,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
         loadSubset: (query: Query, signal: AbortSignal) => Promise<BackendSnapshot>;
     };
     submitAction: (
-        invocation: ActionInvocation,
+        invocation: ActionRequest,
         signal: AbortSignal
     ) => Promise<{
         result: Awaited<ReturnType<typeof Actions.applyWithOverrides>> & { operationId?: string };
@@ -149,7 +149,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                 complete: true,
             };
         }),
-        invoke: Effect.fn("Foundry.invoke")(function* (invocation: ActionInvocation) {
+        applyAction: Effect.fn("Foundry.applyAction")(function* (invocation: ActionRequest) {
             const { result, attachmentIdMappings } = yield* Effect.tryPromise({
                 try: (signal) => options.submitAction(invocation, signal),
                 catch: (cause) =>
@@ -157,7 +157,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                         ? cause
                         : cause instanceof Error && cause.name === "NonRetryableError"
                           ? new BackendError({
-                                operation: "foundry.invoke",
+                                operation: "foundry.applyAction",
                                 kind: "ValidationFailed",
                                 message: cause.message,
                                 retryable: false,
@@ -190,9 +190,9 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                     } else add(edit.objectType, edit.primaryKey);
                 }
             return {
-                invocationId: invocation.id,
+                operationId: invocation.id,
                 outcome: "committed",
-                operationId: result.operationId,
+                providerOperationId: result.operationId,
                 affected: [...targets].map(([objectType, keys]) => ({
                     objectType,
                     ...(keys ? { keys: [...keys] } : {}),

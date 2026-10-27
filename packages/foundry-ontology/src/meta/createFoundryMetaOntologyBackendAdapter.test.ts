@@ -22,7 +22,7 @@ describe("native metadata binding", () => {
                         );
                         expect(
                             (yield* Effect.result(
-                                backend.invoke({ id: "x", name: "create", parameters: {} })
+                                backend.applyAction({ id: "x", name: "create", parameters: {} })
                             ))._tag
                         ).toBe("Failure");
                     })

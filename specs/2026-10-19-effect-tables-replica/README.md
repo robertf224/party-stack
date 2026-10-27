@@ -43,6 +43,8 @@ helpers, and their connection to demand and retention.
 See [the public API checkpoint](./public-api-checkpoint.md) for action confirmation
 semantics, vocabulary review and remaining Gateway gates, and
 [cache management](./cache-management.md) for idle admission and future byte budgets.
+See [future subset subscriptions](./subset-subscriptions.md) for cursor semantics and
+how owned journaling can support a query-scoped feed.
 
 ## Intended outcome
 

@@ -52,12 +52,12 @@ export function projectStateFailures(
         if (!entry.failure) return entry;
         const error = projectBackendError(
             new BackendError({
-                operation: "invoke",
+                operation: "applyAction",
                 kind: entry.failure,
                 message: entry.failureMessage ?? "Action failed.",
                 issues: entry.failureIssues,
                 retryable: entry.failureRetryable ?? false,
-                invocationOutcome: entry.failureOutcome,
+                actionOutcome: entry.failureOutcome,
             }),
             options.errors,
             errorContext(options, entry.invocation.name)
@@ -91,7 +91,7 @@ export const errorProjectionLayer = (options: ErrorProjectionOptions) =>
                         kind: "Internal",
                         message: "The operation could not be completed.",
                         retryable: false,
-                        invocationOutcome: "unknown",
+                        actionOutcome: "unknown",
                     })
                 )
             )

@@ -251,7 +251,7 @@ function statusLabel(entry: OntologyOutboxEntry): string {
         case "acknowledged":
             return "Reconciling";
         case "blocked":
-            return entry.lastError?.invocationOutcome === "unknown" ? "Outcome unknown" : "Blocked";
+            return entry.lastError?.actionOutcome === "unknown" ? "Outcome unknown" : "Blocked";
     }
 }
 
@@ -307,7 +307,7 @@ export function OutboxEntryCard({
         if (
             action === "retry"
                 ? entry.retryRequiresAcknowledgement
-                : entry.lastError?.invocationOutcome === "unknown"
+                : entry.lastError?.actionOutcome === "unknown"
         )
             setConfirmation(action);
         else void run(action);
@@ -366,7 +366,7 @@ export function OutboxEntryCard({
                 <div className="ps-outbox-error" role="alert">
                     <strong>{entry.lastError.kind}</strong>
                     <div>{entry.lastError.message}</div>
-                    {entry.lastError.invocationOutcome === "unknown" ? (
+                    {entry.lastError.actionOutcome === "unknown" ? (
                         <p>
                             The previous attempt may have committed. No definitive result has been received.
                         </p>

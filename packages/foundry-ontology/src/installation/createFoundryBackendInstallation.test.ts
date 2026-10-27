@@ -40,7 +40,8 @@ describe("createFoundryOntologyRoute", () => {
                     expect(adapterOptions?.client.ontologyRid).toBe("ri.ontology.main");
                     expect(adapterOptions?.refetchInterval).toBe(metaRefetchInterval);
                 } finally {
-                    await backend.cleanup?.();
+                    // Adapter construction owns no resources; open(context) acquires them in Scope.
+                    void backend;
                 }
             } finally {
                 createAdapter.mockRestore();

@@ -40,7 +40,7 @@ const setup = Effect.fnUntraced(function* (execute: ReplicaOptions["execute"] = 
     });
     let sequence = 0;
     const put = (id: string, count: number) =>
-        server.invoke({ id: `seed-${sequence++}`, name: "write", parameters: { id, count } });
+        server.applyAction({ id: `seed-${sequence++}`, name: "write", parameters: { id, count } });
     for (let i = 0; i < 5; i++) yield* put(`row${i}`, i);
     const options: ReplicaOptions = {
         namespace: "retention-local",
@@ -50,7 +50,7 @@ const setup = Effect.fnUntraced(function* (execute: ReplicaOptions["execute"] = 
         startSync: false,
         backend: {
             ...server,
-            invoke: () =>
+            applyAction: () =>
                 Effect.fail(
                     new BackendError({
                         operation: "test",

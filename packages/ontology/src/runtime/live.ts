@@ -21,9 +21,9 @@ export type ReplicaLiveOptions = ReplicaHostOptions;
 export const makeReplicaLiveOntology = Effect.fn("Ontology.open")(function* (
     options: ReplicaLiveOptions
 ): Effect.fn.Return<Omit<LiveOntology, "cleanup" | "destroy">, BackendError, Runtime | Scope.Scope> {
-    const { runtime, context, ir, backendAdapter } = options;
+    const { runtime, context, ir } = options;
     if (runtime.acquireHost) yield* runtime.acquireHost.pipe(Effect.mapError(failure));
-    const { replica, backend, blobManager, attachmentsAdapter } = yield* makeReplicaHost(options);
+    const { replica, backend, blobManager, stageAttachment } = yield* makeReplicaHost(options);
     return yield* makeReplicaOntologyView({
         ir,
         context,
@@ -33,24 +33,14 @@ export const makeReplicaLiveOntology = Effect.fn("Ontology.open")(function* (
         resolveActionParameters: backend.resolveActionParameters,
         sourceId: backend.sourceId,
         encrypted: backend.encrypted,
-        attachments: createLiveOntologyAttachments({ ir, attachmentsAdapter, blobManager }),
+        attachments: createLiveOntologyAttachments({ ir, stageAttachment, blobManager }),
         traces: getRuntime(runtime).traces,
         validate: backend.validateAction
             ? (name, parameters) => backend.validateAction!(name, parameters)
-            : backendAdapter.validateAction
-              ? (name, parameters, objects) =>
-                    backendAdapter.validateAction!(name, parameters, { objects, context })
-              : undefined,
+            : undefined,
         validateDraft: backend.validateAction
             ? (name, parameters, knownParameters) =>
                   backend.validateAction!(name, parameters, { knownParameters })
-            : backendAdapter.validateActionDraft
-              ? (name, parameters, knownParameters, objects) =>
-                    backendAdapter.validateActionDraft!(name, parameters, {
-                        objects,
-                        context,
-                        knownParameters,
-                    })
-              : undefined,
+            : undefined,
     });
 });

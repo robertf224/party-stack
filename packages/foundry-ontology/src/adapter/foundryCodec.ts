@@ -30,6 +30,7 @@ export function createFoundryCodec(
     ir: OntologyIR,
     options?: {
         resolveMediaReference?: (id: string) => MediaReference | undefined;
+        resolveAttachmentId?: (id: string) => string | undefined;
     }
 ): FoundryCodec {
     const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
@@ -195,7 +196,12 @@ export function createFoundryCodec(
             case "geopoint":
                 return encodeGeoPoint(value);
             case "attachment":
-                return encodeAttachment(value, resolvedType.value.meta, options?.resolveMediaReference);
+                return encodeAttachment(
+                    value,
+                    resolvedType.value.meta,
+                    options?.resolveMediaReference,
+                    options?.resolveAttachmentId
+                );
             case "objectReference":
             case "unknown":
                 return value;
@@ -373,7 +379,8 @@ function decodeMediaReference(value: unknown): unknown {
 function encodeAttachment(
     value: unknown,
     meta?: Record<string, unknown>,
-    resolveMediaReference?: (id: string) => MediaReference | undefined
+    resolveMediaReference?: (id: string) => MediaReference | undefined,
+    resolveAttachmentId?: (id: string) => string | undefined
 ): unknown {
     if (!isPlainObject(value)) {
         return value;
@@ -382,7 +389,7 @@ function encodeAttachment(
         throw new Error("Invalid Foundry attachment value: expected an attachment with a string id.");
     }
     if (getFoundryAttachmentKind(meta) !== "media") {
-        return value.id;
+        return resolveAttachmentId?.(value.id) ?? value.id;
     }
     const resolved = resolveMediaReference?.(value.id);
     if (resolved) return resolved;

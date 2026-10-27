@@ -38,7 +38,7 @@ export const makeCachedProxy = Effect.fn("OntologyProxy.make")(function* (option
             kind: "RateLimited",
             message: "Cache demand capacity reached; all subsets are in use.",
             retryable: true,
-            invocationOutcome: "not-committed",
+            actionOutcome: "not-committed",
         });
     const retain = (key: string) =>
         admission.withPermits(1)(
@@ -93,8 +93,8 @@ export const makeCachedProxy = Effect.fn("OntologyProxy.make")(function* (option
                 })
             )
         ),
-        invoke: Effect.fn("OntologyProxy.invoke")(function* (invocation) {
-            const receipt = yield* options.backend.invoke(invocation);
+        applyAction: Effect.fn("OntologyProxy.applyAction")(function* (invocation) {
+            const receipt = yield* options.backend.applyAction(invocation);
             const affected =
                 receipt.affectedComplete === false || receipt.affected === undefined
                     ? undefined

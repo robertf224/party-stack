@@ -140,7 +140,7 @@ export function createSalesforceOntologyBackendAdapter(opts: {
                     ? await client.invokeStandardAction(actionApiName, [requestParameters])
                     : await client.invokeFlowAction(actionApiName, [requestParameters]);
         } catch (error) {
-            throw classifyBackendFailure("salesforce.invoke", error);
+            throw classifyBackendFailure("salesforce.applyAction", error);
         }
 
         const result = results[0];

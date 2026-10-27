@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { createLiveOntology } from "../LiveOntology.js";
 import { createLiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
 import type { BlobManager } from "../../runtime/blobs/types.js";
-import type { OntologyAttachmentsAdapter, OntologyBackendAdapter } from "../index.js";
+import type { OntologyBackendAdapter } from "../index.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
@@ -51,7 +51,6 @@ describe("createLiveOntologyAttachments", () => {
         const stage = vi.fn(() => Promise.resolve());
         const attachments = createLiveOntologyAttachments({
             ir,
-            attachmentsAdapter: {} as OntologyAttachmentsAdapter,
             blobManager: { stage } as unknown as BlobManager,
         });
         const file = new File(["hello"], "evidence.txt", {
@@ -98,7 +97,6 @@ describe("createLiveOntologyAttachments", () => {
         const stage = vi.fn();
         const attachments = createLiveOntologyAttachments({
             ir: constrainedIr,
-            attachmentsAdapter: {} as OntologyAttachmentsAdapter,
             blobManager: { stage } as unknown as BlobManager,
         });
 
@@ -143,10 +141,6 @@ describe("createLiveOntologyAttachments", () => {
         const stage = vi.fn(() => Promise.resolve());
         const attachments = createLiveOntologyAttachments({
             ir: constrainedIr,
-            attachmentsAdapter: {
-                generateAttachmentId: () => "image-1",
-                getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
-            },
             blobManager: { stage } as unknown as BlobManager,
         });
 
@@ -177,7 +171,7 @@ describe("createLiveOntologyAttachments", () => {
                 },
             })
         ).resolves.toMatchObject({
-            attachment: { id: "image-1" },
+            attachment: { id: expect.any(String) },
         });
         expect(stage).toHaveBeenCalledOnce();
     });
@@ -205,20 +199,20 @@ describe("createLiveOntologyAttachments", () => {
                     sourceId: "test",
                     supportsIdempotency: false,
                     loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                    invoke: () => Effect.die("Unexpected action"),
+                    applyAction: () => Effect.die("Unexpected action"),
                     queryFunction: () => Effect.die("Unexpected query"),
+                    attachments: {
+                        stage: (attachment, blob) =>
+                            Effect.promise(async () => {
+                                resolveMaterializationStarted?.();
+                                await materializationStarted;
+                                materialized.push(`${attachment.id}:${await blob.text()}`);
+                                return attachment;
+                            }),
+                        read: () => Effect.die("unexpected content read"),
+                        metadata: () => Effect.die("unexpected metadata read"),
+                    },
                 }),
-
-            attachments: {
-                generateAttachmentId: () => "attachment-1",
-                materializeAttachment: async (attachment, blob) => {
-                    resolveMaterializationStarted?.();
-                    await materializationStarted;
-                    materialized.push(`${attachment.id}:${await blob.text()}`);
-                },
-                getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
-                getAttachmentMetadata: () => Promise.reject(new Error("unexpected metadata read")),
-            },
         };
         const ontology = await createLiveOntology({
             ir,
@@ -227,6 +221,7 @@ describe("createLiveOntologyAttachments", () => {
         });
 
         const creation = await ontology.attachments.create(new Blob(["hello"]), {
+            id: "attachment-1",
             target: {
                 kind: "objectProperty",
                 objectType: "Document",
@@ -264,15 +259,9 @@ describe("createLiveOntologyAttachments", () => {
                     sourceId: "test",
                     supportsIdempotency: false,
                     loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                    invoke: () => Effect.die("Unexpected action"),
+                    applyAction: () => Effect.die("Unexpected action"),
                     queryFunction: () => Effect.die("Unexpected query"),
                 }),
-
-            attachments: {
-                generateAttachmentId: () => "local-id",
-                getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
-                getAttachmentMetadata: () => Promise.reject(new Error("unexpected metadata read")),
-            },
         };
         const ontology = await createLiveOntology({
             ir,
@@ -303,15 +292,9 @@ describe("createLiveOntologyAttachments", () => {
                     sourceId: "test",
                     supportsIdempotency: false,
                     loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                    invoke: () => Effect.die("Unexpected action"),
+                    applyAction: () => Effect.die("Unexpected action"),
                     queryFunction: () => Effect.die("Unexpected query"),
                 }),
-
-            attachments: {
-                generateAttachmentId: () => "attachment-1",
-                getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
-                getAttachmentMetadata: () => Promise.reject(new Error("unexpected metadata read")),
-            },
         };
         const ontology = await createLiveOntology({
             ir,
@@ -348,21 +331,15 @@ describe("createLiveOntologyAttachments", () => {
                     sourceId: "test",
                     supportsIdempotency: false,
                     loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                    invoke: (action) =>
+                    applyAction: (action) =>
                         Effect.succeed({
-                            invocationId: action.id,
+                            operationId: action.id,
                             outcome: "committed",
                             affected: [],
                             attachmentIdMappings: [{ localId: "local-id", remoteId: "remote-id" }],
                         }),
                     queryFunction: () => Effect.die("Unexpected query"),
                 }),
-
-            attachments: {
-                generateAttachmentId: () => "local-id",
-                getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
-                getAttachmentMetadata: () => Promise.reject(new Error("unexpected metadata read")),
-            },
         };
         const ontology = await createLiveOntology({
             ir: actionIr,
@@ -370,6 +347,7 @@ describe("createLiveOntologyAttachments", () => {
             runtime: asProvider(() => runtime),
         });
         const { attachment } = await ontology.attachments.create(new Blob(["hello"]), {
+            id: "local-id",
             target: {
                 kind: "objectProperty",
                 objectType: "Document",

@@ -53,7 +53,7 @@ const replicaServer =
     });
 ```
 
-There is no writes flag. Authorization denies `Invoke` and `Submit` for read-only
+There is no writes flag. Authorization denies `ApplyAction` and `Submit` for read-only
 access. The role defines execution responsibility; it does not grant permission.
 A direct protocol proxy can also supply `source: upstreamSource` to delegate
 replication sessions without maintaining another registry.
@@ -69,7 +69,7 @@ coverage. An invalidation IO failure cannot turn a committed action into a faile
 Use a dedicated read-cache replica, bound to the same trusted upstream identity.
 
 `kind: "replica"` serves composed state, including its optimistic overlay. Protocol
-`Submit` returns parent acceptance; stateless `Invoke` waits for upstream confirmation.
+`Submit` returns parent acceptance; stateless `ApplyAction` waits for upstream confirmation.
 The replica's surrounding scope must own its synchronization loop.
 
 ## Stateless backend operations
@@ -79,7 +79,7 @@ import { connectOntologyBackendHttp } from "@party-stack/ontology-server/rpc/htt
 
 const backend = yield * connectOntologyBackendHttp({ url }).pipe(Effect.provide(FetchHttpClient.layer));
 const snapshot = yield * backend.loadSubset({ objectType: "Issue", query });
-const receipt = yield * backend.invoke(invocation);
+const receipt = yield * backend.applyAction(invocation);
 ```
 
 Mount the endpoint so it accepts the trailing slash appended by Effect's HTTP

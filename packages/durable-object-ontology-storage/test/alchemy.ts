@@ -184,20 +184,20 @@ export class AlchemyOntologyTest extends DurableObject<Environment> {
                         blob: new File(["shared bytes"], "shared.txt", { type: "text/plain" }),
                         target: {},
                     };
-                    yield* backend.invoke({
+                    yield* backend.applyAction({
                         id: "one",
                         name: "createAsset",
                         parameters: { id: "first", attachment: upload.attachment },
                         attachmentUploads: [upload],
                     });
-                    yield* backend.invoke({
+                    yield* backend.applyAction({
                         id: "two",
                         name: "createAsset",
                         parameters: { id: "second", attachment: upload.attachment },
                         attachmentUploads: [upload],
                     });
                     const conflict = yield* Effect.result(
-                        backend.invoke({
+                        backend.applyAction({
                             id: "conflicting-upload",
                             name: "createAsset",
                             parameters: { id: "third", attachment: upload.attachment },
@@ -213,13 +213,13 @@ export class AlchemyOntologyTest extends DurableObject<Environment> {
                     const reopened = yield* makeAlchemyOntology(options);
                     const content = yield* reopened.backend.attachments!.read(upload.attachment);
                     const text = yield* Effect.promise(() => content.text());
-                    yield* reopened.backend.invoke({
+                    yield* reopened.backend.applyAction({
                         id: "remove-one",
                         name: "removeAsset",
                         parameters: { id: "first" },
                     });
                     const stillShared = yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 });
-                    yield* reopened.backend.invoke({
+                    yield* reopened.backend.applyAction({
                         id: "remove-two",
                         name: "removeAsset",
                         parameters: { id: "second" },
@@ -229,7 +229,7 @@ export class AlchemyOntologyTest extends DurableObject<Environment> {
                         reopened.backend.attachments!.read(upload.attachment)
                     );
                     const rejected = yield* Effect.result(
-                        backend.invoke({
+                        backend.applyAction({
                             id: "rejected",
                             name: "rejectAsset",
                             parameters: { attachment: { id: "orphan" } },

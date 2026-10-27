@@ -497,3 +497,31 @@ Remaining follow-up includes UI recovery controls for uncertain actions, live-pr
 acceptance, protocol-child GC/blobs, and UI consumer unmount ordering during pagehide
 (TanStack currently logs dependent-query disposal warnings there). General query
 watching/IVM, schema migrations and idempotency-window negotiation stay deferred.
+
+## October 27 native API cleanup and remaining v0 order
+
+Native adapters acquire all capabilities through scoped open(context); parallel
+adapter-level validation, Promise attachment hooks and cleanup callbacks are removed.
+The execution hook/RPC is applyAction/ApplyAction with ActionRequest. A caller's
+idempotencyKey supplies the stable request id and receipt.operationId. Optional
+providerOperationId is upstream metadata, not retry identity. actionOutcome retains
+not-committed/unknown evidence independently of outbox status and Uncertain validation.
+
+Attachment preparation collects only locally staged bytes and leaves existing
+remote handles alone. Provider execution handles ordinary/media uploads and returns
+ID mappings with its receipt; native staging supports explicit eager uploads.
+Metadata selections (including image dimensions) pass through the native service.
+
+Finish byte-stream uploads/storage IO, bounded transfer authorization/limits and example/provider lifecycle/recovery
+acceptance before the last v0 phase: Gateway parity including hierarchical Query IR,
+context binding, relational read/reference policy execution, dynamic projected
+schema/context Describe, and actual form/prefill/attachment/action flows. Do not add
+an exists-first public policy language. Delete the deprecated HTTP transport once
+those workflows run on native operations. See gateway-v0-parity.md for the checklist.
+
+subscribeSubset is deferred. Keep cursor as the continuation term; own snapshots and
+journal positions provide the future feed's foundation, but query membership,
+join/window dependencies, result removals and authorized reset handling are still
+required. See subset-subscriptions.md. Full server IVM, untrusted replica-state
+projection, persistent protocol-child GC/blobs, ranges and durable upload resumability
+are not silently included in this cleanup.

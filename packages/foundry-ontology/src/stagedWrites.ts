@@ -82,7 +82,7 @@ function writeProperties(
         if (value === undefined) continue;
         if (typeof value === "string") result[property.name] = { plaintext: value };
         else if (Predicate.hasProperty(value, "decrypt") && Predicate.isFunction(value.decrypt)) {
-            // Real OSDK CipherText objects are normalized by WriteableClient itself; never invoke decrypt.
+            // Real OSDK CipherText objects are normalized by WriteableClient itself; never applyAction decrypt.
             result[property.name] = value;
         } else {
             // Portable handles are not OSDK CipherText instances; convert them explicitly.

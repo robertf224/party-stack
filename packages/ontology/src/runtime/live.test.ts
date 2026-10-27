@@ -74,11 +74,11 @@ test("LiveOntology persists and restores offline projections, exposes local-only
                         if (!online) throw new Error("Network load during offline replay");
                         return backend.loadSubset(subset);
                     }),
-                invoke: (action) =>
+                applyAction: (action) =>
                     Effect.suspend(() => {
                         requests();
                         if (!online) throw new Error("Offline dispatch");
-                        return backend.invoke(action);
+                        return backend.applyAction(action);
                     }),
                 changes: {
                     pull: (query) =>
@@ -175,8 +175,7 @@ test("runtime cleanup closes the ontology's DbClient collections and sync scope"
         runtime: asProvider(() => runtime),
         backend: () => ({
             name: "lifetime",
-            open: () => Effect.succeed(backend),
-            cleanup: cleanupBackend,
+            open: () => Effect.acquireRelease(Effect.succeed(backend), () => Effect.sync(cleanupBackend)),
         }),
         persistObjects: true,
     });
@@ -207,11 +206,18 @@ test("a scoped replica host runs without application collections and outlives in
         open: () =>
             Effect.gen(function* () {
                 yield* Effect.addFinalizer(() => Effect.sync(released));
-                return backend;
+                return {
+                    ...backend,
+                    attachments: {
+                        read: (value) => Effect.promise(() => readAttachment(value)),
+                        metadata: () => Effect.succeed({ size: 12, type: "" }),
+                    },
+                };
             }),
     };
-    const readAttachment = vi.fn(() => Promise.resolve(new Blob(["remote bytes"])));
-    adapter.attachments = { getAttachmentContent: readAttachment };
+    const readAttachment = vi.fn((_value: import("@party-stack/ontology-spec/values").attachment) =>
+        Promise.resolve(new Blob(["remote bytes"]))
+    );
     const runtime = defineRuntimeFixture(() => ({
         owner: "user",
         namespace: "scoped-host",
@@ -245,7 +251,7 @@ test("a scoped replica host runs without application collections and outlives in
                 })
             ).text()
         ).toBe("remote bytes");
-        expect(readAttachment).toHaveBeenCalledWith({ id: "remote-attachment", source }, expect.anything());
+        expect(readAttachment).toHaveBeenCalledWith({ id: "remote-attachment", source });
         await Effect.runPromise(Scope.close(secondSession, Exit.void));
         expect(await Effect.runPromise(host.replica.pending)).toEqual([]);
         await Effect.runPromise(Scope.close(owner, Exit.void));

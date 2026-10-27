@@ -283,7 +283,7 @@ for (const sqlite of [false, true])
             );
             const page = await runtime.runPromise(reopened.changes!.pull({ cursor: before.cursor }));
             expect(page.commits).toHaveLength(1);
-            expect(page.commits[0]?.invocationId).toBeUndefined();
+            expect(page.commits[0]?.operationId).toBeUndefined();
             expect(page.commits[0]?.changes).toEqual(
                 expect.arrayContaining([
                     expect.objectContaining({

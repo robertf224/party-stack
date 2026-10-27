@@ -75,7 +75,7 @@ const fixture = Effect.fnUntraced(function* (settings?: { keys?: boolean; owner?
         supportsIdempotency: false,
         loadSubset: () =>
             Effect.succeed({ rows: [{ key: "1", value: { id: "1", secret: handle } }], complete: true }),
-        invoke: () => Effect.die("unused"),
+        applyAction: () => Effect.die("unused"),
         queryFunction: () => Effect.die("unused"),
         encrypted: { decrypt: call },
         pollIntervalMs: () => false as const,
@@ -289,7 +289,7 @@ test("LiveOntology decorates encrypted sources and only decrypts explicitly", as
                             ],
                             complete: true,
                         }),
-                    invoke: () => Effect.die("unused"),
+                    applyAction: () => Effect.die("unused"),
                     queryFunction: () => Effect.die("unused"),
                     encrypted: { decrypt: call },
                 }),

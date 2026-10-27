@@ -95,11 +95,14 @@ export const connectOntologyBackendHttp = Effect.fn("OntologyBackend.connectHttp
                           )
                         : blob;
                 }),
-            metadata: (value) =>
-                boundary(async () => {
-                    const meta = await helpers.attachments.metadata(value);
-                    return { size: meta.size, type: meta.type, name: meta.name };
-                }),
+            metadata: (value, settings) =>
+                client
+                    .AttachmentMetadata({ attachment: value, select: settings?.select })
+                    .pipe(
+                        Effect.mapError((cause) =>
+                            classifyBackendFailure("remote.attachment.metadata", cause)
+                        )
+                    ),
         },
         encrypted: {
             decrypt: (value) =>
@@ -131,7 +134,7 @@ export const connectOntologyBackendHttp = Effect.fn("OntologyBackend.connectHttp
             client
                 .LoadSubset(subset)
                 .pipe(Effect.mapError((cause) => classifyBackendFailure("remote.request", cause))),
-        invoke: Effect.fn("OntologyBackend.invokeRemote")(function* (invocation) {
+        applyAction: Effect.fn("OntologyBackend.invokeRemote")(function* (invocation) {
             for (const upload of invocation.attachmentUploads ?? []) {
                 const staged = yield* boundary(
                     async () =>
@@ -151,22 +154,22 @@ export const connectOntologyBackendHttp = Effect.fn("OntologyBackend.connectHttp
                                 message: error.message,
                                 issues: error.issues,
                                 retryable: error.retryable,
-                                invocationOutcome: "not-committed",
+                                actionOutcome: "not-committed",
                             })
                     )
                 );
                 if (staged.id !== upload.attachment.id)
                     return yield* new BackendError({
-                        operation: "invoke.upload",
+                        operation: "applyAction.upload",
                         kind: "Conflict",
                         message: "Staging changed an attachment identity before submission.",
                         retryable: false,
-                        invocationOutcome: "not-committed",
+                        actionOutcome: "not-committed",
                     });
             }
             return yield* client
-                .Invoke(invocation)
-                .pipe(Effect.mapError((cause) => classifyBackendFailure("remote.invoke", cause)));
+                .ApplyAction(invocation)
+                .pipe(Effect.mapError((cause) => classifyBackendFailure("remote.applyAction", cause)));
         }),
         queryFunction: (name, parameters) =>
             client

@@ -316,8 +316,9 @@ test.skipIf(!url)("navigation preserves the devtools panel, selected tab and tra
         await visible(page, "heading", "Connect profile");
         await page.getByRole("button", { name: "Connect", exact: true }).click();
         await visible(page, "button", "New issue");
-        // Keep the new fixture above the open devtools drawer in the sorted sidebar.
-        const project = `000 Navigation acceptance ${crypto.randomUUID().slice(0, 8)}`;
+        // Newest fixtures sort first even when earlier acceptance data remains.
+        // The selected sidebar row must stay above the open devtools drawer.
+        const project = `000 ${9_999_999_999_999 - Date.now()} Navigation acceptance ${crypto.randomUUID().slice(0, 8)}`;
         await page.getByRole("button", { name: "Create project", exact: true }).click();
         const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
         await dialog.getByLabel("Project name", { exact: true }).fill(project);

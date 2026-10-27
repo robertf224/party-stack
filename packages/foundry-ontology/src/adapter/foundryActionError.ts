@@ -57,7 +57,7 @@ export function foundryActionError(
                 kind: "ValidationFailed",
                 message: "Submission failed validation.",
                 retryable: false,
-                invocationOutcome: "not-committed",
+                actionOutcome: "not-committed",
                 cause: normalized.cause,
                 issues: paths.map((path) => ({
                     path,

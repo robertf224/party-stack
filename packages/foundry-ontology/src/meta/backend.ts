@@ -103,7 +103,7 @@ export function makeFoundryMetadataBackend(options: {
         name: "foundry-metadata",
         sourceId: `foundry-metadata:${options.client.baseUrl}:${options.client.ontologyRid}`,
         supportsIdempotency: false,
-        invoke: () => unsupported("invoke"),
+        applyAction: () => unsupported("applyAction"),
         queryFunction: () => unsupported("queryFunction"),
         pollIntervalMs: () => options.refetchInterval ?? false,
         loadSubset: Effect.fn("FoundryMetadata.loadSubset")(function* (subset: BackendSubset) {

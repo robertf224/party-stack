@@ -119,13 +119,13 @@ it("delivers action 404 reference details through native apply and validation", 
     );
     const error = {
         kind: "ValidationFailed",
-        invocationOutcome: "not-committed",
+        actionOutcome: "not-committed",
         issues: [{ path: ["project"], code: "InvalidObjectReference" }],
     };
     await expect(applyNative(adapter, "create", { project: "deleted" }, {})).rejects.toMatchObject(error);
     await expect(
         Effect.runPromise(
-            adapter.validateAction!("create", { project: "deleted" }, { objects: {}, context: {} })
+            validateNative(adapter, "create", { project: "deleted" }, { objects: {}, context: {} })
         )
     ).rejects.toMatchObject(error);
     expect(ontologyMocks.applyWithOverrides).toHaveBeenCalledTimes(2);
@@ -321,7 +321,8 @@ describe("Foundry live behavior", () => {
                     );
                     for (const id of ["first", "second"]) {
                         expect(
-                            (yield* backend.invoke({ id, name: "updateTask", parameters: {} })).operationId
+                            (yield* backend.applyAction({ id, name: "updateTask", parameters: {} }))
+                                .providerOperationId
                         ).toBe("operation-1");
                     }
                     expect(createWebSocket).toHaveBeenCalledTimes(1);
@@ -367,9 +368,9 @@ describe("Foundry live behavior", () => {
 
             expect(awaitOperationId).not.toHaveBeenCalled();
             expect(result?.receipt).toMatchObject({
-                invocationId: "local-invocation",
+                operationId: "local-invocation",
                 outcome: "committed",
-                operationId: "operation-1",
+                providerOperationId: "operation-1",
             });
         }
     );
@@ -430,9 +431,79 @@ describe("Foundry attachments", () => {
             queryFunctionTypes: [],
         },
     });
-    const materializeAttachment = adapter.attachments!.materializeAttachment!;
+    const materializeAttachment = (
+        value: import("@party-stack/ontology/values").attachment,
+        bytes: Blob,
+        settings: { target?: import("@party-stack/ontology-spec").AttachmentTypeDef }
+    ) =>
+        Effect.runPromise(
+            Effect.scoped(
+                Effect.flatMap(adapter.open({}), (backend) =>
+                    backend.attachments!.stage!(value, bytes, settings)
+                )
+            )
+        );
     const target = attachmentType.value;
     const blob = new Blob(["attachment"], { type: "text/plain" });
+
+    it("uploads ordinary attachments inside native action execution and returns mappings only in its receipt", async () => {
+        const actionAdapter = createFoundryOntologyBackendAdapter({
+            client: { ontologyRid: "ontology" } as OntologyClient,
+            watch: false,
+            ir: {
+                types: [],
+                objectTypes: [],
+                linkTypes: [],
+                queryFunctionTypes: [],
+                actionTypes: [
+                    {
+                        name: "save",
+                        displayName: "Save",
+                        logic: [],
+                        parameters: [
+                            {
+                                name: "files",
+                                displayName: "Files",
+                                type: o.list({ elementType: attachmentType }),
+                            },
+                        ],
+                    },
+                ],
+            },
+        });
+        attachmentMocks.upload.mockResolvedValue({ rid: "ri.attachments.main.attachment.canonical" });
+        ontologyMocks.applyWithOverrides.mockResolvedValue({
+            operationId: "provider-1",
+            edits: { type: "edits", edits: [] },
+        });
+        const parameters = { files: [{ id: "local" }, { id: "local" }] };
+        const result = await applyNative(actionAdapter, "save", parameters, {
+            idempotencyKey: "operation-1",
+            attachmentUploads: [{ attachment: { id: "local" }, blob, target }],
+        });
+        expect(result.receipt).toMatchObject({
+            operationId: "operation-1",
+            providerOperationId: "provider-1",
+            attachmentIdMappings: [
+                { localId: "local", remoteId: "ri.attachments.main.attachment.canonical" },
+            ],
+        });
+        expect(attachmentMocks.upload).toHaveBeenCalledOnce();
+        expect(ontologyMocks.applyWithOverrides.mock.calls[0]?.[3].request.parameters.files).toEqual([
+            "ri.attachments.main.attachment.canonical",
+            "ri.attachments.main.attachment.canonical",
+        ]);
+        expect(parameters.files[0]?.id).toBe("local");
+
+        ontologyMocks.applyWithOverrides.mockClear();
+        attachmentMocks.upload.mockRejectedValue(new Error("Upload disconnected"));
+        await expect(
+            applyNative(actionAdapter, "save", parameters, {
+                attachmentUploads: [{ attachment: { id: "local" }, blob, target }],
+            })
+        ).rejects.toMatchObject({ actionOutcome: "not-committed" });
+        expect(ontologyMocks.applyWithOverrides).not.toHaveBeenCalled();
+    });
 
     it("lets Foundry assign a canonical RID for an opaque local ID", async () => {
         attachmentMocks.upload.mockResolvedValue({
@@ -472,7 +543,7 @@ describe("Foundry attachments", () => {
                 blob,
                 { target }
             )
-        ).resolves.toBeUndefined();
+        ).resolves.toMatchObject({ id: "ri.attachments.main.attachment.existing" });
         expect(attachmentMocks.upload).not.toHaveBeenCalled();
         expect(attachmentMocks.uploadWithRid).not.toHaveBeenCalled();
     });
@@ -490,7 +561,7 @@ describe("Foundry attachments", () => {
                 blob,
                 { target }
             )
-        ).resolves.toBeUndefined();
+        ).resolves.toMatchObject({ id: "ri.attachments.main.attachment.missing" });
         expect(attachmentMocks.uploadWithRid).toHaveBeenCalledWith(
             expect.anything(),
             "ri.attachments.main.attachment.missing",
@@ -514,7 +585,7 @@ describe("Foundry attachments", () => {
                 blob,
                 { target }
             )
-        ).rejects.toBe(error);
+        ).rejects.toMatchObject({ kind: "Unavailable", cause: error });
         expect(attachmentMocks.upload).not.toHaveBeenCalled();
         expect(attachmentMocks.uploadWithRid).not.toHaveBeenCalled();
     });
@@ -566,20 +637,29 @@ describe("Foundry media attachments", () => {
             queryFunctionTypes: [],
         },
     });
-    const attachments = adapter.attachments!;
-    const getAttachmentMetadata = attachments.getAttachmentMetadata!;
+    const getAttachmentMetadata = (
+        value: import("@party-stack/ontology/values").attachment,
+        selection: readonly ("size" | "type" | "name" | "dimensions")[]
+    ) =>
+        Effect.runPromise(
+            Effect.scoped(
+                Effect.flatMap(adapter.open({}), (backend) =>
+                    backend.attachments!.metadata(value, { select: selection })
+                )
+            )
+        );
     const target = mediaType.value;
 
-    it("routes media through action attachment uploads", () => {
-        expect(
-            attachments.canMaterializeAttachment?.(
-                {
-                    id: "local-id",
-                    type: "image/png",
-                },
-                { target }
+    it("requires media to upload during action execution", async () => {
+        await expect(
+            Effect.runPromise(
+                Effect.scoped(
+                    Effect.flatMap(adapter.open({}), (backend) =>
+                        backend.attachments!.stage!({ id: "local-id" }, new Blob(["media"]), { target })
+                    )
+                )
             )
-        ).toBe(false);
+        ).rejects.toMatchObject({ kind: "NotImplemented" });
     });
 
     it("uploads media during action execution and returns a tokenless mapping", async () => {
@@ -661,7 +741,8 @@ describe("Foundry media attachments", () => {
 
         await expect(
             Effect.runPromise(
-                adapter.validateAction!(
+                validateNative(
+                    adapter,
                     "createMedia",
                     {
                         media: {
@@ -750,7 +831,8 @@ describe("Foundry media attachments", () => {
 
         await expect(
             Effect.runPromise(
-                adapter.validateActionDraft!(
+                validateDraftNative(
+                    adapter,
                     "createMedia",
                     {},
                     {
@@ -779,7 +861,8 @@ describe("Foundry media attachments", () => {
     it("reports uncertain draft validation without a context user", async () => {
         await expect(
             Effect.runPromise(
-                adapter.validateActionDraft!(
+                validateDraftNative(
+                    adapter,
                     "createMedia",
                     {},
                     {
@@ -798,7 +881,8 @@ describe("Foundry media attachments", () => {
     it("reports a known required parameter as missing", async () => {
         await expect(
             Effect.runPromise(
-                adapter.validateActionDraft!(
+                validateDraftNative(
+                    adapter,
                     "createMedia",
                     {},
                     {
@@ -848,9 +932,13 @@ describe("Foundry media attachments", () => {
             path: undefined,
         });
 
-        await expect(attachments.getAttachmentContent(attachment).then((blob) => blob.text())).resolves.toBe(
-            "image"
-        );
+        await expect(
+            Effect.runPromise(
+                Effect.scoped(
+                    Effect.flatMap(adapter.open({}), (backend) => backend.attachments!.read(attachment))
+                )
+            ).then((blob) => blob.text())
+        ).resolves.toBe("image");
         await expect(getAttachmentMetadata(attachment, ["size", "type", "name"])).resolves.toEqual({
             size: 5,
             type: "image/png",
@@ -920,7 +1008,7 @@ function applyNative(
     return Effect.runPromise(
         Effect.scoped(
             Effect.flatMap(adapter.open(options.context ?? {}), (backend) =>
-                backend.invoke({
+                backend.applyAction({
                     id: options.idempotencyKey ?? "test-invocation",
                     name,
                     parameters,
@@ -929,4 +1017,29 @@ function applyNative(
             )
         )
     ).then((receipt) => ({ receipt, attachmentIdMappings: receipt.attachmentIdMappings }));
+}
+
+function validateNative(
+    adapter: import("@party-stack/ontology").OntologyBackendAdapter,
+    name: string,
+    parameters: Record<string, unknown>,
+    settings: { context?: Record<string, unknown>; objects?: unknown }
+) {
+    return Effect.scoped(
+        Effect.flatMap(adapter.open(settings.context ?? {}), (backend) =>
+            backend.validateAction!(name, parameters)
+        )
+    );
+}
+function validateDraftNative(
+    adapter: import("@party-stack/ontology").OntologyBackendAdapter,
+    name: string,
+    parameters: Record<string, unknown>,
+    settings: { context?: Record<string, unknown>; objects?: unknown; knownParameters: readonly string[] }
+) {
+    return Effect.scoped(
+        Effect.flatMap(adapter.open(settings.context ?? {}), (backend) =>
+            backend.validateAction!(name, parameters, { knownParameters: settings.knownParameters })
+        )
+    );
 }

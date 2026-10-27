@@ -58,17 +58,17 @@ test.each(["pause", "discard-all"] as const)(
                         tables: yield* Memory.make(),
                         backend: {
                             ...owned,
-                            invoke: (invocation) =>
+                            applyAction: (invocation) =>
                                 Effect.suspend(() => {
                                     invocations++;
                                     return invocation.parameters.title === "invalid"
                                         ? Effect.fail(
                                               new BackendError({
-                                                  operation: "invoke",
+                                                  operation: "applyAction",
                                                   kind: "ValidationFailed",
                                                   message: "Invalid title.",
                                                   retryable: false,
-                                                  invocationOutcome: "not-committed",
+                                                  actionOutcome: "not-committed",
                                                   issues: [
                                                       {
                                                           path: ["title"],
@@ -81,7 +81,7 @@ test.each(["pause", "discard-all"] as const)(
                                                   ],
                                               })
                                           )
-                                        : owned.invoke(invocation);
+                                        : owned.applyAction(invocation);
                                 }),
                         },
                         execute: rename,
@@ -122,7 +122,7 @@ test.each(["pause", "discard-all"] as const)(
                     yield* Effect.promise(async () => {
                         await expect(first.completed).rejects.toMatchObject({
                             kind: "ValidationFailed",
-                            invocationOutcome: "not-committed",
+                            actionOutcome: "not-committed",
                             issues: [{ path: ["title"], code: "TooShort" }],
                         });
                         await view.outbox.collection._sync.loadSubset({});
@@ -196,10 +196,10 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                     tables: yield* Memory.make(),
                     backend: {
                         ...backend,
-                        invoke: (invocation) =>
+                        applyAction: (invocation) =>
                             Deferred.succeed(executing, undefined).pipe(
                                 Effect.andThen(Deferred.await(allowExecute)),
-                                Effect.andThen(backend.invoke(invocation))
+                                Effect.andThen(backend.applyAction(invocation))
                             ),
                     },
                     execute: rename,

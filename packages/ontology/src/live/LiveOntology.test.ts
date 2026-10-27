@@ -21,7 +21,7 @@ const native = (overrides: Partial<OntologyBackendService> = {}): OntologyBacken
     sourceId: "test",
     supportsIdempotency: true,
     loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-    invoke: (action) => Effect.succeed({ invocationId: action.id, outcome: "committed", affected: [] }),
+    applyAction: (action) => Effect.succeed({ operationId: action.id, outcome: "committed", affected: [] }),
     queryFunction: () => Effect.succeed("user-1"),
     ...overrides,
 });
@@ -44,11 +44,11 @@ describe("native LiveOntology construction", () => {
         const resolve = vi.fn((name: string, parameters: Record<string, unknown>) =>
             Effect.succeed({ ...parameters, title: `prefill-${name}` })
         );
-        const invoke = vi.fn(() => Effect.die("must not submit"));
+        const applyAction = vi.fn(() => Effect.die("must not submit"));
         const live = await createLiveOntology({
             ir,
             runtime: asProvider(() => platform()),
-            backend: () => adapter(native({ resolveActionParameters: resolve, invoke })),
+            backend: () => adapter(native({ resolveActionParameters: resolve, applyAction })),
         });
         try {
             expect(await live.actions.save!.resolveParameters({ id: "existing" })).toEqual({
@@ -56,7 +56,7 @@ describe("native LiveOntology construction", () => {
                 title: "prefill-save",
             });
             expect(resolve).toHaveBeenCalledWith("save", { id: "existing" });
-            expect(invoke).not.toHaveBeenCalled();
+            expect(applyAction).not.toHaveBeenCalled();
             expect(live.outbox.collection.size).toBe(0);
         } finally {
             await live.cleanup();
@@ -94,18 +94,18 @@ describe("native LiveOntology construction", () => {
     });
 
     it("cleans up providers when persistence cannot be supplied", async () => {
-        const cleanupBackend = vi.fn();
+        const openBackend = vi.fn(adapter().open);
         const runtime = platform();
         const cleanupRuntime = vi.fn();
         await expect(
             createLiveOntology({
                 ir,
                 persistObjects: true,
-                backend: () => ({ ...adapter(), cleanup: cleanupBackend }),
+                backend: () => ({ ...adapter(), open: openBackend }),
                 runtime: asProvider(() => ({ ...runtime, cleanup: cleanupRuntime })),
             })
         ).rejects.toThrow("owned Tables storage");
-        expect(cleanupBackend).toHaveBeenCalledOnce();
+        expect(openBackend).not.toHaveBeenCalled();
         expect(cleanupRuntime).toHaveBeenCalledOnce();
     });
 
@@ -119,15 +119,18 @@ describe("native LiveOntology construction", () => {
                 runtime: asProvider(() => ({ ...runtime, cleanup: cleanupRuntime })),
                 backend: () => ({
                     name: "fail",
-                    cleanup,
                     open: () =>
-                        Effect.fail(
-                            new BackendError({
-                                operation: "open",
-                                kind: "ValidationFailed",
-                                message: "No access",
-                                retryable: false,
-                            })
+                        Effect.acquireRelease(Effect.void, () => Effect.sync(cleanup)).pipe(
+                            Effect.andThen(
+                                Effect.fail(
+                                    new BackendError({
+                                        operation: "open",
+                                        kind: "ValidationFailed",
+                                        message: "No access",
+                                        retryable: false,
+                                    })
+                                )
+                            )
                         ),
                 }),
             })
@@ -138,10 +141,10 @@ describe("native LiveOntology construction", () => {
 
     it("queued writes survive cancelling an observation and can later be awaited by ID", async () => {
         const runtime = platform(false);
-        const invoke = vi.fn(native().invoke);
+        const applyAction = vi.fn(native().applyAction);
         const live = await createLiveOntology({
             ir,
-            backend: () => adapter(native({ invoke })),
+            backend: () => adapter(native({ applyAction })),
             runtime: asProvider(() => runtime),
         });
         try {
@@ -157,7 +160,7 @@ describe("native LiveOntology construction", () => {
             expect((await Effect.runPromise(live.storage!.pending)).map((a) => a.invocation.id)).toEqual([
                 "offline",
             ]);
-            expect(invoke).not.toHaveBeenCalled();
+            expect(applyAction).not.toHaveBeenCalled();
             runtime.connectivity.isConnected = true;
             await Effect.runPromise(live.storage!.syncOnce);
             expect(((await queued.completed) as { receipt: { outcome: string } }).receipt.outcome).toBe(
@@ -170,7 +173,7 @@ describe("native LiveOntology construction", () => {
     });
 
     it("validation never dispatches an action and missing validation remains uncertain", async () => {
-        const invoke = vi.fn(native().invoke);
+        const applyAction = vi.fn(native().applyAction);
         const validate = vi.fn(() =>
             Effect.succeed({
                 certain: true as const,
@@ -179,7 +182,7 @@ describe("native LiveOntology construction", () => {
         );
         const live = await createLiveOntology({
             ir,
-            backend: () => ({ ...adapter(native({ invoke })), validateAction: validate }),
+            backend: () => adapter(native({ applyAction, validateAction: validate })),
         });
         try {
             expect(await live.actions.save!.validate({})).toEqual({
@@ -187,7 +190,7 @@ describe("native LiveOntology construction", () => {
                 value: { kind: "ok", value: undefined },
             });
             expect(validate).toHaveBeenCalledOnce();
-            expect(invoke).not.toHaveBeenCalled();
+            expect(applyAction).not.toHaveBeenCalled();
         } finally {
             await live.cleanup();
         }
@@ -201,18 +204,18 @@ describe("native LiveOntology construction", () => {
 
     it("direct offline rejection is typed and outbox action Promises wait through offline queueing", async () => {
         const runtime = platform(false);
-        const invoke = vi.fn(native().invoke);
+        const applyAction = vi.fn(native().applyAction);
         const live = await createLiveOntology({
             ir,
             runtime: asProvider(() => runtime),
-            backend: () => adapter(native({ invoke })),
+            backend: () => adapter(native({ applyAction })),
         });
         try {
             await expect(live.actions.save!({}, { mode: "direct" })).rejects.toMatchObject({
                 _tag: "BackendError",
                 kind: "Unavailable",
                 retryable: true,
-                invocationOutcome: "not-committed",
+                actionOutcome: "not-committed",
             });
             expect(await Effect.runPromise(live.storage!.pending)).toEqual([]);
             const confirmed = vi.fn();
@@ -227,7 +230,7 @@ describe("native LiveOntology construction", () => {
             });
             expect((await Effect.runPromise(live.storage!.pending))[0]?.invocation.id).toBe("queued");
             expect(confirmed).not.toHaveBeenCalled();
-            expect(invoke).not.toHaveBeenCalled();
+            expect(applyAction).not.toHaveBeenCalled();
             runtime.connectivity.isConnected = true;
             await Effect.runPromise(live.storage!.syncOnce);
             await expect(applying).resolves.toMatchObject({ receipt: { outcome: "committed" } });
@@ -243,24 +246,24 @@ describe("native LiveOntology construction", () => {
             kind: "ValidationFailed",
             message: "Submission failed validation.",
             retryable: false,
-            invocationOutcome: "not-committed",
+            actionOutcome: "not-committed",
             issues: [{ path: ["project"], code: "InvalidObjectReference", message: "Choose a valid value." }],
         });
-        const invoke = vi.fn(() => Effect.fail(failure));
+        const applyAction = vi.fn(() => Effect.fail(failure));
         const live = await createLiveOntology({
             ir,
             runtime: asProvider(() => platform()),
-            backend: () => adapter(native({ invoke })),
+            backend: () => adapter(native({ applyAction })),
             writes: { defaultMode: "outbox", outbox: { failureStrategy: "discard-all" } },
         });
         try {
             await expect(live.actions.save!({})).rejects.toMatchObject({
                 kind: "ValidationFailed",
-                invocationOutcome: "not-committed",
+                actionOutcome: "not-committed",
                 issues: failure.issues,
             });
             expect(await Effect.runPromise(live.storage!.pending)).toEqual([]);
-            expect(invoke).toHaveBeenCalledOnce();
+            expect(applyAction).toHaveBeenCalledOnce();
         } finally {
             await live.cleanup();
         }

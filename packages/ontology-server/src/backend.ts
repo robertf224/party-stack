@@ -84,9 +84,25 @@ export function makeRemoteOntologyBackend(options: {
                 });
                 return { rows, complete: true };
             }),
-        invoke: (invocation) =>
+        validateAction: (name, parameters, settings) =>
+            settings?.knownParameters
+                ? Effect.succeed({ certain: false as const })
+                : request("validateAction", async (signal) => {
+                      const report = await transport.validateAction(
+                          { actionType: name, parameters },
+                          { signal }
+                      );
+                      if (!report.certain) return { certain: false as const };
+                      if (report.value.kind === "err")
+                          return {
+                              certain: true as const,
+                              value: { kind: "err" as const, value: report.value.value },
+                          };
+                      return { certain: true as const, value: { kind: "ok" as const, value: undefined } };
+                  }),
+        applyAction: (invocation) =>
             Effect.gen(function* () {
-                const response = yield* request("invoke", (signal) =>
+                const response = yield* request("applyAction", (signal) =>
                     transport.applyAction(
                         {
                             actionType: invocation.name,
@@ -104,7 +120,7 @@ export function makeRemoteOntologyBackend(options: {
                 );
                 return yield* Schema.decodeUnknownEffect(ActionReceiptSchema)(
                     response.receipt ?? {
-                        invocationId: invocation.id,
+                        operationId: invocation.id,
                         outcome: "committed",
                         attachmentIdMappings: response.attachmentIdMappings,
                         affected: (

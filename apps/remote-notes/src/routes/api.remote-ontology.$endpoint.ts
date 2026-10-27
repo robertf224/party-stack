@@ -34,7 +34,7 @@ const denied = () =>
         kind: "NotFound",
         message: "Resource not found.",
         retryable: false,
-        invocationOutcome: "not-committed",
+        actionOutcome: "not-committed",
     });
 
 // These three demo principals are bounded; a real server binds authenticated
@@ -107,7 +107,7 @@ const makePrincipal = Effect.fnUntraced(function* (
             [
                 "Describe",
                 "LoadSubset",
-                "Invoke",
+                "ApplyAction",
                 "ValidateAction",
                 "CreateAttachment",
                 "ReadAttachment",

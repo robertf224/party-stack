@@ -302,11 +302,11 @@ it("shows field paths and unknown outcomes in the outbox error display", async (
                 nextAttemptAt: 0,
                 request: { actionTypeName: "createIssue", idempotencyKey: "example", parameters: {} },
                 lastError: new BackendError({
-                    operation: "invoke",
+                    operation: "applyAction",
                     kind: "ValidationFailed",
                     message: "Submission failed validation.",
                     retryable: false,
-                    invocationOutcome: "not-committed",
+                    actionOutcome: "not-committed",
                     issues: [
                         {
                             path: ["project"],

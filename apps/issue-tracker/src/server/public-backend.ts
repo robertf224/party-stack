@@ -64,10 +64,10 @@ export function publicBackend(backend: OntologyBackendService, ir: OntologyIR): 
                     })),
                 };
             }),
-        invoke: (invocation) =>
+        applyAction: (invocation) =>
             call(
                 ir.actionTypes.some((action) => action.name === invocation.name),
-                backend.invoke(invocation)
+                backend.applyAction(invocation)
             ),
         queryFunction: (name, parameters) =>
             call(

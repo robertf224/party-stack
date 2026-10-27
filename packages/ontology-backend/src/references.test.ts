@@ -53,19 +53,19 @@ test("reference validation is rechecked in the commit transaction and returns pa
             yield* owned.storage.transaction((tx) => tx.delete("Project", "project"));
             const before = yield* owned.loadSubset({ objectType: "Issue" });
             const failure = yield* Effect.result(
-                owned.invoke({ id: "same-action", name: "create", parameters: { project: "project" } })
+                owned.applyAction({ id: "same-action", name: "create", parameters: { project: "project" } })
             );
             expect(failure).toMatchObject({
                 _tag: "Failure",
                 failure: {
                     kind: "ValidationFailed",
-                    invocationOutcome: "not-committed",
+                    actionOutcome: "not-committed",
                     issues: [{ code: "InvalidObjectReference", path: ["project"] }],
                 },
             });
             expect(applied).toBe(0);
             expect((yield* owned.changes!.pull({ cursor: before.cursor })).commits).toEqual([]);
-            yield* owned.invoke({ id: "same-action", name: "create", parameters: {} });
+            yield* owned.applyAction({ id: "same-action", name: "create", parameters: {} });
             expect(applied).toBe(1);
         })
     );

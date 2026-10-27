@@ -29,11 +29,14 @@ const fail = (kind: "Unavailable" | "ValidationFailed" = "Unavailable") =>
         message: "An actual failure message",
         retryable: kind === "Unavailable",
     });
-const backend = (invoke: OntologyBackendService["invoke"], idempotent = true): OntologyBackendService => ({
+const backend = (
+    applyAction: OntologyBackendService["applyAction"],
+    idempotent = true
+): OntologyBackendService => ({
     name: "test",
     sourceId: "test",
     supportsIdempotency: idempotent,
-    invoke,
+    applyAction,
     loadSubset: () => Effect.succeed({ rows: [], complete: true }),
     queryFunction: () => Effect.void,
 });
@@ -136,7 +139,7 @@ test("pause preserves unknown-outcome intent until a verified receipt is reconci
                 expect((yield* replica.pending)[0]?.state).toBe("blocked");
                 expect((yield* Effect.result(replica.retry("one")))._tag).toBe("Failure");
                 expect((yield* Effect.result(replica.remove("one")))._tag).toBe("Failure");
-                yield* replica.reconcile("one", { invocationId: "one", outcome: "committed", affected: [] });
+                yield* replica.reconcile("one", { operationId: "one", outcome: "committed", affected: [] });
                 yield* replica.syncOnce;
                 expect((yield* replica.receipt("one"))?.outcome).toBe("committed");
             })
@@ -188,7 +191,7 @@ test("acceptance and confirmation waits differ; interrupting a wait leaves durab
                     ir,
                     tables: yield* Memory.make(),
                     backend: backend((a) =>
-                        Effect.succeed({ invocationId: a.id, outcome: "committed", affected: [] })
+                        Effect.succeed({ operationId: a.id, outcome: "committed", affected: [] })
                     ),
                     execute: () => Effect.void,
                     startSync: false,
@@ -235,7 +238,7 @@ test("local receipt application can fail and restart without losing the receipt 
                             Effect.sync(() => {
                                 submissions++;
                                 return {
-                                    invocationId: action.id,
+                                    operationId: action.id,
                                     outcome: "committed" as const,
                                     affected: [],
                                     attachmentIdMappings: [{ localId: "local", remoteId: "remote" }],
@@ -288,11 +291,11 @@ test("an explicit pre-dispatch failure permits automatic retry without backend i
                                               kind: "Unavailable",
                                               message: "Attachment upload unavailable",
                                               retryable: true,
-                                              invocationOutcome: "not-committed",
+                                              actionOutcome: "not-committed",
                                           })
                                       )
                                     : Effect.succeed({
-                                          invocationId: action.id,
+                                          operationId: action.id,
                                           outcome: "committed",
                                           affected: [],
                                       });
@@ -325,11 +328,11 @@ test("a rejected retry does not erase an earlier unknown outcome", async () => {
                             ++calls === 1
                                 ? fail()
                                 : new BackendError({
-                                      operation: "invoke",
+                                      operation: "applyAction",
                                       kind: "SessionExpired",
                                       message: "Expired",
                                       retryable: false,
-                                      invocationOutcome: "not-committed",
+                                      actionOutcome: "not-committed",
                                   })
                         )
                     ),
@@ -373,10 +376,10 @@ test("protected pending receipts cannot starve expired journal-hint cleanup", as
                 for (let index = 0; index < 100; index++) {
                     const id = `pending-${index}`;
                     yield* replica.enqueue(invocation(id));
-                    yield* tables.put(hints, id, { invocationId: id, outcome: "committed", observedAt: 0 });
+                    yield* tables.put(hints, id, { operationId: id, outcome: "committed", observedAt: 0 });
                 }
                 yield* tables.put(hints, "zz-orphan", {
-                    invocationId: "zz-orphan",
+                    operationId: "zz-orphan",
                     outcome: "committed",
                     observedAt: 0,
                 });

@@ -9,7 +9,7 @@ import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
 import { connectReplicaParent, makeReplica, replicaStateSource } from "./index.js";
 import type { ClientSubmission, ReplicaOptions, ReplicaService, ReplicaStateSnapshot } from "./index.js";
-import type { ActionInvocation, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { ActionRequest, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
@@ -37,7 +37,7 @@ const ir: OntologyIR = {
         },
     ],
 };
-const invocation = (id: string, delta: number): ActionInvocation => ({
+const invocation = (id: string, delta: number): ActionRequest => ({
     id,
     name: "increment",
     parameters: { delta },
@@ -72,12 +72,12 @@ const fixture = Effect.fnUntraced(function* () {
                 complete: true,
                 rows: evaluateQuery([{ key: "one", value: { id: "one", count: serverCount } }], subset.query),
             })),
-        invoke: (action) =>
+        applyAction: (action) =>
             Effect.sync(() => {
                 submitted.push(action.id);
                 serverCount += Number(action.parameters.delta);
                 return {
-                    invocationId: action.id,
+                    operationId: action.id,
                     outcome: "committed" as const,
                     affected: [{ objectType: "Counter", keys: ["one"] }],
                 };

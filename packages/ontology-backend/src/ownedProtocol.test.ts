@@ -7,7 +7,7 @@ import { expect, test } from "vitest";
 import { makeOwnedBackend } from "./owned.js";
 import { BackendError } from "./index.js";
 import type { ClientPolicy } from "./clients.js";
-import type { ActionInvocation } from "./index.js";
+import type { ActionRequest } from "./index.js";
 
 const ir: OntologyIR = {
     types: [],
@@ -32,7 +32,7 @@ const ir: OntologyIR = {
         parameters: [],
     })),
 };
-const invocation = (id: string, name = "increment"): ActionInvocation => ({ id, name, parameters: {} });
+const invocation = (id: string, name = "increment"): ActionRequest => ({ id, name, parameters: {} });
 const setup = Effect.fnUntraced(function* (clients?: ClientPolicy, maxCommits?: number) {
     const tables = yield* Memory.make();
     const options = {
@@ -279,8 +279,8 @@ test("result and journal retention are independent of committed application rows
                 history: { maxCommits: Infinity, maxAgeMs: 50 },
             });
             const before = yield* backend.loadSubset({ objectType: "Counter" });
-            yield* backend.invoke(invocation("one"));
-            yield* backend.invoke(invocation("one"));
+            yield* backend.applyAction(invocation("one"));
+            yield* backend.applyAction(invocation("one"));
             expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(1);
             yield* TestClock.adjust(101);
             yield* backend.maintenance!;
@@ -295,7 +295,7 @@ test("result and journal retention are independent of committed application rows
             });
             expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(1);
             // Finite idempotency is explicit: after retention the same ID is a new invocation.
-            yield* backend.invoke(invocation("one"));
+            yield* backend.applyAction(invocation("one"));
             expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(2);
         }).pipe(Effect.provide(TestClock.layer()))
     );

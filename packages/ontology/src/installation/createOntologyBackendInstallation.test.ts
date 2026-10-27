@@ -19,7 +19,7 @@ const ir: OntologyIR = {
     queryFunctionTypes: [],
 };
 
-function createTestBackend() {
+function createTestBackend(onClose?: () => void) {
     return {
         name: "test",
         open: () =>
@@ -28,9 +28,9 @@ function createTestBackend() {
                 sourceId: "test",
                 supportsIdempotency: false,
                 loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                invoke: () => Effect.die("Unexpected action"),
+                applyAction: () => Effect.die("Unexpected action"),
                 queryFunction: () => Effect.die("Unexpected query"),
-            }),
+            }).pipe(Effect.tap(() => Effect.addFinalizer(() => Effect.sync(() => onClose?.())))),
     };
 }
 
@@ -133,11 +133,11 @@ describe("createOntologyBackendInstallation", () => {
                                     sourceId: "test",
                                     supportsIdempotency: false,
                                     loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                                    invoke: () => Effect.die("Unexpected action"),
+                                    applyAction: () => Effect.die("Unexpected action"),
                                     queryFunction: () => Effect.die("Unexpected query"),
-                                }),
-
-                            cleanup: cleanupOntology,
+                                }).pipe(
+                                    Effect.tap(() => Effect.addFinalizer(() => Effect.sync(cleanupOntology)))
+                                ),
                         }),
                     }),
                 },
@@ -174,10 +174,7 @@ describe("createOntologyBackendInstallation", () => {
         const cleanupMeta = vi.fn();
         const configureMeta = vi.fn(() => ({
             ir,
-            backend: () => ({
-                ...createTestBackend(),
-                cleanup: cleanupMeta,
-            }),
+            backend: () => createTestBackend(cleanupMeta),
         }));
         const installation = await createOntologyBackendInstallation({
             installationId: "meta-route",
@@ -240,7 +237,7 @@ describe("createOntologyBackendInstallation", () => {
                     matches: (ontologyId) => ontologyId === "ontology",
                     configure: () => ({
                         ir: sourceIR,
-                        backend: createTestBackend,
+                        backend: () => createTestBackend(),
                     }),
                 },
             ],
@@ -272,10 +269,7 @@ describe("createOntologyBackendInstallation", () => {
                     matches: (ontologyId) => ontologyId === "ontology",
                     configureMeta: () => ({
                         ir,
-                        backend: () => ({
-                            ...createTestBackend(),
-                            cleanup: cleanupMeta,
-                        }),
+                        backend: () => createTestBackend(cleanupMeta),
                     }),
                 },
             ],
@@ -310,14 +304,14 @@ describe("createOntologyBackendInstallation", () => {
                     matches: () => true,
                     configure: () => ({
                         ir,
-                        backend: createTestBackend,
+                        backend: () => createTestBackend(),
                     }),
                 },
                 {
                     matches: () => true,
                     configure: () => ({
                         ir,
-                        backend: createTestBackend,
+                        backend: () => createTestBackend(),
                     }),
                 },
             ],
@@ -337,7 +331,7 @@ describe("createOntologyBackendInstallation", () => {
         const adapter = createTestConnectionAdapter();
         const configure = vi.fn(() => ({
             ir,
-            backend: createTestBackend,
+            backend: () => createTestBackend(),
         }));
         const installation = await createOntologyBackendInstallation({
             installationId: "concurrent-open",
@@ -392,7 +386,7 @@ it("a scoped installation releases its live ontologies and connections with its 
                         matches: () => true,
                         configure: () => ({
                             ir,
-                            backend: () => ({ ...createTestBackend(), cleanup }),
+                            backend: () => createTestBackend(cleanup),
                         }),
                     },
                 ],
@@ -426,7 +420,7 @@ it("retries a failed ontology acquisition rather than caching its failure", asyn
     const configure = vi
         .fn()
         .mockRejectedValueOnce(new Error("Temporary route failure"))
-        .mockResolvedValue({ ir, backend: createTestBackend });
+        .mockResolvedValue({ ir, backend: () => createTestBackend() });
     const installation = await createOntologyBackendInstallation({
         installationId: "retry-open",
         connections: () => Effect.succeed(createTestConnectionAdapter()),
@@ -462,11 +456,19 @@ it("shutdown during a live ontology acquisition releases the late resource exact
                 matches: () => true,
                 configure: () => ({
                     ir,
-                    backend: async () => {
-                        entered();
-                        await gate;
-                        return { ...createTestBackend(), cleanup };
-                    },
+                    backend: () => ({
+                        name: "delayed",
+                        open: () =>
+                            Effect.acquireRelease(
+                                Effect.sync(() => {
+                                    entered();
+                                }),
+                                () => Effect.sync(cleanup)
+                            ).pipe(
+                                Effect.andThen(Effect.promise(() => gate)),
+                                Effect.andThen(createTestBackend().open())
+                            ),
+                    }),
                 }),
             },
         ],

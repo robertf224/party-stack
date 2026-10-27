@@ -17,7 +17,7 @@ export interface StorageOntologyBackendOptions {
     readonly clients?: import("@party-stack/ontology-backend/clients").ClientPolicy;
     readonly history?: import("@party-stack/ontology-backend/owned").OwnedBackendOptions["history"];
     readonly resultRetentionMs?: number;
-    readonly invocationScope?: string;
+    readonly actionScope?: string;
     readonly tables: TablesService;
     readonly blobs: BlobStorageService;
     /** Authority-owned keys, supplied by the deployment (KMS, secrets, or a platform key store). */
@@ -140,7 +140,7 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                   }),
               }
             : undefined,
-        invocationScope: options.invocationScope ?? JSON.stringify(options.context?.user ?? "system"),
+        actionScope: options.actionScope ?? JSON.stringify(options.context?.user ?? "system"),
         mutators: Object.fromEntries(
             options.ir.actionTypes
                 .filter((action) => action.logic.length || options.mutators?.[action.name])
@@ -152,7 +152,7 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                             tx,
                             name: invocation.name,
                             parameters: invocation.parameters,
-                            invocationId: invocation.id,
+                            operationId: invocation.id,
                             replay: invocation.replay,
                             context: options.context,
                             mutators: options.mutators,

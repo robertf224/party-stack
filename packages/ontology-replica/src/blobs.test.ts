@@ -50,18 +50,18 @@ test("staged outbox bytes survive upload, lost receipts and reopen until reconci
                     sourceId: "test",
                     supportsIdempotency: true,
                     loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                    invoke: (invocation) =>
+                    applyAction: (invocation) =>
                         Effect.gen(function* () {
                             // Materialization succeeds before the action response is lost.
                             yield* blobs.bindRemoteId("local", "remote").pipe(Effect.orDie);
                             if (loseReceipt)
                                 return yield* new BackendError({
-                                    operation: "invoke",
+                                    operation: "applyAction",
                                     kind: "Unavailable",
                                     message: "Response lost",
                                     retryable: true,
                                 });
-                            return { invocationId: invocation.id, outcome: "committed" as const };
+                            return { operationId: invocation.id, outcome: "committed" as const };
                         }),
                 };
                 const options = {
@@ -133,7 +133,7 @@ test("editing and removing pending actions atomically replace and release attach
                         sourceId: "offline",
                         supportsIdempotency: false,
                         loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                        invoke: () => Effect.die("No dispatch expected"),
+                        applyAction: () => Effect.die("No dispatch expected"),
                     },
                 });
                 yield* replica.enqueue({ id: "action", name: "upload", parameters: { file: { id: "one" } } });
@@ -191,11 +191,11 @@ test("a mapping race preserves the receipt and recovers without another remote i
                     supportsIdempotency: false,
                     loadSubset: () => Effect.succeed({ rows: [], complete: true }),
                     queryFunction: () => Effect.void,
-                    invoke: (invocation) =>
+                    applyAction: (invocation) =>
                         Effect.sync(() => {
                             calls++;
                             return {
-                                invocationId: invocation.id,
+                                operationId: invocation.id,
                                 outcome: "committed" as const,
                                 attachmentIdMappings: [{ localId: "local", remoteId: "remote" }],
                             };
@@ -284,7 +284,7 @@ test("replica snapshots and optimistic rows retain attachment identities and rel
                         supportsIdempotency: false,
                         loadSubset: () => Effect.succeed({ rows, complete: true }),
                         queryFunction: () => Effect.void,
-                        invoke: () => Effect.die("offline"),
+                        applyAction: () => Effect.die("offline"),
                     },
                     execute: (tx, invocation) =>
                         tx.put("Document", { id: "optimistic", file: invocation.parameters.file }),

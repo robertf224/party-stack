@@ -15,7 +15,7 @@ export {
     classifyBackendFailure,
     projectBackendError,
     projectValidationIssue,
-    isUnknownInvocationOutcome,
+    isUnknownActionOutcome,
 } from "./errors.js";
 export type {
     BackendErrorKind,
@@ -74,7 +74,7 @@ export type ObjectChange =
 export interface BackendCommit {
     readonly cursor: string;
     readonly changes: readonly ObjectChange[];
-    readonly invocationId?: string;
+    readonly operationId?: string;
 }
 export interface BackendChangePage {
     readonly commits: readonly BackendCommit[];
@@ -86,7 +86,7 @@ export interface AttachmentUpload {
     readonly blob: Blob;
     readonly target?: AttachmentTypeDef;
 }
-export interface ActionInvocation {
+export interface ActionRequest {
     /** Stable across retries. The source must separately guarantee keyed idempotency. */
     readonly id: string;
     readonly name: string;
@@ -96,11 +96,13 @@ export interface ActionInvocation {
     readonly replay?: { readonly now: string; readonly seed: string };
 }
 export interface ActionReceipt {
-    readonly invocationId: string;
+    /** The submitted ActionRequest.id, also supplied as the application's idempotencyKey. */
+    readonly operationId: string;
     /** Accepted remote actions may still require read-back before optimistic state can settle. */
     readonly outcome: "committed" | "accepted";
     readonly cursor?: string;
-    readonly operationId?: string;
+    /** Optional upstream execution ID. Never substitutes for our stable retry identity. */
+    readonly providerOperationId?: string;
     /** Read-back targets for a committed non-journal action. Missing keys
      * means the whole type; an empty list means no modeled object changes.
      * Omission conservatively refreshes every modeled type.
@@ -127,10 +129,10 @@ export const ObjectChangeSchema = Schema.Union([
     Schema.Struct({ kind: Schema.Literal("delete"), objectType: Schema.String, key: KeySchema }),
 ]);
 export const ActionReceiptSchema = Schema.Struct({
-    invocationId: Schema.String,
+    operationId: Schema.String,
     outcome: Schema.Literals(["committed", "accepted"]),
     cursor: Schema.optional(Schema.String),
-    operationId: Schema.optional(Schema.String),
+    providerOperationId: Schema.optional(Schema.String),
     affected: Schema.optional(
         Schema.Array(
             Schema.Struct({ objectType: Schema.String, keys: Schema.optional(Schema.Array(KeySchema)) })
@@ -144,7 +146,7 @@ export const ActionReceiptSchema = Schema.Struct({
 export const BackendCommitSchema = Schema.Struct({
     cursor: Schema.String,
     changes: Schema.Array(ObjectChangeSchema),
-    invocationId: Schema.optional(Schema.String),
+    operationId: Schema.optional(Schema.String),
 });
 export const BackendSnapshotSchema = Schema.Struct({
     fetchedRows: Schema.optional(Schema.Number),
@@ -163,15 +165,25 @@ export const BackendChangePageSchema = Schema.Struct({
 
 export interface BackendAttachments {
     /** Optional authoritative staging before a subsequent action references the handle. */
-    readonly stage?: (value: attachment, bytes: Blob) => Effect.Effect<attachment, BackendError>;
+    readonly stage?: (
+        value: attachment,
+        bytes: Blob,
+        options?: { readonly target?: AttachmentTypeDef }
+    ) => Effect.Effect<attachment, BackendError>;
     readonly read: (
         value: attachment,
         options?: { readonly offset?: number; readonly length?: number }
     ) => Effect.Effect<Blob, BackendError>;
     readonly metadata: (
-        value: attachment
+        value: attachment,
+        options?: { readonly select?: readonly ("size" | "type" | "name" | "dimensions")[] }
     ) => Effect.Effect<
-        { readonly size: number; readonly type: string; readonly name?: string },
+        {
+            readonly size?: number;
+            readonly type?: string;
+            readonly name?: string;
+            readonly dimensions?: { readonly width: number; readonly height: number };
+        },
         BackendError
     >;
 }
@@ -179,7 +191,7 @@ export { EncryptedValueSchema, DecryptedValueSchema, encryptedPropertyCodec } fr
 export type { DecryptedValue } from "./encrypted.js";
 
 export interface BackendEncryptedValues {
-    /** Explicit operation. Ordinary record loads return handles and never invoke this method. */
+    /** Explicit operation. Ordinary record loads return handles and never decrypt them. */
     readonly decrypt: (
         value: Encrypted<unknown>
     ) => Effect.Effect<import("./encrypted.js").DecryptedValue, BackendError>;
@@ -215,7 +227,7 @@ export interface OntologyBackendService {
         parameters: Record<string, unknown>,
         options?: { readonly knownParameters?: readonly string[] }
     ) => Effect.Effect<import("./errors.js").ValidationReport, BackendError>;
-    readonly invoke: (invocation: ActionInvocation) => Effect.Effect<ActionReceipt, BackendError>;
+    readonly applyAction: (invocation: ActionRequest) => Effect.Effect<ActionReceipt, BackendError>;
     readonly queryFunction: (
         name: string,
         parameters: Record<string, unknown>

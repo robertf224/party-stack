@@ -44,7 +44,7 @@ test("mutator queries lazily read transaction-local persisted rows and earlier w
                         tx,
                         name: action.name,
                         parameters: {},
-                        invocationId: action.id,
+                        operationId: action.id,
                         mutators: {
                             increment: async ({ tx }) => {
                                 const previous = await tx.query<{ count: number } | undefined>((q, objects) =>
@@ -73,7 +73,7 @@ test("mutator queries lazily read transaction-local persisted rows and earlier w
                         tx,
                         name: "reject",
                         parameters: {},
-                        invocationId: "reject",
+                        operationId: "reject",
                         mutators: {
                             reject: async ({ tx }) => {
                                 await tx.mutate.Counter!.update("shared", { count: 999 });
@@ -85,7 +85,7 @@ test("mutator queries lazily read transaction-local persisted rows and earlier w
             const backend = yield* makeOwnedBackend({ namespace: "transaction-query", ir, tables, mutators });
             yield* Effect.all(
                 Array.from({ length: 5 }, (_, index) =>
-                    backend.invoke({ id: String(index), name: "increment", parameters: {} })
+                    backend.applyAction({ id: String(index), name: "increment", parameters: {} })
                 ),
                 { concurrency: "unbounded" }
             );
@@ -93,7 +93,9 @@ test("mutator queries lazily read transaction-local persisted rows and earlier w
             expect((yield* backend.loadSubset({ objectType: "Audit" })).rows).toHaveLength(5);
             expect(
                 Result.isFailure(
-                    yield* Effect.result(backend.invoke({ id: "reject", name: "reject", parameters: {} }))
+                    yield* Effect.result(
+                        backend.applyAction({ id: "reject", name: "reject", parameters: {} })
+                    )
                 )
             ).toBe(true);
             expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(5);
@@ -162,7 +164,7 @@ test("action null clears optional properties while omitted inputs preserve exist
                     ir: nullableIR,
                     tx,
                     name: invocation.name,
-                    invocationId: invocation.id,
+                    operationId: invocation.id,
                     parameters: invocation.parameters,
                 }).pipe(Effect.asVoid);
             const backend = yield* makeOwnedBackend({
@@ -171,20 +173,28 @@ test("action null clears optional properties while omitted inputs preserve exist
                 tables,
                 mutators: { create: execute, update: execute },
             });
-            yield* backend.invoke({ id: "create", name: "create", parameters: { id: "one", label: null } });
+            yield* backend.applyAction({
+                id: "create",
+                name: "create",
+                parameters: { id: "one", label: null },
+            });
             expect((yield* backend.loadSubset({ objectType: "Note" })).rows[0]?.value).toEqual({
                 id: "one",
                 label: undefined,
                 payload: null,
             });
-            yield* backend.invoke({
+            yield* backend.applyAction({
                 id: "set",
                 name: "update",
                 parameters: { note: "one", label: "Present" },
             });
-            yield* backend.invoke({ id: "omit", name: "update", parameters: { note: "one" } });
+            yield* backend.applyAction({ id: "omit", name: "update", parameters: { note: "one" } });
             expect((yield* backend.loadSubset({ objectType: "Note" })).rows[0]?.value.label).toBe("Present");
-            yield* backend.invoke({ id: "clear", name: "update", parameters: { note: "one", label: null } });
+            yield* backend.applyAction({
+                id: "clear",
+                name: "update",
+                parameters: { note: "one", label: null },
+            });
             expect((yield* backend.loadSubset({ objectType: "Note" })).rows[0]?.value.label).toBeUndefined();
         })
     );
@@ -214,7 +224,7 @@ test("transaction query preparation narrows repeated point queries and keyed mut
             tx,
             name: "increment",
             parameters: {},
-            invocationId: "precise",
+            operationId: "precise",
             mutators: {
                 increment: async ({ tx }) => {
                     for (const id of ["one", "two", "one"]) {

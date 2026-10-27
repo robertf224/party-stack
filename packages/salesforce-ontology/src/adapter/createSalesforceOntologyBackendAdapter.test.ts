@@ -463,8 +463,8 @@ describe("createSalesforceOntologyBackendAdapter", () => {
                     ["updateAccount", "existing", { recordId: "existing", Name: "Changed" }],
                     ["deleteAccount", "existing", { recordId: "existing" }],
                 ] as const) {
-                    expect(yield* backend.invoke({ id: name, name, parameters })).toEqual({
-                        invocationId: name,
+                    expect(yield* backend.applyAction({ id: name, name, parameters })).toEqual({
+                        operationId: name,
                         outcome: "committed",
                         affected: [{ objectType: "Account", keys: [key] }],
                         affectedComplete: false,
@@ -488,13 +488,13 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         await runNative(createAdapter(), (backend) =>
             Effect.gen(function* () {
                 expect(
-                    yield* backend.invoke({
+                    yield* backend.applyAction({
                         id: "flow",
                         name: "Create_Account",
                         parameters: { accountName: "Acme" },
                     })
                 ).toEqual({
-                    invocationId: "flow",
+                    operationId: "flow",
                     outcome: "committed",
                     affected: [{ objectType: "Account" }],
                 });
@@ -595,7 +595,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             createRecord.mockRejectedValue(cause);
             const result = await runNative(createAdapter(), (backend) =>
                 Effect.result(
-                    backend.invoke({ id: "once", name: "createAccount", parameters: { Name: "Acme" } })
+                    backend.applyAction({ id: "once", name: "createAccount", parameters: { Name: "Acme" } })
                 )
             );
             expect(result).toMatchObject({
@@ -647,7 +647,7 @@ function applyNative(
     return Effect.runPromise(
         Effect.scoped(
             Effect.flatMap(adapter.open(options.context ?? {}), (backend) =>
-                backend.invoke({
+                backend.applyAction({
                     id: options.idempotencyKey ?? "test-invocation",
                     name,
                     parameters,

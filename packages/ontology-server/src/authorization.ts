@@ -77,7 +77,7 @@ export function projectOntologyBackend<Context>(options: {
             kind: "NotFound",
             message: "Resource not found.",
             retryable: false,
-            invocationOutcome: "not-committed",
+            actionOutcome: "not-committed",
         });
     const expose = <A, E extends BackendError>(name: string, work: Effect.Effect<A, E>) =>
         work.pipe(
@@ -105,11 +105,11 @@ export function projectOntologyBackend<Context>(options: {
                               Effect.andThen(() => backend.attachments!.read(value, settings))
                           )
                       ),
-                  metadata: (value) =>
+                  metadata: (value, settings) =>
                       expose(
                           "attachment.metadata",
                           readableAttachment(value).pipe(
-                              Effect.andThen(() => backend.attachments!.metadata(value))
+                              Effect.andThen(() => backend.attachments!.metadata(value, settings))
                           )
                       ),
               }
@@ -227,19 +227,19 @@ export function projectOntologyBackend<Context>(options: {
                     };
                 })
             ),
-        invoke: (invocation) =>
+        applyAction: (invocation) =>
             expose(
                 invocation.name,
                 Effect.gen(function* () {
                     if (!ir.actionTypes.some((action) => action.name === invocation.name))
-                        return yield* denied("invoke");
+                        return yield* denied("applyAction");
                     const values = parameters(invocation.name, invocation.parameters);
                     if (policy.canApplyAction && !(yield* policy.canApplyAction(invocation.name, values)))
-                        return yield* denied("invoke");
-                    const receipt = yield* backend.invoke({ ...invocation, parameters: values });
+                        return yield* denied("applyAction");
+                    const receipt = yield* backend.applyAction({ ...invocation, parameters: values });
                     // Do not reveal upstream cursor positions, hidden affected types or row IDs.
                     return {
-                        invocationId: receipt.invocationId,
+                        operationId: receipt.operationId,
                         outcome: receipt.outcome,
                         attachmentIdMappings: receipt.attachmentIdMappings,
                         affected: receipt.affected

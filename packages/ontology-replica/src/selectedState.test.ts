@@ -63,10 +63,10 @@ const setup = Effect.fnUntraced(function* () {
         tables: yield* Memory.make(),
         mutators: { put: execute, delete: execute },
     });
-    yield* owned.invoke(put("a", 1));
-    yield* owned.invoke(put("b", 2));
-    yield* owned.invoke(put("c", 3));
-    yield* owned.invoke(put("z", 0, "second"));
+    yield* owned.applyAction(put("a", 1));
+    yield* owned.applyAction(put("b", 2));
+    yield* owned.applyAction(put("c", 3));
+    yield* owned.applyAction(put("z", 0, "second"));
     const parent = yield* makeReplica({
         namespace: "parent",
         ir,

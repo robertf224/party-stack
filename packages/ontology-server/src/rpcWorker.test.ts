@@ -60,7 +60,7 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                     tables: yield* Memory.make(),
                     mutators: { increment },
                 });
-                yield* backend.invoke({ id: "seed", name: "increment", parameters: {} });
+                yield* backend.applyAction({ id: "seed", name: "increment", parameters: {} });
                 const owner = yield* makeReplica({
                     namespace: "worker-owner",
                     ir,

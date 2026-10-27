@@ -4,6 +4,40 @@ Effect-native backend contracts, normalized errors and authoritative execution.
 Adapters depend on this package for subset snapshots, action receipts, validation,
 attachment/decrypt capabilities and optional journal/watch interfaces.
 
+## Native adapter and operation identity
+
+An adapter's scoped open(context) returns one OntologyBackendService. Validation,
+attachment IO and other capabilities live on that service, not parallel Promise
+hooks on the adapter. Scope owns cleanup. Source signatures use Effect.Effect and
+Stream.Stream directly; there are no Run/Events aliases.
+
+The execution hook is applyAction(ActionRequest), also named ApplyAction on RPC.
+The caller's idempotencyKey is the stable ActionRequest.id. The returned receipt's
+operationId identifies that same submission across retries. It is not the action
+type's name. providerOperationId is optional upstream metadata, such as Foundry's
+own execution identifier, and is not used for local retry identity or settlement.
+
+```ts
+interface ActionReceipt {
+    operationId: string;
+    providerOperationId?: string;
+    outcome: "committed" | "accepted";
+    cursor?: string;
+    // Read-back targets and attachment ID mappings are additional receipt fields.
+}
+```
+
+Action uploads contain only locally staged bytes. Reusing an existing remote handle
+does not cause a download/re-upload. Provider applyAction owns its upload/encoding
+pipeline and returns canonical ID mappings with the successful receipt. Those
+mappings are not installed ahead of the receipt. Explicit eager staging uses the
+native attachments.stage capability, where available.
+
+loadSubset/watchSubset remain snapshot/invalidation operations. changes.pull returns
+the source-wide journal; changes.watch is only its wake-up stream. A future
+query-scoped data subscription is deferred; see the
+[subscription design note](../../specs/2026-10-19-effect-tables-replica/subset-subscriptions.md).
+
 ## Failures and validation
 
 `BackendError` is a Schema.TaggedError with a `kind` discriminator. Operation failures
@@ -13,7 +47,7 @@ identify HistoryExpired, SessionExpired, SessionReplaced, ViewReplaced, ResultEx
 SourceMismatch and SchemaMismatch. Source/schema changes require explicit reset or
 migration; a transient transport reconnect does not replace the runtime or outbox.
 
-`retryable` controls automatic retry scheduling. `invocationOutcome` separately says
+`retryable` controls automatic retry scheduling. `actionOutcome` separately says
 `not-committed` or `unknown`: a rejected/throttled write can retry safely, while a lost
 reply may have committed. Missing outcome on Unavailable/Internal is conservative.
 An earlier unknown outcome remains unknown after a later rejected retry. A durable
@@ -62,7 +96,7 @@ retaining an audit history intentionally consumes storage. Bounded indexed
 The HTTP server scope schedules maintenance; other hosts must run it from their own
 lifecycle/alarm. Pending outbox work is not expired by result cleanup.
 
-Idempotency is finite when result retention is finite. Reusing an invocation ID after
+Idempotency is finite when result retention is finite. Reusing an operation ID after
 its result has expired may execute it again. Advertising/versioning a remote retry
 window is deferred; `supportsIdempotency` does not promise eternal receipt retention.
 

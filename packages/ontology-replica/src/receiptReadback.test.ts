@@ -40,7 +40,7 @@ test("partial synthetic receipt identities survive restart and do not hide autom
                     objectTypes: [ir.objectTypes[0]!, { ...ir.objectTypes[0]!, name: "Mirror" }],
                 };
                 const receipt = Schema.decodeUnknownSync(ActionReceiptSchema)({
-                    invocationId: "once",
+                    operationId: "once",
                     outcome: "committed",
                     affected: [{ objectType: "Counter", keys: ["one"] }],
                     affectedComplete: false,
@@ -49,7 +49,7 @@ test("partial synthetic receipt identities survive restart and do not hide autom
                     name: "test",
                     sourceId: "test",
                     supportsIdempotency: false,
-                    invoke: () =>
+                    applyAction: () =>
                         Effect.sync(() => {
                             invocations++;
                             return receipt;
@@ -129,11 +129,11 @@ test("receipt targets read only changed identities and publish read-back with ov
                             requests.push(subset);
                             return { rows: evaluateQuery(rows, subset.query), complete: true };
                         }),
-                    invoke: (invocation) =>
+                    applyAction: (invocation) =>
                         Effect.sync(() => {
                             rows = [{ key: "one", value: { id: "one", count: 2 } }, rows[1]!];
                             return {
-                                invocationId: invocation.id,
+                                operationId: invocation.id,
                                 outcome: "committed",
                                 affected: [{ objectType: "Counter", keys: ["one"] }],
                             } satisfies ActionReceipt;
@@ -189,13 +189,13 @@ test("read-back failure retains the receipt across restart and never redispatche
                     name: "test",
                     sourceId: "test",
                     supportsIdempotency: false,
-                    invoke: (invocation) =>
+                    applyAction: (invocation) =>
                         Effect.sync(() => {
                             invocations++;
                             return {
-                                invocationId: invocation.id,
+                                operationId: invocation.id,
                                 outcome: "committed",
-                                operationId: "remote-operation",
+                                providerOperationId: "remote-operation",
                                 affected: [{ objectType: "Counter", keys: ["one"] }],
                             };
                         }),
@@ -230,7 +230,7 @@ test("read-back failure retains the receipt across restart and never redispatche
                 expect((yield* Effect.result(first.syncOnce))._tag).toBe("Failure");
                 expect((yield* first.pending)[0]).toMatchObject({
                     state: "acknowledged",
-                    receipt: { operationId: "remote-operation" },
+                    receipt: { providerOperationId: "remote-operation" },
                     attempts: 1,
                 });
                 yield* Scope.close(scope, Exit.void);
@@ -267,11 +267,11 @@ test("a complete identity read-back can remove a deleted object without evicting
                             rows: evaluateQuery(deleted ? [rows[1]!] : rows, subset.query),
                             complete: true,
                         }),
-                    invoke: (invocation) =>
+                    applyAction: (invocation) =>
                         Effect.sync(() => {
                             deleted = true;
                             return {
-                                invocationId: invocation.id,
+                                operationId: invocation.id,
                                 outcome: "committed",
                                 affected: [{ objectType: "Counter", keys: ["one"] }],
                             };
@@ -330,13 +330,13 @@ test("restart confirms a saved receipt before active demand can publish the remo
                                       rows: [{ key: "one", value: { id: "one", count: remoteCount } }],
                                   });
                         }),
-                    invoke: (invocation) =>
+                    applyAction: (invocation) =>
                         Effect.sync(() => {
                             invocations++;
                             remoteCount++;
                             fail = true;
                             return {
-                                invocationId: invocation.id,
+                                operationId: invocation.id,
                                 outcome: "committed",
                                 affected: [{ objectType: "Counter", keys: ["one"] }],
                             };
@@ -403,12 +403,12 @@ test.each([false, true])(
                         supportsIdempotency,
                         queryFunction: () => Effect.void,
                         loadSubset: () => Effect.succeed({ complete: true, rows: [] }),
-                        invoke: (invocation) =>
+                        applyAction: (invocation) =>
                             Effect.gen(function* () {
                                 calls++;
                                 yield* Deferred.succeed(entered, undefined);
                                 if (hold) yield* Effect.never;
-                                return { invocationId: invocation.id, outcome: "accepted" as const };
+                                return { operationId: invocation.id, outcome: "accepted" as const };
                             }),
                     };
                     const options = {
@@ -464,20 +464,20 @@ test("retry attempts advance once per submission, and acceptance never resets or
                         supportsIdempotency: true,
                         queryFunction: () => Effect.void,
                         loadSubset: () => Effect.succeed({ complete: true, rows: [] }),
-                        invoke: (invocation) =>
+                        applyAction: (invocation) =>
                             Effect.suspend(() => {
                                 calls++;
                                 return calls === 1
                                     ? Effect.fail(
                                           new BackendError({
-                                              operation: "invoke",
+                                              operation: "applyAction",
                                               kind: "Unavailable",
                                               message: "Try again",
                                               retryable: true,
                                           })
                                       )
                                     : Effect.succeed({
-                                          invocationId: invocation.id,
+                                          operationId: invocation.id,
                                           outcome: "accepted" as const,
                                       });
                             }),

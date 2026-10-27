@@ -155,16 +155,10 @@ export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
         if (runtime.scope !== scope) yield* Scope.addFinalizer(scope, Scope.close(resources, Exit.void));
         return yield* Scope.provide(
             Effect.gen(function* () {
-                const backendAdapter = yield* Effect.acquireRelease(
-                    Effect.tryPromise({
-                        try: () => provide(opts.backend, opts.ir, context),
-                        catch: (cause) => cause,
-                    }),
-                    (adapter) =>
-                        Effect.promise(async () => {
-                            await adapter.cleanup?.();
-                        })
-                );
+                const backendAdapter = yield* Effect.tryPromise({
+                    try: () => provide(opts.backend, opts.ir, context),
+                    catch: (cause) => cause,
+                });
                 if (opts.persistObjects && !platform.tables) {
                     return yield* Effect.fail(
                         new Error("Persisted ontology objects require owned Tables storage.")

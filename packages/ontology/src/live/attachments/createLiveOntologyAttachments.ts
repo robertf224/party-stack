@@ -3,7 +3,6 @@ import { ImageMediaTypeOptions } from "@party-stack/ontology-spec/constants";
 import { getTargetValueType } from "@party-stack/ontology-spec/utils";
 import * as v from "@party-stack/ontology-spec/values";
 import type { BlobManager } from "../../runtime/blobs/types.js";
-import type { OntologyAttachmentsAdapter } from "../OntologyBackendAdapter.js";
 import type { AttachmentMetadata, AttachmentMetadataSelection, PartialAttachmentMetadata } from "./types.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { OntologyAttachmentCreateTarget } from "@party-stack/ontology-spec/utils";
@@ -100,10 +99,14 @@ export function createLiveOntologyAttachments<
     Ontology extends AttachmentOntologyDefinition = AttachmentOntologyDefinition,
 >(opts: {
     ir: OntologyIR;
-    attachmentsAdapter: OntologyAttachmentsAdapter;
+    stageAttachment?: (
+        value: v.attachment,
+        bytes: Blob,
+        target?: import("@party-stack/ontology-spec").AttachmentTypeDef
+    ) => Promise<v.attachment>;
     blobManager: BlobManager;
 }): LiveOntologyAttachments<Ontology> {
-    const { attachmentsAdapter, blobManager } = opts;
+    const { stageAttachment, blobManager } = opts;
 
     const create = async <const Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined>(
         blob: Blob | File,
@@ -132,29 +135,22 @@ export function createLiveOntologyAttachments<
             );
             // TODO: Validate image dimensions once runtimes expose a portable media-inspection capability.
         }
-        const id =
-            normalizedOpts.id ??
-            (targetType?.kind === "attachment" && attachmentsAdapter.generateAttachmentId
-                ? await attachmentsAdapter.generateAttachmentId(blob, {
-                      target: targetType.value,
-                  })
-                : crypto.randomUUID());
+        const id = normalizedOpts.id ?? crypto.randomUUID();
         await blobManager.stage(id, blob);
         const attachment: v.attachment = {
             id,
             type: blob.type,
         };
-        const materializeAttachment = attachmentsAdapter.materializeAttachment;
-        const materializeOptions = {
-            target: targetType?.kind === "attachment" ? targetType.value : undefined,
-        };
-        const canMaterialize =
-            materializeAttachment &&
-            (attachmentsAdapter.canMaterializeAttachment?.(attachment, materializeOptions) ?? true);
-        if (normalizedOpts.eager && canMaterialize) {
+        if (normalizedOpts.eager && stageAttachment) {
             const promise = blobManager
                 .read(id)
-                .then((storedBlob) => materializeAttachment(attachment, storedBlob, materializeOptions))
+                .then((storedBlob) =>
+                    stageAttachment(
+                        attachment,
+                        storedBlob,
+                        targetType?.kind === "attachment" ? targetType.value : undefined
+                    )
+                )
                 .then(async (materialized) => {
                     if (materialized) {
                         if (materialized.id !== id) {

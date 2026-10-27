@@ -4,14 +4,14 @@ import { Effect, Schema, SchemaGetter, SchemaIssue } from "effect";
 import { ClientLeaseSchema, ClientSessionSchema } from "./clients.js";
 import { ActionReceiptSchema, BackendErrorKindSchema, ValidationIssueSchema } from "./index.js";
 import type { ClientLease, ClientSession, ClientToken } from "./clients.js";
-import type { ActionInvocation, ActionReceipt, BackendError, BackendSubset } from "./index.js";
+import type { ActionRequest, ActionReceipt, BackendError, BackendSubset } from "./index.js";
 import type { Row } from "@party-stack/ontology-storage";
 import type { Override } from "@party-stack/ontology-storage/overlay";
 import type { Scope, Stream } from "effect";
 
 /** Logical action state shared by owned sources, intermediate replicas and clients. */
 export interface PendingAction {
-    readonly invocation: ActionInvocation;
+    readonly invocation: ActionRequest;
     readonly requestIdentity: string;
     readonly createdAt: number;
     readonly sequence: number;
@@ -71,7 +71,7 @@ export interface ClientState {
 export interface ClientSubmission {
     readonly session: ClientSession;
     readonly sequence: number;
-    readonly invocation: ActionInvocation;
+    readonly invocation: ActionRequest;
     readonly optimistic: boolean;
     readonly view?: ClientView;
 }
@@ -121,14 +121,14 @@ const Counter = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.
 const PositiveCounter = Counter.check(Schema.isGreaterThan(0));
 const KeySchema = Schema.Union([Schema.String, Schema.Finite]);
 const ValueSchema = Schema.Record(Schema.String, Schema.Unknown);
-export const ActionInvocationSchema = Schema.Struct({
+export const ActionRequestSchema = Schema.Struct({
     id: Schema.NonEmptyString,
     name: Schema.NonEmptyString,
     parameters: ValueSchema,
     replay: Schema.optional(Schema.Struct({ now: Schema.String, seed: Schema.NonEmptyString })),
 });
 export const PendingActionSchema = Schema.Struct({
-    invocation: ActionInvocationSchema,
+    invocation: ActionRequestSchema,
     requestIdentity: Schema.String,
     createdAt: Schema.Finite,
     sequence: PositiveCounter,
@@ -189,7 +189,7 @@ const ClientStateSchema = Schema.Struct({ state: ReplicaStateSnapshotSchema, cli
 const ClientSubmissionSchema = Schema.Struct({
     session: ClientSessionSchema,
     sequence: PositiveCounter,
-    invocation: ActionInvocationSchema,
+    invocation: ActionRequestSchema,
     optimistic: Schema.Boolean,
     view: Schema.optional(ClientViewSchema),
 });

@@ -36,7 +36,7 @@ export function makeSalesforceMetadataBackend(
         name: "salesforce-metadata",
         sourceId: `salesforce-metadata:${options.client.instanceUrl}`,
         supportsIdempotency: false,
-        invoke: () => unsupported("invoke"),
+        applyAction: () => unsupported("applyAction"),
         queryFunction: () => unsupported("queryFunction"),
         loadSubset: Effect.fn("SalesforceMetadata.loadSubset")(function* (subset: BackendSubset) {
             const type = metaOntology.objectTypes.find((type) => type.name === subset.objectType);

@@ -52,17 +52,17 @@ export const makeOntologyServer = Effect.fn("OntologyServer.make")(function* <R 
             changes: undefined,
             // Finite request/response callers await confirmation. Replica children
             // use Submit for durable acceptance and normal parent-state handoff.
-            invoke: (invocation) =>
+            applyAction: (invocation) =>
                 Effect.gen(function* () {
                     yield* replica.enqueue(invocation, { optimistic: true });
                     const receipt = yield* replica.awaitAction(invocation.id);
                     if (!receipt)
                         return yield* new BackendError({
-                            operation: "invoke",
+                            operation: "applyAction",
                             kind: "ResultExpired",
                             message: "Action result is unavailable.",
                             retryable: false,
-                            invocationOutcome: "unknown",
+                            actionOutcome: "unknown",
                         });
                     return receipt;
                 }),

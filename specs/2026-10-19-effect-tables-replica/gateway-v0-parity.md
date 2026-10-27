@@ -1,5 +1,31 @@
 # Gateway migration gates and deferred protocol work
 
+## Agreed v0 sequence — October 27
+
+Gateway parity is the final implementation phase of v0. Before it, finish native
+adapter cleanup/operation naming, byte-stream attachment transfers with bounds and the remaining
+provider/example recovery and lifecycle acceptance work. Do not prioritize Salesforce
+CDC or add subscribeSubset before closing those gates.
+
+Pull hierarchical Query IR and authenticated context binding into that final Gateway
+phase. Express relationships, nested queries and correlations in the shared query
+model; do not introduce a separate exists-first public authorization API or another
+policy-only expression language. Existence tests may be an execution lowering detail.
+Query construction does not itself implement authorization: the executor must apply
+policy to referenced objects/dependencies before ordering and pagination.
+
+The final acceptance checklist is projected dynamic Describe/context discovery;
+hierarchical/context-path read policies and query restrictions; object-reference
+parameter authorization through those same views; fixed/generated parameter handling;
+authorized prefill and query functions; source-row/property attachment reads;
+principal/form/revision-bound uploads and request limits; and real form submission,
+structured validation, unknown-outcome and context-change isolation flows.
+
+Retire the deprecated HTTP transport after those workflows run on native operations.
+Its remaining presence does not justify retaining legacy adapter validation,
+attachment or cleanup hooks. General untrusted replica-state access and live
+hierarchical query subscriptions remain separate future work.
+
 Inspected October 26, 2026 against the local Streamline checkout. No gateway files
 were changed. Relevant sources are streamline-gateway/src/logic/liveOntologyDataLoaders/
 remoteFormOntologyServer.ts and createSecuredFormRemoteOntologyServer.ts,

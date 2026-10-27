@@ -564,21 +564,16 @@ describe("remote ontology server policy projection", () => {
             backendAdapter: testBinding({
                 name: "test",
 
-                attachments: {
-                    materializeAttachment: async (attachment, blob) => {
-                        materializedFile = blob;
-                        return {
-                            ...attachment,
-                            id: remoteId,
-                        };
-                    },
-                    getAttachmentContent: () =>
-                        Promise.reject(new Error("unexpected remote attachment read")),
-                },
-
                 rows: [],
-                apply: async (_actionType, parameters) => {
-                    appliedParameters = parameters;
+                apply: async (_actionType, parameters, uploads) => {
+                    materializedFile = uploads?.[0]?.blob;
+                    appliedParameters = {
+                        ...parameters,
+                        file: { ...(parameters.file as Record<string, unknown>), id: remoteId },
+                    };
+                    return {
+                        attachmentIdMappings: [{ localId: (parameters.file as { id: string }).id, remoteId }],
+                    };
                 },
                 query: async () => undefined,
             }),
@@ -807,10 +802,10 @@ describe("authorized replica protocol", () => {
                             reads++;
                             return { rows: [{ key: "n", value }], complete: true, cursor: "source:2" };
                         }),
-                    invoke: () =>
+                    applyAction: () =>
                         Effect.fail(
                             new BackendError({
-                                operation: "invoke",
+                                operation: "applyAction",
                                 kind: "NotImplemented",
                                 message: "No actions",
                                 retryable: false,
@@ -832,7 +827,7 @@ describe("authorized replica protocol", () => {
                                       commits: [
                                           {
                                               cursor: "source:2",
-                                              invocationId: "a",
+                                              operationId: "a",
                                               changes: [{ kind: "put", objectType: "Note", key: "n", value }],
                                           },
                                       ],
@@ -884,9 +879,13 @@ describe("authorized replica protocol", () => {
 });
 
 function testBinding(
-    options: Omit<Partial<OntologyBackendAdapter>, "open"> & {
+    options: Partial<Pick<OntologyBackendService, "name" | "validateAction" | "attachments">> & {
         rows?: readonly Record<string, unknown>[];
-        apply?: (name: string, parameters: Record<string, unknown>) => Promise<unknown>;
+        apply?: (
+            name: string,
+            parameters: Record<string, unknown>,
+            uploads?: readonly import("@party-stack/ontology-backend").AttachmentUpload[]
+        ) => Promise<Partial<import("@party-stack/ontology-backend").ActionReceipt> | void>;
         query?: (name: string, parameters: Record<string, unknown>) => Promise<unknown>;
         onRead?: () => void;
         onClose?: () => void;
@@ -906,12 +905,12 @@ function testBinding(
         });
     return {
         name: options.name ?? "test",
-        validateAction: options.validateAction,
-        attachments: options.attachments,
         open: () =>
             Effect.acquireRelease(
                 Effect.succeed<OntologyBackendService>({
                     name: "test",
+                    validateAction: options.validateAction,
+                    attachments: options.attachments,
                     sourceId: "test",
                     supportsIdempotency: false,
                     loadSubset: () =>
@@ -925,11 +924,17 @@ function testBinding(
                                 })),
                             };
                         }),
-                    invoke: (invocation) =>
-                        Effect.as(
-                            attempt(async () => options.apply?.(invocation.name, invocation.parameters)),
-                            { invocationId: invocation.id, outcome: "committed" as const, affected: [] }
-                        ),
+                    applyAction: (invocation) =>
+                        attempt(async () => ({
+                            operationId: invocation.id,
+                            outcome: "committed" as const,
+                            affected: [],
+                            ...(await options.apply?.(
+                                invocation.name,
+                                invocation.parameters,
+                                invocation.attachmentUploads
+                            )),
+                        })),
                     queryFunction: (name, parameters) =>
                         attempt(async () => options.query?.(name, parameters)),
                 }),

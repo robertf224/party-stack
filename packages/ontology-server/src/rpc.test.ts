@@ -138,7 +138,7 @@ test("native HTTP advertises and transports read-only parameter resolution with 
                     )
                 );
                 expect(operations).toContain("ResolveActionParameters");
-                expect(operations).not.toContain("Invoke");
+                expect(operations).not.toContain("ApplyAction");
                 expect(yield* owned.storage.read((tx) => tx.get("Counter", "one"))).toBeUndefined();
             })
         )
@@ -189,7 +189,7 @@ test("RPC demand leases and change subscriptions close with the client scope", a
                     consumer
                 );
                 yield* Deferred.await(initial);
-                yield* owned.invoke({ id: "other", name: "increment", parameters: {} });
+                yield* owned.applyAction({ id: "other", name: "increment", parameters: {} });
                 yield* Effect.promise(() => vi.waitFor(() => expect(messages).toBeGreaterThan(1)));
                 yield* Scope.close(consumer, Exit.void);
                 yield* Effect.promise(() => vi.waitFor(() => expect(leases).toBe(0)));
@@ -603,7 +603,7 @@ test("stateless backend calls use the same HTTP server without opening a replica
                 });
                 yield* Effect.gen(function* () {
                     const backend = yield* connectOntologyBackendHttp({ url: "https://ontology.test/rpc" });
-                    const receipt = yield* backend.invoke({
+                    const receipt = yield* backend.applyAction({
                         id: "stateless",
                         name: "increment",
                         parameters: {},
@@ -627,7 +627,7 @@ test("stateless backend calls use the same HTTP server without opening a replica
                 );
                 expect(operations).toEqual([
                     "Describe",
-                    "Invoke",
+                    "ApplyAction",
                     "LoadSubset",
                     "ValidateAction",
                     "PullChanges",
@@ -647,14 +647,14 @@ test("authorization makes an owned server read-only and defects never escape as 
                     backend: { ...owned, loadSubset: () => Effect.die(new Error("private-token")) },
                     ir,
                     authorize: (request) =>
-                        request.operation === "Invoke"
+                        request.operation === "ApplyAction"
                             ? Effect.fail(
                                   new BackendError({
                                       operation: "authorize",
                                       kind: "Forbidden",
                                       message: "private policy",
                                       retryable: false,
-                                      invocationOutcome: "not-committed",
+                                      actionOutcome: "not-committed",
                                   })
                               )
                             : Effect.void,
@@ -662,17 +662,17 @@ test("authorization makes an owned server read-only and defects never escape as 
                 yield* Effect.gen(function* () {
                     const backend = yield* connectOntologyBackendHttp({ url: "https://ontology.test/rpc" });
                     const denied = yield* Effect.result(
-                        backend.invoke({ id: "denied", name: "increment", parameters: {} })
+                        backend.applyAction({ id: "denied", name: "increment", parameters: {} })
                     );
                     expect(denied).toMatchObject({
                         _tag: "Failure",
-                        failure: { kind: "Forbidden", invocationOutcome: "not-committed" },
+                        failure: { kind: "Forbidden", actionOutcome: "not-committed" },
                     });
                     expect(JSON.stringify(denied)).not.toContain("private policy");
                     const defect = yield* Effect.result(backend.loadSubset({ objectType: "Counter" }));
                     expect(defect).toMatchObject({
                         _tag: "Failure",
-                        failure: { kind: "Internal", invocationOutcome: "unknown" },
+                        failure: { kind: "Internal", actionOutcome: "unknown" },
                     });
                     expect(JSON.stringify(defect)).not.toContain("private-token");
                 }).pipe(
@@ -739,7 +739,7 @@ test("a failing error-disclosure policy cannot leak its defect over RPC", async 
                         throw new Error("private-policy-detail");
                     },
                     authorize: (request) =>
-                        request.operation === "Invoke"
+                        request.operation === "ApplyAction"
                             ? Effect.fail(
                                   new BackendError({
                                       operation: "authorize",
@@ -753,11 +753,11 @@ test("a failing error-disclosure policy cannot leak its defect over RPC", async 
                 yield* Effect.gen(function* () {
                     const backend = yield* connectOntologyBackendHttp({ url: "https://ontology.test/rpc" });
                     const result = yield* Effect.result(
-                        backend.invoke({ id: "policy-defect", name: "increment", parameters: {} })
+                        backend.applyAction({ id: "policy-defect", name: "increment", parameters: {} })
                     );
                     expect(result).toMatchObject({
                         _tag: "Failure",
-                        failure: { kind: "Internal", invocationOutcome: "unknown" },
+                        failure: { kind: "Internal", actionOutcome: "unknown" },
                     });
                     expect(JSON.stringify(result)).not.toMatch(/secret|private-policy-detail/);
                 }).pipe(

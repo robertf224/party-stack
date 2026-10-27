@@ -5,7 +5,7 @@ import { Effect, Schema } from "effect";
 import { searchSalesforceObjects } from "./salesforceObjectSearch.js";
 import { quoteSoqlIdentifier, serializeSoqlLiteral } from "./soql.js";
 import type {
-    ActionInvocation,
+    ActionRequest,
     ActionReceipt,
     BackendSubset,
     OntologyBackendService,
@@ -117,10 +117,10 @@ export function makeSalesforceBackend(options: {
                 complete: true,
             };
         }),
-        invoke: Effect.fn("Salesforce.invoke")(function* (invocation: ActionInvocation) {
+        applyAction: Effect.fn("Salesforce.applyAction")(function* (invocation: ActionRequest) {
             if (invocation.attachmentUploads?.length)
                 return yield* new BackendError({
-                    operation: "salesforce.invoke",
+                    operation: "salesforce.applyAction",
                     kind: "NotImplemented",
                     message: "Salesforce attachment uploads are not supported.",
                     retryable: false,
@@ -128,10 +128,10 @@ export function makeSalesforceBackend(options: {
             const targets = yield* Effect.tryPromise({
                 try: (signal) =>
                     options.submitAction(invocation.name, invocation.parameters, clientFor(signal)),
-                catch: (cause) => failure("salesforce.invoke", cause),
+                catch: (cause) => failure("salesforce.applyAction", cause),
             });
             return {
-                invocationId: invocation.id,
+                operationId: invocation.id,
                 outcome: "committed",
                 ...targets,
             } satisfies ActionReceipt;

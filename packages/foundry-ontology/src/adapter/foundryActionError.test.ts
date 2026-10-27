@@ -28,7 +28,7 @@ const ir: OntologyIR = {
     ],
 };
 const normalize = (cause: unknown) =>
-    foundryActionError("foundry.invoke", cause, ir, "create", {
+    foundryActionError("foundry.applyAction", cause, ir, "create", {
         project: "gone",
         reviewers: ["valid", "missing"],
     });
@@ -43,7 +43,7 @@ describe("Foundry action reference errors", () => {
         });
         expect(normalize(cause)).toMatchObject({
             kind: "ValidationFailed",
-            invocationOutcome: "not-committed",
+            actionOutcome: "not-committed",
             retryable: false,
             issues: [
                 {

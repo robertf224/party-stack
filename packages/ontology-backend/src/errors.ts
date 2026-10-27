@@ -46,7 +46,7 @@ const Fields = {
     kind: BackendErrorKindSchema,
     message: Schema.String,
     retryable: Schema.Boolean,
-    invocationOutcome: Schema.optional(Schema.Literals(["not-committed", "unknown"])),
+    actionOutcome: Schema.optional(Schema.Literals(["not-committed", "unknown"])),
     retryAfterMs: Schema.optional(Schema.Finite),
     issues: Schema.optional(Schema.Array(ValidationIssueSchema)),
     cause: Schema.optional(Schema.Defect()),
@@ -80,16 +80,16 @@ export const unauthenticated = (message = "Authentication is required.", options
         kind: "Unauthenticated",
         message,
         retryable: false,
-        invocationOutcome: "not-committed",
+        actionOutcome: "not-committed",
         cause: options?.cause,
     });
 export const isUnauthenticatedError = (error: unknown): error is BackendError<"Unauthenticated"> =>
     error instanceof BackendError && error.kind === "Unauthenticated";
 
 /** Unknown outcomes apply to dispatch/execution failures, never ordinary rejections. */
-export const isUnknownInvocationOutcome = (error: BackendError) =>
-    error.invocationOutcome === "unknown" ||
-    (error.invocationOutcome === undefined && (error.kind === "Unavailable" || error.kind === "Internal"));
+export const isUnknownActionOutcome = (error: BackendError) =>
+    error.actionOutcome === "unknown" ||
+    (error.actionOutcome === undefined && (error.kind === "Unavailable" || error.kind === "Internal"));
 
 const ProviderFailure = Schema.Struct({
     reason: Schema.optional(Schema.Unknown),
@@ -188,7 +188,7 @@ export function classifyBackendFailure(operation: string, cause: unknown): Backe
             Internal: "The operation could not be completed.",
         }[kind],
         retryable: kind === "Unavailable" || kind === "RateLimited",
-        invocationOutcome: kind === "Unavailable" ? "unknown" : "not-committed",
+        actionOutcome: kind === "Unavailable" ? "unknown" : "not-committed",
         issues,
         cause: Redacted.make(cause),
     });
@@ -271,7 +271,7 @@ export function projectBackendError(
         message,
         issues: issues?.length ? issues : undefined,
         retryable: error.retryable,
-        invocationOutcome: error.invocationOutcome,
+        actionOutcome: error.actionOutcome,
         retryAfterMs: error.retryAfterMs,
     });
 }

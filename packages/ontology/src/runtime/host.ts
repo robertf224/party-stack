@@ -1,14 +1,13 @@
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
 import { makeReplica, type ReplicaOptions, type ReplicaService } from "@party-stack/ontology-replica";
 import { Runtime } from "@party-stack/runtime";
-import { Effect, Scope, Stream } from "effect";
+import { Effect, Fiber, Scope, Stream } from "effect";
 import { prepareActionParameters } from "../live/actions/prepareActionParameters.js";
-import { unsupportedOntologyAttachmentsAdapter } from "../live/attachments/unsupportedOntologyAttachmentsAdapter.js";
 import { createBlobManager } from "./blobs/createBlobManager.js";
 import { observeReplicaRows } from "./hostQuery.js";
 import { executeTransactionMutator } from "./transactions.js";
 import type { LiveOntologyWrites } from "../live/LiveOntology.js";
-import type { OntologyBackendAdapter, OntologyAttachmentsAdapter } from "../live/OntologyBackendAdapter.js";
+import type { OntologyBackendAdapter } from "../live/OntologyBackendAdapter.js";
 import type { BlobManager } from "./blobs/types.js";
 import type { ConnectionMonitor } from "@party-stack/connect";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -42,7 +41,11 @@ export interface ReplicaHostService {
     readonly replica: ReplicaService;
     readonly backend: OntologyBackendService;
     readonly blobManager: BlobManager;
-    readonly attachmentsAdapter: OntologyAttachmentsAdapter;
+    readonly stageAttachment?: (
+        value: attachment,
+        bytes: Blob,
+        target?: import("@party-stack/ontology-spec").AttachmentTypeDef
+    ) => Promise<attachment>;
     readonly observe: (
         subset: import("@party-stack/ontology-backend").BackendSubset,
         options?: { readonly persistedOnly?: boolean }
@@ -60,22 +63,25 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
     const { runtime, context, ir, backendAdapter } = options;
     const backend = yield* backendAdapter.open(context);
     const captured = yield* Effect.context<never>();
-    const attachmentsAdapter: OntologyAttachmentsAdapter =
-        backendAdapter.attachments ??
-        (backend.attachments
-            ? {
-                  generateAttachmentId: () => crypto.randomUUID(),
-                  getAttachmentContent: (value, settings) =>
-                      Effect.runPromiseWith(captured)(backend.attachments!.read(value), {
-                          signal: settings?.signal,
-                      }),
-                  getAttachmentMetadata: (value, _selection, settings) =>
-                      Effect.runPromiseWith(captured)(backend.attachments!.metadata(value), {
-                          signal: settings?.signal,
-                      }),
-              }
-            : unsupportedOntologyAttachmentsAdapter);
     const scope = yield* Effect.scope;
+    const run = <A>(effect: Effect.Effect<A, BackendError>, signal?: AbortSignal) =>
+        Effect.runPromiseWith(captured)(
+            Effect.flatMap(Effect.forkIn(effect, scope), (fiber) =>
+                Fiber.join(fiber).pipe(Effect.ensuring(Fiber.interrupt(fiber)))
+            ),
+            { signal }
+        );
+    const unavailableAttachment = () =>
+        new BackendError({
+            operation: "attachment.read",
+            kind: "NotImplemented",
+            message: "Attachment reads are unavailable.",
+            retryable: false,
+        });
+    const stageAttachment = backend.attachments?.stage
+        ? (value: attachment, bytes: Blob, target?: import("@party-stack/ontology-spec").AttachmentTypeDef) =>
+              run(backend.attachments!.stage!(value, bytes, { target }))
+        : undefined;
     const blobManager = yield* Effect.acquireRelease(
         Effect.sync(() =>
             createBlobManager({
@@ -83,17 +89,22 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
                 scope,
                 gcTime: 5 * 60_000,
                 remote: {
-                    read: (id, readOptions) =>
-                        attachmentsAdapter.getAttachmentContent(
-                            { ...(readOptions?.meta?.attachment as attachment | undefined), id },
-                            { signal: readOptions?.signal }
+                    read: (id, settings) =>
+                        run(
+                            backend.attachments?.read({
+                                ...(settings?.meta?.attachment as attachment | undefined),
+                                id,
+                            }) ?? Effect.fail(unavailableAttachment()),
+                            settings?.signal
                         ),
-                    metadata: attachmentsAdapter.getAttachmentMetadata
-                        ? (id, readOptions) =>
-                              attachmentsAdapter.getAttachmentMetadata!(
-                                  { ...(readOptions?.meta?.attachment as attachment | undefined), id },
-                                  readOptions?.select ?? ["size", "type", "name"],
-                                  { signal: readOptions?.signal }
+                    metadata: backend.attachments
+                        ? (id, settings) =>
+                              run(
+                                  backend.attachments!.metadata(
+                                      { ...(settings?.meta?.attachment as attachment | undefined), id },
+                                      { select: settings?.select }
+                                  ),
+                                  settings?.signal
                               )
                         : undefined,
                 },
@@ -112,17 +123,14 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         tables: services.tables,
         backend: {
             ...backend,
-            invoke: (invocation) =>
+            applyAction: (invocation) =>
                 Effect.gen(function* () {
-                    const prepared = yield* attempt(() =>
-                        prepareActionParameters({
-                            ir,
-                            actionTypeName: invocation.name,
-                            parameters: invocation.parameters,
-                            backendAdapter,
-                            blobManager,
-                        })
-                    ).pipe(
+                    const prepared = yield* prepareActionParameters({
+                        ir,
+                        actionTypeName: invocation.name,
+                        parameters: invocation.parameters,
+                        blobManager,
+                    }).pipe(
                         Effect.mapError(
                             (error) =>
                                 new BackendError({
@@ -131,20 +139,16 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
                                     message: error.message,
                                     retryable: error.retryable,
                                     cause: error.cause,
-                                    invocationOutcome: "not-committed",
+                                    actionOutcome: "not-committed",
                                 })
                         )
                     );
-                    const receipt = yield* backend.invoke({
+                    const receipt = yield* backend.applyAction({
                         ...invocation,
                         parameters: prepared.parameters,
                         attachmentUploads: prepared.attachmentUploads,
                     });
-                    const mappings = [
-                        ...prepared.attachmentIdMappings,
-                        ...(receipt.attachmentIdMappings ?? []),
-                    ];
-                    return { ...receipt, attachmentIdMappings: mappings.length ? mappings : undefined };
+                    return receipt;
                 }),
         },
         blobs: yield* attempt(() => blobManager.storage),
@@ -154,7 +158,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
                 tx,
                 name: invocation.name,
                 parameters: invocation.parameters,
-                invocationId: invocation.id,
+                operationId: invocation.id,
                 replay: invocation.replay,
                 resolveOnly: settings?.optimistic === false,
                 context,
@@ -182,7 +186,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         replica,
         backend,
         blobManager,
-        attachmentsAdapter,
+        stageAttachment,
         observe: (subset, settings) => observeReplicaRows(replica, subset, settings),
     };
 });

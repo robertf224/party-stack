@@ -32,7 +32,7 @@ const ir: OntologyIR = {
 };
 const rejected = () =>
     new BackendError({
-        operation: "invoke",
+        operation: "applyAction",
         kind: "ValidationFailed",
         message: "Expected rejection",
         retryable: false,
@@ -72,23 +72,23 @@ test("owned commits atomically persist rows, receipts, and ordered source-scoped
             };
             const backend = yield* makeOwnedBackend(options);
             const invocation = { id: "one", name: "increment", parameters: { id: "counter", amount: 1 } };
-            const receipt = yield* backend.invoke(invocation);
+            const receipt = yield* backend.applyAction(invocation);
             expect(receipt.outcome).toBe("committed");
             expect(
-                yield* backend.invoke({ ...invocation, parameters: { amount: 1, id: "counter" } })
+                yield* backend.applyAction({ ...invocation, parameters: { amount: 1, id: "counter" } })
             ).toEqual(receipt);
             const reopened = yield* makeOwnedBackend(options);
-            expect(yield* reopened.invoke(invocation)).toEqual(receipt);
+            expect(yield* reopened.applyAction(invocation)).toEqual(receipt);
             expect(Result.isFailure(yield* Effect.result(escaped!.get("Counter", "counter")))).toBe(true);
             const conflict = yield* Effect.result(
-                backend.invoke({ ...invocation, parameters: { id: "counter", amount: 2 } })
+                backend.applyAction({ ...invocation, parameters: { id: "counter", amount: 2 } })
             );
             expect(Result.isFailure(conflict) && conflict.failure.kind).toBe("Conflict");
             const snapshot = yield* backend.loadSubset({ objectType: "Counter" });
             expect(snapshot.rows).toEqual([{ key: "counter", value: { id: "counter", count: 1 } }]);
             expect(snapshot.cursor).toBe(receipt.cursor);
             const failed = yield* Effect.result(
-                backend.invoke({ id: "failed", name: "fail", parameters: { id: "ignored", amount: 1 } })
+                backend.applyAction({ id: "failed", name: "fail", parameters: { id: "ignored", amount: 1 } })
             );
             expect(Result.isFailure(failed)).toBe(true);
             expect((yield* backend.loadSubset({ objectType: "Other" })).rows).toEqual([]);
@@ -97,7 +97,7 @@ test("owned commits atomically persist rows, receipts, and ordered source-scoped
             expect(all.commits).toEqual([
                 {
                     cursor: receipt.cursor,
-                    invocationId: "one",
+                    operationId: "one",
                     changes: [
                         {
                             kind: "put",
@@ -139,7 +139,7 @@ test("concurrent actions read their transaction state and journal pagination nev
             });
             yield* Effect.all(
                 Array.from({ length: 12 }, (_, index) =>
-                    backend.invoke({
+                    backend.applyAction({
                         id: `invocation-${index}`,
                         name: "increment",
                         parameters: { id: "shared", amount: 1 },
@@ -152,7 +152,7 @@ test("concurrent actions read their transaction state and journal pagination nev
             const ids: string[] = [];
             do {
                 const page = yield* backend.changes!.pull({ cursor, limit: 3 });
-                ids.push(...page.commits.map((commit) => commit.invocationId!));
+                ids.push(...page.commits.map((commit) => commit.operationId!));
                 cursor = page.cursor;
                 if (!page.hasMore) break;
             } while (true);
@@ -228,7 +228,7 @@ test("owned action transactions reject uploads collected before commit and retai
                 });
                 const action = yield* Effect.forkScoped(
                     Effect.result(
-                        backend.invoke({
+                        backend.applyAction({
                             id: "action",
                             name: "create",
                             parameters: {
@@ -251,7 +251,7 @@ test("owned action transactions reject uploads collected before commit and retai
                 expect((yield* backend.loadSubset({ objectType: "Asset" })).rows).toEqual([]);
                 expect(yield* blobs.metadata("photo")).toBeUndefined();
                 // No successful receipt was recorded: the same invocation can upload again.
-                const committedFirst = yield* backend.invoke({
+                const committedFirst = yield* backend.applyAction({
                     id: "action",
                     name: "create",
                     parameters: { id: "asset", photo: { id: "photo" } },
@@ -290,7 +290,7 @@ test("trusted integrations share the action journal and preserve callback errors
             expect(value).toBe("return value");
             const page = yield* backend.changes!.pull({ cursor: before.cursor });
             expect(page.commits).toHaveLength(1);
-            expect(page.commits[0]?.invocationId).toBeUndefined();
+            expect(page.commits[0]?.operationId).toBeUndefined();
             expect(page.commits[0]?.changes).toEqual([
                 { kind: "put", objectType: "Counter", key: "one", value: { id: "one", count: 2 } },
                 { kind: "put", objectType: "Other", key: "two", value: { id: "two", count: 3 } },

@@ -73,7 +73,7 @@ test("inspection streams do not acquire demand, and record live loads, failures,
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
-                        invoke: () => Effect.die("Unexpected invocation"),
+                        applyAction: () => Effect.die("Unexpected invocation"),
                         queryFunction: () => Effect.void,
                         loadSubset: () =>
                             Effect.gen(function* () {
@@ -191,7 +191,7 @@ test("watch-maintained whole-collection coverage explains search reuse without a
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
-                        invoke: () => Effect.die("Unexpected invocation"),
+                        applyAction: () => Effect.die("Unexpected invocation"),
                         queryFunction: () => Effect.void,
                         watchSubset: () => Stream.never,
                         loadSubset: (subset) =>
@@ -253,7 +253,7 @@ test.each([true, false])(
                             name: "fixture",
                             sourceId: "fixture",
                             supportsIdempotency: false,
-                            invoke: () => Effect.die("Unexpected invocation"),
+                            applyAction: () => Effect.die("Unexpected invocation"),
                             queryFunction: () => Effect.void,
                             watchSubset: () => Stream.never,
                             loadSubset: (subset) =>
@@ -319,7 +319,7 @@ test("configured subset polling invalidates coverage on its interval and stops w
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
-                        invoke: () => Effect.die("Unexpected invocation"),
+                        applyAction: () => Effect.die("Unexpected invocation"),
                         queryFunction: () => Effect.void,
                         pollIntervalMs: () => 1000,
                         loadSubset: () =>
@@ -371,7 +371,7 @@ test("disabled polling retains its snapshot without claiming an active watcher",
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
-                        invoke: () => Effect.die("Unexpected invocation"),
+                        applyAction: () => Effect.die("Unexpected invocation"),
                         queryFunction: () => Effect.void,
                         pollIntervalMs: () => false,
                         loadSubset: () =>
@@ -411,7 +411,7 @@ test("load history stays bounded and cancellation does not leave running diagnos
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
-                        invoke: () => Effect.die("Unexpected invocation"),
+                        applyAction: () => Effect.die("Unexpected invocation"),
                         queryFunction: () => Effect.void,
                         loadSubset: () =>
                             Effect.gen(function* () {

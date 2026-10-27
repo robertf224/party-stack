@@ -132,10 +132,10 @@ test("native action submission returns complete identity targets without opening
                     decodeObject: (_type, value) => value,
                 });
                 const invocation = { id: "local-invocation", name: "editIssue", parameters: {} };
-                expect(yield* backend.invoke(invocation)).toMatchObject({
-                    invocationId: "local-invocation",
+                expect(yield* backend.applyAction(invocation)).toMatchObject({
+                    operationId: "local-invocation",
                     outcome: "committed",
-                    operationId: "remote-operation",
+                    providerOperationId: "remote-operation",
                     affected: [{ objectType: "Issue", keys: ["one", "two"] }],
                 });
                 expect(submitAction).toHaveBeenCalledWith(invocation, expect.any(AbortSignal));
@@ -224,7 +224,7 @@ test("large-scale action receipts identify a type without pretending to enumerat
                     decodeObject: (_type, value) => value,
                 });
                 expect(
-                    (yield* backend.invoke({ id: "bulk", name: "edit", parameters: {} })).affected
+                    (yield* backend.applyAction({ id: "bulk", name: "edit", parameters: {} })).affected
                 ).toEqual([{ objectType: "Issue" }]);
             })
         )

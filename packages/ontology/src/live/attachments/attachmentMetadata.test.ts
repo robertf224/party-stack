@@ -1,7 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from "vite-plus/test";
 import { createLiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
 import type { BlobManager } from "../../runtime/blobs/types.js";
-import type { OntologyAttachmentsAdapter } from "../OntologyBackendAdapter.js";
 import type { LiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
 import type { AttachmentMetadataField } from "./types.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -84,7 +83,6 @@ describe("attachment metadata", () => {
                 actionTypes: [],
                 queryFunctionTypes: [],
             } satisfies OntologyIR,
-            attachmentsAdapter: {} as OntologyAttachmentsAdapter,
             blobManager: { metadata } as unknown as BlobManager,
         });
         const attachment = {
