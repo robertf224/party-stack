@@ -1,4 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
+import { byteIO, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import { Effect } from "effect";
 import { makeStorageOntologyBackend, type StorageOntologyBackendOptions } from "../live/storageBackend.js";
@@ -7,8 +8,8 @@ export interface SQLiteDatabase extends SQLite.SQLiteDatabase {
     transaction(body: () => void): () => void;
 }
 export interface SQLiteAttachmentBytesStore {
-    write(id: string, blob: Blob): Promise<void>;
-    read(id: string): Promise<Blob | undefined>;
+    write(id: string, blob: ByteInput, signal?: AbortSignal): Promise<void>;
+    read(id: string): Promise<ByteInput | undefined>;
     delete(id: string): Promise<void>;
 }
 export interface SQLiteAttachmentStorageOptions {
@@ -29,7 +30,7 @@ export const makeSQLiteTestBackend = Effect.fnUntraced(
             bytes: external
                 ? {
                       read: (key) => Effect.tryPromise(() => external.bytes.read(key)),
-                      write: (key, blob) => Effect.tryPromise(() => external.bytes.write(key, blob)),
+                      write: (key, blob) => byteIO((signal) => external.bytes.write(key, blob, signal)),
                       delete: (key) => Effect.tryPromise(() => external.bytes.delete(key)),
                   }
                 : undefined,

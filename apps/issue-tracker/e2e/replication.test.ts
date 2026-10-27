@@ -282,6 +282,30 @@ test.skipIf(!url)(
     }
 );
 
+// Known upstream ownership gap: browser hook queries are not registered for DbClient.cleanup().
+// Keep this separate from functional recovery acceptance. An upstream fix should make it pass
+// unexpectedly, prompting removal of .fails rather than hiding the warning in application code.
+test.skipIf(!url).fails("reload cleans derived React queries before their source collections", async () => {
+    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    const lifecycle: string[] = [];
+    try {
+        const page = await context.newPage();
+        page.on("console", (message) => {
+            if (/Source collection.*(?:manually cleaned|cleaned up while)/.test(message.text()))
+                lifecycle.push(message.text());
+        });
+        await page.goto(url!);
+        await visible(page, "heading", "Connect profile");
+        await page.getByRole("button", { name: "Connect", exact: true }).click();
+        await visible(page, "button", "New issue");
+        await page.reload();
+        await visible(page, "button", "New issue");
+        expect(lifecycle).toEqual([]);
+    } finally {
+        await context.close();
+    }
+});
+
 test.skipIf(!url)(
     "single-process tracing identifies the host without an upstream source selector",
     async () => {
@@ -307,6 +331,53 @@ test.skipIf(!url)(
         }
     }
 );
+
+test.skipIf(!url)("native image uploads survive reload and can be read offline", async () => {
+    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    const title = `Attachment acceptance ${crypto.randomUUID().slice(0, 8)}`;
+    const filename = `${crypto.randomUUID()}.png`;
+    try {
+        const page = await context.newPage();
+        await page.goto(url!);
+        await visible(page, "heading", "Connect profile");
+        await page.getByRole("button", { name: "Connect", exact: true }).click();
+        await visible(page, "button", "New issue");
+        await page.getByRole("button", { name: "New issue" }).click();
+        const form = page.getByRole("dialog", { name: "Create issue", exact: true });
+        await form.getByLabel("Title", { exact: true }).fill(title);
+        await form.locator('input[type="file"]').setInputFiles({
+            name: filename,
+            mimeType: "image/png",
+            buffer: Buffer.from(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDV8AAAAASUVORK5CYII=",
+                "base64"
+            ),
+        });
+        await expect
+            .poll(() => form.getByRole("button", { name: `Remove ${filename}` }).isVisible())
+            .toBe(true);
+        await form.getByRole("button", { name: "Create issue", exact: true }).click();
+        await expect.poll(() => form.count()).toBe(0);
+        await page.getByPlaceholder("Search issues").fill(title);
+        await visible(page, "button", new RegExp(title));
+        await page.getByRole("button", { name: "Open TanStack Devtools" }).click();
+        await page.getByRole("tab", { name: /^Outbox/ }).click();
+        await expect.poll(() => page.getByText("Queue is clear", { exact: true }).isVisible()).toBe(true);
+        await page.reload();
+        await visible(page, "button", "New issue");
+        await context.setOffline(true);
+        await page.getByPlaceholder("Search issues").fill(title);
+        await page.getByRole("button", { name: new RegExp(title) }).click();
+        const image = page.getByRole("img", { name: filename, exact: true });
+        await expect
+            .poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth))
+            .toBe(1);
+        expect(await page.getByText("Attachment unavailable", { exact: true }).count()).toBe(0);
+    } finally {
+        await context.setOffline(false);
+        await context.close();
+    }
+});
 
 test.skipIf(!url)("navigation preserves the devtools panel, selected tab and trace source", async () => {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });

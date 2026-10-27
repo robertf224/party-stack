@@ -4,7 +4,7 @@ import { Tabs } from "@base-ui/react/tabs";
 import { Tooltip } from "@base-ui/react/tooltip";
 import NumberFlow from "@number-flow/react";
 import { createReactPlugin } from "@tanstack/devtools-utils/react";
-import { useLiveInfiniteQuery, useLiveQuery } from "@tanstack/react-db";
+import { DbProvider, useLiveInfiniteQuery, useLiveQuery } from "@tanstack/react-db";
 import {
     createColumnHelper,
     flexRender,
@@ -1351,7 +1351,9 @@ export function OntologyDevtoolsPanel<
 >(props: OntologyDevtoolsPanelProps<Ontology, MetaOntology>) {
     return (
         <PanelBoundary theme={props.theme ?? "dark"}>
-            <OntologyDevtoolsContent {...props} />
+            <DbProvider client={props.ontology.dbClient}>
+                <OntologyDevtoolsContent {...props} />
+            </DbProvider>
         </PanelBoundary>
     );
 }
@@ -1442,7 +1444,9 @@ function OntologyDevtoolsContent<
                 </Tabs.Panel>
                 {metaOntology ? (
                     <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="meta">
-                        <ObjectsView ontology={metaOntology} pageSize={25} />
+                        <DbProvider client={metaOntology.dbClient}>
+                            <ObjectsView ontology={metaOntology} pageSize={25} />
+                        </DbProvider>
                     </Tabs.Panel>
                 ) : null}
             </Tabs.Root>

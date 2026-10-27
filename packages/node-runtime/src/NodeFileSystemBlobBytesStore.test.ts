@@ -1,6 +1,8 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { collectByteBlob } from "@party-stack/runtime";
+import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { NodeFileSystemBlobBytesStore } from "./NodeFileSystemBlobBytesStore.js";
 
@@ -27,7 +29,9 @@ describe("NodeFileSystemBlobBytesStore", () => {
 
         await store.write("../../outside", new Blob(["hello"]));
 
-        await expect((await store.read("../../outside")).text()).resolves.toBe("hello");
+        await expect(
+            (await Effect.runPromise(collectByteBlob(await store.read("../../outside")))).text()
+        ).resolves.toBe("hello");
         await expect(store.read("outside")).rejects.toThrow('Blob bytes not found for "outside".');
     });
 

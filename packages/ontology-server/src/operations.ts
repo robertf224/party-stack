@@ -13,6 +13,13 @@ import {
     protocolValueCodec,
 } from "@party-stack/ontology-backend/protocol";
 import { ReplicaStatusSchema, makeReplicaMonitor } from "@party-stack/ontology-replica";
+import {
+    attachmentByteSource,
+    byteChunks,
+    collectByteBlob,
+    type ByteSource,
+} from "@party-stack/ontology-storage/blobs";
+import { getTargetValueType } from "@party-stack/ontology/utils";
 import { Effect, Queue, Schema, Stream, Fiber, Scope, Layer } from "effect";
 import { Rpc, RpcGroup, RpcClient } from "effect/rpc";
 import {
@@ -23,6 +30,7 @@ import {
     splitAttachmentChunk,
 } from "./attachmentTransfers.js";
 import { projectValidationReport, type ErrorProjectionOptions } from "./errorProjection.js";
+import type { AttachmentTransferPolicy } from "./attachmentTransfers.js";
 import type { LiveOntology } from "@party-stack/ontology";
 import type { Headers } from "effect/http/Headers";
 const Validation = ValidationReportSchema;
@@ -163,7 +171,7 @@ export type OntologyOperationRequest =
           readonly id?: string;
           readonly target?: Schema.Schema.Type<typeof Target>;
           readonly type: string;
-          readonly size: number;
+          readonly size?: number;
       }
     | {
           readonly operation: "ReadAttachment" | "AttachmentMetadata";
@@ -204,19 +212,81 @@ const missing = (name: string) =>
         retryable: false,
     });
 
-export const ontologyOperationHandlers = <R>(
-    options: ErrorProjectionOptions & {
-        readonly ontology?: LiveOntology;
-        readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
-        readonly ready?: Effect.Effect<void, BackendError, R>;
-        readonly deleteLocalData?: Effect.Effect<void, BackendError, R>;
-        readonly releaseOwner?: Effect.Effect<void, BackendError, R>;
-        readonly authorize: (
-            request: OntologyOperationRequest,
-            headers: Headers
-        ) => Effect.Effect<void, BackendError, R>;
-    }
-) => {
+export type OntologyOperationOptions<R = never> = ErrorProjectionOptions & {
+    readonly attachmentTransfers?: AttachmentTransferPolicy<R>;
+    readonly ontology?: LiveOntology;
+    readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
+    readonly ready?: Effect.Effect<void, BackendError, R>;
+    readonly deleteLocalData?: Effect.Effect<void, BackendError, R>;
+    readonly releaseOwner?: Effect.Effect<void, BackendError, R>;
+    readonly authorize: (
+        request: OntologyOperationRequest,
+        headers: Headers
+    ) => Effect.Effect<void, BackendError, R>;
+};
+
+/** Shared storage/application operation; transports supply framing and authorization. */
+export const ontologyAttachmentHandlers = <R>(options: OntologyOperationOptions<R>) => ({
+    create: (
+        request: import("./attachmentTransfers.js").AttachmentUpload,
+        blob: import("@party-stack/ontology-storage/blobs").ByteInput
+    ) =>
+        Effect.gen(function* () {
+            yield* options.ready ?? Effect.void;
+            if (options.backend) {
+                if (!options.backend.attachments?.stage) return yield* missing("CreateAttachment");
+                const ir = options.ir ?? options.ontology?.ir;
+                const type =
+                    request.target && ir
+                        ? yield* Effect.try({
+                              try: () => getTargetValueType(ir, request.target!),
+                              catch: () =>
+                                  new BackendError({
+                                      operation: "attachment.stage",
+                                      kind: "ValidationFailed",
+                                      message: "Invalid attachment target.",
+                                      retryable: false,
+                                  }),
+                          })
+                        : undefined;
+                if (type && type.kind !== "attachment")
+                    return yield* new BackendError({
+                        operation: "attachment.stage",
+                        kind: "ValidationFailed",
+                        message: "Target is not an attachment.",
+                        retryable: false,
+                    });
+                return yield* options.backend.attachments.stage(
+                    { id: request.id ?? crypto.randomUUID(), type: request.type },
+                    blob,
+                    { target: type?.kind === "attachment" ? type.value : undefined }
+                );
+            }
+            if (!options.ontology) return yield* missing("CreateAttachment");
+            const created = yield* attempt(() =>
+                options.ontology!.attachments.create(blob, {
+                    id: request.id,
+                    target: request.target,
+                    eager: request.eager,
+                })
+            );
+            if (created.isMaterialized) yield* attempt(() => created.isMaterialized!);
+            return created.attachment;
+        }),
+    read: (attachment: import("./attachmentTransfers.js").AttachmentValue, headers: Headers) =>
+        Effect.gen(function* () {
+            yield* options.authorize({ operation: "ReadAttachment", attachment }, headers);
+            yield* options.ready ?? Effect.void;
+            if (options.backend) {
+                if (!options.backend.attachments?.read) return yield* missing("ReadAttachment");
+                return yield* options.backend.attachments.read(attachment);
+            }
+            if (!options.ontology) return yield* missing("ReadAttachment");
+            return yield* attempt(() => options.ontology!.attachments.source(attachment));
+        }),
+});
+
+export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R>) => {
     const live = () =>
         (options.ready ?? Effect.void).pipe(
             Effect.andThen(() =>
@@ -442,6 +512,7 @@ export const ontologyOperationHandlers = <R>(
     }).pipe(
         Layer.merge(
             attachmentTransferHandlers({
+                ...options.attachmentTransfers,
                 authorizeUpload: (request, headers) =>
                     options.authorize(
                         {
@@ -453,44 +524,7 @@ export const ontologyOperationHandlers = <R>(
                         },
                         headers
                     ),
-                create: (request, blob) =>
-                    Effect.gen(function* () {
-                        yield* options.ready ?? Effect.void;
-                        if (options.backend) {
-                            if (!options.backend.attachments?.stage)
-                                return yield* missing("CreateAttachment");
-                            return yield* options.backend.attachments.stage(
-                                { id: request.id ?? crypto.randomUUID(), type: request.type },
-                                blob
-                            );
-                        }
-                        const ontology = yield* live();
-                        const created = yield* attempt(() =>
-                            request.eager
-                                ? ontology.attachments.create(blob, {
-                                      id: request.id,
-                                      target: request.target,
-                                      eager: true,
-                                  })
-                                : ontology.attachments.create(blob, {
-                                      id: request.id,
-                                      target: request.target,
-                                  })
-                        );
-                        if (created.isMaterialized) yield* attempt(() => created.isMaterialized!);
-                        return created.attachment;
-                    }),
-                read: (attachment, headers) =>
-                    Effect.gen(function* () {
-                        yield* options.authorize({ operation: "ReadAttachment", attachment }, headers);
-                        yield* options.ready ?? Effect.void;
-                        if (options.backend) {
-                            if (!options.backend.attachments?.read) return yield* missing("ReadAttachment");
-                            return yield* options.backend.attachments.read(attachment);
-                        }
-                        const ontology = yield* live();
-                        return yield* attempt(() => ontology.attachments.blob(attachment));
-                    }),
+                ...ontologyAttachmentHandlers(options),
             })
         )
     );
@@ -574,7 +608,8 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
     };
     yield* Effect.addFinalizer(() => (watcher ? Fiber.interrupt(watcher).pipe(Effect.asVoid) : Effect.void));
     const attachments: LiveOntology["attachments"] = {
-        create: async (blob, opts) => {
+        create: async (input, opts) => {
+            const blob = attachmentByteSource(input);
             const attachment = await run(
                 Effect.gen(function* () {
                     let result: Schema.Schema.Type<typeof Attachment> | undefined;
@@ -582,7 +617,7 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
                         client.CreateAttachment({
                             size: blob.size,
                             type: blob.type,
-                            name: typeof File !== "undefined" && blob instanceof File ? blob.name : undefined,
+                            name: blob.name,
                             ...opts,
                         }),
                         (event) =>
@@ -593,10 +628,7 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
                                 }
                                 let sequence = 0;
                                 yield* Stream.runForEach(
-                                    Stream.fromReadableStream({
-                                        evaluate: () => blob.stream(),
-                                        onError: failure,
-                                    }),
+                                    byteChunks(blob).pipe(Stream.mapError(failure)),
                                     (chunk) =>
                                         Effect.forEach(
                                             splitAttachmentChunk(chunk),
@@ -624,28 +656,47 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
             );
             return { attachment } as Awaited<ReturnType<LiveOntology["attachments"]["create"]>>;
         },
-        blob: (attachment) =>
-            run(
-                Effect.gen(function* () {
-                    const parts: ArrayBuffer[] = [];
-                    let metadata: { type: string; size: number; name?: string } | undefined;
-                    let size = 0;
-                    yield* Stream.runForEach(client.ReadAttachment(attachment), (event) =>
-                        Effect.sync(() => {
-                            if (event.kind === "metadata") metadata = event;
-                            else {
-                                parts.push(new Uint8Array(event.bytes).buffer);
-                                size += event.bytes.length;
-                            }
-                        })
+        source: async (attachment): Promise<ByteSource> => {
+            const info = await run(client.AttachmentMetadata({ attachment }));
+            const metadata = { ...info, type: info.type ?? "application/octet-stream" };
+            return {
+                ...metadata,
+                stream: Stream.suspend(() => {
+                    let received = 0;
+                    let declared: number | undefined;
+                    let started = false;
+                    const content = client.ReadAttachment(attachment).pipe(
+                        Stream.mapEffect((event) =>
+                            Effect.gen(function* () {
+                                if (event.kind === "metadata") {
+                                    if (started)
+                                        return yield* failure(new Error("Duplicate attachment metadata."));
+                                    started = true;
+                                    declared = event.size;
+                                    return new Uint8Array(0);
+                                }
+                                if (!started)
+                                    return yield* failure(new Error("Missing attachment metadata."));
+                                received += event.bytes.length;
+                                if (declared !== undefined && received > declared)
+                                    return yield* failure(new Error("Attachment exceeds its declared size."));
+                                return event.bytes;
+                            })
+                        )
                     );
-                    if (!metadata || size !== metadata.size)
-                        return yield* failure(new Error("Incomplete attachment download."));
-                    return metadata.name === undefined
-                        ? new Blob(parts, { type: metadata.type })
-                        : new File(parts, metadata.name, { type: metadata.type });
-                })
-            ),
+                    return Stream.concat(
+                        content,
+                        Stream.fromEffect(
+                            Effect.gen(function* () {
+                                if (!started || (declared !== undefined && received !== declared))
+                                    return yield* failure(new Error("Incomplete attachment download."));
+                            })
+                        ).pipe(Stream.drain)
+                    );
+                }).pipe(Stream.provideContext(context)),
+            };
+        },
+        blob: async (attachment) => run(collectByteBlob(await attachments.source(attachment))),
         metadata: async (
             attachment: import("@party-stack/ontology/values").attachment,
             opts?: { select: readonly ("size" | "type" | "name" | "dimensions")[] }

@@ -1,4 +1,5 @@
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
+import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect, Result, Deferred, Fiber } from "effect";
@@ -175,9 +176,11 @@ test("owned action transactions reject uploads collected before commit and retai
                     bytes: {
                         read: (key) => Effect.sync(() => values.get(key)),
                         write: (key, value) =>
-                            Effect.sync(() => {
-                                values.set(key, value);
-                            }),
+                            collectByteBlob(value).pipe(
+                                Effect.map((blob) => {
+                                    values.set(key, blob);
+                                })
+                            ),
                         delete: (key) =>
                             Effect.sync(() => {
                                 values.delete(key);

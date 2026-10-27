@@ -1,5 +1,7 @@
 import {
     BlobStorageError,
+    collectByteBlob,
+    type ByteSource,
     makeBlobStorage,
     type BlobStorageService,
     type BlobRecord,
@@ -109,11 +111,42 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
         );
     };
     const notify = () => initialized.then(({ notify }) => managed.runPromise(notify));
-    const reads = new Map<string, Promise<Blob>>();
-    const read = async (id: string, readOptions: Parameters<BlobManager["read"]>[1]): Promise<Blob> => {
-        const local = await run((storage) => storage.read(id), readOptions?.signal);
-        if (local) return local;
+    const reads = new Map<string, Promise<ByteSource>>();
+    const localSource = async (
+        id: string,
+        settings?: Parameters<BlobManager["source"]>[1]
+    ): Promise<ByteSource> => {
+        const { storage } = await initialized;
+        const record = await run((storage) => storage.metadata(id));
+        return {
+            size: record?.size,
+            type: record?.type ?? "application/octet-stream",
+            name: record?.name ?? undefined,
+            stream: Stream.unwrap(
+                Effect.gen(function* () {
+                    if (closed) return yield* Effect.fail(new Error("Blob manager is closed."));
+                    const local = yield* storage.readScoped(id);
+                    if (local) return local.stream;
+                    if (record?.state === "staged")
+                        return yield* new BlobStorageError({
+                            kind: "NotFound",
+                            message: "Staged attachment bytes are unavailable.",
+                        });
+                    const fetched = yield* Effect.tryPromise({
+                        try: (signal) => source(id, { ...settings, signal }),
+                        catch: (cause) => cause,
+                    });
+                    return fetched.stream;
+                })
+            ).pipe(Stream.provideContext(runtimeService.context)),
+        };
+    };
+    const source = async (
+        id: string,
+        readOptions: Parameters<BlobManager["read"]>[1]
+    ): Promise<ByteSource> => {
         const record = await run((storage) => storage.metadata(id), readOptions?.signal);
+        if (record?.byteKey) return localSource(id, readOptions);
         if (record?.state === "staged") throw new Error("Staged blob bytes are unavailable locally.");
         // Keep cancellation isolated per caller; shared remote reads would let one
         // observer cancel another observer's independently owned demand.
@@ -134,7 +167,7 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
             );
             await run((storage) => storage.cache(record?.id ?? id, blob), readOptions?.signal);
             await notify();
-            return blob;
+            return localSource(id, readOptions);
         };
         if (readOptions?.signal) return fetch();
         let pending = reads.get(id);
@@ -145,6 +178,10 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
             reads.set(id, pending);
         }
         return pending;
+    };
+    const read = async (id: string, settings: Parameters<BlobManager["read"]>[1]) => {
+        const content = await source(id, settings);
+        return run(() => collectByteBlob(content), settings?.signal);
     };
     const metadata = async (id: string, settings: BlobMetadataOptions = {}) => {
         const select = settings.select ?? ["size", "type", "name"];
@@ -203,6 +240,7 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
             await run((storage) => storage.bindRemoteId(id, remoteId));
             await notify();
         },
+        source,
         read,
         metadata,
         cleanup: () =>

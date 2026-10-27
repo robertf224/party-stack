@@ -2,6 +2,11 @@ import { invariant } from "@bobbyfidz/panic";
 import { ImageMediaTypeOptions } from "@party-stack/ontology-spec/constants";
 import { getTargetValueType } from "@party-stack/ontology-spec/utils";
 import * as v from "@party-stack/ontology-spec/values";
+import {
+    attachmentByteSource,
+    type ByteInput,
+    type ReadableByteInput,
+} from "@party-stack/ontology-storage/blobs";
 import type { BlobManager } from "../../runtime/blobs/types.js";
 import type { AttachmentMetadata, AttachmentMetadataSelection, PartialAttachmentMetadata } from "./types.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -82,7 +87,7 @@ export interface LiveOntologyAttachments<
     Ontology extends AttachmentOntologyDefinition = AttachmentOntologyDefinition,
 > {
     create: <const Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined>(
-        blob: Blob | File,
+        input: ByteInput | ReadableByteInput,
         opts?: Options
     ) => Promise<LiveOntologyAttachmentCreateResult<Ontology, Options>>;
     metadata: {
@@ -93,6 +98,7 @@ export interface LiveOntologyAttachments<
         ): Promise<AttachmentMetadata<Type, Selection[number]>>;
     };
     blob: (attachment: v.attachment) => Promise<Blob>;
+    source: (attachment: v.attachment) => Promise<import("@party-stack/ontology-storage/blobs").ByteSource>;
 }
 
 export function createLiveOntologyAttachments<
@@ -101,7 +107,7 @@ export function createLiveOntologyAttachments<
     ir: OntologyIR;
     stageAttachment?: (
         value: v.attachment,
-        bytes: Blob,
+        bytes: ByteInput,
         target?: import("@party-stack/ontology-spec").AttachmentTypeDef
     ) => Promise<v.attachment>;
     blobManager: BlobManager;
@@ -109,9 +115,10 @@ export function createLiveOntologyAttachments<
     const { stageAttachment, blobManager } = opts;
 
     const create = async <const Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined>(
-        blob: Blob | File,
+        input: ByteInput | ReadableByteInput,
         createOpts?: Options
     ): Promise<LiveOntologyAttachmentCreateResult<Ontology, Options>> => {
+        const blob = attachmentByteSource(input);
         const normalizedOpts: LiveOntologyAttachmentCreateOptions = createOpts ?? {};
         const targetType = normalizedOpts.target
             ? getTargetValueType(opts.ir, normalizedOpts.target)
@@ -122,7 +129,7 @@ export function createLiveOntologyAttachments<
         );
         const constraint = targetType?.kind === "attachment" ? targetType.value.constraint : undefined;
         invariant(
-            !constraint?.size || satisfiesRange(blob.size, constraint.size),
+            !constraint?.size || blob.size === undefined || satisfiesRange(blob.size, constraint.size),
             `Attachment size ${blob.size} is outside the allowed range.`
         );
         const content = constraint?.content;
@@ -137,13 +144,20 @@ export function createLiveOntologyAttachments<
         }
         const id = normalizedOpts.id ?? crypto.randomUUID();
         await blobManager.stage(id, blob);
+        if (constraint?.size && blob.size === undefined) {
+            const metadata = await blobManager.metadata(id);
+            invariant(
+                metadata.size !== undefined && satisfiesRange(metadata.size, constraint.size),
+                "Attachment size is outside the allowed range."
+            );
+        }
         const attachment: v.attachment = {
             id,
             type: blob.type,
         };
         if (normalizedOpts.eager && stageAttachment) {
             const promise = blobManager
-                .read(id)
+                .source(id)
                 .then((storedBlob) =>
                     stageAttachment(
                         attachment,
@@ -206,5 +220,6 @@ export function createLiveOntologyAttachments<
         create,
         metadata,
         blob,
+        source: (attachment) => blobManager.source(attachment.id, { meta: { attachment } }),
     };
 }

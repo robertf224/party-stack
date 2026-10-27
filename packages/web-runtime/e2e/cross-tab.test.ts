@@ -54,6 +54,14 @@ async function tabs(test: (writer: Page, reader: Page) => Promise<void>) {
 }
 const one = { id: "one", title: "Original", score: 1 };
 describe("real IndexedDB / Web Locks / BroadcastChannel tabs", () => {
+    it("streams unknown-length recordings into OPFS and aborts partial writes on source failure", async () => {
+        await tabs(async (writer, reader) => {
+            expect(await run(writer, "streamRecording")).toBe("Success");
+            expect(await run(reader, "recordingSize")).toBe(10 * 1024 * 1024);
+            expect(await run(writer, "streamRecording", true)).toBe("Failure");
+            expect(await run(reader, "recordingSize", true)).toBe(0);
+        });
+    });
     it("propagates insert, update, delete, and follower writes to live queries", async () => {
         await tabs(async (writer, reader) => {
             await run(writer, "insert", one);

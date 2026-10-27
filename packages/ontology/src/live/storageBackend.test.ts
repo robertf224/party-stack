@@ -6,6 +6,7 @@ import {
     type OntologyMutatorRegistry,
     type OntologyQueryFunctionRegistry,
 } from "@party-stack/ontology";
+import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { eq, inArray, queryOnce } from "@tanstack/db";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -582,10 +583,10 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         const prepare = database.prepare.bind(database);
         database.prepare = (sql) => {
             const statement = prepare(sql);
-            if (sql.includes("SELECT bytes FROM party_blob_bytes")) {
+            if (sql.includes("SELECT bytes FROM party_blob_chunks")) {
                 return {
                     ...statement,
-                    all: () => [{ bytes }],
+                    all: (...parameters: unknown[]) => (parameters.at(-1) === 0 ? [{ bytes }] : []),
                 };
             }
             return statement;
@@ -596,14 +597,16 @@ describe("SQLite LiveOntology MVP acceptance", () => {
                     const service = yield* backend.open({});
                     yield* service.attachments!.stage!(
                         { id: "shared" },
-                        new Blob(["initial"], { type: "text/plain" })
+                        new Blob(["test"], { type: "text/plain" })
                     );
-                    return yield* service.attachments!.read({ id: "shared", type: "text/plain" });
+                    return yield* collectByteBlob(
+                        yield* service.attachments!.read({ id: "shared", type: "text/plain" })
+                    );
                 })
             )
         );
         bytes.fill(0);
-        expect(await blob.text()).toBe("test");
+        expect(await (await Effect.runPromise(collectByteBlob(blob))).text()).toBe("test");
     });
 
     it("supports safe initialization and idempotent cleanup", async () => {

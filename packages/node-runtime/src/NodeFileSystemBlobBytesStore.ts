@@ -1,7 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, stat, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { BlobBytesNotFoundError, type BlobBytesStore } from "@party-stack/runtime";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import {
+    BlobBytesNotFoundError,
+    byteSource,
+    type ByteInput,
+    type ByteSource,
+    type BlobBytesStore,
+} from "@party-stack/runtime";
+import { Stream } from "effect";
 
 export interface NodeFileSystemBlobBytesStoreOptions {
     directory: string;
@@ -18,21 +28,34 @@ export class NodeFileSystemBlobBytesStore implements BlobBytesStore {
         this.#directory = options.directory;
     }
 
-    async write(id: string, blob: Blob): Promise<void> {
+    async write(id: string, input: ByteInput, signal?: AbortSignal): Promise<void> {
         await mkdir(this.#directory, { recursive: true });
         const target = this.#path(id);
         const temporary = join(this.#directory, `.${fileName(id)}.${randomUUID()}.tmp`);
         try {
-            await writeFile(temporary, new Uint8Array(await blob.arrayBuffer()));
+            await pipeline(
+                Readable.from(Stream.toAsyncIterable(byteSource(input).stream)),
+                createWriteStream(temporary),
+                { signal }
+            );
+            signal?.throwIfAborted();
             await rename(temporary, target);
         } finally {
             await rm(temporary, { force: true });
         }
     }
 
-    async read(id: string): Promise<Blob> {
+    async read(id: string): Promise<ByteSource> {
         try {
-            return new Blob([await readFile(this.#path(id))]);
+            const path = this.#path(id);
+            const info = await stat(path);
+            return {
+                size: info.size,
+                type: "application/octet-stream",
+                stream: Stream.suspend(() =>
+                    Stream.fromAsyncIterable(createReadStream(path), (cause) => cause)
+                ),
+            };
         } catch (error) {
             if (error instanceof Error && "code" in error && error.code === "ENOENT") {
                 throw new BlobBytesNotFoundError(id, {

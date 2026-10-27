@@ -1,8 +1,10 @@
 import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
 import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunner";
 import { o, type OntologyIR } from "@party-stack/ontology";
+import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica, replicaStateSource } from "@party-stack/ontology-replica";
+import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect, Exit, Scope } from "effect";
 import { expect, test, vi } from "vite-plus/test";
@@ -245,11 +247,23 @@ test("streams attachment transfers over MessagePorts into a source-only backend"
                 const backend = {
                     ...owned,
                     attachments: {
-                        stage: (attachment: { id: string }, blob: Blob) =>
-                            Effect.sync(() => {
-                                bytes.set(attachment.id, blob);
-                                return attachment;
-                            }),
+                        stage: (attachment: { id: string }, input: ByteInput) =>
+                            collectByteBlob(input).pipe(
+                                Effect.map((blob) => {
+                                    bytes.set(attachment.id, blob);
+                                    return attachment;
+                                }),
+                                Effect.mapError(
+                                    (cause) =>
+                                        new BackendError({
+                                            operation: "stage",
+                                            kind: "Unavailable",
+                                            message: "Upload failed.",
+                                            retryable: false,
+                                            cause,
+                                        })
+                                )
+                            ),
                         read: (attachment: { id: string }) => Effect.succeed(bytes.get(attachment.id)!),
                         metadata: (attachment: { id: string }) =>
                             Effect.succeed({

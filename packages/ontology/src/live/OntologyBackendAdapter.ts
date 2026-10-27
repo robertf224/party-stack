@@ -1,6 +1,5 @@
-import * as v from "@party-stack/ontology-spec/values";
 import type { BackendError, OntologyBackendService } from "@party-stack/ontology-backend";
-import type { AttachmentTypeDef, OntologyIR } from "@party-stack/ontology-spec";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { CollectionConfig, UtilsRecord } from "@tanstack/db";
 import type { Effect, Scope } from "effect";
 
@@ -14,15 +13,7 @@ export type OntologyCollectionOptions = Omit<
     "getKey"
 >;
 
-export interface OntologyAttachmentUpload {
-    /**
-     * The attachment referenced by the prepared action parameters. Its ID is an
-     * opaque local handle and is not guaranteed to be valid for the backend.
-     */
-    attachment: v.attachment;
-    blob: Blob;
-    target?: AttachmentTypeDef;
-}
+export type OntologyAttachmentUpload = import("@party-stack/ontology-backend").AttachmentUpload;
 
 export interface OntologyAttachmentIdMapping {
     /** The opaque attachment ID used before the backend canonicalized it. */

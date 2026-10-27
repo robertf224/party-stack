@@ -9,6 +9,7 @@ import {
     lte,
     indexesForQuery,
 } from "@party-stack/ontology-storage";
+import { digestBytes, byteSource } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Clock, Effect, PubSub, Schema, Stream } from "effect";
 import { clientRegistry } from "./clients.js";
@@ -353,24 +354,20 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                     })
             )
         );
-        const attachmentIdentity = yield* Effect.tryPromise({
-            try: async () =>
-                Promise.all(
-                    (invocation.attachmentUploads ?? []).map(async (upload) => ({
-                        id: upload.attachment.id,
-                        target: upload.target,
-                        type: upload.blob.type,
-                        size: upload.blob.size,
-                        digest: Array.from(
-                            new Uint8Array(
-                                await crypto.subtle.digest("SHA-256", await upload.blob.arrayBuffer())
-                            ),
-                            (byte) => byte.toString(16).padStart(2, "0")
-                        ).join(""),
-                    }))
-                ),
-            catch: (cause) => fault("upload", "ValidationFailed", "Cannot identify attachment bytes.", cause),
-        });
+        const attachmentIdentity = yield* Effect.forEach(invocation.attachmentUploads ?? [], (upload) =>
+            digestBytes(upload.blob).pipe(
+                Effect.map((digest) => ({
+                    id: upload.attachment.id,
+                    target: upload.target,
+                    type: byteSource(upload.blob).type,
+                    size: byteSource(upload.blob).size,
+                    digest,
+                })),
+                Effect.mapError((cause) =>
+                    fault("upload", "ValidationFailed", "Cannot identify attachment bytes.", cause)
+                )
+            )
+        );
         // A preflight avoids staging duplicate uploads on ordinary receipt retries. The
         // write transaction below rechecks identity to resolve concurrent invocations.
         const identity = JSON.stringify(

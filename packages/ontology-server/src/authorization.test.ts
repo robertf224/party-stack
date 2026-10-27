@@ -1,5 +1,6 @@
 import { o, type OntologyIR } from "@party-stack/ontology";
 import { eq, field, evaluateQuery } from "@party-stack/ontology-storage";
+import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { Effect } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { projectOntologyBackend } from "./authorization.js";
@@ -77,9 +78,11 @@ test("attachment reads re-find the handle in an authorized source row and declar
         source: { objectType: "Item", primaryKey: "visible", property: "files" },
     };
     expect(projected.attachments?.stage).toBeUndefined();
-    expect(await Effect.runPromise(projected.attachments!.read(visible)).then((blob) => blob.text())).toBe(
-        "allowed"
-    );
+    expect(
+        await Effect.runPromise(projected.attachments!.read(visible))
+            .then((blob) => Effect.runPromise(collectByteBlob(blob)))
+            .then((blob) => blob.text())
+    ).toBe("allowed");
     expect(await Effect.runPromise(projected.attachments!.metadata(visible))).toEqual({
         size: 7,
         type: "text/plain",

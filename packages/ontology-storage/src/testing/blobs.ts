@@ -1,6 +1,6 @@
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { Effect, Result } from "effect";
-import { makeBlobStorage, type BlobBytesService } from "../blobs/index.js";
+import { makeBlobStorage, collectByteBlob, type BlobBytesService } from "../blobs/index.js";
 import { makeStorageModel } from "../ontology/model.js";
 import { makeOntologyStorage } from "../ontology/storage.js";
 import type { TablesService } from "../tables.js";
@@ -13,9 +13,11 @@ export const runBlobContract = Effect.fnUntraced(function* (tables: TablesServic
             const bytes: BlobBytesService = {
                 read: (key) => Effect.promise(() => Promise.resolve(values.get(key))),
                 write: (key, value) =>
-                    Effect.promise(async () => {
-                        values.set(key, value);
-                    }),
+                    collectByteBlob(value).pipe(
+                        Effect.map((blob) => {
+                            values.set(key, blob);
+                        })
+                    ),
                 delete: (key) =>
                     Effect.promise(async () => {
                         values.delete(key);

@@ -1,8 +1,14 @@
 import { classifyBackendFailure } from "@party-stack/ontology-backend";
 import { BackendError } from "@party-stack/ontology-backend";
+import { sliceByteSource } from "@party-stack/ontology-storage/blobs";
 import { Effect, Layer, Stream } from "effect";
 import { HttpEffect } from "effect/http";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
+import {
+    isAttachmentHttpRequest,
+    makeAttachmentHttpHandler,
+    makeHttpAttachmentClient,
+} from "./attachmentHttp.js";
 import { makeOntologyOperationsClient } from "./operations.js";
 import {
     makeOntologyProtocolClient,
@@ -21,7 +27,22 @@ export const makeOntologyHttpHandler = Effect.fn("RemoteOntology.httpHandler")(f
     options: OntologyRpcServerOptions<R>
 ): Effect.fn.Return<(request: Request) => Promise<Response>, never, R | Scope.Scope> {
     const app = yield* RpcServer.toHttpEffect(OntologyRpcs).pipe(
-        Effect.provide(ontologyRpcHandlers(options)),
+        Effect.provide(
+            ontologyRpcHandlers({
+                ...options,
+                authorize: (request, headers) =>
+                    request.operation === "CreateAttachment"
+                        ? Effect.fail(
+                              new BackendError({
+                                  operation: "attachment.http",
+                                  kind: "NotImplemented",
+                                  message: "Use the HTTP binding for streamed uploads.",
+                                  retryable: false,
+                              })
+                          )
+                        : options.authorize(request, headers),
+            })
+        ),
         Effect.provide(RpcSerialization.layerNdjson)
     );
     if (options.backend?.maintenance)
@@ -36,7 +57,10 @@ export const makeOntologyHttpHandler = Effect.fn("RemoteOntology.httpHandler")(f
     // HttpEffect handles request scopes uninterruptibly by default. Restore interruption
     // while waiting for an RPC response so disconnecting before the first NDJSON chunk
     // closes the request scope and cancels the corresponding server handler.
-    return HttpEffect.toWebHandler(app.pipe(Effect.interruptible));
+    const rpcHandler = HttpEffect.toWebHandler(app.pipe(Effect.interruptible));
+    const uploadHandler = yield* makeAttachmentHttpHandler(options);
+    return (request: Request) =>
+        isAttachmentHttpRequest(request) ? uploadHandler(request) : rpcHandler(request);
 });
 
 /** Supply an Effect HttpClient with the desired authentication and fetch policy.
@@ -53,7 +77,15 @@ export const connectOntologyHttp = Effect.fn("RemoteOntology.connectHttp")(funct
             )
         )
     );
-    return yield* makeOntologyProtocolClient(client, options);
+    const connection = yield* makeOntologyProtocolClient(client, options);
+    const uploads = yield* makeHttpAttachmentClient(options.url);
+    return {
+        ...connection,
+        operations: {
+            ...connection.operations,
+            attachments: { ...connection.operations.attachments, create: uploads.create },
+        },
+    };
 });
 
 /** Stateless request/response binding: never opens a replication client session. */
@@ -74,7 +106,9 @@ export const connectOntologyBackendHttp = Effect.fn("OntologyBackend.connectHttp
     const description = yield* client
         .Describe()
         .pipe(Effect.mapError((cause) => classifyBackendFailure("remote.describe", cause)));
-    const helpers = yield* makeOntologyOperationsClient(client);
+    const rpcHelpers = yield* makeOntologyOperationsClient(client);
+    const uploads = yield* makeHttpAttachmentClient(options.url);
+    const helpers = { ...rpcHelpers, attachments: { ...rpcHelpers.attachments, create: uploads.create } };
     const boundary = <A>(run: (signal: AbortSignal) => Promise<A>) =>
         Effect.tryPromise({ try: run, catch: (cause) => classifyBackendFailure("remote.attachment", cause) });
     return {
@@ -86,14 +120,8 @@ export const connectOntologyBackendHttp = Effect.fn("OntologyBackend.connectHttp
                 ),
             read: (value, range) =>
                 boundary(async () => {
-                    const blob = await helpers.attachments.blob(value);
-                    return range
-                        ? blob.slice(
-                              range.offset ?? 0,
-                              range.length === undefined ? undefined : (range.offset ?? 0) + range.length,
-                              blob.type
-                          )
-                        : blob;
+                    const source = await helpers.attachments.source(value);
+                    return range ? sliceByteSource(source, range.offset ?? 0, range.length) : source;
                 }),
             metadata: (value, settings) =>
                 client
@@ -135,38 +163,7 @@ export const connectOntologyBackendHttp = Effect.fn("OntologyBackend.connectHttp
                 .LoadSubset(subset)
                 .pipe(Effect.mapError((cause) => classifyBackendFailure("remote.request", cause))),
         applyAction: Effect.fn("OntologyBackend.invokeRemote")(function* (invocation) {
-            for (const upload of invocation.attachmentUploads ?? []) {
-                const staged = yield* boundary(
-                    async () =>
-                        (
-                            await helpers.attachments.create(upload.blob, {
-                                id: upload.attachment.id,
-
-                                eager: true,
-                            })
-                        ).attachment
-                ).pipe(
-                    Effect.mapError(
-                        (error) =>
-                            new BackendError({
-                                operation: error.operation,
-                                kind: error.kind,
-                                message: error.message,
-                                issues: error.issues,
-                                retryable: error.retryable,
-                                actionOutcome: "not-committed",
-                            })
-                    )
-                );
-                if (staged.id !== upload.attachment.id)
-                    return yield* new BackendError({
-                        operation: "applyAction.upload",
-                        kind: "Conflict",
-                        message: "Staging changed an attachment identity before submission.",
-                        retryable: false,
-                        actionOutcome: "not-committed",
-                    });
-            }
+            if (invocation.attachmentUploads?.length) return yield* uploads.applyAction(invocation);
             return yield* client
                 .ApplyAction(invocation)
                 .pipe(Effect.mapError((cause) => classifyBackendFailure("remote.applyAction", cause)));

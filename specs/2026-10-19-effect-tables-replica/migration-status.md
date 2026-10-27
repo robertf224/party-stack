@@ -90,11 +90,13 @@ covered in [native-actions.md](./native-actions.md).
 
 Recovery and bounded bookkeeping now use the existing selected-snapshot protocol.
 The current checkpoint is documented in [checkpoint-recovery.md](./checkpoint-recovery.md).
-The remaining v0 work is provider acceptance and application recovery presentation. Retained replica-state deltas, query IR/IVM, general untrusted remote
-authorization, and advertised/versioned idempotency-window negotiation are not v0
-prerequisites. See [the agreed v0 scope](./recovery-v0.md) for vocabulary, retention
-semantics, and the distinction between unknown invocation outcomes and deferred
-idempotency-window tracking. The inventory below also includes post-v0 work.
+The remaining v0 gates are finishing the streaming/recovery acceptance checkpoint,
+hierarchical Query IR/context binding and server authorization for Gateway parity,
+actual downstream form integration, legacy HTTP retirement, and final validation.
+Server IVM/live query watching, retained replica-state deltas, general untrusted
+replica-state access and advertised/versioned idempotency windows remain outside v0.
+See [the agreed v0 scope](./recovery-v0.md) and
+[Gateway gates](./gateway-v0-parity.md). The inventory below also includes post-v0 work.
 
 1. **Protocol hardening.** Retained delta history, general scoped returned-state
    authorization, and protocol-child row/blob retention. Source/session recovery and
@@ -525,3 +527,47 @@ join/window dependencies, result removals and authorized reset handling are stil
 required. See subset-subscriptions.md. Full server IVM, untrusted replica-state
 projection, persistent protocol-child GC/blobs, ranges and durable upload resumability
 are not silently included in this cleanup.
+
+## October 27 streaming and lifecycle checkpoint
+
+Native byte IO now supports lazy streams, measured unknown lengths, exact declared
+lengths and bounded buffers. OPFS/Node/Expo write incrementally; SQLite uses bounded
+chunks and completion markers; R2 streams known lengths directly and uses multipart
+parts for unknown lengths. Platform cancellation settles before abandoned-generation
+cleanup. Native Foundry attachment/media requests bypass Blob-only SDK upload helpers
+while retaining the configured authenticated fetch. Owned action fingerprints use
+incremental SHA-256 and reopen durable sources rather than consume one-shot inputs twice.
+
+HTTP actions with new bytes use one streamed multipart request, without proxy staging
+or an upload registry. Standalone HTTP creation uses a binary body. Both share the
+RPC binding's configured HttpClient/server handler and native execution/error policy.
+MessagePort retains bounded connection/owner-bound chunk transfers. Authorization
+runs at opening/completion; owner checks are cheap per chunk. Transfer limits and
+idle/lifetime deadlines are explicit. Full/range/resumable query/upload semantics
+remain separate; see blob-future-work.md. Legacy HTTP stays only until final Gateway
+parity, then should be deleted.
+
+Existing recovery/retention suites cover history gaps, expired parent sessions, lost
+receipts/replies, mapping races and bounded terminal results. OPFS streaming/recovery
+browser tests pass. The new issue-tracker reload check exposed browser hook queries
+outliving their source collections: providing DbClient alone does not register those
+queries for cleanup in the pinned release. No dependency patch is retained; the
+warning is deferred by agreement until a functional problem is observed, potentially
+revisiting ownership with Relay-style fragment hooks. It is tracked
+by a focused expected-failure browser regression, independently of functional recovery.
+No private SSR flag or timed disposal workaround is installed.
+
+Additional browser acceptance verifies image upload through the SharedWorker/native
+HTTP/SQLite composition, confirmed action settlement, tab reload and reading the image
+while offline. A separate cold-start probe confirms the example has no service-worker
+app-shell cache: a full offline page reload fails with ERR_INTERNET_DISCONNECTED.
+Persisted data/bytes and offline replay work once the app is loaded; this does not
+claim cold offline startup. App-shell caching is an application delivery concern,
+separate from the storage/Replica migration.
+
+Verification with unpatched dependencies: full workspace CI 130/130 tasks;
+issue-tracker browser acceptance six functional cases passed plus the one explicitly
+expected cleanup-warning failure; web-runtime browser acceptance nine cases passed.
+Foundry upload tests include a real loopback HTTP socket receiving bytes before an
+unknown-length producer completes, plus structured/non-JSON error classification.
+These HTTP boundary tests do not claim live-provider media upload acceptance.

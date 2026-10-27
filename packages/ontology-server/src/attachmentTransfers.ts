@@ -1,4 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
+import { byteSource, byteChunks, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import { Effect, Queue, Schema, Semaphore, Stream } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
 import { RpcActivity } from "./rpcActivity.js";
@@ -29,8 +30,8 @@ export const Target = Schema.Union([
         parameter: Schema.String,
     }),
 ]);
-const Upload = Schema.Struct({
-    size: Counter,
+export const AttachmentUploadSchema = Schema.Struct({
+    size: Schema.optional(Counter),
     type: Schema.String,
     name: Schema.optional(Schema.String),
     id: Schema.optional(Schema.NonEmptyString),
@@ -51,7 +52,7 @@ const DownloadEvent = Schema.Union([
     Schema.Struct({
         kind: Schema.Literal("metadata"),
         type: Schema.String,
-        size: Counter,
+        size: Schema.optional(Counter),
         name: Schema.optional(Schema.String),
     }),
     Schema.Struct({ kind: Schema.Literal("bytes"), bytes: Schema.Uint8ArrayFromBase64 }),
@@ -60,7 +61,7 @@ const DownloadEvent = Schema.Union([
 /** RPC streams responses. Upload chunks use acknowledged calls beneath a scoped response stream. */
 export const AttachmentTransferRpcs = RpcGroup.make(
     Rpc.make("CreateAttachment", {
-        payload: Upload,
+        payload: AttachmentUploadSchema,
         success: UploadEvent,
         error: BackendError,
         stream: true,
@@ -73,7 +74,7 @@ export const AttachmentTransferRpcs = RpcGroup.make(
         stream: true,
     }).annotate(RpcActivity, "transfer")
 );
-export type AttachmentUpload = Schema.Schema.Type<typeof Upload>;
+export type AttachmentUpload = Schema.Schema.Type<typeof AttachmentUploadSchema>;
 export type AttachmentValue = Schema.Schema.Type<typeof Attachment>;
 type Frame = Pick<Schema.Schema.Type<typeof Chunk>, "bytes" | "end">;
 const rejected = (message: string) =>
@@ -84,15 +85,33 @@ const rejected = (message: string) =>
         retryable: false,
     });
 
-export const attachmentTransferHandlers = <R>(options: {
-    authorizeUpload(request: AttachmentUpload, headers: Headers): Effect.Effect<void, BackendError, R>;
-    create(request: AttachmentUpload, blob: Blob): Effect.Effect<AttachmentValue, BackendError, R>;
-    read(attachment: AttachmentValue, headers: Headers): Effect.Effect<Blob, BackendError, R>;
-}) => {
+export interface AttachmentTransferPolicy<R = never> {
+    /** For custom authentication, return the stable authenticated principal + form/revision scope. */
+    uploadOwner?: (headers: Headers) => Effect.Effect<string, BackendError, R>;
+    limits?: {
+        maxBytes?: number;
+        maxConcurrent?: number;
+        maxPerOwner?: number;
+        maxReservedBytes?: number;
+        idleTimeoutMs?: number;
+        maxDurationMs?: number;
+    };
+}
+
+export const attachmentTransferHandlers = <R>(
+    options: AttachmentTransferPolicy<R> & {
+        authorizeUpload(request: AttachmentUpload, headers: Headers): Effect.Effect<void, BackendError, R>;
+        create(request: AttachmentUpload, blob: ByteInput): Effect.Effect<AttachmentValue, BackendError, R>;
+        read(attachment: AttachmentValue, headers: Headers): Effect.Effect<ByteInput, BackendError, R>;
+    }
+) => {
     const uploads = new Map<
         string,
         {
             request: AttachmentUpload;
+            owner: string;
+            clientId: number;
+            reserved: number;
             queue: Queue.Queue<Frame, BackendError>;
             gate: Semaphore.Semaphore;
             sequence: number;
@@ -100,16 +119,55 @@ export const attachmentTransferHandlers = <R>(options: {
             ended: boolean;
         }
     >();
+    const limits = {
+        maxBytes: 1024 * 1024 * 1024,
+        maxConcurrent: 8,
+        maxPerOwner: 2,
+        maxReservedBytes: 4 * 1024 * 1024 * 1024,
+        idleTimeoutMs: 60_000,
+        maxDurationMs: 30 * 60_000,
+        ...options.limits,
+    };
+    for (const value of Object.values(limits))
+        if (!Number.isSafeInteger(value) || value <= 0)
+            throw new RangeError("Invalid attachment transfer limits.");
+    const owner =
+        options.uploadOwner ??
+        ((headers: Headers) =>
+            Effect.tryPromise(async () => {
+                const hash = await crypto.subtle.digest(
+                    "SHA-256",
+                    new TextEncoder().encode(
+                        JSON.stringify([headers.authorization ?? "", headers.cookie ?? ""])
+                    )
+                );
+                return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join(
+                    ""
+                );
+            }).pipe(Effect.mapError(() => rejected("Cannot identify attachment transfer owner."))));
+    const limited = () =>
+        new BackendError({
+            operation: "attachment.transfer",
+            kind: "RateLimited",
+            message: "Attachment transfer capacity is in use.",
+            retryable: true,
+        });
     return AttachmentTransferRpcs.toLayer({
         CreateAttachment: (request, context) =>
             Stream.unwrap(
                 Effect.gen(function* () {
                     yield* Effect.annotateCurrentSpan("activity", "transfer");
                     yield* options.authorizeUpload(request, context.headers);
+                    if (request.size !== undefined && request.size > limits.maxBytes)
+                        return yield* rejected("Attachment exceeds the configured upload limit.");
+                    const principal = yield* owner(context.headers);
                     const id = crypto.randomUUID();
                     const queue = yield* Queue.bounded<Frame, BackendError>(1);
                     const transfer = {
                         request,
+                        owner: principal,
+                        clientId: context.client.id,
+                        reserved: request.size ?? limits.maxBytes,
                         queue,
                         gate: yield* Semaphore.make(1),
                         sequence: 0,
@@ -117,7 +175,16 @@ export const attachmentTransferHandlers = <R>(options: {
                         ended: false,
                     };
                     yield* Effect.acquireRelease(
-                        Effect.sync(() => {
+                        Effect.gen(function* () {
+                            const active = [...uploads.values()];
+                            if (
+                                active.length >= limits.maxConcurrent ||
+                                active.filter((item) => item.owner === principal).length >=
+                                    limits.maxPerOwner ||
+                                active.reduce((total, item) => total + item.reserved, transfer.reserved) >
+                                    limits.maxReservedBytes
+                            )
+                                return yield* limited();
                             uploads.set(id, transfer);
                         }),
                         () =>
@@ -127,24 +194,46 @@ export const attachmentTransferHandlers = <R>(options: {
                             })
                     );
                     const consume = Effect.gen(function* () {
-                        const parts: ArrayBuffer[] = [];
-                        for (;;) {
-                            const frame = yield* Queue.take(queue);
-                            if (frame.bytes.length) parts.push(new Uint8Array(frame.bytes).buffer);
-                            if (frame.end) break;
-                        }
-                        const blob =
-                            request.name === undefined
-                                ? new Blob(parts, { type: request.type })
-                                : new File(parts, request.name, { type: request.type });
+                        const stream = Stream.fromQueue(queue).pipe(
+                            Stream.timeout(limits.idleTimeoutMs),
+                            Stream.mapError((cause) =>
+                                cause instanceof BackendError
+                                    ? cause
+                                    : rejected("Attachment transfer timed out.")
+                            ),
+                            Stream.takeUntil((frame) => frame.end),
+                            Stream.map((frame) => frame.bytes)
+                        );
+                        const attachment = yield* options.create(request, {
+                            stream,
+                            size: request.size,
+                            type: request.type,
+                            name: request.name,
+                        });
+                        if (!transfer.ended)
+                            return yield* rejected("Attachment writer returned before the upload finished.");
                         return {
                             kind: "complete" as const,
-                            attachment: yield* options.create(request, blob),
+                            attachment,
                         };
                     });
                     return Stream.concat(
                         Stream.succeed({ kind: "ready" as const, uploadId: id }),
-                        Stream.fromEffect(consume)
+                        Stream.fromEffect(
+                            consume.pipe(
+                                Effect.timeout(limits.maxDurationMs),
+                                Effect.catchTag("TimeoutError", () =>
+                                    Effect.fail(
+                                        new BackendError({
+                                            operation: "attachment.transfer",
+                                            kind: "Unavailable",
+                                            message: "Attachment transfer deadline expired.",
+                                            retryable: true,
+                                        })
+                                    )
+                                )
+                            )
+                        )
                     );
                 })
             ),
@@ -152,19 +241,36 @@ export const attachmentTransferHandlers = <R>(options: {
             Effect.gen(function* () {
                 const transfer = uploads.get(request.uploadId);
                 if (!transfer) return yield* rejected("The attachment transfer has ended.");
-                yield* options.authorizeUpload(transfer.request, context.headers);
+                if (
+                    transfer.clientId !== context.client.id ||
+                    transfer.owner !== (yield* owner(context.headers))
+                )
+                    return yield* new BackendError({
+                        operation: "attachment.transfer",
+                        kind: "Forbidden",
+                        message: "Attachment transfer is unavailable.",
+                        retryable: false,
+                    });
                 yield* transfer.gate.withPermits(1)(
                     Effect.gen(function* () {
                         if (
                             transfer.ended ||
                             request.sequence !== transfer.sequence ||
-                            transfer.size + request.bytes.length > transfer.request.size ||
-                            (request.end && transfer.size + request.bytes.length !== transfer.request.size)
+                            transfer.size + request.bytes.length > limits.maxBytes ||
+                            (transfer.request.size !== undefined &&
+                                transfer.size + request.bytes.length > transfer.request.size) ||
+                            (request.end &&
+                                transfer.request.size !== undefined &&
+                                transfer.size + request.bytes.length !== transfer.request.size)
                         ) {
                             const error = rejected("Invalid attachment chunk sequence or size.");
                             yield* Queue.fail(transfer.queue, error);
                             return yield* error;
                         }
+                        if (request.end)
+                            yield* options
+                                .authorizeUpload(transfer.request, context.headers)
+                                .pipe(Effect.tapError((error) => Queue.fail(transfer.queue, error)));
                         transfer.sequence++;
                         transfer.size += request.bytes.length;
                         transfer.ended = request.end;
@@ -177,25 +283,25 @@ export const attachmentTransferHandlers = <R>(options: {
             Stream.unwrap(
                 Effect.gen(function* () {
                     yield* Effect.annotateCurrentSpan("activity", "transfer");
-                    const blob = yield* options.read(attachment, context.headers);
+                    const blob = byteSource(yield* options.read(attachment, context.headers));
                     const metadata = {
                         kind: "metadata" as const,
                         type: blob.type,
                         size: blob.size,
-                        name: typeof File !== "undefined" && blob instanceof File ? blob.name : undefined,
+                        name: blob.name,
                     };
-                    const bytes = Stream.fromReadableStream({
-                        evaluate: () => blob.stream(),
-                        onError: (cause) =>
-                            new BackendError({
-                                operation: "attachment.read",
-                                kind: "Unavailable",
-                                message: "Attachment stream failed.",
-                                retryable: true,
-                                cause,
-                            }),
-                    }).pipe(
-                        Stream.flatMap((chunk) => Stream.fromIterable(splitAttachmentChunk(chunk))),
+                    const bytes = byteChunks(blob).pipe(
+                        Stream.mapError((cause) =>
+                            cause instanceof BackendError
+                                ? cause
+                                : new BackendError({
+                                      operation: "attachment.read",
+                                      kind: "Unavailable",
+                                      message: "Attachment stream failed.",
+                                      retryable: true,
+                                      cause,
+                                  })
+                        ),
                         Stream.map((bytes) => ({ kind: "bytes" as const, bytes }))
                     );
                     return Stream.concat(Stream.succeed(metadata), bytes);

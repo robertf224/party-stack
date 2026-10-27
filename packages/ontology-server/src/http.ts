@@ -3,7 +3,9 @@ import {
     BackendChangePageSchema,
     DecryptedValueSchema,
 } from "@party-stack/ontology-backend";
+import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { decode, encode } from "@party-stack/ontology/json";
+import { Effect } from "effect";
 import { Schema } from "effect";
 import { parseRemoteOntologyErrorBody } from "./errors.js";
 import { parseRemoteOntologyJson, serializeRemoteOntologyJson } from "./protocol.js";
@@ -96,11 +98,9 @@ async function postMultipart<TResponse>(
         // Temporary workaround for WebKit regressions that can serialize OPFS-backed files as
         // an empty multipart body. Remove after https://bugs.webkit.org/show_bug.cgi?id=319985
         // and https://bugs.webkit.org/show_bug.cgi?id=319396 are fixed in supported Safari versions.
-        const safeBlob = isWebKitRuntime()
-            ? new Blob([await upload.blob.arrayBuffer()], {
-                  type: upload.blob.type,
-              })
-            : upload.blob;
+        const blob =
+            upload.blob instanceof Blob ? upload.blob : await Effect.runPromise(collectByteBlob(upload.blob));
+        const safeBlob = isWebKitRuntime() ? new Blob([await blob.arrayBuffer()], { type: blob.type }) : blob;
         formData.append(
             `attachment:${upload.attachment.id}`,
             safeBlob,

@@ -1,5 +1,28 @@
 # Public API review — October 26
 
+## Collection ownership
+
+Each LiveOntology exposes its scoped dbClient alongside objects. React consumers
+provide it through DbProvider or the hook's client option; devtools installs its
+own provider because its panel can mount in a separate React root. This shares
+collection materialization and query identity. Passing only concrete object
+collections to a hook does not automatically bind the hook to their owner.
+
+Browser hook-query cleanup still needs investigation: the pinned TanStack release
+only registers those observers for DbClient cleanup in SSR mode. No dependency
+patch is retained. On October 27 the published versions are db 0.15.2 and react-db
+0.5.12; current upstream main still has that guard in
+packages/db/src/live-query-observer-client.ts, and hook query resolution still
+creates derived collections outside client.collection. An upgrade alone is not
+evidence that this lifecycle issue is fixed. Choose an explicit ownership approach
+before claiming that closing DbClient safely closes every hook-created query.
+
+Decision October 27: defer the teardown console warning until there is evidence
+of a functional problem. Keep its focused expected-failure regression and no
+dependency patch. Revisit explicit consumer/query lifetime ownership alongside
+Relay-style fragments, where a Party Stack query/fragment hook may be justified.
+Reordering React effects alone cannot await TanStack's deferred collection GC.
+
 ## Action waiting
 
 The normal action call returns one Promise for authoritative confirmation plus local

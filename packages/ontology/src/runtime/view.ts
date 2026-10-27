@@ -307,6 +307,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         ])
     );
     return {
+        dbClient,
         ir,
         context,
         objects,

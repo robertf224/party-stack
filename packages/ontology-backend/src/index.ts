@@ -2,6 +2,7 @@ import { Context, Schema } from "effect";
 import type { AttachmentTypeDef } from "@party-stack/ontology-spec";
 import type { attachment, Encrypted } from "@party-stack/ontology-spec/values";
 import type { Key, Query, Row } from "@party-stack/ontology-storage";
+import type { ByteInput } from "@party-stack/ontology-storage/blobs";
 import type { Effect, Stream } from "effect";
 
 export {
@@ -83,7 +84,7 @@ export interface BackendChangePage {
 }
 export interface AttachmentUpload {
     readonly attachment: attachment;
-    readonly blob: Blob;
+    readonly blob: ByteInput;
     readonly target?: AttachmentTypeDef;
 }
 export interface ActionRequest {
@@ -167,13 +168,13 @@ export interface BackendAttachments {
     /** Optional authoritative staging before a subsequent action references the handle. */
     readonly stage?: (
         value: attachment,
-        bytes: Blob,
+        bytes: ByteInput,
         options?: { readonly target?: AttachmentTypeDef }
     ) => Effect.Effect<attachment, BackendError>;
     readonly read: (
         value: attachment,
         options?: { readonly offset?: number; readonly length?: number }
-    ) => Effect.Effect<Blob, BackendError>;
+    ) => Effect.Effect<ByteInput, BackendError>;
     readonly metadata: (
         value: attachment,
         options?: { readonly select?: readonly ("size" | "type" | "name" | "dimensions")[] }

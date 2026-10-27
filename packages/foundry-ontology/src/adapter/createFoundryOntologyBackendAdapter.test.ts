@@ -1,4 +1,5 @@
 import { o } from "@party-stack/ontology";
+import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { Effect, Stream } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -29,6 +30,20 @@ const metadataMocks = vi.hoisted(() => ({
     bulkLoadOntologyEntities: vi.fn(),
 }));
 
+vi.mock("./streamingMedia.js", () => ({
+    uploadFoundryMedia: mediaMocks.uploadMedia,
+    uploadFoundryAttachment: (
+        client: unknown,
+        input: unknown,
+        options: { filename: string; rid?: string }
+    ) =>
+        options.rid
+            ? attachmentMocks.uploadWithRid(client, options.rid, input, {
+                  filename: options.filename,
+                  preview: true,
+              })
+            : attachmentMocks.upload(client, input, { filename: options.filename }),
+}));
 vi.mock("@osdk/foundry.mediasets", () => ({
     MediaSets: mediaMocks,
 }));
@@ -937,7 +952,9 @@ describe("Foundry media attachments", () => {
                 Effect.scoped(
                     Effect.flatMap(adapter.open({}), (backend) => backend.attachments!.read(attachment))
                 )
-            ).then((blob) => blob.text())
+            )
+                .then((blob) => Effect.runPromise(collectByteBlob(blob)))
+                .then((blob) => blob.text())
         ).resolves.toBe("image");
         await expect(getAttachmentMetadata(attachment, ["size", "type", "name"])).resolves.toEqual({
             size: 5,

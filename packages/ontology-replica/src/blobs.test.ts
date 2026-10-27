@@ -1,6 +1,6 @@
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
-import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
+import { makeBlobStorage, collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Deferred, Fiber, Effect, Result, Scope, Exit } from "effect";
 import { expect, test } from "vitest";
@@ -33,9 +33,11 @@ test("staged outbox bytes survive upload, lost receipts and reopen until reconci
                     bytes: {
                         read: (key) => Effect.succeed(values.get(key)),
                         write: (key, value) =>
-                            Effect.sync(() => {
-                                values.set(key, value);
-                            }),
+                            collectByteBlob(value).pipe(
+                                Effect.map((blob) => {
+                                    values.set(key, blob);
+                                })
+                            ),
                         delete: (key) =>
                             Effect.sync(() => {
                                 values.delete(key);
@@ -106,9 +108,11 @@ test("editing and removing pending actions atomically replace and release attach
                     bytes: {
                         read: (key) => Effect.succeed(values.get(key)),
                         write: (key, value) =>
-                            Effect.sync(() => {
-                                values.set(key, value);
-                            }),
+                            collectByteBlob(value).pipe(
+                                Effect.map((blob) => {
+                                    values.set(key, blob);
+                                })
+                            ),
                         delete: (key) =>
                             Effect.sync(() => {
                                 values.delete(key);
@@ -171,9 +175,11 @@ test("a mapping race preserves the receipt and recovers without another remote i
                                 Effect.as(values.get(key))
                             ),
                         write: (key, value) =>
-                            Effect.sync(() => {
-                                values.set(key, value);
-                            }),
+                            collectByteBlob(value).pipe(
+                                Effect.map((blob) => {
+                                    values.set(key, blob);
+                                })
+                            ),
                         delete: (key) =>
                             Effect.sync(() => {
                                 values.delete(key);
@@ -247,9 +253,11 @@ test("replica snapshots and optimistic rows retain attachment identities and rel
                     bytes: {
                         read: (key) => Effect.succeed(values.get(key)),
                         write: (key, value) =>
-                            Effect.sync(() => {
-                                values.set(key, value);
-                            }),
+                            collectByteBlob(value).pipe(
+                                Effect.map((blob) => {
+                                    values.set(key, blob);
+                                })
+                            ),
                         delete: (key) =>
                             Effect.sync(() => {
                                 values.delete(key);

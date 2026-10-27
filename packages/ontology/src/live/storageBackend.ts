@@ -1,7 +1,13 @@
 import { BackendError, encryptedPropertyCodec, EncryptedValueSchema } from "@party-stack/ontology-backend";
 import { makeOwnedBackend, type OwnedBackendService } from "@party-stack/ontology-backend/owned";
+import {
+    digestBytes as digest,
+    byteSource,
+    sliceByteSource,
+    type ByteInput,
+} from "@party-stack/ontology-storage/blobs";
 import { makeEncryptedValues, type EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
-import { Effect, Schema } from "effect";
+import { Effect, Schema, Stream } from "effect";
 import { executeTransactionMutator, withTransactionCollections } from "../runtime/index.js";
 import { resolveReadActionParameters } from "../runtime/resolveActionParameters.js";
 import { createReadTx } from "./mutators/createMutatorTx.js";
@@ -38,11 +44,6 @@ const failure = (cause: unknown) =>
           });
 const boundary = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.mapError(failure));
 const promise = <A>(body: () => Promise<A>) => Effect.tryPromise({ try: body, catch: failure });
-const digest = (blob: Blob) =>
-    promise(async () => {
-        const hash = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
-        return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
-    });
 
 /** Shared authoritative execution/attachment composition; platform factories supply Tables and byte IO. */
 export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(function* (
@@ -52,12 +53,20 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
     yield* boundary(blobs.recover);
     const stage = Effect.fn("StorageOntology.stageAttachment")(function* (
         attachment: attachment,
-        blob: Blob
+        blob: ByteInput
     ) {
         const stored = yield* boundary(blobs.metadata(attachment.id));
         if (stored?.byteKey) {
-            const existing = yield* boundary(blobs.read(attachment.id));
-            if (!existing || (yield* digest(existing)) !== (yield* digest(blob)))
+            const existing = yield* boundary(
+                Effect.scoped(
+                    blobs
+                        .readScoped(attachment.id)
+                        .pipe(
+                            Effect.flatMap((source) => (source ? digest(source) : Effect.succeed(undefined)))
+                        )
+                )
+            );
+            if (!existing || existing !== (yield* boundary(digest(blob))))
                 return yield* new BackendError({
                     operation: "attachment.stage",
                     kind: "Conflict",
@@ -65,7 +74,7 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                     retryable: false,
                 });
         } else yield* boundary(blobs.stage(attachment.id, blob));
-        return { ...attachment, type: blob.type };
+        return { ...attachment, type: byteSource(blob).type };
     });
     const backend: OwnedBackendService = yield* makeOwnedBackend({
         namespace: options.namespace,
@@ -175,8 +184,6 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
             ])
         ),
         prepareUploads: Effect.fn("StorageOntology.prepareUploads")(function* (invocation) {
-            for (const upload of invocation.attachmentUploads ?? [])
-                yield* stage(upload.attachment, upload.blob);
             return boundary(
                 Effect.forEach(
                     invocation.attachmentUploads ?? [],
@@ -190,20 +197,20 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
             read: (attachment, range) =>
                 boundary(
                     Effect.gen(function* () {
-                        const content = yield* blobs.read(attachment.id);
-                        if (!content)
+                        const metadata = yield* blobs.metadata(attachment.id);
+                        if (!metadata?.byteKey)
                             return yield* new BackendError({
                                 operation: "attachment.read",
                                 kind: "NotFound",
                                 message: "Attachment not found.",
                                 retryable: false,
                             });
-                        if (!range) return content;
+                        const offset = range?.offset ?? 0;
+                        const length = range?.length;
                         if (
-                            !Number.isSafeInteger(range.offset ?? 0) ||
-                            (range.offset ?? 0) < 0 ||
-                            (range.length !== undefined &&
-                                (!Number.isSafeInteger(range.length) || range.length < 0))
+                            !Number.isSafeInteger(offset) ||
+                            offset < 0 ||
+                            (length !== undefined && (!Number.isSafeInteger(length) || length < 0))
                         )
                             return yield* new BackendError({
                                 operation: "attachment.read",
@@ -211,11 +218,27 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                                 message: "Invalid attachment range.",
                                 retryable: false,
                             });
-                        return content.slice(
-                            range.offset ?? 0,
-                            range.length === undefined ? undefined : (range.offset ?? 0) + range.length,
-                            content.type
-                        );
+                        return {
+                            type: metadata.type ?? "application/octet-stream",
+                            name: metadata.name ?? undefined,
+                            size:
+                                metadata.size === undefined
+                                    ? undefined
+                                    : Math.min(Math.max(0, metadata.size - offset), length ?? Infinity),
+                            stream: Stream.unwrap(
+                                Effect.gen(function* () {
+                                    const content = yield* blobs.readScoped(attachment.id);
+                                    if (!content)
+                                        return yield* new BackendError({
+                                            operation: "attachment.read",
+                                            kind: "NotFound",
+                                            message: "Attachment bytes are unavailable.",
+                                            retryable: false,
+                                        });
+                                    return sliceByteSource(content, offset, length).stream;
+                                })
+                            ),
+                        };
                     })
                 ),
             metadata: (attachment) =>
@@ -237,6 +260,18 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
 
     return {
         ...backend,
+        // Incoming HTTP sources may be one-shot. Owned storage accepts bytes into
+        // its final byte store first; fingerprinting and retries reopen that store.
+        applyAction: Effect.fn("StorageOntology.applyAction")(function* (
+            invocation: import("@party-stack/ontology-backend").ActionRequest
+        ) {
+            const uploads: import("@party-stack/ontology-backend").AttachmentUpload[] = [];
+            for (const upload of invocation.attachmentUploads ?? []) {
+                yield* stage(upload.attachment, upload.blob);
+                uploads.push({ ...upload, blob: yield* backend.attachments!.read(upload.attachment) });
+            }
+            return yield* backend.applyAction({ ...invocation, attachmentUploads: uploads });
+        }),
         blobs,
         resolveActionParameters: (name: string, parameters: Record<string, unknown>) =>
             backend.storage.read((read) =>

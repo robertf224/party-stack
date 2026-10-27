@@ -1,4 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
+import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
 import { expect, test, vi } from "vite-plus/test";
@@ -8,30 +9,47 @@ import {
     attachmentChunkSize,
 } from "./attachmentTransfers.js";
 
-const setup = Effect.fnUntraced(function* () {
+const setup = Effect.fnUntraced(function* (
+    limits?: import("./attachmentTransfers.js").AttachmentTransferPolicy["limits"]
+) {
     const stored = new Map<string, Blob>();
-    const create = vi.fn((request: { id?: string }, blob: Blob) =>
-        Effect.sync(() => {
+    const create = vi.fn((request: { id?: string }, input: ByteInput) =>
+        Effect.gen(function* () {
+            const blob = yield* collectByteBlob(input).pipe(
+                Effect.mapError(
+                    (cause) =>
+                        new BackendError({
+                            operation: "attachment.create",
+                            kind: "ValidationFailed",
+                            message: "Incomplete attachment.",
+                            retryable: false,
+                            cause,
+                        })
+                )
+            );
             const id = request.id ?? "created";
             stored.set(id, blob);
             return { id };
         })
     );
     let allowed = true;
+    const authorization = vi.fn(() =>
+        allowed
+            ? Effect.void
+            : Effect.fail(
+                  new BackendError({
+                      operation: "authorize",
+                      kind: "ValidationFailed",
+                      message: "Denied",
+                      retryable: false,
+                  })
+              )
+    );
     const client = yield* RpcTest.makeClient(AttachmentTransferRpcs).pipe(
         Effect.provide(
             attachmentTransferHandlers({
-                authorizeUpload: () =>
-                    allowed
-                        ? Effect.void
-                        : Effect.fail(
-                              new BackendError({
-                                  operation: "authorize",
-                                  kind: "ValidationFailed",
-                                  message: "Denied",
-                                  retryable: false,
-                              })
-                          ),
+                limits,
+                authorizeUpload: authorization,
                 create,
                 read: (attachment) => Effect.succeed(stored.get(attachment.id)!),
             })
@@ -40,6 +58,7 @@ const setup = Effect.fnUntraced(function* () {
     return {
         client,
         create,
+        authorization,
         stored,
         deny: () => {
             allowed = false;
@@ -51,7 +70,7 @@ test("uploads publish only after the declared byte count arrives, and downloads 
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const { client, create, stored } = yield* setup();
+                const { client, create, stored, authorization } = yield* setup();
                 const ready = yield* Deferred.make<string>();
                 let completed: string | undefined;
                 const upload = yield* Effect.forkScoped(
@@ -77,7 +96,9 @@ test("uploads publish only after the declared byte count arrives, and downloads 
                     bytes: new Uint8Array(attachmentChunkSize).fill(65),
                     end: false,
                 });
-                expect(create).not.toHaveBeenCalled();
+                expect(stored.size).toBe(0);
+                expect(create).toHaveBeenCalledOnce();
+                expect(authorization).toHaveBeenCalledTimes(1);
                 yield* client.WriteAttachmentChunk({
                     uploadId,
                     sequence: 1,
@@ -86,6 +107,7 @@ test("uploads publish only after the declared byte count arrives, and downloads 
                 });
                 yield* Fiber.join(upload);
                 expect(completed).toBe("file");
+                expect(authorization).toHaveBeenCalledTimes(2);
                 expect(stored.get("file")!.size).toBe(attachmentChunkSize + 1);
                 const frames = yield* Stream.runCollect(client.ReadAttachment({ id: "file" }));
                 expect(frames[0]).toMatchObject({
@@ -108,7 +130,7 @@ for (const invalid of ["sequence", "size"] as const) {
         await Effect.runPromise(
             Effect.scoped(
                 Effect.gen(function* () {
-                    const { client, create } = yield* setup();
+                    const { client, stored } = yield* setup();
                     const ready = yield* Deferred.make<string>();
                     const upload = yield* Effect.forkScoped(
                         Effect.result(
@@ -131,7 +153,7 @@ for (const invalid of ["sequence", "size"] as const) {
                         )
                     ).toMatchObject({ _tag: "Failure", failure: { kind: "ValidationFailed" } });
                     expect(yield* Fiber.join(upload)).toMatchObject({ _tag: "Failure" });
-                    expect(create).not.toHaveBeenCalled();
+                    expect(stored.size).toBe(0);
                 })
             )
         );
@@ -142,7 +164,7 @@ test("cancelling the owning stream releases an incomplete upload; later chunks c
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const { client, create } = yield* setup();
+                const { client, stored } = yield* setup();
                 const scope = yield* Scope.make();
                 const ready = yield* Deferred.make<string>();
                 yield* Effect.forkIn(
@@ -171,17 +193,17 @@ test("cancelling the owning stream releases an incomplete upload; later chunks c
                         })
                     )
                 ).toMatchObject({ _tag: "Failure", failure: { kind: "ValidationFailed" } });
-                expect(create).not.toHaveBeenCalled();
+                expect(stored.size).toBe(0);
             })
         )
     );
 });
 
-test("authorization is checked before upload allocation and again for chunks", async () => {
+test("authorization is checked before upload allocation and again before completion", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const { client, create, deny } = yield* setup();
+                const { client, stored, deny } = yield* setup();
                 const ready = yield* Deferred.make<string>();
                 const upload = yield* Effect.forkScoped(
                     Stream.runForEach(client.CreateAttachment({ size: 0, type: "" }), (event) =>
@@ -206,7 +228,91 @@ test("authorization is checked before upload allocation and again for chunks", a
                     yield* Effect.result(Stream.runCollect(client.CreateAttachment({ size: 0, type: "" })))
                 ).toMatchObject({ _tag: "Failure", failure: { message: "Denied" } });
                 yield* Fiber.interrupt(upload);
-                expect(create).not.toHaveBeenCalled();
+                expect(stored.size).toBe(0);
+            })
+        )
+    );
+});
+
+test("unknown-length uploads are counted and another principal cannot write their chunks", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { client, stored } = yield* setup();
+                const ready = yield* Deferred.make<string>();
+                const upload = yield* Effect.forkScoped(
+                    Stream.runForEach(
+                        client.CreateAttachment(
+                            { id: "recording", type: "audio/webm" },
+                            { headers: { authorization: "Bearer alice" } }
+                        ),
+                        (event) =>
+                            event.kind === "ready"
+                                ? Deferred.succeed(ready, event.uploadId).pipe(Effect.asVoid)
+                                : Effect.void
+                    )
+                );
+                const uploadId = yield* Deferred.await(ready);
+                expect(
+                    yield* Effect.result(
+                        client.WriteAttachmentChunk(
+                            { uploadId, sequence: 0, bytes: new Uint8Array([9]), end: true },
+                            { headers: { authorization: "Bearer bob" } }
+                        )
+                    )
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "Forbidden" } });
+                yield* client.WriteAttachmentChunk(
+                    { uploadId, sequence: 0, bytes: new Uint8Array([1, 2, 3]), end: true },
+                    { headers: { authorization: "Bearer alice" } }
+                );
+                yield* Fiber.join(upload);
+                expect(stored.get("recording")?.size).toBe(3);
+            })
+        )
+    );
+});
+
+test("admission bounds release capacity on cancellation and enforce limits on unknown-length streams", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { client, stored } = yield* setup({ maxConcurrent: 1, maxBytes: 2 });
+                const ready = yield* Deferred.make<string>();
+                const upload = yield* Effect.forkScoped(
+                    Stream.runForEach(client.CreateAttachment({ type: "" }), (event) =>
+                        event.kind === "ready"
+                            ? Deferred.succeed(ready, event.uploadId).pipe(Effect.asVoid)
+                            : Effect.void
+                    )
+                );
+                yield* Deferred.await(ready);
+                expect(
+                    yield* Effect.result(Stream.runCollect(client.CreateAttachment({ size: 0, type: "" })))
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "RateLimited" } });
+                yield* Fiber.interrupt(upload);
+                const nextReady = yield* Deferred.make<string>();
+                const next = yield* Effect.forkScoped(
+                    Effect.result(
+                        Stream.runForEach(client.CreateAttachment({ type: "" }), (event) =>
+                            event.kind === "ready"
+                                ? Deferred.succeed(nextReady, event.uploadId).pipe(Effect.asVoid)
+                                : Effect.void
+                        )
+                    )
+                );
+                const uploadId = yield* Deferred.await(nextReady);
+                expect(
+                    yield* Effect.result(
+                        client.WriteAttachmentChunk({
+                            uploadId,
+                            sequence: 0,
+                            bytes: new Uint8Array(3),
+                            end: true,
+                        })
+                    )
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "ValidationFailed" } });
+                expect(yield* Fiber.join(next)).toMatchObject({ _tag: "Failure" });
+                expect(stored.size).toBe(0);
             })
         )
     );

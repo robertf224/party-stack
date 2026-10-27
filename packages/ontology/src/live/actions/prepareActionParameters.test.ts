@@ -1,4 +1,5 @@
 import { o } from "@party-stack/ontology-spec";
+import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -55,7 +56,11 @@ describe("prepareActionParameters", () => {
             attachment: { id: "attachment-1" },
         });
         expect(prepared.attachmentUploads[0]!.target).toEqual({});
-        await expect(prepared.attachmentUploads[0]!.blob.text()).resolves.toBe("hello");
+        await expect(
+            Effect.runPromise(collectByteBlob(prepared.attachmentUploads[0]!.blob)).then((blob) =>
+                blob.text()
+            )
+        ).resolves.toBe("hello");
         await blobManager.cleanup();
         await runtime.cleanup();
     });

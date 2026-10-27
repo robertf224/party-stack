@@ -1689,6 +1689,9 @@ importers:
 
   packages/ontology-storage:
     dependencies:
+      '@noble/hashes':
+        specifier: ^2.3.0
+        version: 2.3.0
       '@party-stack/ontology-spec':
         specifier: workspace:*
         version: link:../ontology-spec

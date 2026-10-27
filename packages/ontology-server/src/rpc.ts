@@ -26,6 +26,7 @@ import {
     type OntologyOperationsClient,
 } from "./operations.js";
 import { RpcActivity } from "./rpcActivity.js";
+import type { AttachmentTransferPolicy } from "./attachmentTransfers.js";
 import type { LiveOntology } from "@party-stack/ontology";
 import type { BackendSubset } from "@party-stack/ontology-backend";
 import type { ClientSession, ClientToken } from "@party-stack/ontology-backend/clients";
@@ -116,6 +117,7 @@ export type OntologyRpcRequest =
  * state inspection. Restricted sources must also project their returned state.
  */
 export interface OntologyRpcServerOptions<R = never> extends ErrorProjectionOptions {
+    readonly attachmentTransfers?: AttachmentTransferPolicy<R>;
     readonly source?: OntologySource;
     readonly ontology?: LiveOntology;
     readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;

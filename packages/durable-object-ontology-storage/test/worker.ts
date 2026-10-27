@@ -115,7 +115,9 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
             );
             await ontology.actions.createAsset!({ id: "asset-1", attachment: created.attachment });
             const blob = await ontology.attachments.blob(created.attachment);
-            const inline = this.database.prepare("SELECT COUNT(*) AS count FROM party_blob_bytes").get() as {
+            const inline = this.database
+                .prepare("SELECT COUNT(*) AS count FROM party_blob_generations")
+                .get() as {
                 count: number;
             };
             return { content: await blob.text(), type: blob.type, sqlBytesAreExternal: inline.count === 0 };
@@ -128,7 +130,9 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
                 target: { kind: "objectProperty", objectType: "Asset", property: "attachment" },
             });
             await ontology.actions.createAsset!({ id: "inline-asset", attachment: created.attachment });
-            const inline = this.database.prepare("SELECT COUNT(*) AS count FROM party_blob_bytes").get() as {
+            const inline = this.database
+                .prepare("SELECT COUNT(*) AS count FROM party_blob_generations")
+                .get() as {
                 count: number;
             };
             return inline.count > 0;

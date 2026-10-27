@@ -18,8 +18,15 @@ import {
     type OntologyIR,
 } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
+import {
+    byteSource,
+    byteChunks,
+    readableByteSource,
+    sliceByteSource,
+    type ByteInput,
+} from "@party-stack/ontology-storage/blobs";
 import { resolveType, unwrapType } from "@party-stack/ontology/utils";
-import { Effect } from "effect";
+import { Effect, Stream } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { getFoundryAttachmentKind } from "../meta/foundryAttachmentMetadata.js";
@@ -34,6 +41,7 @@ import {
 } from "./foundryActionValidation.js";
 import { createFoundryCodec } from "./foundryCodec.js";
 import { decodeFoundryMediaId, mediaReferenceToFoundryMediaId } from "./foundryMediaId.js";
+import { uploadFoundryMedia, uploadFoundryAttachment } from "./streamingMedia.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { BackendSnapshot, ValidationReport } from "@party-stack/ontology-backend";
 import type { Query } from "@party-stack/ontology-storage";
@@ -195,7 +203,7 @@ export function createFoundryOntologyBackendAdapter(
     const attachments = {
         materializeAttachment: async (
             attachment: attachment,
-            blob: Blob,
+            input: ByteInput,
             { target }: { target?: import("@party-stack/ontology-spec").AttachmentTypeDef },
             client = opts.client
         ) => {
@@ -207,9 +215,9 @@ export function createFoundryOntologyBackendAdapter(
                 getAttachmentProviderType(target) === "attachment",
                 "Foundry media references must be uploaded during action execution."
             );
-            const filename = getAttachmentName(blob) ?? "";
+            const filename = byteSource(input).name ?? "";
             if (!isFoundryAttachmentRid(attachment.id)) {
-                const uploaded = await Attachments.upload(client, blob, { filename });
+                const uploaded = await uploadFoundryAttachment(client, input, { filename });
                 return {
                     ...attachment,
                     id: uploaded.rid,
@@ -223,10 +231,7 @@ export function createFoundryOntologyBackendAdapter(
                     throw error;
                 }
             }
-            await Attachments.uploadWithRid(client, attachment.id, blob, {
-                filename,
-                preview: true,
-            });
+            await uploadFoundryAttachment(client, input, { filename, rid: attachment.id });
         },
         getAttachmentContent: async (attachment: attachment, readOptions?: { signal?: AbortSignal }) => {
             const client = withRequestSignal(opts.client, readOptions?.signal);
@@ -247,10 +252,16 @@ export function createFoundryOntologyBackendAdapter(
                     source.property,
                     { preview: true }
                 );
-                return response.blob();
+                invariant(response.body, "Foundry returned no media body.");
+                return readableByteSource(response.body, {
+                    type: response.headers.get("content-type") ?? attachment.type,
+                });
             }
             const contents = await Attachments.read(client, attachment.id);
-            return contents.blob();
+            invariant(contents.body, "Foundry returned no attachment body.");
+            return readableByteSource(contents.body, {
+                type: contents.headers.get("content-type") ?? attachment.type,
+            });
         },
         getAttachmentMetadata: async (
             attachment: attachment,
@@ -340,7 +351,7 @@ export function createFoundryOntologyBackendAdapter(
                         attachmentIdMappings.push({ localId: upload.attachment.id, remoteId: id });
                     return;
                 }
-                const reference = await MediaSets.uploadMedia(client, upload.blob, {
+                const reference = await uploadFoundryMedia(client, upload.blob, {
                     filename: getAttachmentName(upload.blob) ?? upload.attachment.id,
                 });
                 mediaReferences.set(upload.attachment.id, reference);
@@ -630,14 +641,8 @@ export function createFoundryOntologyBackendAdapter(
                                 attachments.getAttachmentContent(value, { signal })
                             );
                             return range
-                                ? blob.slice(
-                                      range.offset ?? 0,
-                                      range.length === undefined
-                                          ? undefined
-                                          : (range.offset ?? 0) + range.length,
-                                      blob.type
-                                  )
-                                : blob;
+                                ? sliceByteSource(blob, range.offset ?? 0, range.length)
+                                : byteSource(blob);
                         }),
                     metadata: (value, settings) =>
                         Effect.gen(function* () {
@@ -660,9 +665,28 @@ export function createFoundryOntologyBackendAdapter(
                             const blob = yield* attempt("attachment.read", (signal) =>
                                 attachments.getAttachmentContent(value, { signal })
                             );
+                            const source = byteSource(blob);
+                            const size =
+                                source.size ??
+                                (yield* byteChunks(source).pipe(
+                                    Stream.runFold(
+                                        () => 0,
+                                        (total, chunk) => total + chunk.length
+                                    ),
+                                    Effect.mapError(
+                                        (cause) =>
+                                            new BackendError({
+                                                operation: "attachment.metadata",
+                                                kind: "Unavailable",
+                                                message: "Attachment metadata is unavailable.",
+                                                retryable: true,
+                                                cause,
+                                            })
+                                    )
+                                ));
                             return {
-                                size: blob.size,
-                                type: blob.type,
+                                size,
+                                type: source.type,
                                 name: meta.name,
                                 dimensions: meta.dimensions ?? undefined,
                             };

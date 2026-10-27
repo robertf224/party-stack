@@ -1,19 +1,27 @@
 import { expect, it } from "@effect/vitest";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
-import { Effect, Deferred, Fiber, Exit, Result, Scope } from "effect";
+import { Effect, Deferred, Fiber, Exit, Result, Scope, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import * as Memory from "../memory/tables.js";
 import { Table } from "../model.js";
-import { makeBlobStorage, collectActionAttachments, type BlobBytesService } from "./index.js";
+import {
+    makeBlobStorage,
+    collectActionAttachments,
+    collectByteBlob,
+    byteIO,
+    type BlobBytesService,
+} from "./index.js";
 
 function memoryBytes() {
     const values = new Map<string, Blob>();
     const bytes: BlobBytesService = {
         read: (key) => Effect.sync(() => values.get(key)),
         write: (key, value) =>
-            Effect.sync(() => {
-                values.set(key, value);
-            }),
+            collectByteBlob(value).pipe(
+                Effect.map((blob) => {
+                    values.set(key, blob);
+                })
+            ),
         delete: (key) =>
             Effect.sync(() => {
                 values.delete(key);
@@ -177,10 +185,11 @@ it("cancellation waits for a non-cancelable writer and never publishes its late 
                     bytes: {
                         ...bytes,
                         write: (key, value) =>
-                            Effect.promise(async () => {
+                            byteIO(async () => {
+                                const blob = await Effect.runPromise(collectByteBlob(value));
                                 started();
                                 await done;
-                                values.set(key, value);
+                                values.set(key, blob);
                             }),
                     },
                 });
@@ -413,7 +422,9 @@ it.effect("scoped reads pin file-backed content until the consumer finishes or i
         const content = yield* Scope.provide(blobs.readScoped("remote"), reader);
         expect(content).toBeDefined();
         expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(0);
-        const received = yield* Effect.tryPromise(() => new Response(content!.stream()).text());
+        const received = yield* Effect.tryPromise(() =>
+            new Response(Stream.toReadableStream(content!.stream)).text()
+        );
         expect(received).toBe("streamable");
         yield* Scope.close(reader, Exit.void);
         expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(1);
@@ -436,4 +447,63 @@ it.effect("only replica storage may retain an attachment whose bytes are not loc
             );
         }
     }).pipe(Effect.scoped)
+);
+
+it.effect("stages a generated stream incrementally and publishes its measured size only at EOF", () =>
+    Effect.gen(function* () {
+        const tables = yield* Memory.make();
+        const { bytes } = memoryBytes();
+        const blobs = yield* makeBlobStorage({ namespace: "recording", tables, bytes });
+        const first = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        const stream = Stream.concat(
+            Stream.fromEffect(Deferred.succeed(first, undefined).pipe(Effect.as(new Uint8Array([1, 2])))),
+            Stream.fromEffect(Deferred.await(finish).pipe(Effect.as(new Uint8Array([3]))))
+        );
+        const writer = yield* Effect.forkScoped(blobs.stage("audio", { type: "audio/webm", stream }));
+        yield* Deferred.await(first);
+        expect(yield* blobs.metadata("audio")).toMatchObject({ writing: expect.any(String) });
+        expect((yield* blobs.metadata("audio"))?.byteKey).toBeUndefined();
+        expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(0);
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.join(writer);
+        expect(yield* blobs.metadata("audio")).toMatchObject({
+            size: 3,
+            type: "audio/webm",
+            writing: undefined,
+        });
+    }).pipe(Effect.scoped)
+);
+
+it.effect(
+    "rejects truncated streams and releases interrupted recording writes without publishing bytes",
+    () =>
+        Effect.gen(function* () {
+            const tables = yield* Memory.make();
+            const { bytes, values } = memoryBytes();
+            const blobs = yield* makeBlobStorage({ namespace: "incomplete-streams", tables, bytes });
+            expect(
+                Result.isFailure(
+                    yield* Effect.result(
+                        blobs.stage("truncated", {
+                            type: "",
+                            size: 2,
+                            stream: Stream.succeed(new Uint8Array([1])),
+                        })
+                    )
+                )
+            ).toBe(true);
+            const started = yield* Deferred.make<void>();
+            const stream = Stream.concat(
+                Stream.fromEffect(Deferred.succeed(started, undefined).pipe(Effect.as(new Uint8Array([1])))),
+                Stream.never
+            );
+            const writer = yield* Effect.forkScoped(blobs.stage("interrupted", { type: "", stream }));
+            yield* Deferred.await(started);
+            yield* Fiber.interrupt(writer);
+            expect((yield* blobs.metadata("interrupted"))?.writing).toBeUndefined();
+            expect((yield* blobs.metadata("interrupted"))?.byteKey).toBeUndefined();
+            yield* blobs.recover;
+            expect(values.size).toBe(0);
+        }).pipe(Effect.scoped)
 );

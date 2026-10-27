@@ -1,11 +1,12 @@
 import { o, makeStorageOntologyBackend, type OntologyMutatorRegistry } from "@party-stack/ontology";
+import { collectByteBlob, byteChunks } from "@party-stack/ontology-storage/blobs";
 import { sqliteOntologyConformanceIR } from "@party-stack/ontology/testing/sqlite";
 import { makeHelpers } from "alchemy/Cloudflare/R2/BucketBinding";
 import { makeReadWrite } from "alchemy/Cloudflare/R2/ReadWriteBucketBinding";
 import { DurableObjectState, fromDurableObjectState } from "alchemy/Cloudflare/Workers/DurableObjectState";
 import { RuntimeContext } from "alchemy/RuntimeContext";
 import { DurableObject } from "cloudflare:workers";
-import { Effect, Result } from "effect";
+import { Deferred, Effect, Fiber, Result, Stream } from "effect";
 import { makeAlchemyOntology } from "../src/alchemy/index.js";
 import { makeDurableObjectOntologyStorage, makeR2Bytes } from "../src/index.js";
 import { r2Prefix } from "../src/r2Keys.js";
@@ -143,6 +144,55 @@ export class AlchemyOntologyTest extends DurableObject<Environment> {
         );
     }
 
+    runStreamingBytes() {
+        const bucket = this.env.BLOBS;
+        return Effect.runPromise(
+            withTestRuntime(
+                Effect.scoped(
+                    Effect.gen(function* () {
+                        const bytes = yield* makeR2Bytes({
+                            bucket: testBucket(bucket),
+                            installationId: "stream-tests",
+                            ontologyId: "bytes",
+                        });
+                        const stream = Stream.fromIterable(
+                            Array.from({ length: 160 }, (_, index) => index),
+                            { chunkSize: 1 }
+                        ).pipe(Stream.map((index) => new Uint8Array(64 * 1024).fill(index)));
+                        yield* bytes.write("unknown", { stream, type: "application/octet-stream" });
+                        const source = yield* bytes.read("unknown");
+                        if (!source) return yield* Effect.die("Missing streamed R2 object.");
+                        const received = yield* byteChunks(source).pipe(
+                            Stream.runFold(
+                                () => 0,
+                                (total, chunk) => total + chunk.length
+                            )
+                        );
+                        const started = yield* Deferred.make<void>();
+                        const pending = Stream.concat(
+                            Stream.fromEffect(
+                                Deferred.succeed(started, undefined).pipe(
+                                    Effect.as(new Uint8Array(64 * 1024))
+                                )
+                            ),
+                            Stream.never
+                        );
+                        const writer = yield* Effect.forkScoped(
+                            bytes.write("cancelled", { stream: pending, size: 1024 * 1024, type: "" })
+                        );
+                        yield* Deferred.await(started);
+                        yield* Fiber.interrupt(writer);
+                        return {
+                            received,
+                            cancelledMissing: (yield* bytes.read("cancelled")) === undefined,
+                        };
+                    })
+                ),
+                bucket
+            )
+        );
+    }
+
     runRetention() {
         // Runtime binding helpers use only the resource's logical binding name.
         const bucket = makeReadWrite(
@@ -208,11 +258,13 @@ export class AlchemyOntologyTest extends DurableObject<Environment> {
                         offset: 7,
                         length: 5,
                     });
-                    const rangeText = yield* Effect.promise(() => range.text());
+                    const rangeBlob = yield* collectByteBlob(range);
+                    const rangeText = yield* Effect.promise(() => rangeBlob.text());
                     const protectedCount = yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 });
                     const reopened = yield* makeAlchemyOntology(options);
                     const content = yield* reopened.backend.attachments!.read(upload.attachment);
-                    const text = yield* Effect.promise(() => content.text());
+                    const contentBlob = yield* collectByteBlob(content);
+                    const text = yield* Effect.promise(() => contentBlob.text());
                     yield* reopened.backend.applyAction({
                         id: "remove-one",
                         name: "removeAsset",

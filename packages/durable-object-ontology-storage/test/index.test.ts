@@ -143,3 +143,13 @@ for (const disabled of [false, true]) {
         });
     });
 }
+
+it("R2 streams known-length bodies, cancels incomplete puts, and accepts unknown-length multipart sources", async () => {
+    const { ALCHEMY_ONTOLOGY } = env as unknown as {
+        ALCHEMY_ONTOLOGY: DurableObjectNamespace<import("./alchemy.js").AlchemyOntologyTest>;
+    };
+    await expect(ALCHEMY_ONTOLOGY.get(ALCHEMY_ONTOLOGY.newUniqueId()).runStreamingBytes()).resolves.toEqual({
+        received: 10 * 1024 * 1024,
+        cancelledMissing: true,
+    });
+});

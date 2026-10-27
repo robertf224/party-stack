@@ -3,10 +3,11 @@ import { makeStorageOntologyBackend } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOntologyServer, projectOntologyBackend } from "@party-stack/ontology-server";
 import { and, eq, field } from "@party-stack/ontology-storage";
+import { byteSource } from "@party-stack/ontology-storage/blobs";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import { createFileRoute } from "@tanstack/react-router";
 import Database from "better-sqlite3";
-import { Context, Effect, Layer, ManagedRuntime, Schema } from "effect";
+import { Context, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
 import { notesOntology } from "../ontology/ontology";
 
 const namespace = "remote-notes-sqlite";
@@ -149,7 +150,13 @@ async function handleRequest(request: Request): Promise<Response> {
                 Effect.mapError(() => denied())
             );
             if (!server.attachments) return yield* denied();
-            return new Response(yield* server.attachments.read(input.attachment));
+            const content = byteSource(yield* server.attachments.read(input.attachment));
+            return new Response(Stream.toReadableStream(content.stream), {
+                headers: {
+                    "Content-Type": content.type,
+                    ...(content.size === undefined ? {} : { "Content-Length": String(content.size) }),
+                },
+            });
         }).pipe(Effect.catch(() => Effect.succeed(new Response("Not found.", { status: 404 }))))
     );
 }

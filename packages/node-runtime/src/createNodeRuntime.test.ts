@@ -2,11 +2,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Table } from "@party-stack/ontology-storage/tables";
+import { collectByteBlob } from "@party-stack/runtime";
 import { createLocalCollection } from "@party-stack/runtime";
 import { Runtime } from "@party-stack/runtime";
 import { acquireRuntime } from "@party-stack/runtime/testing";
 import { runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { queryOnce } from "@tanstack/db";
+import { Effect } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { createNodeRuntimeWithOptions } from "./createNodeRuntime.js";
@@ -180,8 +182,12 @@ describe("createNodeRuntime", () => {
         await first.blobBytes.write("blob", new Blob(["first"]));
         await second.blobBytes.write("blob", new Blob(["second"]));
 
-        await expect((await first.blobBytes.read("blob")).text()).resolves.toBe("first");
-        await expect((await second.blobBytes.read("blob")).text()).resolves.toBe("second");
+        await expect(
+            (await Effect.runPromise(collectByteBlob(await first.blobBytes.read("blob")))).text()
+        ).resolves.toBe("first");
+        await expect(
+            (await Effect.runPromise(collectByteBlob(await second.blobBytes.read("blob")))).text()
+        ).resolves.toBe("second");
         await first.destroy?.();
         await second.destroy?.();
     });

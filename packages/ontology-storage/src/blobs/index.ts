@@ -1,7 +1,8 @@
-import { Clock, Context, Effect, Exit, Layer, Schema } from "effect";
+import { Clock, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
 import { Table, eq, ne, field, lte, and, type Cursor } from "../model.js";
 import { cursorOf } from "../query/evaluate.js";
 import { Tables, type TablesService, type ReadTransaction, type Transaction } from "../tables.js";
+import { byteSource, byteChunks, collectByteBlob, type ByteInput, type ByteSource } from "./bytes.js";
 import {
     BlobBytes,
     BlobRecordSchema,
@@ -15,6 +16,7 @@ import {
 import type { OntologyStorageError } from "../errors.js";
 
 export * from "./model.js";
+export * from "./bytes.js";
 export { exclusiveOwnerLiveness } from "./owners.js";
 export { collectAttachments, collectActionAttachments, collectObjectAttachments } from "./attachments.js";
 export type { AttachmentReference } from "./attachments.js";
@@ -36,12 +38,12 @@ export interface BlobStorageService {
     readonly records: (
         query?: import("../model.js").Query
     ) => Effect.Effect<import("../model.js").Row<BlobRecord>[], Failure>;
-    readonly stage: (id: string, value: Blob) => Effect.Effect<void, Failure>;
-    readonly cache: (id: string, value: Blob) => Effect.Effect<void, Failure>;
+    readonly stage: (id: string, value: ByteInput) => Effect.Effect<void, Failure>;
+    readonly cache: (id: string, value: ByteInput) => Effect.Effect<void, Failure>;
     /** File-backed content is valid within the caller's scope; consume streams before it closes. */
     readonly readScoped: (
         id: string
-    ) => Effect.Effect<Blob | undefined, Failure, import("effect").Scope.Scope>;
+    ) => Effect.Effect<ByteSource | undefined, Failure, import("effect").Scope.Scope>;
     /** Materialized local read; safe to consume after this call completes. The caller handles misses. */
     readonly read: (id: string) => Effect.Effect<Blob | undefined, Failure>;
     readonly updateMetadata: (id: string, value: BlobMetadata) => Effect.Effect<BlobRecord, Failure>;
@@ -270,14 +272,49 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
         );
     const write = Effect.fn("BlobStorage.write")(function* (
         id: string,
-        value: Blob,
+        input: ByteInput,
         state: "staged" | "cached"
     ) {
         if (!id) return yield* blobFailure("InvalidValue", "A blob handle needs an ID.");
+        const value = byteSource(input);
+        if (value.size !== undefined && (!Number.isSafeInteger(value.size) || value.size < 0))
+            return yield* blobFailure("InvalidValue", "Invalid attachment size.");
+        let size = 0;
+        let finished = false;
+        const content: ByteSource = {
+            ...value,
+            stream: Stream.concat(
+                byteChunks(value).pipe(
+                    Stream.mapEffect((chunk) =>
+                        Effect.gen(function* () {
+                            size += chunk.length;
+                            if (
+                                !Number.isSafeInteger(size) ||
+                                (value.size !== undefined && size > value.size)
+                            )
+                                return yield* blobFailure(
+                                    "InvalidValue",
+                                    "Attachment exceeds its declared size."
+                                );
+                            return chunk;
+                        })
+                    )
+                ),
+                Stream.fromEffect(
+                    Effect.gen(function* () {
+                        if (value.size !== undefined && size !== value.size)
+                            return yield* blobFailure(
+                                "InvalidValue",
+                                "Attachment ended before its declared size."
+                            );
+                        finished = true;
+                    })
+                ).pipe(Stream.drain)
+            ),
+        };
         const token = crypto.randomUUID();
         const byteKey = `party-stack:blob:${token}`;
-        // Wait for an external write to settle even if its Promise ignores cancellation.
-        // Then check cancellation before publishing it or queue its exact generation for cleanup.
+        // Byte stores cancel and settle IO before returning. Only the metadata handoff is uninterruptible.
         yield* Effect.uninterruptibleMask((restore) =>
             Effect.gen(function* () {
                 yield* tables.transaction((tx) =>
@@ -305,7 +342,9 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                     })
                 );
                 yield* Effect.gen(function* () {
-                    yield* io(bytes.write(byteKey, value));
+                    yield* restore(io(bytes.write(byteKey, content)));
+                    if (!finished)
+                        return yield* blobFailure("Bytes", "Byte store did not consume the complete stream.");
                     yield* restore(Effect.void);
                     yield* tables.transaction((tx) =>
                         Effect.gen(function* () {
@@ -321,7 +360,7 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                                 byteKey,
                                 writing: undefined,
                                 state,
-                                size: value.size,
+                                size,
                                 type: value.type || (state === "cached" ? (record.type ?? "") : ""),
                                 name:
                                     state === "cached" && record.name !== undefined
@@ -392,11 +431,12 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                 if (!acquired?.record.byteKey) return undefined;
                 const value = yield* io(bytes.read(acquired.record.byteKey));
                 if (value)
-                    return typeof acquired.record.name === "string"
-                        ? new File([value], acquired.record.name, {
-                              type: acquired.record.type ?? value.type,
-                          })
-                        : new Blob([value], { type: acquired.record.type ?? value.type });
+                    return {
+                        ...byteSource(value),
+                        size: acquired.record.size ?? byteSource(value).size,
+                        type: acquired.record.type ?? byteSource(value).type,
+                        name: acquired.record.name ?? byteSource(value).name,
+                    };
                 // A byte store can lose cache files independently. Detach only
                 // the generation we read, preserving the identity and its roots.
                 yield* tables.transaction((tx) =>
@@ -417,10 +457,7 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                 Effect.gen(function* () {
                     const blob = yield* service.readScoped(id);
                     if (!blob) return undefined;
-                    const buffer = yield* io(Effect.tryPromise(() => blob.arrayBuffer()));
-                    return typeof File !== "undefined" && blob instanceof File
-                        ? new File([buffer], blob.name, { type: blob.type })
-                        : new Blob([buffer], { type: blob.type });
+                    return yield* io(collectByteBlob(blob));
                 })
             ).pipe(Effect.withSpan("BlobStorage.read")),
         updateMetadata: Effect.fnUntraced(function* (id: string, input: BlobMetadata) {

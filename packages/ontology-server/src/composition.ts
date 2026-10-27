@@ -54,7 +54,39 @@ export const makeOntologyServer = Effect.fn("OntologyServer.make")(function* <R 
             // use Submit for durable acceptance and normal parent-state handoff.
             applyAction: (invocation) =>
                 Effect.gen(function* () {
-                    yield* replica.enqueue(invocation, { optimistic: true });
+                    if (invocation.attachmentUploads?.length) {
+                        if (!options.ontology)
+                            return yield* new BackendError({
+                                operation: "applyAction.upload",
+                                kind: "NotImplemented",
+                                message:
+                                    "A replica server needs local attachment storage to accept action uploads.",
+                                retryable: false,
+                                actionOutcome: "not-committed",
+                            });
+                        for (const upload of invocation.attachmentUploads)
+                            yield* Effect.tryPromise({
+                                try: () =>
+                                    options.ontology!.attachments.create(upload.blob, {
+                                        id: upload.attachment.id,
+                                    }),
+                                catch: (cause) =>
+                                    cause instanceof BackendError
+                                        ? cause
+                                        : new BackendError({
+                                              operation: "applyAction.upload",
+                                              kind: "Unavailable",
+                                              message: "Local attachment staging failed.",
+                                              retryable: false,
+                                              actionOutcome: "not-committed",
+                                              cause,
+                                          }),
+                            });
+                    }
+                    yield* replica.enqueue(
+                        { ...invocation, attachmentUploads: undefined },
+                        { optimistic: true }
+                    );
                     const receipt = yield* replica.awaitAction(invocation.id);
                     if (!receipt)
                         return yield* new BackendError({

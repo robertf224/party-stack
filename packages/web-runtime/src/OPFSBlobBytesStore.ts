@@ -1,4 +1,10 @@
-import { BlobBytesNotFoundError, type BlobBytesStore } from "@party-stack/runtime";
+import {
+    BlobBytesNotFoundError,
+    byteSource,
+    type ByteInput,
+    type BlobBytesStore,
+} from "@party-stack/runtime";
+import { Stream } from "effect";
 
 export interface OPFSBlobBytesStoreOptions {
     directoryName: string;
@@ -15,17 +21,13 @@ export class OPFSBlobBytesStore implements BlobBytesStore {
         this.#directoryName = options.directoryName;
     }
 
-    async write(id: string, blob: Blob): Promise<void> {
+    async write(id: string, input: ByteInput, signal?: AbortSignal): Promise<void> {
         const directory = await this.#directory();
         const fileHandle = await directory.getFileHandle(encodeFileName(id), {
             create: true,
         });
         const writable = await fileHandle.createWritable();
-        try {
-            await writable.write(blob);
-        } finally {
-            await writable.close();
-        }
+        await Stream.toReadableStream(byteSource(input).stream).pipeTo(writable, { signal });
     }
 
     async read(id: string): Promise<Blob> {

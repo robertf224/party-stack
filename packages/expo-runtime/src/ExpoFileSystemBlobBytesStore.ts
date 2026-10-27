@@ -1,4 +1,10 @@
-import { BlobBytesNotFoundError, type BlobBytesStore } from "@party-stack/runtime";
+import {
+    BlobBytesNotFoundError,
+    byteSource,
+    type ByteInput,
+    type BlobBytesStore,
+} from "@party-stack/runtime";
+import { Stream } from "effect";
 import { Directory, File, Paths } from "expo-file-system";
 import { hashStorageName } from "./hashStorageName.js";
 
@@ -13,11 +19,15 @@ export class ExpoFileSystemBlobBytesStore implements BlobBytesStore {
         this.#directoryName = options.directoryName;
     }
 
-    async write(id: string, blob: Blob): Promise<void> {
+    async write(id: string, input: ByteInput, signal?: AbortSignal): Promise<void> {
         const file = await this.#file(id);
-        const bytes = new Uint8Array(await blob.arrayBuffer());
         file.create({ intermediates: true, overwrite: true });
-        file.write(bytes);
+        try {
+            await Stream.toReadableStream(byteSource(input).stream).pipeTo(file.writableStream(), { signal });
+        } catch (error) {
+            if (file.exists) file.delete();
+            throw error;
+        }
     }
 
     read(id: string): Promise<Blob> {

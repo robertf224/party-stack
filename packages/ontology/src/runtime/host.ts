@@ -12,6 +12,7 @@ import type { BlobManager } from "./blobs/types.js";
 import type { ConnectionMonitor } from "@party-stack/connect";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { attachment } from "@party-stack/ontology-spec/values";
+import type { ByteInput } from "@party-stack/ontology-storage/blobs";
 import type { RuntimeAdapter } from "@party-stack/runtime";
 
 const failure = (cause: unknown) =>
@@ -43,7 +44,7 @@ export interface ReplicaHostService {
     readonly blobManager: BlobManager;
     readonly stageAttachment?: (
         value: attachment,
-        bytes: Blob,
+        bytes: ByteInput,
         target?: import("@party-stack/ontology-spec").AttachmentTypeDef
     ) => Promise<attachment>;
     readonly observe: (
@@ -79,8 +80,11 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
             retryable: false,
         });
     const stageAttachment = backend.attachments?.stage
-        ? (value: attachment, bytes: Blob, target?: import("@party-stack/ontology-spec").AttachmentTypeDef) =>
-              run(backend.attachments!.stage!(value, bytes, { target }))
+        ? (
+              value: attachment,
+              bytes: ByteInput,
+              target?: import("@party-stack/ontology-spec").AttachmentTypeDef
+          ) => run(backend.attachments!.stage!(value, bytes, { target }))
         : undefined;
     const blobManager = yield* Effect.acquireRelease(
         Effect.sync(() =>

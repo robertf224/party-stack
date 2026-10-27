@@ -3,6 +3,7 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica } from "@party-stack/ontology-replica";
 import { eq, field } from "@party-stack/ontology-storage";
+import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Deferred, Effect, Exit, Scope, Stream } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
@@ -404,12 +405,14 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
             },
         },
         attachments: {
-            create: async (blob: Blob, opts?: { id?: string }) => {
+            create: async (input: ByteInput, opts?: { id?: string }) => {
+                const blob = await Effect.runPromise(collectByteBlob(input));
                 const id = opts?.id ?? "blob";
                 bytes.set(id, blob);
                 return { attachment: { id, type: blob.type } };
             },
             blob: async (attachment: { id: string }) => bytes.get(attachment.id)!,
+            source: async (attachment: { id: string }) => bytes.get(attachment.id)!,
             metadata: async (attachment: { id: string }) => ({
                 ...attachment,
                 size: bytes.get(attachment.id)!.size,

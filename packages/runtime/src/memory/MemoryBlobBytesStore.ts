@@ -1,12 +1,14 @@
+import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
+import { Effect } from "effect";
 import { BlobBytesNotFoundError } from "../BlobBytesNotFoundError.js";
 import type { BlobBytesStore } from "../types.js";
 
 export class MemoryBlobBytesStore implements BlobBytesStore {
     constructor(readonly blobs = new Map<string, Blob>()) {}
 
-    write(id: string, blob: Blob): Promise<void> {
+    async write(id: string, value: ByteInput, signal?: AbortSignal): Promise<void> {
+        const blob = await Effect.runPromise(collectByteBlob(value), { signal });
         this.blobs.set(id, blob);
-        return Promise.resolve();
     }
 
     read(id: string): Promise<Blob> {

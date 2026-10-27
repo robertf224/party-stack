@@ -19,3 +19,11 @@ export * from "./Runtime.js";
 export { getCollectionDemands, type CollectionDemandDiagnostic } from "./collections/diagnostics.js";
 
 export { makeSecretStoreKeyring, type KeyMaterialCodec } from "./encryptionKeys.js";
+export {
+    byteSource,
+    byteChunks,
+    collectByteBlob,
+    readableByteSource,
+    byteIO,
+} from "@party-stack/ontology-storage/blobs";
+export type { ByteSource, ByteInput } from "@party-stack/ontology-storage/blobs";

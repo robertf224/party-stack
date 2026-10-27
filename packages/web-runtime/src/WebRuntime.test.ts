@@ -1,4 +1,5 @@
 import { Table } from "@party-stack/ontology-storage/tables";
+import { collectByteBlob } from "@party-stack/runtime";
 import { Runtime } from "@party-stack/runtime";
 import { acquireRuntime } from "@party-stack/runtime/testing";
 import { Deferred, Effect, Fiber } from "effect";
@@ -27,7 +28,8 @@ test("the platform runtime is acquired lazily and scope closure releases its res
             yield* runtime.tables.put(Table.make<number>({ name: "rows" }), "one", 1);
             yield* runtime.bytes.write("bytes", new Blob(["data"]));
             const bytes = yield* runtime.bytes.read("bytes");
-            expect(yield* Effect.promise(() => bytes!.text())).toBe("data");
+            const blob = yield* collectByteBlob(bytes!);
+            expect(yield* Effect.promise(() => blob.text())).toBe("data");
             expect(p.add.mock.calls.map(([name]) => name)).toEqual(["online", "offline"]);
             return runtime;
         }).pipe(Effect.provide(runtimeLayer))

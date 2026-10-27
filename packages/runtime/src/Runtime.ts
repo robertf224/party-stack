@@ -1,3 +1,4 @@
+import { byteIO, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Context, Effect, Layer, PubSub, Queue, Schema, Stream, Tracer } from "effect";
 import { BlobBytesNotFoundError } from "./BlobBytesNotFoundError.js";
@@ -39,8 +40,8 @@ export interface RuntimeService {
     readonly externalChanges: Stream.Stream<void>;
     readonly notify: Effect.Effect<void>;
     readonly bytes: {
-        read(id: string): Effect.Effect<Blob | undefined, RuntimeError>;
-        write(id: string, value: Blob): Effect.Effect<void, RuntimeError>;
+        read(id: string): Effect.Effect<ByteInput | undefined, RuntimeError>;
+        write(id: string, value: ByteInput): Effect.Effect<void, RuntimeError>;
         delete(id: string): Effect.Effect<void, RuntimeError>;
     };
 }
@@ -108,8 +109,10 @@ export class Runtime extends Context.Service<Runtime, RuntimeService>()("@party-
                         }
                     });
                 }),
-                write: Effect.fn("Runtime.bytes.write")(function* (id: string, value: Blob) {
-                    yield* attempt("bytes.write", () => adapter.blobBytes.write(id, value));
+                write: Effect.fn("Runtime.bytes.write")(function* (id: string, value: ByteInput) {
+                    yield* byteIO((signal) => adapter.blobBytes.write(id, value, signal)).pipe(
+                        Effect.mapError((cause) => new RuntimeError({ operation: "bytes.write", cause }))
+                    );
                 }),
                 delete: Effect.fn("Runtime.bytes.delete")(function* (id: string) {
                     yield* attempt("bytes.delete", () => adapter.blobBytes.delete(id));

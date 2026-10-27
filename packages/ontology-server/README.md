@@ -241,12 +241,35 @@ subset reads, action commits and optional journal reads, without session allocat
 
 Trace snapshots use a sliding buffer and are subscribed only while the consumer
 asks for them. Attachment downloads stream metadata followed by bounded byte frames.
-Uploads use ordered, acknowledged 64 KiB chunk calls beneath a scoped response
-stream because Effect RPC supports streamed responses, not streamed request payloads.
-Closing that stream discards incomplete transfers. Sequence/size checks reject
-partial uploads; authorization runs before allocation and for each chunk. No
-durable resumable upload session is introduced. The Blob API still materializes
-content at storage boundaries; the transport avoids a single whole-file RPC frame.
+
+The HTTP binding uses the same configured Effect HttpClient for RPC and binary IO.
+Standalone attachment creation sends one streamed binary POST to the mounted URL;
+actions carrying new bytes send a streamed multipart POST containing the portable
+action request and files associated by attachment ID. Actions without new bytes
+remain ordinary RPCs. A stateless proxy can consume those file streams directly in
+its native backend's applyAction, without a staging registry or disk. The last file's
+EOF is withheld until the complete multipart envelope and final authorization pass,
+so provider action dispatch cannot precede upload validation. Files/metadata have
+explicit per-request limits. HTTP does not use the multi-call chunk upload RPC.
+
+Worker/MessagePort bindings use ordered, acknowledged 64 KiB chunk calls beneath a
+scoped response stream. This host-local upload registry is bounded and expires on
+idle/total deadlines; it is not a durable resumable session. Every chunk checks its
+connection and authenticated upload owner. Full authorization runs on opening and
+completion, rather than on every chunk. Closing the owning stream cancels incomplete
+writes. Configure attachmentTransfers.uploadOwner for custom authentication or a
+form/revision-scoped identity; the default fingerprints authorization/cookie headers.
+Limits live under attachmentTransfers.limits (maxBytes, maxConcurrent, maxPerOwner,
+maxReservedBytes, idleTimeoutMs, maxDurationMs). HTTP uses the size/deadline settings
+per request; connection/owner admission applies to the message transport's host.
+
+Both transports call the same attachment writer and native action executor. Owned
+storage accepts one-shot bytes into its final byte store before fingerprinting or
+committing rows; an intermediate replica needs its local attachment storage before
+accepting uploads into an outbox. Parameters/outboxes persist attachment handles,
+not stream objects. Provider-specific ID mappings return in the action receipt.
+The application Blob convenience and memory store have explicit buffering limits;
+the streaming storage/provider paths do not assemble a whole-file Blob.
 
 Optional `ready` gates Describe and helper requests while a worker restores its
 installation. Bootstrap failures retain their typed BackendError. Neither local

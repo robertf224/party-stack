@@ -265,20 +265,23 @@ function NotesContent({
 
     const trimmedSearchQuery = searchQuery.trim();
     const { data: notes } = useLiveQuery(
-        (q) => {
-            const notesQuery = q.from({ note: ontology.objects.Note });
-            const filteredNotesQuery = trimmedSearchQuery
-                ? notesQuery.where(({ note }) =>
-                      or(
-                          ilike(note.title, `%${trimmedSearchQuery}%`),
-                          ilike(note.bodyMarkdown, `%${trimmedSearchQuery}%`)
+        {
+            client: ontology.dbClient,
+            query: (q) => {
+                const notesQuery = q.from({ note: ontology.objects.Note });
+                const filteredNotesQuery = trimmedSearchQuery
+                    ? notesQuery.where(({ note }) =>
+                          or(
+                              ilike(note.title, `%${trimmedSearchQuery}%`),
+                              ilike(note.bodyMarkdown, `%${trimmedSearchQuery}%`)
+                          )
                       )
-                  )
-                : notesQuery;
+                    : notesQuery;
 
-            return filteredNotesQuery
-                .select(({ note }) => ({ ...note }))
-                .orderBy(({ note }) => note.updatedAt, "desc");
+                return filteredNotesQuery
+                    .select(({ note }) => ({ ...note }))
+                    .orderBy(({ note }) => note.updatedAt, "desc");
+            },
         },
         [ontology, trimmedSearchQuery]
     );

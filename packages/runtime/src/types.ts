@@ -1,7 +1,9 @@
+import type { ByteInput } from "@party-stack/ontology-storage/blobs";
+
 export interface BlobBytesStore {
-    write(id: string, blob: Blob): Promise<void>;
+    write(id: string, bytes: ByteInput, signal?: AbortSignal): Promise<void>;
     /** Reject with BlobBytesNotFoundError for a missing key; preserve other IO failures. */
-    read(id: string): Promise<Blob>;
+    read(id: string): Promise<ByteInput>;
     delete(id: string): Promise<void>;
 }
 

@@ -1,5 +1,6 @@
 import { o, type OntologyBackendAdapter, type OntologyIR } from "@party-stack/ontology";
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
+import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { eq, gt, IR, queryOnce } from "@tanstack/db";
 import { Effect } from "effect";
 import { Temporal } from "temporal-polyfill";
@@ -566,7 +567,9 @@ describe("remote ontology server policy projection", () => {
 
                 rows: [],
                 apply: async (_actionType, parameters, uploads) => {
-                    materializedFile = uploads?.[0]?.blob;
+                    materializedFile = uploads?.[0]
+                        ? await Effect.runPromise(collectByteBlob(uploads[0].blob))
+                        : undefined;
                     appliedParameters = {
                         ...parameters,
                         file: { ...(parameters.file as Record<string, unknown>), id: remoteId },

@@ -1,5 +1,32 @@
 # Replicating replica state
 
+## October 27 clarification: source paths and convergence
+
+The SharedWorker is a replica server using the same OntologySource contract as
+an intermediate cloud replica. Owned backends also expose that protocol. There is
+no worker-specific row/outbox replication protocol: worker-specific code supplies
+transport, principal/ontology partitioning and persistent platform storage.
+
+Two acquisition paths remain in the engine: direct backend adapters use subset
+snapshots plus optional committed changes.pull; protocol sources use Changes hints
+plus Read/Submit selected-state snapshots. Changes itself carries no row payload.
+The latter snapshots include base rows, inherited overrides, selected pending and
+completed actions, and client delivery/acceptance progress. Their installation and
+local prediction handoff are transactional. Repeated refreshes currently transfer
+unchanged selected state too; this is a v0 transfer limitation, not a retained
+incremental replica-state feed.
+
+The committed backend journal cannot be forwarded unchanged by an intermediate:
+an offline action changes its outbox/overlay before an authoritative commit exists.
+Keep the parent's local state revision distinct from its upstream journal cursor.
+The eventual common protocol should support initial/replacement selected state,
+atomic incremental state updates and explicit reset after history expiry. Owned
+sources have no speculative overlay; replica sources include it. The same receiving
+machinery should serve both, with provider adapters normalizing into that model.
+Result membership/removals, bounded history, authorization and action handoff must
+stay coherent; a first implementation can reevaluate/diff selected results without
+claiming server IVM. See subset-subscriptions.md for related query-feed work.
+
 Design exploration from the October 20, 2026 discussion. Selected-state exchange
 uses the existing Replica engine for parent and children, with scoped connections,
 direct owned sources and initial Effect RPC/HTTP composition. Production application

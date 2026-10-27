@@ -1,7 +1,9 @@
 # Recovery and bookkeeping — v0 scope
 
-Agreed October 26. Keep selected snapshots and current subset demand; full query
-IR, server IVM, and retained replica-state deltas are not v0 prerequisites.
+Agreed October 26; updated October 27. Keep selected snapshots and current subset
+demand. Hierarchical Query IR/context binding was subsequently pulled into the final
+Gateway authorization phase; see gateway-v0-parity.md. Server IVM/live full-query
+watching and retained replica-state deltas remain outside v0.
 
 ## Vocabulary and lifetime
 

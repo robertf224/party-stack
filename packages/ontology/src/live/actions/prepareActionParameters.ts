@@ -41,7 +41,7 @@ export const prepareActionParameters = Effect.fn("Ontology.prepareActionParamete
         const record = yield* storage.metadata(entry.attachment.id).pipe(Effect.mapError(failure));
         if (record?.state !== "staged" || record.remoteId) continue;
         const blob = yield* Effect.tryPromise({
-            try: (signal) => manager.read(entry.attachment.id, { signal }),
+            try: (signal) => manager.source(entry.attachment.id, { signal }),
             catch: failure,
         });
         uploads.push({ ...entry, blob });

@@ -5,6 +5,7 @@ import {
     type OntologyMutatorRegistry,
     type OntologyQueryFunctionRegistry,
 } from "@party-stack/ontology";
+import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import { eq, queryOnce, type Collection } from "@tanstack/db";
 import { Effect } from "effect";
 import {
@@ -358,9 +359,8 @@ function runTransactionRollback(database: SQLiteDatabase): void {
 class MemoryAttachmentBytesStore implements SQLiteAttachmentBytesStore {
     readonly blobs = new Map<string, Blob>();
 
-    write(id: string, blob: Blob): Promise<void> {
-        this.blobs.set(id, blob);
-        return Promise.resolve();
+    async write(id: string, input: ByteInput): Promise<void> {
+        this.blobs.set(id, await Effect.runPromise(collectByteBlob(input)));
     }
 
     read(id: string): Promise<Blob> {
@@ -393,7 +393,7 @@ class DelayedAttachmentBytesStore extends MemoryAttachmentBytesStore {
         this.markStarted = started;
     }
 
-    override async write(id: string, blob: Blob): Promise<void> {
+    override async write(id: string, blob: ByteInput): Promise<void> {
         this.markStarted();
         await this.writeGate;
         await super.write(id, blob);

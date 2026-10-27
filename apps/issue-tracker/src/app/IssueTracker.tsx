@@ -427,6 +427,7 @@ function UserAvatar({
 function ProfileIdentity({ profile }: { profile: ConnectedProfile }) {
     const ontology = profile.ontology;
     const { data: user } = useLiveQuery({
+        client: ontology.dbClient,
         query: (q) =>
             q
                 .from({ User: ontology.objects.User })
@@ -1035,6 +1036,7 @@ function IssueDetails({
     const { updateIssue, deleteIssue } = ontology.actions;
     const [editing, setEditing] = useState(false);
     const { data: issue } = useLiveQuery({
+        client: ontology.dbClient,
         query: (q) =>
             q
                 .from({ Issue: ontology.objects.Issue })
@@ -1891,6 +1893,7 @@ function ConnectedIssueTracker({
     const devtoolsPlugins = useMemo(() => [createOntologyDevtoolsPlugin({ ontology })], [ontology]);
 
     const { data: projects, isLoading: projectsLoading } = useLiveQuery({
+        client: ontology.dbClient,
         query: (q) =>
             q
                 .from({ Project: ontology.objects.Project })
@@ -1898,11 +1901,13 @@ function ConnectedIssueTracker({
     });
 
     const { data: users } = useLiveQuery({
+        client: ontology.dbClient,
         query: (q) => q.from({ User: ontology.objects.User }).orderBy(({ User }) => User.familyName, "asc"),
     });
     const currentUser = users.find((user) => user.id === ontology.context.user);
 
     const { data: allIssueIds } = useLiveQuery({
+        client: ontology.dbClient,
         query: (q) =>
             q.from({ Issue: ontology.objects.Issue }).select(({ Issue }) => ({
                 issueId: Issue.issueId,
@@ -1910,6 +1915,7 @@ function ConnectedIssueTracker({
     });
 
     const { data: issues, isLoading: issuesLoading } = useLiveQuery({
+        client: ontology.dbClient,
         query: (q) => {
             let query = q.from({ Issue: ontology.objects.Issue });
             if (search)

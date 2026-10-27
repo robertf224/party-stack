@@ -1,8 +1,8 @@
 import { Table } from "@party-stack/ontology-storage/tables";
-import { createLocalCollection } from "@party-stack/runtime";
+import { byteSource, createLocalCollection } from "@party-stack/runtime";
 import { Runtime } from "@party-stack/runtime";
 import { createLiveQueryCollection, queryOnce } from "@tanstack/db";
-import { ManagedRuntime, Scope } from "effect";
+import { Effect, ManagedRuntime, Scope, Stream } from "effect";
 import { layer } from "../src/WebRuntime.js";
 
 // Drop storage notifications while retaining real native locks and IndexedDB.
@@ -58,6 +58,37 @@ const subscription = query.subscribeChanges(() => {}, { includeInitialState: tru
 await queryOnce((q) => q.from({ item: query }));
 Object.assign(window, {
     persistenceTest: {
+        streamRecording: async (fail = false) => {
+            const chunks = function* () {
+                for (let part = 0; part < 160; part++) yield new Uint8Array(64 * 1024).fill(part);
+            };
+            const source = Stream.fromIterable(chunks(), { chunkSize: 1 });
+            const result = await app.runPromise(
+                Effect.result(
+                    service.bytes.write(fail ? "interrupted-recording" : "recording", {
+                        type: "audio/webm",
+                        stream: fail
+                            ? Stream.concat(source, Stream.fail(new Error("Recording interrupted")))
+                            : source,
+                    })
+                )
+            );
+            return result._tag;
+        },
+        recordingSize: async (fail = false) => {
+            const input = await app.runPromise(
+                service.bytes.read(fail ? "interrupted-recording" : "recording")
+            );
+            return input
+                ? await app.runPromise(
+                      Stream.runFold(
+                          byteSource(input).stream,
+                          () => 0,
+                          (size, part) => size + part.length
+                      )
+                  )
+                : undefined;
+        },
         durable: async () => {
             const service = await app.runPromise(Runtime);
             const table = Table.make<Item>({

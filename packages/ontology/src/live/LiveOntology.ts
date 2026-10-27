@@ -91,6 +91,10 @@ export type LiveOntologyDecrypt = <A>(
 ) => Promise<A>;
 
 export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefinition> {
+    /** Scoped source-collection and query-identity owner. Supply to React's DbProvider or query options.
+     * The current TanStack release does not register browser hook queries for client cleanup.
+     */
+    readonly dbClient: import("@tanstack/db").DbClient;
     readonly ir: OntologyIR;
     readonly context: OntologyContext<Ontology>;
     /**

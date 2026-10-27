@@ -1,4 +1,5 @@
 import { o } from "@party-stack/ontology-spec";
+import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { MemoryBlobBytesStore } from "@party-stack/runtime";
 import { asProvider } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
@@ -68,7 +69,10 @@ describe("createLiveOntologyAttachments", () => {
             },
         });
 
-        expect(stage).toHaveBeenCalledWith("opaque-local-id", file);
+        expect(stage).toHaveBeenCalledWith(
+            "opaque-local-id",
+            expect.objectContaining({ size: 5, type: "text/plain", name: "evidence.txt" })
+        );
     });
 
     it("rejects blobs outside a target's allowed media types", async () => {
@@ -206,7 +210,9 @@ describe("createLiveOntologyAttachments", () => {
                             Effect.promise(async () => {
                                 resolveMaterializationStarted?.();
                                 await materializationStarted;
-                                materialized.push(`${attachment.id}:${await blob.text()}`);
+                                materialized.push(
+                                    `${attachment.id}:${await (await Effect.runPromise(collectByteBlob(blob))).text()}`
+                                );
                                 return attachment;
                             }),
                         read: () => Effect.die("unexpected content read"),

@@ -1,42 +1,44 @@
 # Blob follow-up work
 
-## Remaining v0 byte streaming and transfer hardening — October 27
+## Streaming checkpoint — October 27
 
-Byte streaming is now explicitly part of v0, to revisit after native adapter cleanup
-and before the final Gateway phase. Change byte-store read/write, backend staging and
-action upload sources to stream-capable interfaces. Keep application File/Blob
-conveniences. Persist attachment identity in the outbox and reopen a fresh source
-per attempt; never persist a live stream. Feed RPC's bounded incoming chunk queue
-directly into the writer, verify completion before publishing metadata, and test
-truncation, cancellation, retries and write-intent crash recovery. Provider SDKs
-requiring Blob need an explicit bounded staging fallback. Durable cross-restart
-offset/part resumption remains a separate future capability.
+Byte inputs carry an Effect stream internally with type, optional size and optional
+name. Application attachment creation also accepts Blob/File or a ReadableStream
+wrapper with those metadata fields. Unknown-size streams are counted during staging;
+declared lengths are verified. Metadata is published only after successful EOF.
+Reader roots live through stream consumption, and cancelled platform writes settle
+before their immutable generation is abandoned for cleanup.
 
-Before the final Gateway port, add explicit total/per-upload/per-principal/concurrent
-byte limits, caller/target/form/revision binding, and reauthorization of chunk/final
-use. Keep action requests to parameters/handles and reuse scoped RPC clients. A
-small-file bounded path is a viable v0 boundary; do not describe framing as a total
-memory bound while uploads accumulate a Blob.
+OPFS, Node and Expo write chunks to files. SQLite stores bounded 64 KiB BLOB rows
+plus a completed-generation marker. R2 known-size sources use streaming put (empty
+objects use an empty ArrayBuffer); unknown-size sources use 8 MiB multipart buffers.
+Foundry regular attachment and temporary-media uploads use the authenticated HTTP
+fetch directly because the generated SDK only accepts Blob. Incoming provider reads
+stay streamed. Full-Blob conveniences and the memory fallback use an explicit
+64 MiB default materialization limit rather than an unbounded array of chunks.
 
-Effect RPC provides response-stream framing, cancellation and acknowledgments. The
-official HTTP/HttpApi multipart path provides streamed request file parts with parser
-limits. There is no documented general client-streaming upload RPC that removes the
-need for our upload protocol. HTTP multipart can be an additional transport into the
-same staging service, rather than another retention/execution implementation. Keep
-MessagePort/iframe operation support through the normal RPC path.
+HTTP actions with uploads use one multipart request; standalone creation uses one
+binary request. Both use the same configured Effect HttpClient as RPC and the same
+server Fetch handler. A stateless proxy streams each part into native provider
+execution; it has no uploadId registry and does not require local staging storage.
+Owned storage writes to its final byte store. Worker/MessagePort RPC still uses a
+bounded, connection/owner-bound chunk registry. It checks full upload authorization
+at opening/completion, cheap ownership on each chunk, size/order, and idle/lifetime
+limits. Neither transport is a durable resumable-upload protocol.
 
-Limits/authorization are a focused hardening task. Byte streaming is a larger
-cross-layer v0 change: byte-store writes and provider upload APIs currently accept
-Blob. Streamed sinks, atomic publication/cancellation and transport throughput tests
-must be designed together. Measure the current acknowledged 64 KiB frames
-before tuning frame sizes or adding a bounded in-flight window. Durable resumability
-and arbitrary large-file/range support are not implied by these v0 requirements.
+Local recording input can stream into OPFS while being produced. Eager upstream
+materialization currently starts after local staging completes; overlapping local
+recording and remote upload needs a separately supervised pipeline. The local API
+returns an optional isMaterialized promise, while remote helpers await upload
+completion before returning. Revisit those completion semantics together rather than
+pretending streaming implies simultaneous forwarding through every durable replica.
+
+Before deleting legacy HTTP, finish the Gateway parity checklist, including actual
+form/revision principal binding, complete projected authorization, and consumer
+integration. No production-data migration is supplied for the new development-only
+SQLite byte layout. See gateway-v0-parity.md.
 
 Reference: [Effect v4 Multipart](https://effect.website/docs/v4/api/effect/http/Multipart).
-
-The native SQLite/DO blob checkpoint covers shared metadata/retention, streamed
-attachment RPCs and local workerd crash recovery. These follow-ups are intentionally
-outside it.
 
 ## Offline query attachment policies
 
@@ -55,11 +57,24 @@ fully downloaded Blob with a native range request.
 
 ## Durable resumable uploads
 
-An intermediate or owned server may stage an upload before its final action and
-provide resumability even when the upstream provider cannot. Define durable upload
-identity, offset/checksum validation, expiration, cancellation and crash recovery.
-A scoped chunked RPC transfer is not a durable resumable upload session. Learn from
-Files SDK provider integrations without delegating ontology retention/metadata to it.
+Deferred from this streaming pass. R2/S3 supply multipart upload sessions and parts,
+but our engine would still need durable provider upload IDs, progress, integrity,
+authorization, expiration, cancellation and restart recovery. R2 aborts incomplete
+uploads after seven days by default; S3 needs an explicit abort/lifecycle policy.
+Foundry's public temporary-media upload documents one binary request, not a resumable
+session; its dataset S3 API is a separate capability. Ditto's attachment fetch APIs
+were reviewed, but no public guarantee of partial-transfer resumption was verified.
+Do not infer resumability merely from a binary content type or streaming interface.
+
+An intermediate or owned server can accept resumable uploads into its own durable
+storage even if the final provider needs a complete retry. Reopen the durable local
+source per attempt; never persist a live stream. Files SDK provider integrations
+may help without owning ontology metadata/retention.
+
+References: [R2 uploads](https://developers.cloudflare.com/r2/objects/upload-objects/),
+[S3 multipart](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html),
+[Foundry temporary media](https://www.palantir.com/docs/foundry/api/v2/media-sets-v2-resources/media-sets/upload-media),
+[Foundry dataset S3](https://www.palantir.com/docs/foundry/data-integration/foundry-s3-api).
 
 ## Direct byte grants
 
@@ -76,9 +91,8 @@ bind identity/revision where appropriate and keep the standard authenticated pat
 Do not add signed handles merely to avoid the source-row guard.
 
 RPC streaming does not supply staging, retention, sequencing or transfer budgets for
-free. The current handlers implement chunk order/size checks and scoped cancellation,
-but still assemble Blob values. Track total/concurrent byte limits and streaming
-sinks alongside [cache budgets](./cache-management.md).
+free. Keep transport admission separate from durable row/byte budgets; see
+[cache budgets](./cache-management.md).
 
 ## Drafts and optional blob versions
 
