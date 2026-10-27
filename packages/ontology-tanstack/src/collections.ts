@@ -1,7 +1,7 @@
 import { Table } from "@party-stack/ontology-storage/tables";
+import { Runtime } from "@party-stack/runtime";
 import { BasicIndex, createCollection, collectionOptions, whenSyncAccepted } from "@tanstack/db";
 import { Effect, Exit, Fiber, Scope, Stream } from "effect";
-import { Runtime } from "../Runtime.js";
 import { registerCollectionDemands, type CollectionDemandDiagnostic } from "./diagnostics.js";
 import { analyzeStorageSubset, storageSubset } from "./subset.js";
 import type { ReplicaService } from "@party-stack/ontology-replica";
@@ -302,13 +302,13 @@ export const scopedCollection = <A extends object, K extends Key>(
                       await collection.cleanup();
                   })
           );
-export const makeLocalCollection = Effect.fn("Runtime.localCollection")(function* <
+export const makeLocalCollection = Effect.fn("Ontology.localCollection")(function* <
     A extends object,
     K extends Key,
 >(options: Parameters<typeof localCollectionOptions<A, K>>[0]) {
     return yield* scopedCollection(yield* localCollectionOptions(options));
 });
-export const makeReplicatedCollection = Effect.fn("Runtime.replicatedCollection")(function* <
+export const makeReplicatedCollection = Effect.fn("Ontology.replicatedCollection")(function* <
     A extends object,
 >(options: Parameters<typeof replicatedCollectionOptions<A>>[0], client?: DbClient) {
     return yield* scopedCollection(yield* replicatedCollectionOptions(options), client);

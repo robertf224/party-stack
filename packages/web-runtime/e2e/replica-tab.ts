@@ -1,7 +1,8 @@
 import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
 import { makeReplica } from "@party-stack/ontology-replica";
 import { connectOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
-import { makeReplicatedCollection, Runtime } from "@party-stack/runtime";
+import { makeReplicatedCollection } from "@party-stack/ontology-tanstack";
+import { Runtime } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
 import { Context, Effect, Layer, ManagedRuntime } from "effect";
 import * as WebRuntime from "../src/WebRuntime.js";

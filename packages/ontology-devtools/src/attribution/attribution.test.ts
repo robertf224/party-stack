@@ -3,7 +3,7 @@ import {
     scopedCollection,
     storageSubset,
     getCollectionDemands,
-} from "@party-stack/runtime";
+} from "@party-stack/ontology-tanstack";
 import { createLiveQueryCollection, eq } from "@tanstack/db";
 import { Effect, Stream } from "effect";
 import { expect, test, vi } from "vite-plus/test";

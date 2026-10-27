@@ -5,13 +5,13 @@ import {
     TransactionError,
     type TablesService,
 } from "@party-stack/ontology-storage/tables";
+import { MemoryBlobBytesStore } from "@party-stack/runtime";
 import { memoryRuntimeFixture, defineRuntimeFixture } from "@party-stack/runtime/testing";
 import { eq, queryOnce } from "@tanstack/db";
 import { Effect } from "effect";
 import { expect, test, vi } from "vite-plus/test";
-import { MemoryBlobBytesStore } from "../memory/MemoryBlobBytesStore.js";
 import { createLocalCollection } from "./createLocalCollection.js";
-import type { RuntimeAdapter } from "../types.js";
+import type { RuntimeAdapter } from "@party-stack/runtime";
 
 interface Item {
     id: string;

@@ -1,8 +1,8 @@
+import { Runtime, getRuntime } from "@party-stack/runtime";
 import { BasicIndex, createCollection } from "@tanstack/db";
 import { Effect, Exit, Scope } from "effect";
-import { Runtime, getRuntime } from "../Runtime.js";
 import { localCollectionOptions } from "./collections.js";
-import type { RuntimeAdapter } from "../types.js";
+import type { RuntimeAdapter } from "@party-stack/runtime";
 import type { Collection, CollectionConfig } from "@tanstack/db";
 
 /** Synchronous application boundary; storage acquisition and all work stay in the runtime's scope. */

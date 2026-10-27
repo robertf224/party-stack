@@ -1,4 +1,6 @@
-**Proposal · October 27, 2026 · Not implemented.** This document proposes the next
+**Replication proposal · October 27, 2026.** Scoped composition and the runtime
+boundary cleanup below are implemented in this checkpoint. Incremental transfer,
+shared incoming-state installation and protocol-child GC/blobs remain proposals. This document proposes the next
 replication and browser-composition checkpoint. Existing selected snapshots,
 atomic parent handoff, streaming attachments, and adapter-backed GC remain the
 working baseline. This is not a promise that every item belongs in the initial v0.
@@ -10,8 +12,8 @@ working baseline. This is not a promise that every item belongs in the initial v
    provider confirmation and protocol acceptance semantics explicit.
 3. Deliver incremental selected state, including inherited predictions and action
    progress, with bounded server memory and snapshot recovery.
-4. Support protocol replicas with ordinary row retention and optional local blob
-   storage. Memory tabs should use their parent's attachment service by default.
+4. Support protocol replicas with ordinary row retention and local blob storage.
+   Memory tabs should use the same machinery, backed by memory and their parent.
 5. Leave a stable receiving contract for hierarchical queries and eventual server IVM.
 
 We should not build another nested Replica engine for the parent's system tables.
@@ -43,63 +45,54 @@ are released. The worker's own adapter-backed GC still runs.
 
 ## Runtime composition
 
-Keep the ordinary `web-runtime` entry point for platform resources. Add explicit
-browser integration exports:
+**Revised boundary:** do not introduce ontology-aware `web-runtime/tab` or
+`web-runtime/shared-worker` exports. Runtime storage choice and process placement
+are independent. The existing `WebRuntime.layer` already supports both
+`storage: "memory"` and `storage: "indexeddb"`, in a window or a worker.
 
-| Proposed export             | Responsibility                                                                                  |
-| --------------------------- | ----------------------------------------------------------------------------------------------- |
-| `web-runtime/tab`           | Scoped memory Runtime and convenient SharedWorker connection/view construction.                 |
-| `web-runtime/shared-worker` | Persistent Runtime, partition decoding, startup/error forwarding, serving, and orderly release. |
-| `ontology-server/client`    | Platform-neutral `connectLiveOntology` composition over a connected source and Runtime.         |
+| Layer/package                | Responsibility                                                                            |
+| ---------------------------- | ----------------------------------------------------------------------------------------- |
+| `runtime`, `web-runtime`     | Scoped platform resources: tables, bytes, keys, connectivity, browser auth and ownership. |
+| `ontology-replica`           | Replication state, demand, outbox, replay and retention.                                  |
+| `ontology-tanstack`          | Local/replicated collection options, subset translation, and demand diagnostics.          |
+| `ontology`                   | Domain execution and application collection/view composition.                             |
+| `ontology-server/client`     | Scoped `connectLiveOntology` and framework `createConnectedLiveOntology` composition.     |
+| `ontology-server/rpc/worker` | Worker transport and `serveOpenedOntologyWorker` readiness/lifecycle.                     |
 
-The `/tab` and `/shared-worker` integrations may depend on ontology-server, which
-already depends on ontology/runtime. No ontology package should depend back on
-web-runtime. Keep these imports out of the platform-only root entry point. Confirm
-the dependency DAG and browser bundle before adding those dependencies.
+The collection bridge is separate because Connect also consumes generic local
+collections; putting them in ontology itself would create a cycle through
+ontology -> Connect -> ontology. Runtime no longer imports ReplicaService or
+TanStack DB. Platform-plus-collection tests moved into ontology-tanstack so platform
+packages do not gain dependencies on their application consumers. No second
+storage/schema abstraction was introduced.
 
-Applications choose domain definitions, mutators, principal partition and worker
-URL. Infrastructure chooses the usual memory/persistent services, composes the
-replica/view, delegates operations, installs diagnostics, and owns cleanup. The
-worker URL remains in application code so Vite can discover the worker entry.
-
-Illustrative application code, not current exports:
+Applications choose definitions, authenticated identity partition, domain
+mutators, worker URL/transport and platform resources. The ontology client
+composer constructs the Replica/view, delegates operations and installs tracing.
+It acquires the connection inside its own scope. The worker composer starts
+serving before acquisition finishes, awaits readiness, propagates typed startup
+failures and cleans up the opened facade and partial resources on failure.
 
 ```ts
-import * as Tab from "@party-stack/web-runtime/tab";
-
-const open = Tab.open({
-    partition: { installationId, userId, ontologyId },
-    worker: (name) =>
-        new SharedWorker(new URL("./ontology.worker.ts", import.meta.url), { name, type: "module" }),
+const open = createConnectedLiveOntology({
     ir,
-    mutators,
+    connection, // Effect from connectOntologyWorker/HTTP, with transport supplied.
+    runtime: WebRuntime.layer({ owner: userId, namespace, storage: "memory" }),
+    writes: { defaultMode: "outbox", defaultVisibility: "optimistic", mutators },
+});
+
+const serve = serveOpenedOntologyWorker({
+    open: openTrackerOntology, // Scoped Effect; application validates its partition.
+    errors: "forward", // Trusted identity-isolated same-origin deployment only.
+    authorize: () => Effect.void,
 });
 ```
 
-`Tab.open` returns a scoped Effect. It builds a memory Runtime, connects the
-source, and calls the shared client composer. It does not ask applications to
-forward attachments, queries, decryption, validation, outbox controls, or traces
-one method at a time. The common composer obtains those from the connected
-ontology operations. A supplied Runtime/transport remains available through the
-lower-level constructor for HTTP, dedicated workers and iframes.
-
-The worker entry would supply only the domain-specific open operation:
-
-```ts
-import * as SharedWorker from "@party-stack/web-runtime/shared-worker";
-
-const serve = SharedWorker.serve({
-    partition: TrackerPartitionSchema,
-    open: (partition) => openTrackerOntology(partition),
-});
-```
-
-Both `open` and `serve` above are Effects, run within their owning application or
-worker scope. `openTrackerOntology` is a scoped acquisition, not a long-lived Promise factory
-with application-managed cleanup. The helper binds one worker to one identity
-partition, starts transport readiness before credential restoration, forwards
-typed startup failures, and closes the opened ontology and server with its scope.
-Its source is the opened replica using the standard ontology protocol.
+The first constructor is a Promise boundary backed by a ManagedRuntime. Native
+Effect applications instead construct `connectLiveOntology` in a service Layer
+and supply Runtime there. The worker function is a long-running scoped Effect,
+provided with the platform WorkerRunner. It does not choose browser persistence.
+See the website's installation guide for complete composition examples.
 
 The client helper acquires transport, local replica and collection view in that
 order; scope cleanup releases them in reverse order. Existing delayed TanStack
@@ -313,6 +306,20 @@ each receiver applies imported state and then its own remaining outbox.
 
 ## Protocol-child row GC
 
+This work is not dependent on incremental delivery. Shared installation and
+coherent retention can enable protocol-child GC while snapshots are still the
+transport. Conversely, adding diffs alone does not make GC safe.
+
+The current guard disables the automatic age-based row-cache sweep for protocol
+sources and rejects an independent blob service. Protocol installation does not
+populate the ordinary row-retention records, and the sweeper only deletes the
+materialized `base:<type>` copy. It would not remove/update imported base,
+inherited overrides and the imported-head claims together. That could leave
+orphaned state or recreate an evicted row on later projection. This is unfinished
+source-specific bookkeeping, not a rule that protocol replicas cannot collect.
+Replacement snapshots already remove deselected imported rows; bounded action
+and session cleanup continue independently. Delegated bytes remain parent-owned.
+
 Keep two concepts explicit: the **active imported mirror** and the **reusable
 confirmed cache**. The mirror represents the installed selected view exactly.
 Cache rows may outlive their selection, but cannot claim current coverage forever.
@@ -365,31 +372,22 @@ budget, so admission/backpressure needs a defined failure, not silent row evicti
 
 ## Protocol-child attachment modes
 
-Use an explicit composition choice, independent of the upstream being protocol
-or provider:
+Target the same BlobStorage machinery in every replica, including memory tabs.
+Its metadata/aliases/roots/intents share the replica's own table store; bytes use
+the supplied memory, OPFS, file, SQL or R2 service. The parent supplies authorized
+remote reads/uploads. Byte keys and physical intents are local and never replicated.
 
-```ts
-type ChildAttachmentOptions =
-    | { mode: "parent" }
-    | {
-          mode: "local";
-          bytes: BlobBytesService;
-          // Blob metadata uses this replica's transaction/table service.
-      };
-```
+Current connected clients delegate attachment operations directly to their parent.
+That is the temporary implementation gap guarded by no independent blob service,
+not the intended permanent meaning of a tab replica. Merely constructing a
+memory Runtime does not connect its bytes to protocol-child BlobStorage yet.
 
-Default memory tabs to `parent`: delegate the existing attachment API and streams
-to the worker. This avoids copying durable bytes into every tab. The worker owns
-staging, aliases, upload and byte GC. Reading an attachment must remain scoped
-through stream completion. A raw byte-store proxy would bypass those semantics.
-
-Persistent protocol replicas can select `local`: use the existing BlobStorage
-metadata/alias/root/intent tables in their own table store and a platform bytes
-service (OPFS, file, SQL, R2). Attachment identity comes from the parent; local
-byte keys and physical intents are private to the child and never replicated.
-Readers fetch missing bytes from the parent through its authorized attachment
-operation, stream them through local recoverable staging when caching is desired,
-and serve subsequent reads from that durable copy.
+An ordinary child should lazily cache bytes it reads, stage bytes it creates,
+and use the same retention policy to release unpinned cached bytes. This does
+not imply downloading every referenced attachment or keeping duplicate bytes
+forever. No tab-only blob manager or additional attachment-mode API is needed
+before the normal local path is working. Parent delegation can remain a deliberate
+future optimization if there is a demonstrated need.
 
 For outgoing attachments, persist local staging and the owning action's attachment
 dependencies before forwarding. Parent staging/materialization produces alias
@@ -407,9 +405,9 @@ unsent staged dependencies do. Import, action handoff, row eviction and reset
 update these roots using `blobs.in(tx)` in the same table transaction. Byte deletion
 still happens through generation-fenced external intents after commit.
 
-Parent-only mode cannot promise independent offline attachment access if the
-parent becomes unreachable. Local-cache mode only promises offline reads for
-complete locally retained bytes. Range caching, resumability, direct object-store
+The current delegated path cannot promise independent offline attachment access
+if the parent becomes unreachable. The normal local path only promises offline
+reads for complete locally retained bytes. Range caching, resumability, direct object-store
 grants and automatic query attachment-download policies remain future additions.
 
 ## Future query IVM
@@ -437,8 +435,10 @@ is parent-owned derived state with scope/size bounds, not an unbounded new journ
 
 ## Implementation sequence and acceptance
 
-1. **Extract scoped composition.** Replace application `sharedOntology.ts` and
-   worker readiness/cleanup assembly with common helpers. Verify identity isolation,
+1. **Implemented: untangle runtime and scoped composition.** Moved replica/TanStack
+   collection integration into ontology-tanstack. Kept WebRuntime's existing storage modes.
+   Replaced application `sharedOntology.ts` and
+   worker readiness/cleanup assembly with common helpers. Verified identity isolation,
    startup failure, in-process fallback, diagnostics, and teardown. No sync rewrite.
 2. **Extract incoming object installation.** Keep snapshot transport. Test identical
    adapter/protocol visible outcomes, encrypted-copy preservation, action handoff,
@@ -451,7 +451,8 @@ is parent-owned derived state with scope/size bounds, not an unbounded new journ
    server and an intermediate. Test selection release, inactive cache eviction,
    pending dependency protection, concurrent sweep/install, and rehydration after
    reset. Remove the GC restriction only when these invariants hold.
-5. **Protocol-child local attachments.** Keep tabs on parent delegation by default.
+5. **Protocol-child local attachments.** Use the normal BlobStorage machinery in
+   memory tabs and persistent protocol children.
    Verify locally staged bytes through multi-hop acceptance, alias mapping, restart,
    reset with pending actions, interrupted IO, reader pins, and independent byte GC.
    Remove the no-blob-service guard only after these tests pass.

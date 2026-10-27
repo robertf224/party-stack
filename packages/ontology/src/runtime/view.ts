@@ -1,11 +1,11 @@
 import { BackendError, encryptedPropertyCodec } from "@party-stack/ontology-backend";
 import { makeReplicaMonitor } from "@party-stack/ontology-replica";
 import {
-    Runtime,
     makeReplicatedCollection,
     persistedCollectionOptions,
     scopedCollection,
-} from "@party-stack/runtime";
+} from "@party-stack/ontology-tanstack";
+import { Runtime } from "@party-stack/runtime";
 import { DbClient } from "@tanstack/db";
 import { Effect, Scope, Fiber } from "effect";
 import { createLiveOntologyAction } from "../live/actions/createLiveOntologyAction.js";

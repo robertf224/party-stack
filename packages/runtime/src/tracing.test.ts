@@ -44,3 +44,78 @@ test("trace failures retain a bounded message without copying stacks, payloads, 
     expect(JSON.stringify(traces.getSnapshot())).not.toContain("secret-token");
     expect(JSON.stringify(traces.getSnapshot())).not.toContain("stack");
 });
+
+test("Effect trace buffer is bounded and omits parameters and secret attributes", async () => {
+    const traces = createRuntimeTraces(2);
+    for (const index of [1, 2, 3])
+        await Effect.runPromise(
+            Effect.void.pipe(
+                Effect.withSpan(`Replica.test${index}`, {
+                    attributes: { count: index, token: "secret-token" },
+                }),
+                Effect.provideService(Tracer.Tracer, traces.tracer)
+            )
+        );
+    expect(traces.getSnapshot().map((entry) => entry.name)).toEqual(["Replica.test2", "Replica.test3"]);
+    expect(traces.getSnapshot()[0]?.attributes).toEqual({ count: 2 });
+    expect(JSON.stringify(traces.getSnapshot())).not.toContain("secret-token");
+    const single = createRuntimeTraces(1);
+    for (const _ of [1, 2]) {
+        void _;
+        await Effect.runPromise(
+            Effect.void.pipe(Effect.withSpan("one"), Effect.provideService(Tracer.Tracer, single.tracer))
+        );
+    }
+    expect(single.getSnapshot()).toHaveLength(1);
+});
+
+test("running spans retain their parent and clearing does not resurrect in-flight work", async () => {
+    const { Deferred, Fiber } = await import("effect");
+    const traces = createRuntimeTraces();
+    const gate = Effect.runSync(Deferred.make<void>());
+    const fiber = Effect.runFork(
+        Deferred.await(gate).pipe(
+            Effect.withSpan("child"),
+            Effect.withSpan("sync"),
+            Effect.provideService(Tracer.Tracer, traces.tracer)
+        )
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const root = traces.getSnapshot().find((span) => span.name === "sync")!;
+    const child = traces.getSnapshot().find((span) => span.name === "child")!;
+    expect(root.outcome).toBe("running");
+    expect(child.parentId).toBe(root.id);
+    expect(child.traceId).toBe(root.traceId);
+    traces.clear();
+    await Effect.runPromise(Deferred.succeed(gate, undefined));
+    await Effect.runPromise(Fiber.join(fiber));
+    expect(traces.getSnapshot()).toEqual([]);
+});
+
+test("subscription messages update live, remain bounded, and exclude arbitrary events and attributes", async () => {
+    const traces = createRuntimeTraces();
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            const span = yield* Effect.currentSpan;
+            expect(traces.getSnapshot()[0]?.attributes).toEqual({ activity: "subscription" });
+            for (let count = 0; count < 150; count++)
+                span.event("replica.invalidation", 1_000_000n * BigInt(count), { count, token: "secret" });
+            span.event("secret-event", 0n, { token: "secret" });
+            const record = traces.getSnapshot()[0]!;
+            expect(record.outcome).toBe("running");
+            expect(record.eventCount).toBe(150);
+            expect(record.events).toHaveLength(100);
+            expect(record.events?.[0]).toEqual({
+                name: "replica.invalidation",
+                at: 50,
+                attributes: { count: 50 },
+            });
+        }).pipe(
+            Effect.withSpan("watch", { attributes: { activity: "subscription" } }),
+            Effect.provideService(Tracer.Tracer, traces.tracer)
+        )
+    );
+    expect(traces.getSnapshot()[0]?.eventCount).toBe(150);
+    expect(traces.getSnapshot()[0]?.outcome).toBe("success");
+    expect(JSON.stringify(traces.getSnapshot())).not.toContain("secret");
+});

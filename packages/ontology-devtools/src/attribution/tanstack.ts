@@ -1,4 +1,4 @@
-import { getCollectionDemands, type CollectionDemandDiagnostic } from "@party-stack/runtime";
+import { getCollectionDemands, type CollectionDemandDiagnostic } from "@party-stack/ontology-tanstack";
 import { demandId, type ReplicationDemand } from "../replicationActivity.js";
 import { queryConsumers, type DemandOwner } from "./registry.js";
 

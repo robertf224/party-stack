@@ -8,17 +8,8 @@ import type { RuntimeAdapter } from "./types.js";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
 
 export { createEncryptedSecretStore } from "./encryptedSecrets.js";
-export { storageSubset } from "./collections/subset.js";
 export { createRuntimeTraces } from "./tracing.js";
 export type { RuntimeTrace, RuntimeTraces, RuntimeTraceStore } from "./tracing.js";
-export {
-    localCollectionOptions,
-    replicatedCollectionOptions,
-    makeLocalCollection,
-    makeReplicatedCollection,
-    scopedCollection,
-    persistedCollectionOptions,
-} from "./collections/collections.js";
 export class RuntimeError extends Schema.TaggedError<RuntimeError>()("RuntimeError", {
     operation: Schema.String,
     cause: Schema.Defect(),

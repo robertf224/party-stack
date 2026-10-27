@@ -23,6 +23,7 @@
         "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-spec": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
+        "@party-stack/ontology-tanstack": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "effect": "^4.0.5",
         "oauth4webapi": "^3.8.7",

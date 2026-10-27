@@ -48,6 +48,7 @@
         "@party-stack/ontology-replica": "workspace:*",
         "@party-stack/ontology-spec": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
+        "@party-stack/ontology-tanstack": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "@party-stack/sql-ontology-storage": "workspace:*",
         "change-case": "^5.4.4",

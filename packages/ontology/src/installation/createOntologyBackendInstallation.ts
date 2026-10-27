@@ -1,6 +1,7 @@
 import { makeConnectionManager, createConnectionMonitor } from "@party-stack/connect";
 import { BackendError } from "@party-stack/ontology-backend";
-import { makeLocalCollection, Runtime } from "@party-stack/runtime";
+import { makeLocalCollection } from "@party-stack/ontology-tanstack";
+import { Runtime } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
 import { Context, Effect, Exit, Fiber, Layer, Scope, ScopedCache, Semaphore } from "effect";
 import { makeLiveOntology } from "../live/LiveOntology.js";

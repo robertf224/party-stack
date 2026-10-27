@@ -1,9 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createNodeRuntimeWithOptions } from "@party-stack/node-runtime";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { collectByteBlob } from "@party-stack/runtime";
-import { createLocalCollection } from "@party-stack/runtime";
 import { Runtime } from "@party-stack/runtime";
 import { acquireRuntime } from "@party-stack/runtime/testing";
 import { runtimeFixtureContext } from "@party-stack/runtime/testing";
@@ -11,7 +11,7 @@ import { queryOnce } from "@tanstack/db";
 import { Effect } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { createNodeRuntimeWithOptions } from "./createNodeRuntime.js";
+import { createLocalCollection } from "./createLocalCollection.js";
 
 interface Item {
     id: string;

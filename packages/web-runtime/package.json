@@ -27,6 +27,7 @@
         "@party-stack/ontology-server": "workspace:*",
         "@party-stack/ontology-spec": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
+        "@party-stack/ontology-tanstack": "workspace:*",
         "@tanstack/db": "0.14.0",
         "playwright": "^1.61.1",
         "typescript": "~7.0.2",

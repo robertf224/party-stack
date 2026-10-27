@@ -1,5 +1,6 @@
 import { Table } from "@party-stack/ontology-storage/tables";
-import { byteSource, createLocalCollection } from "@party-stack/runtime";
+import { createLocalCollection } from "@party-stack/ontology-tanstack";
+import { byteSource } from "@party-stack/runtime";
 import { Runtime } from "@party-stack/runtime";
 import { createLiveQueryCollection, queryOnce } from "@tanstack/db";
 import { Effect, ManagedRuntime, Scope, Stream } from "effect";

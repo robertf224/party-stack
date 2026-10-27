@@ -35,7 +35,9 @@ covered in [native-actions.md](./native-actions.md).
   Foundry/Salesforce object, metadata, and user collection helpers are removed.
   The Foundry watcher callback facade is isolated behind its explicit `/callback`
   export; native backend execution uses the scoped Effect watcher.
-- **Collection integration:** scoped DbClient, demand-driven TanStack subsets,
+- **Collection integration:** ontology-tanstack owns local/replicated collection
+  options, demand translation and diagnostics, above the platform Runtime. Runtime
+  no longer depends on Replica or TanStack DB. Scoped DbClient, demand-driven TanStack subsets,
   join/include forwarding, and persisted-only inspection. No explicit preloads or
   TanStack persistence coordinator. Initial demand attempts sync before its view
   is ready; offline replay still makes no network queries.
@@ -91,7 +93,8 @@ covered in [native-actions.md](./native-actions.md).
 The [October 27 incremental-state proposal](./incremental-state-proposal.md)
 describes scoped browser composition, shared incoming-state installation,
 bounded selected-state diffs, protocol-child GC/blobs and the later query-IVM
-extension. These are proposed changes, not implemented capabilities. The new
+extension. Scoped client/worker composition and the Runtime dependency cleanup
+are implemented; incoming-state/GC/delta changes remain proposals. The new
 `apps/website` embeds this same document in its Fumadocs design section so it can
 be reviewed alongside the current architecture/runtime/storage documentation.
 

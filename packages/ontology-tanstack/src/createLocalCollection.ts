@@ -1,5 +1,5 @@
-import { createEffectLocalCollection } from "../collections/localCollection.js";
-import type { RuntimeAdapter } from "../types.js";
+import { createEffectLocalCollection } from "./localCollection.js";
+import type { RuntimeAdapter } from "@party-stack/runtime";
 import type { Collection } from "@tanstack/db";
 import type { Scope } from "effect";
 

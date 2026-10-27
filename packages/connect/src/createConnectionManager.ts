@@ -1,6 +1,7 @@
 import { unauthenticated, type UnauthenticatedError } from "@party-stack/ontology-backend";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { makeLocalCollection, Runtime, getRuntime } from "@party-stack/runtime";
+import { makeLocalCollection } from "@party-stack/ontology-tanstack";
+import { Runtime, getRuntime } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
 import { Clock, Context, Effect, Exit, Fiber, Layer, Queue, Scope, Semaphore, Stream } from "effect";
 import { ConnectionError, connectionOperation } from "./ConnectionError.js";

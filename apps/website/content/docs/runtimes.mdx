@@ -1,6 +1,6 @@
 ---
 title: Browser runtimes
-description: Platform resources, worker placement, and the proposed simpler application setup.
+description: Platform resources, worker placement, and scoped ontology composition.
 ---
 
 ## Available today
@@ -40,38 +40,25 @@ owner. Tabs use memory replicas and delegate attachment operations to that owner
 The worker handles persistent blob metadata and bytes. Tabs query their own
 materialized collections.
 
-Application setup currently assembles too many pieces: RPC, replica construction,
-mutator execution, attachment helpers, tracing, and lifecycle handling. The
-proposed infrastructure helper should own those details.
+The application now supplies domain/placement choices to
+`createConnectedLiveOntology` and `serveOpenedOntologyWorker`. Replica construction,
+operation forwarding, tracing and startup readiness live in the ontology server
+package. Collection translation and demand diagnostics live in
+`@party-stack/ontology-tanstack`; Runtime has no Replica/TanStack dependency.
 
-## Proposed application setup
+## Application setup
 
-**Design proposal — these constructors are not exported yet.**
+See [installation and setup](/docs/getting-started) for Vite/TanStack Start,
+SharedWorker, Node and Expo composition. `createConnectedLiveOntology` accepts a
+connection acquisition Effect and a Runtime Layer. Its ManagedRuntime keeps the
+Layer alive after the constructor returns; `cleanup()` closes the scoped client
+and then platform resources.
 
-Browser integration helpers would live under `web-runtime/tab` and
-`web-runtime/shared-worker`. They would use a platform-neutral scoped ontology
-client composer in `ontology-server/client`. The platform-only `web-runtime`
-entry point would remain separate from these higher-level integrations.
-
-```ts
-import * as Tab from "@party-stack/web-runtime/tab";
-
-// Proposed: the app chooses placement and domain behavior.
-const open = Tab.open({
-    partition,
-    worker: (name) =>
-        new SharedWorker(new URL("./ontology.worker.ts", import.meta.url), { name, type: "module" }),
-    ir,
-    mutators,
-});
-```
-
-`open` is a scoped Effect, acquired within the application's owning scope. The
-application still supplies a bundler-visible worker URL, principal partition,
-and domain implementation. Infrastructure composes the local replica and view,
-delegates attachment operations by default, and closes the connection and derived
-resources with the scope. A convenience Promise bridge belongs at the application
-edge when required by React integration.
+Native Effect applications use `connectLiveOntology` in a service Layer. Runtime
+is supplied independently, so memory/persistent storage is not coupled to a
+worker/tab role. `serveOpenedOntologyWorker` takes an `open` Effect plus mandatory
+authorization and the platform worker-runner Layer. Domain code owns partition
+validation/authenticated acquisition; infrastructure owns readiness and shutdown.
 
 Worker startup fallback must happen before accepting writes. A failed connection
 does not authorize silently creating a second persistent owner. A configured

@@ -6,9 +6,10 @@ import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica, replicaStateSource } from "@party-stack/ontology-replica";
 import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Effect, Exit, Scope } from "effect";
+import { Deferred, Effect, Exit, Fiber, Scope } from "effect";
 import { expect, test, vi } from "vite-plus/test";
-import { connectOntologyWorker, serveOntologyWorker } from "./rpcWorker.js";
+import { connectOntologyWorker, serveOntologyWorker, serveOpenedOntologyWorker } from "./rpcWorker.js";
+import type { LiveOntology } from "@party-stack/ontology";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 import type { ReplicaOptions } from "@party-stack/ontology-replica";
 
@@ -50,6 +51,110 @@ const openPort = Effect.fnUntraced(function* (
         Effect.provide(BrowserWorkerRunner.layerMessagePort(channel.port1))
     );
     return yield* connectOntologyWorker().pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)));
+});
+
+test("worker composition serves during delayed acquisition and releases its opened facade on interruption", async () => {
+    const cleanup = vi.fn(async () => {});
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const channel = new MessageChannel();
+                yield* Effect.addFinalizer(() =>
+                    Effect.sync(() => {
+                        channel.port1.close();
+                        channel.port2.close();
+                    })
+                );
+                const backend = yield* makeOwnedBackend({
+                    namespace: "composed-worker-server",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: { increment },
+                });
+                yield* backend.applyAction({ id: "seed", name: "increment", parameters: {} });
+                const owner = yield* makeReplica({
+                    namespace: "composed-worker-owner",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend,
+                    execute: increment,
+                    startSync: false,
+                    gc: false,
+                });
+                yield* owner.demand({ objectType: "Counter" });
+                yield* owner.syncOnce;
+                const gate = yield* Deferred.make<void>();
+                const started = yield* Deferred.make<void>();
+                const host = yield* serveOpenedOntologyWorker({
+                    open: Effect.gen(function* () {
+                        yield* Deferred.succeed(started, undefined);
+                        yield* Deferred.await(gate);
+                        return { storage: owner, cleanup, destroy: cleanup } as unknown as LiveOntology;
+                    }),
+                    errors: "forward",
+                    authorize: () => Effect.void,
+                }).pipe(
+                    Effect.provide(BrowserWorkerRunner.layerMessagePort(channel.port1)),
+                    Effect.forkScoped
+                );
+                yield* Deferred.await(started);
+                const connecting = yield* connectOntologyWorker().pipe(
+                    Effect.provide(BrowserWorker.layer(() => channel.port2)),
+                    Effect.forkScoped
+                );
+                expect(cleanup).not.toHaveBeenCalled();
+                yield* Deferred.succeed(gate, undefined);
+                const source = yield* Fiber.join(connecting);
+                const session = yield* source.openClient();
+                const batch = yield* source.read(session, {
+                    generation: 1,
+                    selection: { subsets: [{ objectType: "Counter" }], actionIds: [] },
+                });
+                expect(batch.state.objects[0]?.base[0]?.value.count).toBe(1);
+                expect(cleanup).not.toHaveBeenCalled();
+                yield* Fiber.interrupt(host);
+                expect(cleanup).toHaveBeenCalledTimes(1);
+            })
+        )
+    );
+});
+
+test("worker startup returns typed failures and immediately releases partially acquired resources", async () => {
+    const cleanup = vi.fn();
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const channel = new MessageChannel();
+                yield* Effect.addFinalizer(() =>
+                    Effect.sync(() => {
+                        channel.port1.close();
+                        channel.port2.close();
+                    })
+                );
+                yield* serveOpenedOntologyWorker({
+                    open: Effect.gen(function* () {
+                        yield* Effect.addFinalizer(() => Effect.sync(cleanup));
+                        return yield* new BackendError({
+                            operation: "test.open",
+                            kind: "Unauthenticated",
+                            retryable: false,
+                            message: "Sign in again.",
+                        });
+                    }),
+                    errors: "forward",
+                    authorize: () => Effect.void,
+                }).pipe(
+                    Effect.provide(BrowserWorkerRunner.layerMessagePort(channel.port1)),
+                    Effect.forkScoped
+                );
+                const result = yield* Effect.result(
+                    connectOntologyWorker().pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)))
+                );
+                expect(result).toMatchObject({ _tag: "Failure", failure: { kind: "Unauthenticated" } });
+                expect(cleanup).toHaveBeenCalledTimes(1);
+            })
+        )
+    );
 });
 
 test("two memory tabs hand off actions to one owner through native MessagePorts", async () => {

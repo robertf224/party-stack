@@ -1,4 +1,4 @@
 {
     "title": "Design proposals",
-    "pages": ["replication"]
+    "pages": ["replication", "garbage-collection"]
 }

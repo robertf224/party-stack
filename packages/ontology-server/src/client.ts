@@ -1,5 +1,7 @@
 import { createLiveOntology } from "@party-stack/ontology";
 import { makeRemoteOntologyBackend } from "./backend.js";
+export { connectLiveOntology, createConnectedLiveOntology } from "./liveClient.js";
+export type { ConnectLiveOntologyOptions } from "./liveClient.js";
 import type { RemoteOntologyTransport } from "./protocol.js";
 export { makeRemoteOntologyBackend } from "./backend.js";
 import type {

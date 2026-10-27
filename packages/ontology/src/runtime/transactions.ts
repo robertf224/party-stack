@@ -1,6 +1,6 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { storageSubset } from "@party-stack/runtime";
+import { storageSubset } from "@party-stack/ontology-tanstack";
 import { BasicIndex, whenSyncAccepted, DbClient, collectionOptions } from "@tanstack/db";
 import { Effect, Fiber } from "effect";
 import { resolveActionParameters } from "../live/expression.js";

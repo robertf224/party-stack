@@ -25,7 +25,6 @@
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db": "0.14.0",
         "@types/better-sqlite3": "^7.6.13",
         "@types/node": "^24.10.1",
         "typescript": "~7.0.2",

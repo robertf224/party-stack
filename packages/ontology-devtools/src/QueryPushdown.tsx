@@ -6,7 +6,7 @@ import { OperandToken, QueryPills, QuerySubject, nullOrderLabel } from "./QueryP
 import { demandId } from "./replicationActivity.js";
 import type { ReplicationLoad, ReplicationDemand } from "./replicationActivity.js";
 import type { ObjectTypeDef } from "@party-stack/ontology";
-import type { CollectionDemandDiagnostic } from "@party-stack/runtime";
+import type { CollectionDemandDiagnostic } from "@party-stack/ontology-tanstack";
 
 const operators: Readonly<Record<string, string>> = {
     eq: "=",
