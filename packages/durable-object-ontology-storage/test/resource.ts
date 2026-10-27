@@ -176,32 +176,37 @@ export const runOntologyResource: (
         );
     const denied = yield* Effect.result(connect("wrong"));
     const client = yield* connect("test");
-    const session = yield* client.openClient();
-    yield* client.submit({
-        session,
-        sequence: 1,
-        optimistic: false,
-        invocation: {
-            id: "create",
-            name: "createNote",
-            parameters: { id: "one", title: "Resource factory", owner: "tester" },
-        },
-    });
+    if (client.replication.kind !== "committed")
+        return yield* new BackendError({
+            operation: "test",
+            kind: "Internal",
+            message: "Owned server advertised speculative state.",
+            retryable: false,
+        });
+    const create = {
+        id: "create",
+        name: "createNote",
+        parameters: { id: "one", title: "Resource factory", owner: "tester" },
+    };
+    const receipt = yield* client.backend.applyAction(create);
+    const repeated = yield* client.backend.applyAction(create);
+    if (JSON.stringify(receipt) !== JSON.stringify(repeated))
+        return yield* new BackendError({
+            operation: "test",
+            kind: "Internal",
+            message: "A repeated action did not recover its receipt.",
+            retryable: false,
+        });
     const orphan = yield* Effect.promise(() =>
         client.operations.attachments.create(new Blob(["orphan"]), { id: "orphan" })
     );
     const retained = yield* Effect.promise(() =>
         client.operations.attachments.create(new Blob(["retained"]), { id: "retained" })
     );
-    yield* client.submit({
-        session,
-        sequence: 2,
-        optimistic: false,
-        invocation: {
-            id: "asset",
-            name: "createAsset",
-            parameters: { id: "asset", attachment: retained.attachment },
-        },
+    yield* client.backend.applyAction({
+        id: "asset",
+        name: "createAsset",
+        parameters: { id: "asset", attachment: retained.attachment },
     });
     if (shape.alarm) yield* withTestRuntime(shape.alarm(), bucket);
     const afterAlarm = yield* Effect.promise(() => state.storage.getAlarm());
@@ -231,7 +236,7 @@ export const runOntologyResource: (
             return reopenedFetch(request);
         })
     );
-    const snapshot = yield* restored.read(yield* restored.openClient());
+    const snapshot = yield* restored.backend.loadSubset({ objectType: "Note" });
     return {
         encryptionConfigured: definition.encryptionConfigured(),
         name: definition.namespace.name,
@@ -250,6 +255,6 @@ export const runOntologyResource: (
         preservedAlarm: secondAlarm === afterAlarm,
         orphanCollected: Result.isFailure(readOrphan),
         content,
-        title: snapshot.state.objects.find((object) => object.objectType === "Note")?.base[0]?.value.title,
+        title: snapshot.rows[0]?.value.title,
     };
 });

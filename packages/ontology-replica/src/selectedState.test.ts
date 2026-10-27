@@ -94,6 +94,26 @@ const keys = (rows: readonly { key: string | number }[]) =>
     rows.map((row) => row.key).sort((a, b) => String(a).localeCompare(String(b)));
 const window: Query = { where: eq(field("group"), "first"), orderBy: [{ field: field("rank") }], limit: 2 };
 
+test("forwarding an unchanged query preserves its parent demand and coverage identity", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { parent, child } = yield* setup();
+                yield* child.demand({ objectType: "Item" });
+                expect((yield* parent.status).demands).toHaveLength(1);
+                expect((yield* parent.status).demands[0]?.references).toBe(2);
+                const query = { where: eq(field("group"), "first") };
+                yield* child.demand({ objectType: "Item", query });
+                yield* parent.syncOnce;
+                const parentDemand = (yield* parent.status).demands.find((demand) => demand.query?.where);
+                expect(parentDemand?.query).toEqual(query);
+                expect(parentDemand?.coveredBy).toEqual({ objectType: "Item" });
+                expect(parentDemand?.coverageProof?.reason).toBe("collection");
+            })
+        )
+    );
+});
+
 test("partial state follows the composed top-k window without copying the source collection or its outbox", async () => {
     await Effect.runPromise(
         Effect.scoped(

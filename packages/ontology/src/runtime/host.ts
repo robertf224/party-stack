@@ -3,6 +3,7 @@ import { makeReplica, type ReplicaOptions, type ReplicaService } from "@party-st
 import { Runtime } from "@party-stack/runtime";
 import { Effect, Fiber, Scope, Stream } from "effect";
 import { prepareActionParameters } from "../live/actions/prepareActionParameters.js";
+import { createLiveOntologyAttachments } from "../live/attachments/createLiveOntologyAttachments.js";
 import { createBlobManager } from "./blobs/createBlobManager.js";
 import { observeReplicaRows } from "./hostQuery.js";
 import { executeTransactionMutator } from "./transactions.js";
@@ -27,21 +28,35 @@ const failure = (cause: unknown) =>
           });
 const attempt = <A>(run: () => Promise<A>) => Effect.tryPromise({ try: run, catch: failure });
 
-export interface ReplicaHostOptions {
+interface ReplicaHostCommonOptions {
+    readonly id?: string;
     readonly ir: OntologyIR;
     readonly context: Record<string, unknown>;
-    /** The caller owns provider acquisition/cleanup; open(context) acquires native backend resources in this Scope. */
-    readonly backendAdapter: OntologyBackendAdapter;
     readonly runtime: RuntimeAdapter;
     readonly writes?: LiveOntologyWrites;
     readonly connection?: ConnectionMonitor;
     readonly gc?: ReplicaOptions["gc"];
     readonly clients?: ReplicaOptions["clients"];
 }
+/** A native connection can additionally publish speculative parent state. */
+export type ReplicaHostOptions = ReplicaHostCommonOptions &
+    (
+        | {
+              readonly backendAdapter: OntologyBackendAdapter;
+              readonly backend?: never;
+              readonly source?: never;
+          }
+        | {
+              readonly backend: OntologyBackendService;
+              readonly source?: import("@party-stack/ontology-backend/protocol").OntologySource;
+              readonly backendAdapter?: never;
+          }
+    );
 export interface ReplicaHostService {
     readonly replica: ReplicaService;
     readonly backend: OntologyBackendService;
     readonly blobManager: BlobManager;
+    readonly attachments: import("../live/LiveOntology.js").LiveOntology["attachments"];
     readonly stageAttachment?: (
         value: attachment,
         bytes: ByteInput,
@@ -61,8 +76,8 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
     options: ReplicaHostOptions
 ): Effect.fn.Return<ReplicaHostService, BackendError, Runtime | Scope.Scope> {
     const services = yield* Runtime;
-    const { runtime, context, ir, backendAdapter } = options;
-    const backend = yield* backendAdapter.open(context);
+    const { runtime, context, ir } = options;
+    const backend = options.backend ?? (yield* options.backendAdapter!.open(context));
     const captured = yield* Effect.context<never>();
     const scope = yield* Effect.scope;
     const run = <A>(effect: Effect.Effect<A, BackendError>, signal?: AbortSignal) =>
@@ -121,40 +136,86 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         ? Stream.map(options.connection.changes, (state) => state.status === "active")
         : Stream.never;
     const replica = yield* makeReplica({
-        namespace: runtime.namespace,
+        namespace: options.id ?? runtime.namespace,
         clients: options.clients ?? { leaseMs: 10 * 60_000 },
         ir,
         tables: services.tables,
-        backend: {
-            ...backend,
-            applyAction: (invocation) =>
-                Effect.gen(function* () {
-                    const prepared = yield* prepareActionParameters({
-                        ir,
-                        actionTypeName: invocation.name,
-                        parameters: invocation.parameters,
-                        blobManager,
-                    }).pipe(
-                        Effect.mapError(
-                            (error) =>
-                                new BackendError({
-                                    operation: error.operation,
-                                    kind: error.kind,
-                                    message: error.message,
-                                    retryable: error.retryable,
-                                    cause: error.cause,
-                                    actionOutcome: "not-committed",
-                                })
-                        )
-                    );
-                    const receipt = yield* backend.applyAction({
-                        ...invocation,
-                        parameters: prepared.parameters,
-                        attachmentUploads: prepared.attachmentUploads,
-                    });
-                    return receipt;
-                }),
-        },
+        ...(!options.source
+            ? {
+                  backend: {
+                      ...backend,
+                      applyAction: (invocation) =>
+                          Effect.gen(function* () {
+                              const prepared = yield* prepareActionParameters({
+                                  ir,
+                                  actionTypeName: invocation.name,
+                                  parameters: invocation.parameters,
+                                  blobManager,
+                              }).pipe(
+                                  Effect.mapError(
+                                      (error) =>
+                                          new BackendError({
+                                              operation: error.operation,
+                                              kind: error.kind,
+                                              message: error.message,
+                                              retryable: error.retryable,
+                                              cause: error.cause,
+                                              actionOutcome: "not-committed",
+                                          })
+                                  )
+                              );
+                              const receipt = yield* backend.applyAction({
+                                  ...invocation,
+                                  parameters: prepared.parameters,
+                                  attachmentUploads: prepared.attachmentUploads,
+                              });
+                              return receipt;
+                          }),
+                  },
+              }
+            : {
+                  source: {
+                      ...options.source,
+                      submit: (request) =>
+                          Effect.gen(function* () {
+                              const prepared = yield* prepareActionParameters({
+                                  ir,
+                                  actionTypeName: request.invocation.name,
+                                  parameters: request.invocation.parameters,
+                                  blobManager,
+                              }).pipe(Effect.mapError(failure));
+                              const submission = {
+                                  ...request,
+                                  stagedAttachments: prepared.attachmentUploads.map(
+                                      (upload) => upload.attachment.id
+                                  ),
+                              };
+                              const first = yield* Effect.result(options.source!.submit(submission));
+                              if (first._tag === "Success") return first.success;
+                              if (
+                                  first.failure.kind !== "NotFound" ||
+                                  first.failure.operation !== "replica.submit.attachments"
+                              )
+                                  return yield* first.failure;
+                              for (const upload of prepared.attachmentUploads) {
+                                  if (!stageAttachment) return yield* unavailableAttachment();
+                                  const staged = yield* attempt(() =>
+                                      stageAttachment(upload.attachment, upload.blob, upload.target)
+                                  );
+                                  if (staged.id !== upload.attachment.id)
+                                      return yield* new BackendError({
+                                          operation: "attachment.handoff",
+                                          kind: "Conflict",
+                                          retryable: false,
+                                          actionOutcome: "not-committed",
+                                          message:
+                                              "A speculative parent must preserve staged attachment IDs.",
+                                      });
+                              }
+                              return yield* options.source!.submit(submission);
+                          }),
+                  },
+              }),
         blobs: yield* attempt(() => blobManager.storage),
         execute: (tx, invocation, settings) =>
             executeTransactionMutator({
@@ -191,6 +252,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         backend,
         blobManager,
         stageAttachment,
+        attachments: createLiveOntologyAttachments({ ir, blobManager, stageAttachment }),
         observe: (subset, settings) => observeReplicaRows(replica, subset, settings),
     };
 });

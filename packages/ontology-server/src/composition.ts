@@ -1,5 +1,6 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeCachedProxy, replicaStateSource } from "@party-stack/ontology-replica";
+import { sliceByteSource } from "@party-stack/ontology-storage/blobs";
 import { Effect } from "effect";
 import { makeOntologyHttpHandler } from "./rpcHttp.js";
 import type { OntologyRpcServerOptions } from "./rpc.js";
@@ -15,10 +16,12 @@ export type OntologyServerOptions<R = never> = Common<R> &
         | {
               readonly kind: "proxy";
               readonly backend: OntologyBackendService;
-              readonly cache?: ReplicaService;
+          }
+        | {
+              readonly kind: "cached-proxy";
+              readonly backend: OntologyBackendService;
+              readonly cache: ReplicaService;
               readonly demand?: { readonly idleDemandMs?: number; readonly maxSubsets?: number };
-              /** A protocol proxy can delegate upstream sessions without another registry. */
-              readonly source?: OntologySource;
           }
         | {
               readonly kind: "replica";
@@ -35,21 +38,77 @@ export const makeOntologyServer = Effect.fn("OntologyServer.make")(function* <R 
 ) {
     let backend: OntologyBackendService = options.backend;
     let source: OntologySource | undefined;
-    if (options.kind === "owned") source = options.backend.protocol;
-    else if (options.kind === "proxy") {
-        source = options.source;
-        if (options.cache)
-            backend = yield* makeCachedProxy({ replica: options.cache, backend, ...options.demand });
-    } else {
+    if (options.kind === "cached-proxy") {
+        backend = yield* makeCachedProxy({ replica: options.cache, backend, ...options.demand });
+    } else if (options.kind === "replica") {
         const replica = options.replica;
         source = replicaStateSource(replica);
-        backend = yield* makeCachedProxy({ replica, backend, confirmed: false });
         backend = {
             ...backend,
             supportsIdempotency: true,
-            // Upstream commits do not describe this replica's optimistic state.
-            // Protocol children consume its selected replica-state stream instead.
-            changes: undefined,
+            // The ordinary adapter facet stays committed: rows and cursors come
+            // from upstream. Published predictions travel only through source.
+            // Local staged/cached attachments still belong to this server.
+            attachments: options.ontology
+                ? {
+                      stage: (value, bytes) =>
+                          Effect.tryPromise({
+                              try: async () =>
+                                  (await options.ontology!.attachments.create(bytes, { id: value.id }))
+                                      .attachment,
+                              catch: (cause) =>
+                                  cause instanceof BackendError
+                                      ? cause
+                                      : new BackendError({
+                                            operation: "attachment.stage",
+                                            kind: "Unavailable",
+                                            retryable: true,
+                                            actionOutcome: "not-committed",
+                                            message: "Attachment staging failed.",
+                                            cause,
+                                        }),
+                          }),
+                      read: (value, range) =>
+                          Effect.tryPromise({
+                              try: (signal) => options.ontology!.attachments.source(value, { signal }),
+                              catch: (cause) =>
+                                  cause instanceof BackendError
+                                      ? cause
+                                      : new BackendError({
+                                            operation: "attachment.read",
+                                            kind: "Unavailable",
+                                            retryable: true,
+                                            message: "Attachment read failed.",
+                                            cause,
+                                        }),
+                          }).pipe(
+                              Effect.map((source) =>
+                                  range ? sliceByteSource(source, range.offset ?? 0, range.length) : source
+                              )
+                          ),
+                      metadata: (value, settings) =>
+                          Effect.tryPromise({
+                              try: () =>
+                                  options.ontology!.attachments.metadata(value, {
+                                      select: (settings?.select as readonly ("size" | "type" | "name")[]) ?? [
+                                          "size",
+                                          "type",
+                                          "name",
+                                      ],
+                                  }),
+                              catch: (cause) =>
+                                  cause instanceof BackendError
+                                      ? cause
+                                      : new BackendError({
+                                            operation: "attachment.metadata",
+                                            kind: "Unavailable",
+                                            retryable: true,
+                                            message: "Attachment metadata failed.",
+                                            cause,
+                                        }),
+                          }),
+                  }
+                : backend.attachments,
             // Finite request/response callers await confirmation. Replica children
             // use Submit for durable acceptance and normal parent-state handoff.
             applyAction: (invocation) =>
@@ -108,7 +167,9 @@ export const makeOntologyServer = Effect.fn("OntologyServer.make")(function* <R 
                 ? options.backend.storage.ir
                 : options.kind === "replica"
                   ? options.replica.ir
-                  : undefined),
+                  : options.kind === "cached-proxy"
+                    ? options.cache.ir
+                    : undefined),
         backend,
         source,
     });

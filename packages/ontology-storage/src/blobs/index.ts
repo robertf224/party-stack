@@ -28,7 +28,9 @@ export interface BlobRetentionTransaction {
         ids: readonly string[],
         options?: { readonly bytes?: boolean; readonly group?: string }
     ) => Effect.Effect<void, Failure>;
-    readonly bindRemoteId: (id: string, remoteId: string) => Effect.Effect<void, Failure>;
+    /** Validate transferred bytes in the transaction that accepts responsibility for them. */
+    readonly requireBytes: (ids: readonly string[]) => Effect.Effect<void, Failure>;
+    readonly bindRemoteId: (id: string, remoteId?: string) => Effect.Effect<void, Failure>;
     readonly releaseGroup: (group: string) => Effect.Effect<void, Failure>;
     readonly release: (owner: string) => Effect.Effect<void, Failure>;
 }
@@ -47,7 +49,7 @@ export interface BlobStorageService {
     /** Materialized local read; safe to consume after this call completes. The caller handles misses. */
     readonly read: (id: string) => Effect.Effect<Blob | undefined, Failure>;
     readonly updateMetadata: (id: string, value: BlobMetadata) => Effect.Effect<BlobRecord, Failure>;
-    readonly bindRemoteId: (id: string, remoteId: string) => Effect.Effect<void, Failure>;
+    readonly bindRemoteId: (id: string, remoteId?: string) => Effect.Effect<void, Failure>;
     readonly collectGarbage: (options: {
         readonly olderThanMs: number;
         /** Unreferenced identities and sole local copies expire after this grace period. */
@@ -158,10 +160,11 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
         for (const row of previous) yield* tx.delete(roots, row.key);
         for (const id of new Set(previous.map((row) => row.value.blob))) yield* refreshRetention(tx, id);
     });
-    const bindRemoteId = Effect.fnUntraced(function* (tx: Transaction, id: string, remoteId: string) {
-        if (!remoteId) return yield* blobFailure("InvalidValue", "A remote blob handle needs an ID.");
+    const bindRemoteId = Effect.fnUntraced(function* (tx: Transaction, id: string, remote?: string) {
         const record = yield* find(tx, id);
         if (!record) return yield* blobFailure("NotFound", "Cannot bind a missing blob.");
+        const remoteId = remote ?? record.remoteId ?? id;
+        if (!remoteId) return yield* blobFailure("InvalidValue", "A remote blob handle needs an ID.");
         if (record.writing) return yield* blobFailure("Busy", "Blob staging has not completed.");
         if (record.remoteId && record.remoteId !== remoteId)
             return yield* blobFailure("Conflict", "Blob ID is already bound to another remote ID.");
@@ -212,6 +215,14 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
         bytesRetained: false,
     });
     const retention = (tx: Transaction): BlobRetentionTransaction => ({
+        requireBytes: Effect.fnUntraced(function* (ids: readonly string[]) {
+            for (const id of new Set(ids))
+                if (!(yield* find(tx, id))?.byteKey)
+                    return yield* blobFailure(
+                        "NotFound",
+                        "Required staged attachment bytes are unavailable."
+                    );
+        }),
         release: (rootOwner) => release(tx, rootOwner),
         releaseGroup: Effect.fnUntraced(function* (group: string) {
             const selected = yield* tx.loadSubset(roots, { where: eq(field("group"), group) });

@@ -1,4 +1,4 @@
-# Migration status — October 26, 2026
+# Migration status — October 27, 2026
 
 Current inventory. The [execution log](./implementation.md) records historical
 checkpoints; this file describes the current implementation. The overall
@@ -97,7 +97,8 @@ The [October 27 incremental-state proposal](./incremental-state-proposal.md)
 describes scoped browser composition, shared incoming-state installation,
 bounded selected-state diffs, protocol-child GC/blobs and the later query-IVM
 extension. Scoped client/worker composition and the Runtime dependency cleanup
-are implemented; incoming-state/GC/delta changes remain proposals. The new
+and protocol-child row/blob retention are implemented; shared incoming-state
+extraction and retained delta delivery remain proposals. The new
 `apps/website` embeds this same document in its Fumadocs design section so it can
 be reviewed alongside the current architecture/runtime/storage documentation.
 
@@ -112,10 +113,10 @@ See [the agreed v0 scope](./recovery-v0.md) and
 [Gateway gates](./gateway-v0-parity.md). The inventory below also includes post-v0 work.
 
 1. **Protocol hardening.** Retained delta history, general scoped returned-state
-   authorization, and protocol-child row/blob retention. Source/session recovery and
+   authorization. Source/session recovery, protocol-child row/blob retention and
    configurable receipt/journal/session cleanup are implemented. Current
    selected snapshots replace atomically; they are not a retained delta stream.
-   Protocol children require `gc:false` and no blob service. The issue-tracker
+   Every child uses local BlobStorage and ordinary row GC. The issue-tracker
    placement is a trusted same-origin use, not a generic untrusted deployment.
 2. **Provider synchronization.** Foundry durable edits-history catch-up with honest
    cursor guarantees, Salesforce CDC health/reconnect support, deeper predicate
@@ -594,10 +595,34 @@ outbox through parent inclusion; a private inclusion flag prevents repeat replay
 and preserves their dependency roots until the final outcome. Same-revision refill
 is fenced by a bounded digest/residency record. Query windows, explicit pins,
 inherited creations/tombstones and accepted-action dependencies have regressions.
-Independent child BlobStorage/staged-byte handoff remains future work; attachment
-RPC delegation is unchanged. See [the current GC rules](./protocol-gc-examples.md).
+Independent child BlobStorage/staged-byte handoff is now implemented as described
+below. See [the current GC rules](./protocol-gc-examples.md).
 
 Connect's session-state TanStack collection is removed. Its direct table writes
 retain cross-context refresh/logout coordination; local snapshots and monitors
 serve consumers without a DB collection. The TanStack adapter and its tests now
 live at `ontology/tanstack`, and the standalone ontology-tanstack package is removed.
+
+## October 27: native child attachments and server roles
+
+Connected clients use the normal replica host and local BlobStorage. Memory tabs
+stage/cache in memory; persistent children use their own platform byte service.
+Parent access is an ordinary remote provider. Cold reads deliver bytes while both
+parent and child fill their caches, with bounded queues and scoped cancellation.
+Metadata-only requests retain selected-field provider pushdown and do not read
+bytes when the provider supplies those fields. Byte reads use their own stream header.
+
+Speculative submissions transfer missing staged copies before first acceptance.
+The parent checks required bytes and installs outbox roots in one transaction.
+Accepted duplicates recover without requiring a second transfer. Child receipts
+are saved before alias reconciliation; restart can finish a failed mapping even
+after the parent's result detail expires. Each child's byte GC is independent.
+
+Only intermediate replica servers expose speculative state. Owned, proxy and
+cached-proxy connections use the ordinary committed adapter facet; no child session
+is opened for finite calls. Intermediate servers also expose committed upstream
+rows/journal through that facet; predictions use the speculative extension.
+Describe advertises a definition digest, not private schema contents.
+
+The [subsystem review](./architecture-simplification-review.md) records simplifications
+and remaining candidates. Incremental selected-state deltas are still unimplemented.

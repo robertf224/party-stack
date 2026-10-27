@@ -20,7 +20,7 @@ import {
     type ByteSource,
 } from "@party-stack/ontology-storage/blobs";
 import { getTargetValueType } from "@party-stack/ontology/utils";
-import { Effect, Queue, Schema, Stream, Fiber, Scope, Layer } from "effect";
+import { Effect, Exit, Option, Queue, Schema, Sink, Stream, Fiber, Scope, Layer } from "effect";
 import { Rpc, RpcGroup, RpcClient } from "effect/rpc";
 import {
     Attachment,
@@ -74,6 +74,13 @@ const HelperRpcs = RpcGroup.make(
         payload: BackendSubsetCodec,
         success: protocolValueCodec(BackendSnapshotSchema),
         error: BackendError,
+    }),
+    Rpc.make("WatchChanges", { success: Schema.Literal("invalidate"), error: BackendError, stream: true }),
+    Rpc.make("WatchSubset", {
+        payload: BackendSubsetCodec,
+        success: Schema.Literal("invalidate"),
+        error: BackendError,
+        stream: true,
     }),
     Rpc.make("PullChanges", {
         payload: Schema.Struct({
@@ -146,9 +153,10 @@ const HelperRpcs = RpcGroup.make(
 );
 export const OntologyOperationRpcs = HelperRpcs.merge(AttachmentTransferRpcs);
 export type OntologyOperationRequest =
+    | { readonly operation: "WatchChanges" }
     | { readonly operation: "PullChanges"; readonly cursor?: string; readonly limit?: number }
     | {
-          readonly operation: "LoadSubset";
+          readonly operation: "LoadSubset" | "WatchSubset";
           readonly subset: import("@party-stack/ontology-backend").BackendSubset;
       }
     | {
@@ -203,7 +211,8 @@ const decryptFailure = (cause: unknown) =>
         retryable: cause instanceof BackendError ? cause.retryable : true,
         message: "Decryption failed.",
     });
-const attempt = <A>(run: () => Promise<A>) => Effect.tryPromise({ try: run, catch: failure });
+const attempt = <A>(run: (signal: AbortSignal) => Promise<A>) =>
+    Effect.tryPromise({ try: run, catch: failure });
 const missing = (name: string) =>
     new BackendError({
         operation: name,
@@ -282,7 +291,7 @@ export const ontologyAttachmentHandlers = <R>(options: OntologyOperationOptions<
                 return yield* options.backend.attachments.read(attachment);
             }
             if (!options.ontology) return yield* missing("ReadAttachment");
-            return yield* attempt(() => options.ontology!.attachments.source(attachment));
+            return yield* attempt((signal) => options.ontology!.attachments.source(attachment, { signal }));
         }),
 });
 
@@ -301,6 +310,41 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                 if (!options.backend) return yield* missing("LoadSubset");
                 return yield* options.backend.loadSubset(subset);
             }),
+        WatchChanges: (_, context) =>
+            Stream.unwrap(
+                Effect.gen(function* () {
+                    yield* options.authorize({ operation: "WatchChanges" }, context.headers);
+                    yield* options.ready ?? Effect.void;
+                    if (!options.backend?.changes?.watch) return yield* missing("WatchChanges");
+                    return Stream.concat(
+                        Stream.make("invalidate" as const),
+                        options.backend.changes.watch.pipe(Stream.map(() => "invalidate" as const))
+                    );
+                })
+            ),
+        WatchSubset: (subset, context) =>
+            Stream.unwrap(
+                Effect.gen(function* () {
+                    yield* options.authorize({ operation: "WatchSubset", subset }, context.headers);
+                    yield* options.ready ?? Effect.void;
+                    if (!options.backend) return yield* missing("WatchSubset");
+                    const watched = options.backend.watchSubset?.(subset);
+                    const interval = options.backend.pollIntervalMs?.(subset) ?? 5_000;
+                    if (!watched && interval !== false && (!Number.isFinite(interval) || interval < 100))
+                        return yield* new BackendError({
+                            operation: "WatchSubset",
+                            kind: "ValidationFailed",
+                            retryable: false,
+                            message: "Invalid subset poll interval.",
+                        });
+                    const changes = watched ?? (interval === false ? Stream.never : Stream.tick(interval));
+                    // A new subscription is also a repair boundary for missed invalidations.
+                    return Stream.concat(
+                        Stream.make("invalidate" as const),
+                        changes.pipe(Stream.map(() => "invalidate" as const))
+                    );
+                })
+            ),
         PullChanges: (request, context) =>
             Effect.gen(function* () {
                 yield* options.authorize({ operation: "PullChanges", ...request }, context.headers);
@@ -569,8 +613,11 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
     const replicaMonitor = yield* makeReplicaMonitor(client.ReplicaStatus().pipe(Stream.mapError(failure)));
     const scope = yield* Effect.scope;
     const context = yield* Effect.context<never>();
-    const run = <A, E>(work: Effect.Effect<A, E>) =>
-        Effect.runPromiseWith(context)(Effect.flatMap(Effect.forkIn(work, scope), Fiber.join));
+    const run = <A, E>(work: Effect.Effect<A, E>, signal?: AbortSignal) =>
+        Effect.runPromiseWith(context)(
+            Effect.acquireUseRelease(Effect.forkIn(work, scope), Fiber.join, Fiber.interrupt),
+            { signal }
+        );
     const listeners = new Set<() => void>();
     let spans: readonly import("@party-stack/runtime").RuntimeTrace[] = [];
     let watcher: Fiber.Fiber<void> | undefined;
@@ -656,45 +703,67 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
             );
             return { attachment } as Awaited<ReturnType<LiveOntology["attachments"]["create"]>>;
         },
-        source: async (attachment): Promise<ByteSource> => {
-            const info = await run(client.AttachmentMetadata({ attachment }));
-            const metadata = { ...info, type: info.type ?? "application/octet-stream" };
-            return {
-                ...metadata,
-                stream: Stream.suspend(() => {
-                    let received = 0;
-                    let declared: number | undefined;
-                    let started = false;
-                    const content = client.ReadAttachment(attachment).pipe(
-                        Stream.mapEffect((event) =>
-                            Effect.gen(function* () {
-                                if (event.kind === "metadata") {
-                                    if (started)
-                                        return yield* failure(new Error("Duplicate attachment metadata."));
-                                    started = true;
-                                    declared = event.size;
-                                    return new Uint8Array(0);
-                                }
-                                if (!started)
-                                    return yield* failure(new Error("Missing attachment metadata."));
-                                received += event.bytes.length;
-                                if (declared !== undefined && received > declared)
-                                    return yield* failure(new Error("Attachment exceeds its declared size."));
-                                return event.bytes;
-                            })
-                        )
-                    );
-                    return Stream.concat(
-                        content,
-                        Stream.fromEffect(
-                            Effect.gen(function* () {
-                                if (!started || (declared !== undefined && received !== declared))
-                                    return yield* failure(new Error("Incomplete attachment download."));
-                            })
-                        ).pipe(Stream.drain)
-                    );
-                }).pipe(Stream.provideContext(context)),
-            };
+        source: async (attachment, options): Promise<ByteSource> => {
+            const readScope = await run(Scope.fork(scope), options?.signal);
+            try {
+                // Read the stream's own header. A separate metadata request can
+                // otherwise download the whole body to derive unknown size/name.
+                const [header, tail] = await run(
+                    Scope.provide(
+                        Stream.peel(
+                            client.ReadAttachment(attachment),
+                            Sink.head<Stream.Success<ReturnType<OperationsRpcClient["ReadAttachment"]>>>()
+                        ),
+                        readScope
+                    ),
+                    options?.signal
+                );
+                if (Option.isNone(header) || header.value.kind !== "metadata")
+                    throw failure(new Error("Missing attachment metadata."));
+                const { kind: _kind, ...metadata } = header.value;
+                let consumed = false;
+                return {
+                    ...metadata,
+                    stream: Stream.suspend(() => {
+                        if (consumed)
+                            return Stream.unwrap(
+                                Effect.tryPromise({
+                                    try: () => attachments.source(attachment, options),
+                                    catch: failure,
+                                }).pipe(Effect.map((source) => source.stream))
+                            );
+                        consumed = true;
+                        let received = 0;
+                        return Stream.concat(
+                            tail.pipe(
+                                Stream.mapEffect((event) =>
+                                    Effect.gen(function* () {
+                                        if (event.kind !== "bytes")
+                                            return yield* failure(
+                                                new Error("Duplicate attachment metadata.")
+                                            );
+                                        received += event.bytes.length;
+                                        if (metadata.size !== undefined && received > metadata.size)
+                                            return yield* failure(
+                                                new Error("Attachment exceeds its declared size.")
+                                            );
+                                        return event.bytes;
+                                    })
+                                )
+                            ),
+                            Stream.fromEffect(
+                                Effect.gen(function* () {
+                                    if (metadata.size !== undefined && received !== metadata.size)
+                                        return yield* failure(new Error("Incomplete attachment download."));
+                                })
+                            ).pipe(Stream.drain)
+                        ).pipe(Stream.ensuring(Scope.close(readScope, Exit.void)));
+                    }).pipe(Stream.provideContext(context)),
+                };
+            } catch (cause) {
+                await Effect.runPromise(Scope.close(readScope, Exit.void));
+                throw failure(cause);
+            }
         },
         blob: async (attachment) => run(collectByteBlob(await attachments.source(attachment))),
         metadata: async (

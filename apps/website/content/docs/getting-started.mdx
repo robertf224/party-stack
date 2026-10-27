@@ -220,12 +220,10 @@ resources too early.
 
 ## Attachment storage at this checkpoint
 
-Protocol clients currently delegate attachment operations to their parent, even
-when their Runtime has a memory byte store. That is a temporary implementation
-restriction: independent protocol-child BlobStorage and GC are not wired yet.
-The persistent worker uses its own ordinary attachment storage.
-
-The intended follow-up makes every replica use the same attachment machinery:
-memory or durable local metadata/bytes, with parent access for cache misses and
-uploads. This need not fetch every attachment or keep duplicate bytes forever.
+Every replica uses the same local attachment machinery: memory or durable
+metadata/bytes, with parent access for cache misses and uploads. Tabs stage bytes
+in memory; their persistent worker stages and caches its own durable copies.
+Cold reads stream through while filling the local cache. Metadata-only requests
+use the provider metadata capability when available. This does not fetch every
+attachment or keep duplicate bytes forever; each replica owns its byte GC.
 See the [replication and retention proposal](/docs/design/replication).

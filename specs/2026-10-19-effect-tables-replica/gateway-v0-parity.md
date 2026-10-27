@@ -107,9 +107,9 @@ another client's speculative actions. Ordinary row access must never imply privi
 outbox/base inspection. This is deferred for the described gateway request/response
 workflow, not treated as already implemented.
 
-Protocol child replicas currently require gc:false and no local blob service. Trusted
-memory tabs receive selected snapshots and use their persistent parent's attachment
-service. Persistent children need transactional row roots from their own demand,
-forwarded actions and imported parent dependencies, plus byte/alias retention and
-crash recovery. Add selected-membership and parent-handoff stress tests before lifting
-the guard. This is distinct from existing mark-and-sweep in an adapter-backed replica.
+Protocol children now use ordinary row GC and local BlobStorage. Trusted memory
+tabs receive selected snapshots and keep their own memory byte cache; their parent
+is the remote byte provider. Demand, pins and own action dependencies protect rows;
+transactional blob roots protect attachment identity and staged bytes. This removes
+the earlier GC/blob guard, but does not authorize general untrusted speculative-state
+access. Such access still needs the projection work described above.

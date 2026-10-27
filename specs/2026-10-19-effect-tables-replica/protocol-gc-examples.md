@@ -1,8 +1,8 @@
 **Replica state and GC · October 27, 2026**
 
-The row storage simplification and protocol-child row GC described below are now
-implemented. Incremental delivery and independent child attachment storage remain
-future work; neither is required for the row collector.
+The row storage simplification, protocol-child row GC and independent local
+attachment storage described below are implemented. Incremental selected-state
+delivery remains future work.
 
 ## Start with three things
 
@@ -140,9 +140,10 @@ Selected parent action records and source/view positions are base/protocol
 bookkeeping. Terminal results, client sessions and delivery records have their
 own bounded retention; unresolved own actions remain in the outbox.
 
-Tabs currently use the parent's attachment API over streaming RPC. They do not
-run independent BlobStorage metadata or byte GC. The target is to reuse normal
-BlobStorage with the parent as a remote provider, rather than add a special tab
-manager. Safe staged-byte handoff, receipt mappings and restart recovery are still
-required before enabling that composition. The remaining protocol no-blob-service
-guard concerns that byte ownership work; it no longer disables row GC.
+Tabs use normal local BlobStorage with the parent as a remote provider. Memory
+tabs and persistent children collect their own bytes independently. Reads stream
+through while filling the local cache. New action attachments transfer before
+parent acceptance; required bytes and outbox roots are checked/installed in one
+parent transaction. Duplicate accepted submissions need no second transfer.
+Receipts are persisted before local alias reconciliation, so a failed mapping can
+recover after restart without resubmitting. There is no protocol-child GC/blob guard.

@@ -1,8 +1,9 @@
+import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { MemoryBlobBytesStore, type RuntimeAdapter } from "@party-stack/runtime";
 import { runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { closeRuntimeFixture } from "@party-stack/runtime/testing";
-import { Effect } from "effect";
+import { Deferred, Effect, Stream } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { createBlobManager } from "./createBlobManager.js";
 
@@ -81,6 +82,98 @@ test("native blob cleanup aborts remote work and fences a late non-cancelable re
         expect(bytes.blobs.size).toBe(0);
     } finally {
         finish(new Blob());
+        await manager.cleanup();
+        await closeRuntimeFixture(runtime);
+    }
+});
+
+test("a cold read delivers its first bytes before EOF and commits the cache before completion", async () => {
+    const runtime: RuntimeAdapter = {
+        owner: "user",
+        namespace: "progressive",
+        tables: Memory.make(),
+        blobBytes: new MemoryBlobBytesStore(),
+    };
+    runtimeFixtureContext(runtime);
+    const release = Effect.runSync(Deferred.make<void>());
+    const received = Effect.runSync(Deferred.make<void>());
+    let finished = false;
+    const read = vi.fn(async () => ({
+        type: "text/plain",
+        stream: Stream.concat(
+            Stream.make(new TextEncoder().encode("first")),
+            Stream.fromEffect(
+                Deferred.await(release).pipe(
+                    Effect.map(() => {
+                        finished = true;
+                        return new TextEncoder().encode("last");
+                    })
+                )
+            )
+        ),
+    }));
+    const manager = createBlobManager({ runtime, remote: { read }, gcTime: Infinity });
+    try {
+        const source = await manager.source("remote");
+        expect(finished).toBe(false);
+        const consuming = Effect.runPromise(
+            collectByteBlob({
+                ...source,
+                stream: source.stream.pipe(Stream.tap(() => Deferred.succeed(received, undefined))),
+            })
+        );
+        await Effect.runPromise(Deferred.await(received).pipe(Effect.timeout("2 seconds")));
+        expect(finished).toBe(false);
+        expect(
+            (await Effect.runPromise((await manager.storage).metadata("remote")))?.byteKey
+        ).toBeUndefined();
+        await Effect.runPromise(Deferred.succeed(release, undefined));
+        expect(await (await consuming).text()).toBe("firstlast");
+        expect((await Effect.runPromise((await manager.storage).metadata("remote")))?.byteKey).toBeDefined();
+        expect(await (await manager.read("remote")).text()).toBe("firstlast");
+        expect(await (await Effect.runPromise(collectByteBlob(source))).text()).toBe("firstlast");
+        expect(read).toHaveBeenCalledOnce();
+    } finally {
+        await Effect.runPromise(Deferred.succeed(release, undefined));
+        await manager.cleanup();
+        await closeRuntimeFixture(runtime);
+    }
+});
+
+test("canceling a progressive reader settles its partial write before another reader retries", async () => {
+    const bytes = new MemoryBlobBytesStore();
+    const runtime: RuntimeAdapter = {
+        owner: "user",
+        namespace: "progressive-cancel",
+        tables: Memory.make(),
+        blobBytes: bytes,
+    };
+    runtimeFixtureContext(runtime);
+    const release = Effect.runSync(Deferred.make<void>());
+    const read = vi.fn(async () => ({
+        type: "text/plain",
+        stream: Stream.concat(
+            Stream.make(new Uint8Array([1])),
+            Stream.fromEffect(Deferred.await(release).pipe(Effect.as(new Uint8Array([2]))))
+        ),
+    }));
+    const manager = createBlobManager({ runtime, remote: { read }, gcTime: Infinity });
+    try {
+        const source = await manager.source("remote");
+        expect(await Effect.runPromise(Stream.runCollect(Stream.take(source.stream, 1)))).toEqual([
+            new Uint8Array([1]),
+        ]);
+        expect(
+            (await Effect.runPromise((await manager.storage).metadata("remote")))?.writing
+        ).toBeUndefined();
+        expect(bytes.blobs.size).toBe(0);
+        await Effect.runPromise(Deferred.succeed(release, undefined));
+        expect(new Uint8Array(await (await manager.read("remote")).arrayBuffer())).toEqual(
+            new Uint8Array([1, 2])
+        );
+        expect(read).toHaveBeenCalledTimes(2);
+    } finally {
+        await Effect.runPromise(Deferred.succeed(release, undefined));
         await manager.cleanup();
         await closeRuntimeFixture(runtime);
     }

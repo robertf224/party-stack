@@ -33,6 +33,7 @@ const ir: OntologyIR = {
 test("framework composition retains platform/transport after acquisition, confirms actions, and closes both", async () => {
     const released: string[] = [];
     let parent: OntologyConnection | undefined;
+    const requests: string[] = [];
     const runtime = Layer.effect(
         Runtime,
         Effect.gen(function* () {
@@ -68,7 +69,16 @@ test("framework composition retains platform/transport after acquisition, confir
         });
         yield* backend.applyAction({ id: "seed", name: "increment", parameters: {} });
         const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
-            Effect.provide(ontologyRpcHandlers({ source: backend.protocol, authorize: () => Effect.void }))
+            Effect.provide(
+                ontologyRpcHandlers({
+                    backend,
+                    ir,
+                    authorize: (request) =>
+                        Effect.sync(() => {
+                            requests.push(request.operation);
+                        }),
+                })
+            )
         );
         parent = yield* makeOntologyProtocolClient(client);
         return parent;
@@ -83,12 +93,19 @@ test("framework composition retains platform/transport after acquisition, confir
     });
     try {
         expect(released).toEqual([]);
-        expect(live.attachments).toBe(parent!.operations.attachments);
+        expect(live.attachments).not.toBe(parent!.operations.attachments);
+        expect(parent!.replication.kind).toBe("committed");
         const rows = await queryOnce((q) => q.from({ counter: live.objects.Counter! }));
         expect(rows[0]?.count).toBe(1);
         await live.actions.increment!({});
         expect((await queryOnce((q) => q.from({ counter: live.objects.Counter! })))[0]?.count).toBe(2);
-        expect(live.diagnostics?.parent?.label).toBe("Authority");
+        expect(live.diagnostics?.parent).toBeUndefined();
+        expect(requests).toEqual(expect.arrayContaining(["LoadSubset", "ApplyAction", "PullChanges"]));
+        expect(
+            requests.some((operation) =>
+                ["OpenClient", "Read", "Submit", "Acknowledge", "Demand"].includes(operation)
+            )
+        ).toBe(false);
         expect(live.traces?.getSnapshot().length).toBeGreaterThan(0);
     } finally {
         await live.cleanup();

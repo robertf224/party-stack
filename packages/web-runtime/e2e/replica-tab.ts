@@ -17,9 +17,11 @@ const makeTab = Effect.gen(function* () {
         Effect.sync(() => new SharedWorker(workerUrl, { name: namespace, type: "module" })),
         (worker) => Effect.sync(() => worker.port.close())
     );
-    const source = yield* connectOntologyWorker({ connectionTimeoutMs: 15_000 }).pipe(
+    const connection = yield* connectOntologyWorker({ connectionTimeoutMs: 15_000 }).pipe(
         Effect.provide(BrowserWorker.layer(() => worker))
     );
+    if (connection.replication.kind !== "speculative") throw new Error("Expected a replica host.");
+    const source = connection.replication.source;
     const replica = yield* makeReplica({
         namespace: "tab",
         ir,

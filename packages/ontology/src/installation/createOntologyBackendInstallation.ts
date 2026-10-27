@@ -1,10 +1,10 @@
 import { makeConnectionManager, createConnectionMonitor } from "@party-stack/connect";
 import { BackendError } from "@party-stack/ontology-backend";
+import { eq, field } from "@party-stack/ontology-storage";
+import { Table } from "@party-stack/ontology-storage/tables";
 import { Runtime } from "@party-stack/runtime";
-import { queryOnce } from "@tanstack/db";
 import { Context, Effect, Exit, Fiber, Layer, Scope, ScopedCache, Semaphore } from "effect";
 import { makeLiveOntology } from "../live/LiveOntology.js";
-import { makeLocalCollection } from "../tanstack/index.js";
 import { createMetaOntologyConfiguration } from "./createMetaOntologyConfiguration.js";
 import type { LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 import type {
@@ -91,16 +91,18 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
             installationId: options.installationId,
             adapter: options.connections,
         }).pipe(Effect.mapError((cause) => failure("installation.connections", cause)));
-        const partitions = yield* makeLocalCollection<LocalOntologyPartition, string>({
-            name: "ontology-partitions",
-            getKey: (row) => row.id,
-            schemaVersion: 1,
+        const partitions = Table.make<LocalOntologyPartition>({
+            name: JSON.stringify([
+                "local",
+                runtime.adapter.owner,
+                runtime.adapter.namespace,
+                "ontology-partitions",
+            ]),
+            version: 1,
         });
-        yield* Effect.acquireRelease(
-            Effect.sync(() => partitions.subscribeChanges(() => {}, { includeInitialState: true })),
-            (demand) => Effect.sync(() => demand.unsubscribe())
-        );
-        yield* boundary("installation.restore", () => queryOnce((q) => q.from({ row: partitions })));
+        yield* runtime.tables
+            .ensureIndex(partitions, { name: "userId", field: field("userId") })
+            .pipe(Effect.mapError((cause) => failure("installation.restore", cause)));
         let disposed = false;
         const closed = () =>
             failure(
@@ -118,14 +120,9 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
         const owned = <B>(work: Effect.Effect<B, BackendError>) =>
             Effect.andThen(ensureOpen, Effect.flatMap(Effect.forkIn(work, owner), Fiber.join));
         const recordPartition = (row: LocalOntologyPartition) =>
-            boundary("installation.partition", () => {
-                const transaction = partitions.has(row.id)
-                    ? partitions.update(row.id, { optimistic: false }, (draft) => {
-                          Object.assign(draft, row);
-                      })
-                    : partitions.insert(row, { optimistic: false });
-                return transaction.isPersisted.promise;
-            });
+            runtime.tables
+                .put(partitions, row.id, row)
+                .pipe(Effect.mapError((cause) => failure("installation.partition", cause)));
         const cache = yield* ScopedCache.makeWith<string, LiveOntology, BackendError>({
             capacity: Number.MAX_SAFE_INTEGER,
             // Failed acquisitions must be retryable; successful resources live until explicit close or scope closure.
@@ -207,7 +204,10 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
         });
         const destroyUser = Effect.fnUntraced(function* (userId: string) {
             yield* closeUser(userId);
-            for (const partition of [...partitions.values()].filter((row) => row.userId === userId)) {
+            const selected = yield* runtime.tables
+                .loadSubset(partitions, { where: eq(field("userId"), userId) })
+                .pipe(Effect.mapError((cause) => failure("installation.partition", cause)));
+            for (const { value: partition } of selected) {
                 const namespace = `${liveOntologyNamespace(options.installationId, partition.ontologyId)}${partition.meta ? ":meta" : ""}`;
                 yield* Effect.scoped(
                     Effect.gen(function* () {
@@ -222,10 +222,9 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                         });
                     })
                 );
-                yield* boundary(
-                    "installation.partition",
-                    () => partitions.delete(partition.id, { optimistic: false }).isPersisted.promise
-                );
+                yield* runtime.tables
+                    .delete(partitions, partition.id)
+                    .pipe(Effect.mapError((cause) => failure("installation.partition", cause)));
             }
         });
         yield* Effect.addFinalizer(() =>

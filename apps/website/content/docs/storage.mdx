@@ -38,23 +38,21 @@ resumable uploads and range caches remain future work.
 
 ## Browser placement today
 
-In issue-tracker, tab attachment operations delegate to the SharedWorker over RPC.
-The worker manages durable staging, upload, and cached bytes. The tab does not have
-an independent durable attachment cache.
+Every replica owns normal local BlobStorage. Issue-tracker tabs use memory bytes;
+the SharedWorker uses durable bytes. The parent is the child's remote provider,
+using the same composition as any other replica.
 
-The connected-client composer currently installs the RPC attachment API directly
-as `LiveOntology.attachments`. Applications do not select a special tab adapter:
-they provide a connection to `createConnectedLiveOntology`, and its composition
-contains `attachments: connection.operations.attachments`.
+`source(handle)` streams from local bytes or a remote cache miss while filling the
+local cache. The first bytes can arrive before the remote stream finishes; EOF
+waits for local cache publication. `blob(handle)` deliberately collects the stream.
+`create(input)` stages locally. When an action uses that attachment, the child
+transfers the bytes needed by its parent before parent acceptance. Local action
+roots retain staged bytes through confirmation and receipt reconciliation.
 
-`source(handle)` obtains metadata and returns a lazy RPC byte stream from the
-worker. `blob(handle)` deliberately collects that stream into a Blob. `create(input)`
-streams the input to the worker, which stages it in its own attachment storage.
-This applies to connected protocol clients, not a check for "is this a tab?".
-The normal-child target can use local BlobStorage with its parent as the remote
-byte provider. A cold miss in today's BlobManager finishes caching the remote
-source before exposing the local read stream; progressive read-through and range
-caching are future work. RPC streaming avoids collecting another Blob in the tab.
+Metadata-only requests use the provider's metadata capability with the missing
+selected fields. They do not read bytes when that capability supplies the fields.
+Explicit metadata requests may derive missing fields from bytes as a fallback.
+Byte reads take metadata from the stream header without a separate metadata request.
 
 ## Garbage collection
 
@@ -69,6 +67,6 @@ An evicted base can be reloaded even when the parent revision is unchanged.
 Selected snapshots also replace old imported membership. Action/session history
 has separate bounded retention.
 
-Independent protocol-child blob storage remains unfinished; connected clients
-currently delegate bytes to the parent. See the
-[GC rules and concrete examples](/docs/design/garbage-collection).
+Each replica collects its own cached bytes independently. Evicting a child's copy
+does not evict the parent's copy. Range caching and resumable transfers remain
+future work. See the [GC rules and concrete examples](/docs/design/garbage-collection).

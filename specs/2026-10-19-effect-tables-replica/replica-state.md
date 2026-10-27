@@ -570,8 +570,10 @@ window entrants/exits, rather than independently limiting confirmed rows and
 overrides. It transfers requested action identities; broader action inspection is
 an explicit trusted interest. Full `snapshotState` remains available for inspection.
 Selected membership is replaced completely on refresh; retained delta batches and
-cursor resume are not implemented. Protocol children still require disabled GC
-and no blob service. They forward actions rather than calling a provider backend.
+cursor resume are not implemented. Protocol children use ordinary row GC and
+local BlobStorage, with their parent as the remote attachment provider. Only
+intermediate servers need this speculative extension; authoritative servers and
+proxies expose the normal committed adapter contract without child sessions.
 
 The transport-independent `OntologySource` contract lives in
 `ontology-backend/protocol`. `makeOwnedBackend(...).protocol` exposes an authoritative

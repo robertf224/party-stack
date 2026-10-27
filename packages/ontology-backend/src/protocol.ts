@@ -73,6 +73,8 @@ export interface ClientSubmission {
     readonly sequence: number;
     readonly invocation: ActionRequest;
     readonly optimistic: boolean;
+    /** Newly staged child copies required before first acceptance; duplicates need no transfer. */
+    readonly stagedAttachments?: readonly string[];
     readonly view?: ClientView;
 }
 
@@ -191,6 +193,7 @@ const ClientSubmissionSchema = Schema.Struct({
     sequence: PositiveCounter,
     invocation: ActionRequestSchema,
     optimistic: Schema.Boolean,
+    stagedAttachments: Schema.optional(Schema.Array(Schema.NonEmptyString)),
     view: Schema.optional(ClientViewSchema),
 });
 

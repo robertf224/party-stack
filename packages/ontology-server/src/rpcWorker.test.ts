@@ -9,10 +9,15 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Deferred, Effect, Exit, Fiber, Scope } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { connectOntologyWorker, serveOntologyWorker, serveOpenedOntologyWorker } from "./rpcWorker.js";
+import type { OntologyConnection } from "./rpc.js";
 import type { LiveOntology } from "@party-stack/ontology";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 import type { ReplicaOptions } from "@party-stack/ontology-replica";
 
+const speculativeSource = (connection: OntologyConnection) => {
+    if (connection.replication.kind !== "speculative") throw new Error("Expected speculative replication.");
+    return connection.replication.source;
+};
 const ir: OntologyIR = {
     types: [],
     linkTypes: [],
@@ -105,8 +110,8 @@ test("worker composition serves during delayed acquisition and releases its open
                 expect(cleanup).not.toHaveBeenCalled();
                 yield* Deferred.succeed(gate, undefined);
                 const source = yield* Fiber.join(connecting);
-                const session = yield* source.openClient();
-                const batch = yield* source.read(session, {
+                const session = yield* speculativeSource(source).openClient();
+                const batch = yield* speculativeSource(source).read(session, {
                     generation: 1,
                     selection: { subsets: [{ objectType: "Counter" }], actionIds: [] },
                 });
@@ -185,7 +190,7 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                         namespace,
                         ir,
                         tables: yield* Memory.make(),
-                        source,
+                        source: speculativeSource(source),
                         execute: increment,
                         gc: false,
                         startSync: false,
@@ -242,13 +247,13 @@ test("closing one port releases its demands without closing the shared source", 
                 const firstScope = yield* Scope.make();
                 const first = yield* Scope.provide(openPort(source), firstScope);
                 const second = yield* openPort(source);
-                yield* Scope.provide(first.demand({ objectType: "Counter" }), firstScope);
-                yield* second.demand({ objectType: "Counter" });
+                yield* Scope.provide(speculativeSource(first).demand({ objectType: "Counter" }), firstScope);
+                yield* speculativeSource(second).demand({ objectType: "Counter" });
                 expect(leases).toBe(2);
                 yield* Scope.close(firstScope, Exit.void);
                 yield* Effect.promise(() => vi.waitFor(() => expect(leases).toBe(1)));
-                const session = yield* second.openClient();
-                const result = yield* second.submit({
+                const session = yield* speculativeSource(second).openClient();
+                const result = yield* speculativeSource(second).submit({
                     session,
                     sequence: 1,
                     invocation: { id: "survivor", name: "increment", parameters: {} },

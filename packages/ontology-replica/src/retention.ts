@@ -7,6 +7,9 @@ import type { ReadTransaction } from "@party-stack/ontology-storage/tables";
 
 /** Offset rows influence a window even though they are not returned. */
 export function retentionQuery(query: Query = {}): Query {
+    // Forward unchanged demands unchanged. Only an offset needs a wider prefix;
+    // adding a redundant offset:0 would split demand/coverage/diagnostic identity.
+    if (!query.offset) return query;
     return {
         ...query,
         offset: 0,

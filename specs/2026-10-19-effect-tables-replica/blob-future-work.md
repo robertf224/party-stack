@@ -9,6 +9,12 @@ declared lengths are verified. Metadata is published only after successful EOF.
 Reader roots live through stream consumption, and cancelled platform writes settle
 before their immutable generation is abandoned for cleanup.
 
+Every replica, including protocol children, now owns local BlobStorage. Cold remote
+reads stream through while filling that cache; EOF waits for publication, and cancellation
+settles partial writes. A real parent/child RPC test verifies first-byte delivery
+before upstream EOF and independent byte GC. Explicit metadata requests still push
+selected fields to provider metadata APIs; byte reads do not preflight metadata.
+
 OPFS, Node and Expo write chunks to files. SQLite stores bounded 64 KiB BLOB rows
 plus a completed-generation marker. R2 known-size sources use streaming put (empty
 objects use an empty ArrayBuffer); unknown-size sources use 8 MiB multipart buffers.

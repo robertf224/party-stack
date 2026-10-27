@@ -36,9 +36,9 @@ no plaintext caching unless the caller opts in.
 ## The issue-tracker topology today
 
 Each identity/installation/ontology partition opens one persistent SharedWorker
-owner. Tabs use memory replicas and delegate attachment operations to that owner.
-The worker handles persistent blob metadata and bytes. Tabs query their own
-materialized collections.
+owner. Tabs use memory replicas with their own memory attachment storage; the
+worker uses durable metadata and bytes. A tab fetches remote bytes through its
+parent on a cache miss. Tabs query their own materialized collections.
 
 The application now supplies domain/placement choices to
 `createConnectedLiveOntology` and `serveOpenedOntologyWorker`. Replica construction,

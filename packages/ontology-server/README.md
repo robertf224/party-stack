@@ -35,7 +35,7 @@ const proxyServer =
 const cachedServer =
     yield *
     makeOntologyServer({
-        kind: "proxy",
+        kind: "cached-proxy",
         backend: upstream,
         cache: readCache,
         authorize,
@@ -55,8 +55,9 @@ const replicaServer =
 
 There is no writes flag. Authorization denies `ApplyAction` and `Submit` for read-only
 access. The role defines execution responsibility; it does not grant permission.
-A direct protocol proxy can also supply `source: upstreamSource` to delegate
-replication sessions without maintaining another registry.
+Only the intermediate replica role exposes speculative replica-state replication.
+Owned, proxy and cached-proxy roles expose committed backend operations without
+opening child replication sessions.
 
 The read cache shares subset demand with scoped `RcMap` leases. Concurrent callers
 share one demand. The idle timeout restarts after the last request releases its lease.
@@ -68,7 +69,8 @@ for its affected types; incomplete targets invalidate all types. The next read r
 coverage. An invalidation IO failure cannot turn a committed action into a failed one.
 Use a dedicated read-cache replica, bound to the same trusted upstream identity.
 
-`kind: "replica"` serves composed state, including its optimistic overlay. Protocol
+`kind: "replica"` publishes composed state through its speculative extension. Its
+ordinary backend facet still serves committed upstream rows and journal. Protocol
 `Submit` returns parent acceptance; stateless `ApplyAction` waits for upstream confirmation.
 The replica's surrounding scope must own its synchronization loop.
 
@@ -139,8 +141,8 @@ principal-bound source; this wrapper does not automatically secure that protocol
 
 The separate `./rpc` export defines typed client sessions, selected state reads,
 ordered actions, applied acknowledgments, demand leases and invalidation streams.
-It accepts an `OntologySource` from `ontology-backend/protocol`: either an owned
-backend's `.protocol` or `replicaStateSource(replica)` for an intermediate Replica.
+It accepts `replicaStateSource(replica)` from an intermediate Replica. Authoritative
+servers use the ordinary committed backend contract instead of speculative state.
 
 `./rpc/http` composes the same contract with Fetch handlers and streaming NDJSON:
 
@@ -151,7 +153,9 @@ import { makeOntologyHttpHandler } from "@party-stack/ontology-server/rpc/http";
 const handleRequest =
     yield *
     makeOntologyHttpHandler({
-        source: owned.protocol,
+        backend: upstream,
+        source: replicaStateSource(replica),
+        ir,
         authorize: authorizeRequest,
     });
 // Mount handleRequest at a dedicated HTTP route.
@@ -163,12 +167,13 @@ import { Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
 
 // Inside the client's scoped Effect program:
-const source =
+const connection =
     yield *
     connectOntologyHttp({ url: "https://example.test/ontology/rpc" }).pipe(
         Effect.provide(FetchHttpClient.layer)
     );
-// Pass source to makeReplica({ ..., source, gc: false }).
+// connectLiveOntology({ ir, connection: Effect.succeed(connection) }) composes
+// the correct replica path with normal local row and blob storage.
 ```
 
 The HttpClient service supplies authentication/fetch behavior; its Layer constructs
@@ -182,7 +187,9 @@ sources must belong to the authenticated principal's partition. Restricted sourc
 also need returned-state projection, including action parameters and confirmed base.
 The existing row/property policies below are not automatically applied to this new
 protocol. Selected snapshots currently replace membership in full. Retained replica-state
-deltas and protocol-child row/blob GC remain follow-up work.
+deltas remain follow-up work. Protocol-child row/blob GC uses the same local
+storage machinery as adapter replicas. Metadata-only requests retain selected-field
+provider pushdown; cold byte reads stream through while filling local caches.
 Issue-tracker now uses the SharedWorker/memory-tab placement described below.
 
 ## Worker transport

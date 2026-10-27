@@ -1,10 +1,10 @@
-import { executeTransactionMutator, makeReplicaOntologyView } from "@party-stack/ontology";
-import { makeReplica } from "@party-stack/ontology-replica";
+import { makeReplicaHost, makeReplicaOntologyView } from "@party-stack/ontology";
+import { BackendError } from "@party-stack/ontology-backend";
+import { digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Runtime } from "@party-stack/runtime";
-import { Context, Effect, Exit, Layer, ManagedRuntime, Scope, Tracer } from "effect";
+import { Context, Effect, Exit, Layer, ManagedRuntime, Scope, Stream, Tracer } from "effect";
 import type { OntologyConnection } from "./rpc.js";
 import type { LiveOntology, LiveOntologyWrites, OntologyIR } from "@party-stack/ontology";
-import type { BackendError } from "@party-stack/ontology-backend";
 
 export interface ConnectLiveOntologyOptions<R = never> {
     readonly ir: OntologyIR;
@@ -18,8 +18,7 @@ export interface ConnectLiveOntologyOptions<R = never> {
 }
 
 /** Compose a protocol child and application view over supplied platform services.
- * Attachments currently delegate to the parent; independent protocol-child blob
- * byte storage can be composed here when protocol-child staging is supported.
+ * Each client owns normal local row/blob storage; the parent is its remote provider.
  */
 export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function* <R>(
     options: ConnectLiveOntologyOptions<R>
@@ -27,48 +26,66 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
     const runtime = yield* Runtime;
     const scope = yield* Scope.fork(yield* Effect.scope);
     const open = Effect.gen(function* () {
-        const source = yield* options.connection;
+        const connection = yield* options.connection;
+        const definitionHash = connection.definitionHash
+            ? yield* digestBytes({
+                  type: "application/json",
+                  stream: Stream.make(new TextEncoder().encode(JSON.stringify(options.ir))),
+              }).pipe(
+                  Effect.mapError(
+                      (cause) =>
+                          new BackendError({
+                              operation: "ontology.connect",
+                              kind: "Internal",
+                              retryable: false,
+                              message: "Could not identify the client definition.",
+                              cause,
+                          })
+                  )
+              )
+            : undefined;
+        if (connection.definitionHash && connection.definitionHash !== definitionHash)
+            return yield* new BackendError({
+                operation: "ontology.connect",
+                kind: "SchemaMismatch",
+                message: "Server definition differs from this client.",
+                retryable: false,
+            });
         const context = options.context ?? {};
-        const replica = yield* makeReplica({
-            namespace: options.id ?? runtime.adapter.namespace,
+        const speculative =
+            connection.replication.kind === "speculative" ? connection.replication.source : undefined;
+        const { replica, attachments } = yield* makeReplicaHost({
+            runtime: runtime.adapter,
+            id: options.id,
             ir: options.ir,
-            tables: runtime.tables,
-            source,
-            outbox: options.writes?.outbox,
-            execute: (tx, action, settings) =>
-                executeTransactionMutator({
-                    ir: options.ir,
-                    tx,
-                    name: action.name,
-                    parameters: action.parameters,
-                    operationId: action.id,
-                    replay: action.replay,
-                    resolveOnly: settings?.optimistic === false,
-                    context,
-                    mutators: options.writes?.mutators,
-                }),
+            context,
+            writes: options.writes,
+            backend: connection.backend,
+            source: speculative,
         });
-        const operations = source.operations;
+        const operations = connection.operations;
         const view = yield* makeReplicaOntologyView({
             ir: options.ir,
             context,
             replica,
             writes: options.writes,
-            attachments: operations.attachments,
+            attachments,
             queryFunction: operations.queryFunction,
             resolveActionParameters: operations.resolveActionParameters,
             decrypt: operations.decrypt,
             traces: runtime.traces,
             diagnosticLabel: options.label,
-            parentDiagnostics: {
-                label: options.parent?.label ?? "Parent",
-                role: "host",
-                location: options.parent?.location,
-                replica: operations.replicaMonitor,
-                traces: operations.traces,
-            },
-            parentOutbox: operations.outbox,
-            awaitParentAcceptance: true,
+            parentDiagnostics: speculative
+                ? {
+                      label: options.parent?.label ?? "Parent",
+                      role: "host",
+                      location: options.parent?.location,
+                      replica: operations.replicaMonitor,
+                      traces: operations.traces,
+                  }
+                : undefined,
+            parentOutbox: speculative ? operations.outbox : undefined,
+            awaitParentAcceptance: Boolean(speculative),
             validate: (name, parameters) => operations.validate(name, parameters),
             validateDraft: (name, parameters, known) => operations.validate(name, parameters, known),
         });

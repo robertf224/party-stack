@@ -17,6 +17,7 @@ import {
 } from "@party-stack/ontology-storage";
 import {
     digestBytes,
+    BlobStorageError,
     collectObjectAttachments,
     collectActionAttachments,
     type BlobStorageService,
@@ -265,7 +266,7 @@ interface ReplicaCommonOptions {
     readonly isOwnerAlive?: (owner: string) => Effect.Effect<boolean, BackendError>;
 }
 /** Use a provider/owned backend binding or a protocol source, never both.
- * Protocol attachment services currently delegate to the parent.
+ * Both paths own ordinary local row and attachment retention.
  */
 export type ReplicaOptions = ReplicaCommonOptions &
     (
@@ -348,11 +349,6 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 })
             ),
     };
-    if (options.source && options.blobs)
-        return yield* fault(
-            "NotImplemented",
-            "Protocol attachment services currently delegate to the parent."
-        );
     const gc =
         options.gc === false
             ? undefined
@@ -413,16 +409,23 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         type: string,
         key: Key,
         value: ObjectValue | undefined,
-        kind: "base" | "overlay"
+        kind: "base" | "overlay",
+        additional?: ObjectValue
     ) => {
         if (!options.blobs) return Effect.void;
         const group = blobGroup(type, kind);
         const owner = JSON.stringify([group, key]);
-        return value === undefined
+        return value === undefined && additional === undefined
             ? options.blobs.in(tx).release(owner)
             : options.blobs.in(tx).retain(
                   owner,
-                  collectObjectAttachments(options.ir, type, value).map((entry) => entry.attachment.id),
+                  [value, additional].flatMap((row) =>
+                      row === undefined
+                          ? []
+                          : collectObjectAttachments(options.ir, type, row).map(
+                                (entry) => entry.attachment.id
+                            )
+                  ),
                   { bytes: false, group }
               );
     };
@@ -1274,14 +1277,18 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         );
         yield* notify;
     });
-    const bindReceiptBlobs = (tx: Transaction, receipt: ActionReceipt) =>
-        options.blobs
-            ? Effect.forEach(
-                  receipt.attachmentIdMappings ?? [],
-                  (mapping) => options.blobs!.in(tx).bindRemoteId(mapping.localId, mapping.remoteId),
-                  { discard: true }
-              )
-            : Effect.void;
+    const bindReceiptBlobs = (tx: Transaction, receipt: ActionReceipt, invocation?: ActionRequest) =>
+        Effect.gen(function* () {
+            if (!options.blobs) return;
+            const mappings = receipt.attachmentIdMappings ?? [];
+            for (const mapping of mappings)
+                yield* options.blobs.in(tx).bindRemoteId(mapping.localId, mapping.remoteId);
+            if (receipt.outcome === "committed" && invocation) {
+                const mapped = new Set(mappings.map((mapping) => mapping.localId));
+                for (const id of attachmentIds(invocation))
+                    if (!mapped.has(id)) yield* options.blobs.in(tx).bindRemoteId(id);
+            }
+        });
     const collectResults = access(
         tables.transaction((tx) =>
             Effect.gen(function* () {
@@ -1330,7 +1337,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         failureRetryable: undefined,
                         retryRequiresAcknowledgement: false,
                     });
-                if (bindings) yield* bindReceiptBlobs(tx, receipt);
+                if (bindings) yield* bindReceiptBlobs(tx, receipt, entry.invocation);
             })
         );
     const sync = Effect.fn("Replica.sync", { root: true })(function* () {
@@ -1365,7 +1372,9 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         );
         for (const entry of yield* boundary(tables.read(pendingIn)))
             if (entry.receipt) {
-                yield* boundary(tables.transaction((tx) => bindReceiptBlobs(tx, entry.receipt!)));
+                yield* boundary(
+                    tables.transaction((tx) => bindReceiptBlobs(tx, entry.receipt!, entry.invocation))
+                );
                 yield* options.onReceipt?.(entry.receipt) ?? Effect.void;
             }
         yield* pull();
@@ -1523,7 +1532,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 );
                 yield* notify;
             }
-            yield* boundary(tables.transaction((tx) => bindReceiptBlobs(tx, receipt!)));
+            yield* boundary(tables.transaction((tx) => bindReceiptBlobs(tx, receipt!, head.invocation)));
             yield* options.onReceipt?.(receipt) ?? Effect.void;
             if (receipt.cursor && backend.changes) {
                 yield* pull();
@@ -2032,7 +2041,45 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             });
                         }
                         return yield* clients.admit(tx, request.session, request.sequence, fingerprint, () =>
-                            enqueueIn(tx, request.invocation, { optimistic: request.optimistic })
+                            Effect.gen(function* () {
+                                if (request.stagedAttachments?.length) {
+                                    const declared = new Set(attachmentIds(request.invocation));
+                                    if (request.stagedAttachments.some((id) => !declared.has(id)))
+                                        return yield* fault(
+                                            "ValidationFailed",
+                                            "Staged attachments must belong to the submitted action."
+                                        );
+                                    if (!options.blobs)
+                                        return yield* fault(
+                                            "NotImplemented",
+                                            "Attachment storage is unavailable."
+                                        );
+                                    yield* options.blobs
+                                        .in(tx)
+                                        .requireBytes(request.stagedAttachments)
+                                        .pipe(
+                                            Effect.mapError(
+                                                (cause) =>
+                                                    new BackendError({
+                                                        operation: "replica.submit.attachments",
+                                                        kind:
+                                                            cause instanceof BlobStorageError &&
+                                                            cause.kind === "NotFound"
+                                                                ? "NotFound"
+                                                                : "Unavailable",
+                                                        retryable: true,
+                                                        actionOutcome: "not-committed",
+                                                        message:
+                                                            "Required staged attachments must be transferred before acceptance.",
+                                                        cause,
+                                                    })
+                                            )
+                                        );
+                                }
+                                return yield* enqueueIn(tx, request.invocation, {
+                                    optimistic: request.optimistic,
+                                });
+                            })
                         );
                     })
                 )
@@ -2087,6 +2134,50 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             )
                 return yield* fault("ValidationFailed", "Invalid parent view generation.");
             const digest = yield* snapshotDigest(snapshot);
+            const fresh = yield* boundary(
+                tables.transaction((tx) =>
+                    Effect.gen(function* () {
+                        const head = yield* tx.get(imported, "head");
+                        if (
+                            (snapshot.view?.generation ?? 0) < (head?.view?.generation ?? 0) ||
+                            (head && snapshot.revision < head.revision)
+                        )
+                            return false;
+                        if (
+                            head &&
+                            snapshot.revision === head.revision &&
+                            (snapshot.view?.generation ?? 0) === (head.view?.generation ?? 0) &&
+                            head.digest &&
+                            head.digest !== digest
+                        )
+                            return yield* fault("Conflict", "Parent reused a revision for different state.");
+                        for (const result of snapshot.completed) {
+                            const local = yield* tx.get(outbox, result.invocation.id);
+                            if (!local || !result.receipt) continue;
+                            if (
+                                result.receipt.operationId !== local.invocation.id ||
+                                (result.requestIdentity !== local.requestIdentity &&
+                                    result.requestIdentity !==
+                                        Table.make<ActionRequest>({ name: "invocation" }).encode(
+                                            local.invocation
+                                        ))
+                            )
+                                return yield* fault(
+                                    "Conflict",
+                                    "Parent result differs from the local action."
+                                );
+                            yield* tx.put(outbox, result.invocation.id, {
+                                ...local,
+                                receipt: result.receipt,
+                                state: "acknowledged",
+                            });
+                        }
+                        return true;
+                    })
+                )
+            );
+            if (!fresh) return;
+
             const changed = yield* boundary(
                 tables.transaction((tx) =>
                     Effect.gen(function* () {
@@ -2142,6 +2233,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                             )
                                         );
                             }
+                            yield* clearRowBlobs(tx, object.objectType, "base");
                             yield* tx.clear(v.base);
                             yield* tx.clear(inherited);
                             for (const row of object.base) {
@@ -2174,8 +2266,30 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                 );
                             }
                         }
+                        for (const object of snapshot.objects) {
+                            const v = views.get(object.objectType)!;
+                            for (const key of new Set(
+                                [...object.base, ...object.overrides].map((row) => row.key)
+                            ))
+                                yield* retainRowBlobs(
+                                    tx,
+                                    object.objectType,
+                                    key,
+                                    yield* tx.get(v.base, key),
+                                    "base",
+                                    yield* getBaseline(tx, v, key)
+                                );
+                        }
+                        const terminal = new Map(
+                            snapshot.completed.map((entry) => [entry.invocation.id, entry])
+                        );
+                        // The parent's result window may expire after a mapping failure. A
+                        // locally saved committed receipt still proves the action outcome.
+                        for (const { value: entry } of yield* tx.loadSubset(outbox))
+                            if (entry.receipt?.outcome === "committed" && !terminal.has(entry.invocation.id))
+                                terminal.set(entry.invocation.id, publicAction(entry));
                         const known = new Map(
-                            [...snapshot.pending, ...snapshot.completed].map((entry) => [
+                            [...snapshot.pending, ...terminal.values()].map((entry) => [
                                 entry.invocation.id,
                                 entry,
                             ])
@@ -2211,9 +2325,11 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                     requestIdentity: observed.requestIdentity,
                                 });
                         }
-                        for (const entry of snapshot.completed) {
+                        for (const entry of terminal.values()) {
                             const local = yield* tx.get(outbox, entry.invocation.id);
                             if (local?.includedInBase && (entry.receipt || entry.failure)) {
+                                if (entry.receipt)
+                                    yield* bindReceiptBlobs(tx, entry.receipt, local.invocation);
                                 yield* tx.put(completed, entry.invocation.id, {
                                     ...entry,
                                     requestIdentity:
@@ -2645,7 +2761,9 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     attributes: { activity: "subscription", objectType: subset.objectType },
                 });
                 if (options.source)
-                    return yield* options.source.demand({ ...copy, query: retentionQuery(copy.query) });
+                    return yield* options.source.demand(
+                        copy.query ? { ...copy, query: retentionQuery(copy.query) } : copy
+                    );
                 const watched = adapter!.watchSubset?.(copy);
                 const configuredInterval = adapter!.pollIntervalMs?.(copy);
                 const demand = demands.get(key)!;

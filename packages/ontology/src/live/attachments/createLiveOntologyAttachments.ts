@@ -98,7 +98,10 @@ export interface LiveOntologyAttachments<
         ): Promise<AttachmentMetadata<Type, Selection[number]>>;
     };
     blob: (attachment: v.attachment) => Promise<Blob>;
-    source: (attachment: v.attachment) => Promise<import("@party-stack/ontology-storage/blobs").ByteSource>;
+    source: (
+        attachment: v.attachment,
+        options?: { readonly signal?: AbortSignal }
+    ) => Promise<import("@party-stack/ontology-storage/blobs").ByteSource>;
 }
 
 export function createLiveOntologyAttachments<
@@ -167,9 +170,7 @@ export function createLiveOntologyAttachments<
                 )
                 .then(async (materialized) => {
                     if (materialized) {
-                        if (materialized.id !== id) {
-                            await blobManager.bindRemoteId(id, materialized.id);
-                        }
+                        if (materialized.id !== id) await blobManager.bindRemoteId(id, materialized.id);
                         Object.assign(attachment, materialized);
                     }
                 });
@@ -220,6 +221,7 @@ export function createLiveOntologyAttachments<
         create,
         metadata,
         blob,
-        source: (attachment) => blobManager.source(attachment.id, { meta: { attachment } }),
+        source: (attachment, options) =>
+            blobManager.source(attachment.id, { signal: options?.signal, meta: { attachment } }),
     };
 }

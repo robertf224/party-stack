@@ -1,7 +1,7 @@
 **Replication proposal · October 27, 2026.** Scoped composition and the runtime
-boundary cleanup, base/outbox simplification, and protocol-child row GC below are
-implemented. Incremental transfer, shared incoming-state installation, and
-independent protocol-child blobs remain proposals. This document proposes the next
+boundary cleanup, base/outbox simplification, protocol-child row GC and local blobs
+below are implemented. Incremental transfer and shared incoming-state installation
+remain proposals. This document proposes the next
 replication and browser-composition checkpoint. Existing selected snapshots,
 atomic parent handoff, streaming attachments, and adapter-backed GC remain the
 working baseline. This is not a promise that every item belongs in the initial v0.
@@ -359,13 +359,11 @@ Its metadata/aliases/roots/intents share the replica's own table store; bytes us
 the supplied memory, OPFS, file, SQL or R2 service. The parent supplies authorized
 remote reads/uploads. Byte keys and physical intents are local and never replicated.
 
-Current connected clients delegate attachment operations directly to their parent.
-That is the temporary implementation gap guarded by no independent blob service,
-not the intended permanent meaning of a tab replica. Merely constructing a
-memory Runtime does not connect its bytes to protocol-child BlobStorage yet.
+Implemented: connected clients compose normal local BlobStorage through the
+common replica host. The protocol-child no-blob-service guard is removed.
 
-An ordinary child should lazily cache bytes it reads, stage bytes it creates,
-and use the same retention policy to release unpinned cached bytes. This does
+An ordinary child lazily caches bytes it reads, stages bytes it creates,
+and uses the same retention policy to release unpinned cached bytes. This does
 not imply downloading every referenced attachment or keeping duplicate bytes
 forever. No tab-only blob manager or additional attachment-mode API is needed
 before the normal local path is working. Parent delegation can remain a deliberate
@@ -387,8 +385,7 @@ unsent staged dependencies do. Import, action handoff, row eviction and reset
 update these roots using `blobs.in(tx)` in the same table transaction. Byte deletion
 still happens through generation-fenced external intents after commit.
 
-The current delegated path cannot promise independent offline attachment access
-if the parent becomes unreachable. The normal local path only promises offline
+The local path only promises offline
 reads for complete locally retained bytes. Range caching, resumability, direct object-store
 grants and automatic query attachment-download policies remain future additions.
 
@@ -434,11 +431,10 @@ is parent-owned derived state with scope/size bounds, not an unbounded new journ
    dependency retention, no rebase resurrection, same-revision refill and conflict
    fencing. Persistent byte ownership and incremental-stream reset tests remain
    in their respective steps.
-5. **Protocol-child local attachments.** Use the normal BlobStorage machinery in
-   memory tabs and persistent protocol children.
-   Verify locally staged bytes through multi-hop acceptance, alias mapping, restart,
-   reset with pending actions, interrupted IO, reader pins, and independent byte GC.
-   Remove the no-blob-service guard only after these tests pass.
+5. **Protocol-child local attachments — implemented.** Normal BlobStorage in
+   memory tabs and persistent protocol children. Tests cover multi-hop staging,
+   transactional acceptance, failed alias reconciliation plus restart/result expiry,
+   canceled IO, reader pins, independent byte GC and progressive cold RPC reads.
 6. **Query IR and authorization.** Extend result records and policies. Server IVM
    can follow independently; it is not required for exact incremental transfer.
 

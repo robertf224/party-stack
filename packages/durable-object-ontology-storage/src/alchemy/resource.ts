@@ -122,8 +122,8 @@ export function OntologyDurableObject(
                     ontologyId: options.ontologyId ?? name,
                 }).pipe(Effect.orDie);
                 const handle = yield* makeOntologyHttpHandler({
-                    source: backend.protocol,
                     backend,
+                    ir: options.ir,
                     authorize: options.authorize,
                 });
                 const schedule =

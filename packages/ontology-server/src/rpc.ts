@@ -10,6 +10,7 @@ import {
     ClientSubmissionCodec,
     ClientViewCodec,
 } from "@party-stack/ontology-backend/protocol";
+import { digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Context, Deferred, Effect, Schema, Stream, Layer, Scope } from "effect";
 import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcSchema } from "effect/rpc";
 import {
@@ -26,6 +27,7 @@ import {
     type OntologyOperationsClient,
 } from "./operations.js";
 import { RpcActivity } from "./rpcActivity.js";
+import { makeRpcBackend } from "./rpcBackend.js";
 import type { AttachmentTransferPolicy } from "./attachmentTransfers.js";
 import type { LiveOntology } from "@party-stack/ontology";
 import type { BackendSubset } from "@party-stack/ontology-backend";
@@ -36,10 +38,13 @@ import type { Headers } from "effect/http/Headers";
 const Counter = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }));
 const Description = Schema.Struct({
     version: Schema.Literal(1),
+    replication: Schema.Literals(["committed", "speculative"]),
+    definitionHash: Schema.optional(Schema.String),
     sourceId: Schema.NonEmptyString,
     supportsIdempotency: Schema.Boolean,
     changes: Schema.optional(Schema.Boolean),
     watchChanges: Schema.optional(Schema.Boolean),
+    watchSubset: Schema.optional(Schema.Boolean),
     actionParameterResolution: Schema.optional(Schema.Boolean),
 });
 const ReplicaRpcs = RpcGroup.make(
@@ -93,8 +98,16 @@ export const makeOntologyRpcClient = RpcClient.make(OntologyRpcs.middleware(Subs
     )
 );
 
-export interface OntologyConnection extends OntologySource {
+export type OntologyDescription = Schema.Schema.Type<typeof Description>;
+export interface OntologyConnection {
+    readonly sourceId: string;
+    readonly definitionHash?: string;
     readonly operations: OntologyOperationsClient;
+    /** Finite operations are available for all server roles. */
+    readonly backend: import("@party-stack/ontology-backend").OntologyBackendService;
+    readonly replication:
+        | { readonly kind: "committed" }
+        | { readonly kind: "speculative"; readonly source: OntologySource };
 }
 
 export type OntologyRpcRequest =
@@ -157,16 +170,31 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
         Describe: (_, context) =>
             authorize({ operation: "Describe" }, context.headers).pipe(
                 Effect.andThen(options.ready ?? Effect.void),
-                Effect.map(() => ({
-                    version: 1 as const,
-                    sourceId: source.sourceId,
-                    supportsIdempotency: source.supportsIdempotency,
-                    changes: Boolean(options.backend?.changes),
-                    watchChanges: Boolean(options.backend?.changes?.watch),
-                    actionParameterResolution: Boolean(
-                        options.backend?.resolveActionParameters || options.ontology
-                    ),
-                }))
+                Effect.andThen(
+                    Effect.gen(function* () {
+                        const definitionHash = options.ir
+                            ? yield* digestBytes({
+                                  type: "application/json",
+                                  stream: Stream.make(new TextEncoder().encode(JSON.stringify(options.ir))),
+                              }).pipe(Effect.mapError((cause) => classifyBackendFailure("describe", cause)))
+                            : undefined;
+                        return {
+                            version: 1 as const,
+                            replication: options.source ? ("speculative" as const) : ("committed" as const),
+                            definitionHash,
+                            sourceId: source.sourceId,
+                            supportsIdempotency: source.supportsIdempotency,
+                            changes: Boolean(options.backend?.changes),
+                            watchChanges: Boolean(options.backend?.changes?.watch),
+                            watchSubset: Boolean(
+                                options.backend?.watchSubset || options.backend?.pollIntervalMs
+                            ),
+                            actionParameterResolution: Boolean(
+                                options.backend?.resolveActionParameters || options.ontology
+                            ),
+                        };
+                    })
+                )
             ),
         OpenClient: (request, context) =>
             authorize({ operation: "OpenClient", ...request }, context.headers).pipe(
@@ -219,9 +247,7 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                 Effect.gen(function* () {
                     yield* Effect.annotateCurrentSpan("activity", "subscription");
                     yield* authorize({ operation: "Changes" }, context.headers);
-                    const changes = options.source
-                        ? yield* source.subscribeChanges
-                        : options.backend?.changes?.watch;
+                    const changes = options.source ? yield* source.subscribeChanges : undefined;
                     if (!changes) return yield* unavailableSource();
                     // A new stream is a repair boundary, not proof that no updates were missed.
                     return Stream.concat(
@@ -233,12 +259,14 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
     }).pipe(Layer.merge(ontologyOperationHandlers(options)), Layer.merge(errorProjectionLayer(options)));
 };
 
-type ProtocolClient = Effect.Success<ReturnType<typeof RpcClient.make<RpcGroup.Rpcs<typeof OntologyRpcs>>>>;
+export type OntologyRpcClient = Effect.Success<
+    ReturnType<typeof RpcClient.make<RpcGroup.Rpcs<typeof OntologyRpcs>>>
+>;
 const unavailable = (cause: unknown) => classifyBackendFailure("remote.protocol", cause);
 
 /** Use the same source contract with Effect RPC's worker, HTTP or socket transport. */
 export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(function* (
-    client: ProtocolClient,
+    client: OntologyRpcClient,
     options?: { readonly retryIntervalMs?: number }
 ): Effect.fn.Return<OntologyConnection, BackendError, Scope.Scope> {
     const retryIntervalMs = options?.retryIntervalMs ?? 1_000;
@@ -251,8 +279,14 @@ export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(f
         });
     const description = yield* client.Describe().pipe(Effect.mapError(unavailable));
     const operations = yield* makeOntologyOperationsClient(client);
-    return {
+    const common = {
         operations,
+        sourceId: description.sourceId,
+        definitionHash: description.definitionHash,
+        backend: makeRpcBackend(client, description, operations),
+    };
+    if (description.replication === "committed") return { ...common, replication: { kind: "committed" } };
+    const source: OntologySource = {
         sourceId: description.sourceId,
         supportsIdempotency: description.supportsIdempotency,
         openClient: (resume) => client.OpenClient({ resume }).pipe(Effect.mapError(unavailable)),
@@ -299,4 +333,5 @@ export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(f
                 yield* Deferred.await(ready);
             }),
     };
+    return { ...common, replication: { kind: "speculative", source } };
 });
