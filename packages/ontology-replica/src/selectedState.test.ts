@@ -87,7 +87,6 @@ const setup = Effect.fnUntraced(function* () {
         execute,
         startSync: false,
         outbox: { retryDelayMs: 0 },
-        gc: false,
     });
     return { owned, parent, child };
 });
@@ -238,7 +237,209 @@ test("pending-action row dependencies survive releasing UI demand without pinnin
                 yield* f.parent.syncOnce;
                 yield* child.syncOnce;
                 expect((yield* child.receipt(put("z", 9, "second").id))?.outcome).toBe("committed");
+                // Last-read data is now eligible for ordinary GC, not an active dependency.
+                expect(yield* child.collectGarbage({ olderThanMs: 0 })).toBe(1);
                 expect(yield* child.loadSubset("Item")).toEqual([]);
+            })
+        )
+    );
+});
+
+test("protocol GC evicts one logical base and can reload the identical parent revision", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* setup();
+                yield* f.parent.enqueue(put("a", 10));
+                yield* f.parent.enqueue(put("new", 4));
+                yield* f.parent.enqueue({ id: "delete-z", name: "delete", parameters: { id: "z" } });
+                const snapshot = yield* f.parent.snapshotState;
+                yield* f.child.receiveParentState(snapshot);
+                const reader = yield* Scope.make();
+                yield* Scope.provide(
+                    f.child.retainLocal("Item", {
+                        where: eq(field("group"), "first"),
+                        orderBy: [{ field: field("rank") }],
+                        limit: 1,
+                    }),
+                    reader
+                );
+                yield* f.child.pin("Item", "new", true);
+                // 'a' is first in confirmed base; 'b' is first in parent-visible base.
+                expect(yield* f.child.collectGarbage({ olderThanMs: 0 })).toBe(2);
+                expect(keys(yield* f.child.loadSubset("Item"))).toEqual(["a", "b", "new"]);
+                expect((yield* f.child.confirmed.get("Item", "a"))?.rank).toBe(1);
+                expect((yield* f.child.get("Item", "a"))?.rank).toBe(10);
+                yield* Scope.close(reader, Exit.void);
+                yield* f.child.pin("Item", "new", false);
+                expect(yield* f.child.collectGarbage({ olderThanMs: 0 })).toBe(3);
+                expect(yield* f.child.loadSubset("Item")).toEqual([]);
+                expect((yield* f.child.parentState)?.objects[0]?.overrides).toEqual([]);
+                // A local rebase cannot resurrect the parent's evicted overrides.
+                yield* f.child.enqueue(put("own", 7));
+                expect(keys(yield* f.child.loadSubset("Item"))).toEqual(["own"]);
+                // Eviction must not disable reused-revision corruption checks.
+                const conflicting = {
+                    ...snapshot,
+                    objects: snapshot.objects.map((object) => ({ ...object, base: [] })),
+                };
+                const conflict = yield* Effect.result(f.child.receiveParentState(conflicting));
+                expect(conflict._tag).toBe("Failure");
+                if (conflict._tag === "Failure") expect(conflict.failure.kind).toBe("Conflict");
+                yield* f.child.receiveParentState(snapshot);
+                expect(keys(yield* f.child.loadSubset("Item"))).toEqual(["a", "b", "c", "new", "own"]);
+                expect((yield* f.child.get("Item", "a"))?.rank).toBe(10);
+                expect((yield* f.child.confirmed.get("Item", "a"))?.rank).toBe(1);
+            })
+        )
+    );
+});
+
+test("protocol GC retains action dependencies after parent inclusion until final reconciliation", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* setup();
+                const reader = yield* Scope.make();
+                yield* Scope.provide(f.child.retainLocal("Item"), reader);
+                yield* f.child.syncOnce;
+                yield* f.child.enqueue(put("a", 10));
+                yield* f.child.syncOnce;
+                expect(yield* f.child.pending).toEqual([]); // Accepted, not a second action to submit.
+                expect((yield* f.child.actionStatus(put("a", 10).id)).parentAcceptance).toBeDefined();
+                yield* Scope.close(reader, Exit.void);
+                expect(yield* f.child.collectGarbage({ olderThanMs: 0 })).toBe(3);
+                expect(keys(yield* f.child.loadSubset("Item"))).toEqual(["a"]);
+                expect((yield* f.child.get("Item", "a"))?.rank).toBe(10);
+                expect((yield* f.child.confirmed.get("Item", "a"))?.rank).toBe(1);
+                // The dependency stays in the selected read even without a UI query.
+                yield* f.child.syncOnce;
+                expect(keys(yield* f.child.loadSubset("Item"))).toEqual(["a"]);
+                expect((yield* f.child.snapshotState).pending[0]).not.toHaveProperty("includedInBase");
+                yield* f.parent.syncOnce;
+                yield* f.child.syncOnce;
+                expect((yield* f.child.actionStatus(put("a", 10).id)).receipt?.outcome).toBe("committed");
+                expect(yield* f.child.collectGarbage({ olderThanMs: 0 })).toBe(1);
+                expect(yield* f.child.loadSubset("Item")).toEqual([]);
+            })
+        )
+    );
+});
+
+test("protocol window retention imports the offset prefix and keeps explicit pins in its selection", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* setup();
+                yield* f.child.retainLocal("Item", { ...window, offset: 1, limit: 1 });
+                yield* f.child.pin("Item", "z", true);
+                yield* f.child.syncOnce;
+                expect(keys(yield* f.child.loadSubset("Item"))).toEqual(["a", "b", "z"]);
+                expect(keys(yield* f.child.loadSubset("Item", { ...window, offset: 1, limit: 1 }))).toEqual([
+                    "b",
+                ]);
+                expect(yield* f.child.collectGarbage({ olderThanMs: 0 })).toBe(0);
+                yield* f.child.pin("Item", "z", false);
+                expect(yield* f.child.collectGarbage({ olderThanMs: 0 })).toBe(1);
+            })
+        )
+    );
+});
+
+test("protocol base preserves encrypted caches without mixing confirmed and inherited row values", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const definition: OntologyIR = {
+                    ...ir,
+                    objectTypes: ir.objectTypes.map((type) => ({
+                        ...type,
+                        properties: [
+                            ...type.properties,
+                            {
+                                name: "secret",
+                                displayName: "Secret",
+                                type: o.optional({ type: o.encrypted({ type: o.string({}) }) }),
+                            },
+                        ],
+                    })),
+                };
+                const value = {
+                    ciphertext: "remote-1",
+                    source: { objectType: "Item", primaryKey: "a", property: "secret" },
+                };
+                const local = { ciphertext: "local-1" };
+                const owned = yield* makeOwnedBackend({
+                    namespace: "secret-source",
+                    ir: definition,
+                    tables: yield* Memory.make(),
+                    mutators: {},
+                });
+                yield* owned.storage.transaction((tx) =>
+                    tx.put("Item", { id: "a", group: "first", rank: 1, secret: value })
+                );
+                const child = yield* makeReplica({
+                    namespace: "secret-child",
+                    ir: definition,
+                    tables: yield* Memory.make(),
+                    source: owned.protocol,
+                    execute,
+                    startSync: false,
+                });
+                yield* child.retainLocal("Item");
+                yield* child.syncOnce;
+                yield* child.encryptedCache.put(value, local);
+                const snapshot = (yield* child.parentState)!;
+                const inherited = {
+                    ...snapshot,
+                    revision: snapshot.revision + 1,
+                    objects: [
+                        {
+                            ...snapshot.objects[0]!,
+                            overrides: [
+                                {
+                                    key: "a",
+                                    value: {
+                                        deleted: false as const,
+                                        value: { id: "a", group: "first", rank: 10, secret: value },
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                };
+                yield* child.receiveParentState(inherited);
+                expect((yield* child.confirmed.get("Item", "a"))?.rank).toBe(1);
+                expect((yield* child.get("Item", "a"))?.rank).toBe(10);
+                expect(yield* child.encryptedCache.get(value)).toEqual(local);
+                // Repeated parent publication preserves a device copy in the inherited layer.
+                yield* child.receiveParentState({ ...inherited, revision: inherited.revision + 1 });
+                expect(yield* child.encryptedCache.get(value)).toEqual(local);
+                const updated = { ...value, ciphertext: "remote-2" };
+                yield* child.receiveParentState({
+                    ...inherited,
+                    revision: inherited.revision + 2,
+                    objects: [
+                        {
+                            ...inherited.objects[0]!,
+                            overrides: [
+                                {
+                                    key: "a",
+                                    value: {
+                                        deleted: false,
+                                        value: { id: "a", group: "first", rank: 11, secret: updated },
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                });
+                expect(yield* child.encryptedCache.get(value)).toBeUndefined();
+                expect(yield* child.encryptedCache.get(updated)).toBeUndefined();
+                yield* child.encryptedCache.put(updated, { ciphertext: "local-2" });
+                expect(yield* child.encryptedCache.get(updated)).toEqual({ ciphertext: "local-2" });
+                expect((yield* child.confirmed.get("Item", "a"))?.rank).toBe(1);
+                expect(yield* child.collectGarbage({ olderThanMs: 0 })).toBe(0);
             })
         )
     );

@@ -1,96 +1,148 @@
-**Protocol-child GC: concrete cases**
+**Replica state and GC · October 27, 2026**
 
-Design examples for the follow-up implementation. This checkpoint moves platform
-composition and collection integration; it does not remove the protocol GC/blob
-guard. GC can be completed alongside incremental delivery, and the coherent
-installer can also support it while snapshots remain the transport.
+The row storage simplification and protocol-child row GC described below are now
+implemented. Incremental delivery and independent child attachment storage remain
+future work; neither is required for the row collector.
 
-## 1. Release an issue query
+## Start with three things
 
-A tab has a selected Issues query containing Issue 42. Its local tables contain
-confirmed `parent-base:Issue[42] = Open`, inherited
-`parent-overlay:Issue[42] = Completed`, and materialized `base:Issue[42] = Completed`.
-The page navigates away and releases its last query root.
+A replica has:
 
-Today the next selected snapshot replaces these records with the new selection.
-The ordinary age-based sweeper is not wired into this import path. If we merely
-enabled the old sweeper, it would either find no retention candidate, or delete
-only the materialized base copy, leaving the imported copies and head claims.
-Later recomposition could restore the evicted row.
+- **Base:** the portion of its parent's published state that it needs locally.
+  The parent may be authoritative or may itself have pending writes.
+- **Outbox:** this replica's own actions still awaiting an outcome.
+- **Overlay:** the changes predicted from those actions that are not already
+  represented in base.
 
-The follow-up must remove an unneeded imported record and its materialization,
-update blob roots/coverage, and change selection progress coherently. It must
-not delete Issue 42 from the parent/authoritative database. Whether inactive
-confirmed rows are kept for a grace period is a cache policy, not a sync delete.
+The parent's pending changes are part of what this replica receives as base.
+They are not this replica's outbox. We can retain selected parent action records
+for action completion or an inspector without importing every parent action.
+Base may preserve parent confirmed rows and published predictions separately
+when a confirmed-only read needs that distinction. Those are data inside base,
+not another independently managed local replica.
 
-## 2. A pending rename still needs Issue 42
+The implementation stores confirmed rows and sparse inherited overrides inside
+base. Reads compose them directly. There is no additional parent-visible row table.
+The child's own sparse overlay is recomputed from its outbox. An outbox entry gets
+an internal inclusion marker once its action appears in received parent state;
+that marker prevents a second prediction or submission. There is no separate
+forwarded-action table.
 
-The list has unmounted, but the tab has an unaccepted Rename action whose local
-transaction read Issue 42. A concurrent upstream update can require replaying
-that action. Sweeping the issue just because no React component queries it could
-make replay fail or change its result.
+## One rule for cached data
 
-Existing action row/query dependencies remain roots. Protect those exact rows
-and query dependencies until responsibility is transferred or the action is
-settled/discarded. Do not protect the whole Issue type or pause all GC whenever
-any outbox entry exists. Source acquisition and sweep use the same transactions
-for their root records so a root cannot appear halfway through deletion.
+**Keep the base data needed by active queries, pending actions, and explicit
+pins. Other cached base data can be removed under the cache's retention policy.**
 
-## 3. A patch assumes a row is resident
+Forgetting local cached data does not delete an object upstream. The overlay is
+recomputed from retained base and the local outbox. GC does not silently discard
+unresolved actions. Authoritative application rows are durable application data,
+not an age-evicted replica cache. Orphaned authoritative attachments can still
+have their own configured cleanup policy.
 
-The child acknowledges stream position 20 containing Issue 42. It evicts the row
-without changing its selection or installed position. At position 21 the parent
-changes only Issue 77. A correct diff does not resend unchanged Issue 42, leaving
-the child permanently missing data it still claims to have.
+The same rule applies to a replica backed by IndexedDB, memory, or SQL, regardless
+of whether the parent is an adapter or our protocol. The implementation must
+update base, derived data, coverage and blob references in the same transaction.
 
-Active imported membership is protected. To release it, change selection with a
-new generation; to drop/rebuild its state, request a replacement snapshot/new
-epoch. Never acknowledge a baseline that no longer matches the stored mirror.
-The same issue exists with today's equal-revision snapshot short-circuit: local
-eviction must invalidate the corresponding installation/coverage claims.
+## 1. Stop requesting Issue 42
 
-## 4. Created attachment, tab-to-worker handoff, then restart
+A React component has a live query showing Issue 42. You navigate to another
+project and that component unmounts. Its query stops requesting Issue 42. This
+is what the earlier phrase "leave the issue list" meant; the engine sees query
+acquisition/release, not page names.
 
-A user adds `photo.png` and submits Create Issue. The child has staged bytes and
-a local outbox root. Its worker accepts the action but the upstream has not yet
-confirmed it. A premature cleanup that removes the child's root before the
-worker has durable bytes could lose the only upload copy.
+If another component still requests Issue 42, keep it. If a pending action needs
+it, keep it. If neither does and it is not pinned, its cached base data is eligible
+for removal under the retention policy. Remove the associated derived data and
+references together. Do not keep the entire Issue type just because another issue
+is being displayed.
 
-In the intended normal-child attachment path, the worker must have staged the
-needed bytes before advertising durable action acceptance. Store returned
-receipt/mapping evidence before changing aliases. The child's handoff, mapping
-and root updates are transactional. Pending/forwarded actions retain their
-required staging through recovery. A reset discards imported cache roots, not
-these action-owned bytes. Cross-process IO still uses intents/retry identity;
-there is no shared database transaction between tab and worker.
+The current protocol asks the parent for the data needed by all active queries
+and action dependencies. The parent replies with that requested state. Today
+that reply replaces the previously imported state; if Issue 42 is no longer
+requested, the next reply can omit it and its imported copy is removed. This
+already prunes data. The same bounded age-based collector also handles protocol
+base rows: it removes confirmed data, its inherited override, retention metadata,
+and affected coverage in one transaction. A later local rebase cannot recreate it.
+The imported head keeps a SHA-256 digest and a residency flag, so an unchanged
+parent revision can safely refill evicted data without disabling revision checks.
 
-At this checkpoint the tab delegates creation to the worker, so its bytes are
-already worker-owned. That is why we have not yet exercised this independent
-child staging case. It is a concrete acceptance test for removing the guard.
+## 2. Stop displaying an issue while its rename is pending
 
-## 5. A cached attachment can lose bytes without losing its row
+The tab has a Rename Issue 42 action in its own outbox. Even if no component
+shows the issue anymore, the action's transaction read it and may need it again
+when replaying over updated parent data.
 
-Issue 42 references a remote 50 MB attachment. Its identity and source locator
-remain available, but the child need not keep 50 MB in memory forever. An
-ordinary row reference retains identity, not necessarily cached bytes. An offline
-pin or pending upload can retain bytes; a scoped reader pins them until EOF or
-cancellation. Byte eviction updates metadata transactionally and deletes external
-bytes through generation-fenced intents.
+That dependency keeps Issue 42's required base data alive. It does not keep every
+issue alive or pause all GC. Once the action settles, release dependencies that
+are no longer needed. Accepted actions can retain status/receipt tracking until
+the final outcome without retaining an unnecessary duplicate prediction.
 
-Each replica should ultimately use the same BlobStorage model, with memory or
-durable bytes and its parent as the remote attachment provider. Memory does not
-mean eager download. A configurable cache policy can avoid long-lived duplicate
-bytes in tabs while preserving normal replica semantics.
+## 3. Parent acceptance must not apply the action twice
 
-## Suggested decisions
+The parent shows a counter at 1. The child predicts Increment and shows 2.
+The parent then publishes a new state that already includes that same Increment.
 
-- Keep exact active-demand/action/pin roots, not whole-type protection.
-- Preserve current age-based policy for reusable confirmed cache; do not invent a
-  new protocol-specific retention policy. Mirror membership release may drop
-  records immediately as snapshots do today.
-- Reuse BlobStorage/intent machinery at each replica; treat current tab delegation
-  as a temporary gap. Do not add a second lightweight tab-only blob manager.
-- Reset selection/stream evidence when dropping an installed mirror. Preserve
-  outbox/forwarded state and required staged bytes.
-- Implement these invariants in the common installer, with snapshot and patch
-  tests, before removing either protocol guard. No IVM requirement.
+In one transaction, the child installs that base and records that the action is
+already included there. Its overlay stops applying the extra increment. It
+continues to show 2. A later authoritative result settles the action.
+
+If upstream instead rejects the parent's increment, the parent sends corrected
+data. The child updates base and replays its own remaining actions normally.
+There is no separate child rollback engine for inherited predictions.
+
+Acceptance and inclusion are different: a reply saying "accepted" does not prove
+that the child's installed base already contains the prediction. Keep that small
+piece of evidence with the local action. The conceptual model does not require
+another outbox or another row store for this bookkeeping.
+
+## 4. Do not claim to have data that was evicted
+
+The parent sends Issue 42 and the child acknowledges receiving it. Later the
+parent changes only Issue 77. Incremental delivery correctly sends only Issue 77.
+If the child quietly deleted Issue 42 while still requesting it, its data would
+now be incomplete.
+
+The active query protects Issue 42. To stop keeping it, release that demand.
+If the child deliberately drops its cached base, it must also drop the claim
+that it has a complete copy and fetch that data again. This is ordinary cache
+coverage/stream bookkeeping, not a second GC policy.
+
+## 5. Attachment bytes can have a different lifetime
+
+An issue references a 50 MB video. Retaining the issue and attachment handle does
+not require keeping all 50 MB of bytes in tab memory. An unpinned byte cache can
+be evicted and read again from the parent. A currently running reader or an
+explicit offline pin protects the bytes it needs.
+
+A newly created photo is different: if a pending action needs its only staged
+copy, keep those bytes. Before a persistent parent promises durable acceptance,
+it must have the required bytes or a durable means to obtain them. Record
+handoff/mapping evidence before releasing the child's last required copy.
+
+Use the same BlobStorage metadata/reference/intent machinery at every replica,
+with memory or durable bytes. Reads can stream through from the parent; whether
+to retain a local copy is cache policy. Future range caching can retain only
+requested video intervals without changing the base/outbox/overlay model.
+
+## What qualifies the three retention roots?
+
+- Action dependencies include transaction reads/writes and query results, not just
+  IDs in action parameters. They survive parent inclusion until final reconciliation.
+- An offset/limit query needs its influential prefix. Marking considers confirmed,
+  parent-published and locally visible rows, so a prediction cannot hide needed base.
+- Eviction must clear the data and its completeness/residency claims together.
+  Actual upstream deletion still wins over a local pin.
+- Running byte readers temporarily pin bytes through completion or cancellation.
+  Remote cached bytes and the sole staged copy of a pending upload have different
+  retention needs, both handled by BlobStorage roots.
+
+Selected parent action records and source/view positions are base/protocol
+bookkeeping. Terminal results, client sessions and delivery records have their
+own bounded retention; unresolved own actions remain in the outbox.
+
+Tabs currently use the parent's attachment API over streaming RPC. They do not
+run independent BlobStorage metadata or byte GC. The target is to reuse normal
+BlobStorage with the parent as a remote provider, rather than add a special tab
+manager. Safe staged-byte handoff, receipt mappings and restart recovery are still
+required before enabling that composition. The remaining protocol no-blob-service
+guard concerns that byte ownership work; it no longer disables row GC.

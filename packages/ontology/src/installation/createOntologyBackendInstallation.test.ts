@@ -400,7 +400,7 @@ it("a scoped installation releases its live ontologies and connections with its 
             installation.openOntology({ userId: connection.userId, ontologyId: "ontology" })
         );
         await Effect.runPromise(Scope.close(scope, Exit.void));
-        expect(installation.connections.status).toBe("cleaned-up");
+        expect(installation.connections.size).toBe(0);
         expect(cleanup).toHaveBeenCalledOnce();
         await expect(
             Effect.runPromise(
@@ -485,7 +485,7 @@ it("shutdown during a live ontology acquisition releases the late resource exact
     await closing;
     expect(await outcome).toBe("interrupted");
     expect(cleanup).toHaveBeenCalledOnce();
-    expect(installation.connections.status).toBe("cleaned-up");
+    expect(installation.connections.size).toBe(0);
     await installation.cleanup();
     expect(cleanup).toHaveBeenCalledOnce();
 });

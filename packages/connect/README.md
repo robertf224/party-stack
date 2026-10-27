@@ -15,7 +15,7 @@ Applications reference connectors. The credential authority resolves their desig
 - `@party-stack/connect`: Effect service, native storage, OAuth provider integration, browser client, maintenance, and SDK/UI facades.
 - `@party-stack/connect/server`: mountable HTTP handlers for server-mediated authorization.
 
-The former `@party-stack/oauth` and `@party-stack/connections` packages have been consolidated here. Existing provider SDK and UI entry points remain Promise boundaries; OAuth storage and execution underneath them use Effect. The generic connection manager and installation lifecycle now run as scoped Effect services. Reactive connection status collections remain UI projections over native local storage.
+The former `@party-stack/oauth` and `@party-stack/connections` packages have been consolidated here. Existing provider SDK and UI entry points remain Promise boundaries; OAuth storage and execution underneath them use Effect. The generic connection manager and installation lifecycle now run as scoped Effect services. Connection status is stored through direct native table transactions and exposed as a read-only snapshot plus per-user monitors. Connect has no TanStack DB dependency and creates no UI collection.
 
 ## Live sessions and installations
 
@@ -24,6 +24,23 @@ Its `disconnect`, `forget` and `reportUnauthenticated` methods return Effects wi
 `ConnectionError`. Adapter construction, restoration, session refresh, logout and
 cleanup also use Effect contracts. Adapters can use `Effect.acquireRelease` directly;
 partial acquisition failure releases what was already acquired.
+
+`manager.connections` is a read-only map of session status, reconciled from shared
+tables. It is distinct from the credential ontology above: SDK sessions/sockets
+remain process-local. `createConnectionMonitor(manager, userId)` exposes a current
+`state`, scoped Effect `changes` stream and a callback `subscribe` boundary. An
+ontology installation provides the same monitor directly:
+
+```ts
+const monitor = installation.connectionMonitor(userId);
+const unsubscribe = monitor.subscribe((state) => {
+    // Update application state; no query collection is needed for connection status.
+});
+```
+
+The callback owner calls `unsubscribe`; Effect consumers run `monitor.changes` in
+their scope. Persistent status writes still notify other contexts so refresh and
+logout coordination do not depend on a UI subscriber.
 
 `makeOntologyBackendInstallation(options)` from `@party-stack/ontology` acquires an
 installation in the caller's Scope. Its open/close/disconnect/forget methods are

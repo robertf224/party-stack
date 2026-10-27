@@ -1,11 +1,15 @@
 import type { CreateLiveOntologyOpts, LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 import type { OntologyBackendAdapterProvider } from "../live/OntologyBackendAdapter.js";
-import type { BackendConnectionAdapterProvider, Connection, ConnectionEgress } from "@party-stack/connect";
+import type {
+    BackendConnectionAdapterProvider,
+    Connection,
+    ConnectionEgress,
+    ConnectionMonitor,
+} from "@party-stack/connect";
 import type { BackendError } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { MetaOntology } from "@party-stack/ontology-spec/meta";
 import type { RuntimeAdapterProvider } from "@party-stack/runtime";
-import type { Collection } from "@tanstack/db";
 import type { Effect } from "effect";
 
 export interface ConfigureOntologyOptions {
@@ -48,7 +52,8 @@ export interface CreateOntologyBackendInstallationOptions<AuthenticationClient e
 export interface OntologyBackendInstallation<AuthenticationClient extends object = object> {
     readonly installationId: string;
     readonly authentication: AuthenticationClient;
-    readonly connections: Collection<Connection, string>;
+    readonly connections: ReadonlyMap<string, Connection>;
+    connectionMonitor(userId: string): ConnectionMonitor;
 
     /**
      * Opens or returns the cached LiveOntology for one user and ontology ID.
@@ -96,7 +101,8 @@ export interface OntologyBackendInstallation<AuthenticationClient extends object
 export interface OntologyBackendInstallationService<A extends object = object> {
     readonly installationId: string;
     readonly authentication: A;
-    readonly connections: Collection<Connection, string>;
+    readonly connections: ReadonlyMap<string, Connection>;
+    connectionMonitor(userId: string): ConnectionMonitor;
     openOntology<T extends OntologyDefinition = OntologyDefinition>(options: {
         userId: string;
         ontologyId: string;

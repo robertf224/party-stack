@@ -23,6 +23,7 @@
         "@party-stack/connect": "workspace:*",
         "@party-stack/node-runtime": "workspace:*",
         "typescript": "~7.0.2",
+        "vite": "catalog:",
         "vite-plus": "catalog:"
     }
 }

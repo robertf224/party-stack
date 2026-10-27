@@ -1,5 +1,4 @@
 import { type ConnectionState } from "@party-stack/connect";
-import { eq } from "@tanstack/db";
 import { createTrackerInstallations, FOUNDRY_ONTOLOGY_RID } from "./installations";
 import { openSharedOntology } from "./sharedOntology";
 import type { IssueTrackerOntology } from "../ontology/generated/types";
@@ -153,20 +152,7 @@ export function subscribeProfileConnection(
 ): () => void {
     const handle = handles.get(profile.id);
     if (!handle) return () => undefined;
-    const connections = handle.installation.connections;
-    const subscription = connections.subscribeChanges(
-        () => {
-            listener(
-                connections.get(handle.userId)?.state ?? {
-                    status: "inactive",
-                }
-            );
-        },
-        {
-            where: (connection) => eq(connection.userId, handle.userId),
-        }
-    );
-    return () => subscription.unsubscribe();
+    return handle.installation.connectionMonitor(handle.userId).subscribe(listener);
 }
 
 const initialProfiles = [

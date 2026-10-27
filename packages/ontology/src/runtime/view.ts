@@ -1,16 +1,12 @@
 import { BackendError, encryptedPropertyCodec } from "@party-stack/ontology-backend";
 import { makeReplicaMonitor } from "@party-stack/ontology-replica";
-import {
-    makeReplicatedCollection,
-    persistedCollectionOptions,
-    scopedCollection,
-} from "@party-stack/ontology-tanstack";
 import { Runtime } from "@party-stack/runtime";
 import { DbClient } from "@tanstack/db";
 import { Effect, Scope, Fiber } from "effect";
 import { createLiveOntologyAction } from "../live/actions/createLiveOntologyAction.js";
 import { decorateObjectAttachmentSources } from "../live/attachments/attachmentSources.js";
 import { decorateObjectEncryptedSources } from "../live/encryptedSources.js";
+import { makeReplicatedCollection, persistedCollectionOptions, scopedCollection } from "../tanstack/index.js";
 import { makeLiveDecryption } from "./encrypted.js";
 import type { LiveOntologyAttachments } from "../live/attachments/createLiveOntologyAttachments.js";
 import type { LiveOntology, LiveOntologyWrites } from "../live/LiveOntology.js";

@@ -19,7 +19,7 @@ export interface ConnectLiveOntologyOptions<R = never> {
 
 /** Compose a protocol child and application view over supplied platform services.
  * Attachments currently delegate to the parent; independent protocol-child blob
- * storage and row-cache eviction await the shared retention installation path.
+ * byte storage can be composed here when protocol-child staging is supported.
  */
 export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function* <R>(
     options: ConnectLiveOntologyOptions<R>
@@ -34,7 +34,6 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
             ir: options.ir,
             tables: runtime.tables,
             source,
-            gc: false,
             outbox: options.writes?.outbox,
             execute: (tx, action, settings) =>
                 executeTransactionMutator({

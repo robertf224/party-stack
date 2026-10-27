@@ -1,6 +1,7 @@
 **Replication proposal · October 27, 2026.** Scoped composition and the runtime
-boundary cleanup below are implemented in this checkpoint. Incremental transfer,
-shared incoming-state installation and protocol-child GC/blobs remain proposals. This document proposes the next
+boundary cleanup, base/outbox simplification, and protocol-child row GC below are
+implemented. Incremental transfer, shared incoming-state installation, and
+independent protocol-child blobs remain proposals. This document proposes the next
 replication and browser-composition checkpoint. Existing selected snapshots,
 atomic parent handoff, streaming attachments, and adapter-backed GC remain the
 working baseline. This is not a promise that every item belongs in the initial v0.
@@ -20,6 +21,24 @@ We should not build another nested Replica engine for the parent's system tables
 The existing imported base/overlay/actions already represent parent state. We can
 share its installation mechanics without recursively instantiating more engines.
 
+## Organizing model
+
+**Base is the selected parent state; outbox tracks this replica's own outstanding
+actions; overlay predicts actions not already included in base.** Parent pending
+changes and selected parent action records are data in base. They are not another
+local outbox. Keep the parent confirmed/predicted distinction where needed for
+confirmed reads. Reads now compose those layers without a materialized
+parent-visible row copy.
+
+Acceptance/inclusion evidence prevents double application when a parent takes an
+action. It is now stored on the local outbox entry, replacing the separate
+forwarded table while preserving lost-reply recovery and final waits.
+
+GC retains base records needed by active queries, outstanding-action dependencies
+and pins; other cache data follows retention policy. Updating backing records,
+derived indexes and completeness claims is one transaction. See
+[the concrete GC rules](/docs/design/garbage-collection) before the implementation details.
+
 ## What already exists
 
 `makeReplica` accepts either a provider backend or a protocol source. Both use the
@@ -37,11 +56,10 @@ evaluated on composed visible state, and includes local-action dependencies and
 explicitly retained action IDs. Normal object demand does not import all parent
 actions. An outbox inspector can explicitly request broader action inspection.
 
-Today a protocol source requires `gc: false` and no blob service. The row sweeper
-does not coordinate imported records and the materialized parent projection.
-It does not mean all cleanup is disabled: replacing selected snapshots removes
-old imported membership, action/session cleanup is separate, and memory scopes
-are released. The worker's own adapter-backed GC still runs.
+Protocol sources now support ordinary row GC. They still reject an independent
+blob service pending safe local byte staging and handoff. Replacing selected
+snapshots removes old imported membership, while action/session cleanup remains
+separate from row retention.
 
 ## Runtime composition
 
@@ -54,17 +72,16 @@ are independent. The existing `WebRuntime.layer` already supports both
 | ---------------------------- | ----------------------------------------------------------------------------------------- |
 | `runtime`, `web-runtime`     | Scoped platform resources: tables, bytes, keys, connectivity, browser auth and ownership. |
 | `ontology-replica`           | Replication state, demand, outbox, replay and retention.                                  |
-| `ontology-tanstack`          | Local/replicated collection options, subset translation, and demand diagnostics.          |
+| `ontology/tanstack`          | Local/replicated collection options, subset translation, and demand diagnostics.          |
 | `ontology`                   | Domain execution and application collection/view composition.                             |
 | `ontology-server/client`     | Scoped `connectLiveOntology` and framework `createConnectedLiveOntology` composition.     |
 | `ontology-server/rpc/worker` | Worker transport and `serveOpenedOntologyWorker` readiness/lifecycle.                     |
 
-The collection bridge is separate because Connect also consumes generic local
-collections; putting them in ontology itself would create a cycle through
-ontology -> Connect -> ontology. Runtime no longer imports ReplicaService or
-TanStack DB. Platform-plus-collection tests moved into ontology-tanstack so platform
-packages do not gain dependencies on their application consumers. No second
-storage/schema abstraction was introduced.
+TanStack integration now lives in `ontology/tanstack`. Connect's session manager
+uses direct table transactions and read-only snapshots/monitors, so it no longer
+requires TanStack or creates a cycle through ontology. Platform-plus-collection
+tests live beside that adapter; Runtime remains independent of Replica and TanStack.
+No second storage/schema abstraction was introduced.
 
 Applications choose definitions, authenticated identity partition, domain
 mutators, worker URL/transport and platform resources. The ontology client
@@ -151,7 +168,7 @@ Extract a small internal incoming-state module inside ontology-replica. It owns:
 
 - Base/override installation and removal, schema/key checks and preservation of
   matching device-encrypted cached copies.
-- Refreshing the existing materialized baseline used by local replay.
+- Updating confirmed rows and inherited overrides as the logical replay baseline.
 - Row retention records and blob reverse-reference changes for affected records.
 - Coverage invalidation when a deletion/eviction makes previous proofs unusable.
 
@@ -165,11 +182,11 @@ For a protocol update, one table transaction:
    and expected previous sequence.
 2. Applies imported objects and action records. A snapshot replaces the current
    mirror; a patch modifies the existing mirror.
-3. Moves matching locally owned actions into forwarded tracking when the imported
-   parent state includes them. Persists results/receipts before clearing recoverable
+3. Marks matching local outbox entries as included when the received parent state
+   includes them. Persists results/receipts before clearing recoverable
    action state. Request identity checks prevent a same-ID/different-action handoff.
 4. Updates row/blob retention and invalidates affected coverage.
-5. Recomputes the parent's visible baseline and replays the still-local outbox.
+5. Replays own actions not already included in the composed parent baseline.
 6. Persists the installed stream position and derived local revision.
 
 Notify observers and acknowledge the installed sequence only after commit. Any
@@ -181,10 +198,9 @@ its own upstream cursor and receipt evidence, and replays once in its existing
 transaction boundary. Do not reinterpret partial adapter snapshots as complete
 replacements or treat omission from a filtered load as authoritative deletion.
 
-Initially keep imported base/overrides and the materialized replay baseline
-separate, as today. Removing that duplicated materialization is an independent
-optimization requiring query/performance evidence; this proposal does not depend
-on it. A second recursive engine would add lifecycle and replay coordination.
+Confirmed rows and sparse inherited overrides now compose directly below the
+own-action overlay. The previous duplicate materialized parent baseline has been
+removed. A recursive Replica for parent system tables is unnecessary.
 
 ## Incremental delivery contract
 
@@ -306,69 +322,35 @@ each receiver applies imported state and then its own remaining outbox.
 
 ## Protocol-child row GC
 
-This work is not dependent on incremental delivery. Shared installation and
-coherent retention can enable protocol-child GC while snapshots are still the
-transport. Conversely, adding diffs alone does not make GC safe.
+Implemented independently of incremental delivery. Adapter and protocol replicas
+use the same bounded age-based collector and the same three retention roots:
+active queries, outstanding action dependencies, and explicit pins.
 
-The current guard disables the automatic age-based row-cache sweep for protocol
-sources and rejects an independent blob service. Protocol installation does not
-populate the ordinary row-retention records, and the sweeper only deletes the
-materialized `base:<type>` copy. It would not remove/update imported base,
-inherited overrides and the imported-head claims together. That could leave
-orphaned state or recreate an evicted row on later projection. This is unfinished
-source-specific bookkeeping, not a rule that protocol replicas cannot collect.
-Replacement snapshots already remove deselected imported rows; bounded action
-and session cleanup continue independently. Delegated bytes remain parent-owned.
+A protocol base consists of `parent-base:<type>` and sparse
+`parent-overlay:<type>` records, composed directly by reads. Own actions remain in
+`outbox` through parent inclusion, with an internal marker preventing duplicate
+replay/submission. Their row/query dependency roots survive until reconciliation.
+There is no duplicate materialized parent-visible table or forwarded-action table.
 
-Keep two concepts explicit: the **active imported mirror** and the **reusable
-confirmed cache**. The mirror represents the installed selected view exactly.
-Cache rows may outlive their selection, but cannot claim current coverage forever.
+Installation populates ordinary retention candidates. A sweep deletes both base
+components, retention metadata and affected coverage transactionally. It marks the
+received head nonresident while preserving the original state digest. An identical
+revision can then rehydrate data; a conflicting reuse of that revision still fails.
+Selection generations and older-revision fencing remain in force. Active queries
+are marked against confirmed, parent-published and final visible values; bounded
+windows retain their offset prefix. Pins and action dependencies are included in
+the requested parent selection. Local-only reads do not create backend fetch demand.
 
-| Stored state                         | Location and retention                                                   |
-| ------------------------------------ | ------------------------------------------------------------------------ |
-| Imported head/records                | Child tables, one current mirror and installed position per source/view. |
-| Materialized parent projection       | Child tables, maintained transactionally with imported records.          |
-| Reusable confirmed rows              | Child tables, existing accessed-at retention and invalidatable coverage. |
-| Own outbox/overlay/forwarded actions | Child tables; retained until settled/discarded/recovered under policy.   |
-| Active query/action/pin roots        | Same child tables and transaction as row/blob retention.                 |
-| Parent producer baseline             | Parent memory, bounded per live connection, disposed on disconnect.      |
+Selected snapshots can still discard deselected rows immediately; keeping extra
+inactive rows is not required. Future incremental streams must preserve the same
+invariant: never retain a complete stream baseline after discarding required data.
+Recover a missing/gapped baseline through replacement rather than silently applying
+later patches. The current snapshot residency flag is not a substitute for that
+future stream sequence contract.
 
-Concretely, keep `parent-base:<type>`, `parent-overlay:<type>`, `parent-pending`,
-`parent-completed`, and the materialized `base:<type>`/local overlay tables. Extend
-`parent-head` with the installed stream epoch/sequence and selection generation.
-Reuse `outbox`, `forwarded`, `completed`, `retention`, `coverage`, `roots`,
-`action-rows`, `action-queries`, and `pins`. Any retained confirmed cache separated
-from the active materialization needs an explicit table/provenance record; do not
-overload `parent-base` with inactive rows that a replacement snapshot claims absent.
-The initial implementation can simply discard deselected objects, avoiding that
-extra cache until it is useful. Blob tables remain in the same child database.
-
-The first implementation protects all currently selected mirror records, exact
-pending-action reads/writes, explicit row pins and action dependencies. This is
-per-row/result protection, not protection of an entire object type. A selection
-change drops unneeded mirror records; optionally retain their confirmed values
-as ordinary cache rows. Do not retain a detached inherited prediction as confirmed
-data. If exact separation is awkward initially, discard deselected rows rather
-than caching a potentially stale speculative projection.
-
-Reuse the existing age-based sweeper for inactive cache rows. It updates rows,
-retention metadata, affected coverage and blob references in one transaction.
-The child can keep reading cached rows while offline without treating their
-presence as proof of a complete/fresh query.
-
-Crucially, never evict an active mirrored record while retaining its current
-stream baseline: an unchanged parent record would never be resent. To release
-that data, first change selection with a new generation; to recover a corrupted
-or deliberately dropped mirror, request a replacement snapshot/new epoch. Local
-GC and selection changes serialize with state installation in the same tables.
-Active roots win races with a sweep. A pinned inactive query becomes an active
-selection, not just a claim that old coverage stays valid.
-
-Initially retain the current policy shape (`intervalMs`, `olderThanMs`, bounded
-`limit`). Age/space pressure budgets, measured retained row/byte size, and DO cache
-limits need a separate explicit budget policy; existing adapters do not already
-offer a complete space-budget collector. Live active demand can exceed a cache
-budget, so admission/backpressure needs a defined failure, not silent row eviction.
+The existing policy remains `intervalMs`, `olderThanMs`, bounded `limit`. Byte/space
+budgets and admission/backpressure remain future work; active roots must not be
+silently evicted to meet a budget. See [concrete GC rules](/docs/design/garbage-collection).
 
 ## Protocol-child attachment modes
 
@@ -436,7 +418,7 @@ is parent-owned derived state with scope/size bounds, not an unbounded new journ
 ## Implementation sequence and acceptance
 
 1. **Implemented: untangle runtime and scoped composition.** Moved replica/TanStack
-   collection integration into ontology-tanstack. Kept WebRuntime's existing storage modes.
+   collection integration into ontology/tanstack. Kept WebRuntime's existing storage modes.
    Replaced application `sharedOntology.ts` and
    worker readiness/cleanup assembly with common helpers. Verified identity isolation,
    startup failure, in-process fallback, diagnostics, and teardown. No sync rewrite.
@@ -447,10 +429,11 @@ is parent-owned derived state with scope/size bounds, not an unbounded new journ
    updates, own-action handoff, rollback plus later local actions, limit-window
    changes, membership-vs-deletion, source/schema fencing, duplicate/gapped messages,
    disconnect-before-ack, slow consumers, bounds and replacement recovery.
-4. **Protocol-child row retention.** Exercise a persistent child against an owned
-   server and an intermediate. Test selection release, inactive cache eviction,
-   pending dependency protection, concurrent sweep/install, and rehydration after
-   reset. Remove the GC restriction only when these invariants hold.
+4. **Protocol-child row retention — implemented for snapshots.** Tests cover
+   selection/pin/window roots, inherited creations/deletions, accepted-action
+   dependency retention, no rebase resurrection, same-revision refill and conflict
+   fencing. Persistent byte ownership and incremental-stream reset tests remain
+   in their respective steps.
 5. **Protocol-child local attachments.** Use the normal BlobStorage machinery in
    memory tabs and persistent protocol children.
    Verify locally staged bytes through multi-hop acceptance, alias mapping, restart,

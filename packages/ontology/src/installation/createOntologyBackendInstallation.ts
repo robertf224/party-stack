@@ -1,10 +1,10 @@
 import { makeConnectionManager, createConnectionMonitor } from "@party-stack/connect";
 import { BackendError } from "@party-stack/ontology-backend";
-import { makeLocalCollection } from "@party-stack/ontology-tanstack";
 import { Runtime } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
 import { Context, Effect, Exit, Fiber, Layer, Scope, ScopedCache, Semaphore } from "effect";
 import { makeLiveOntology } from "../live/LiveOntology.js";
+import { makeLocalCollection } from "../tanstack/index.js";
 import { createMetaOntologyConfiguration } from "./createMetaOntologyConfiguration.js";
 import type { LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 import type {
@@ -237,6 +237,7 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
             installationId: options.installationId,
             authentication: connectionManager.authentication,
             connections: connectionManager.connections,
+            connectionMonitor: (userId: string) => createConnectionMonitor(connectionManager, userId),
             openOntology: <T extends OntologyDefinition>({
                 userId,
                 ontologyId,

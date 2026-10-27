@@ -1,11 +1,10 @@
-import { eq } from "@tanstack/db";
 import { Effect, Stream, Queue } from "effect";
 import type { ConnectionManagerService, ConnectionMonitor, ConnectionState } from "./types.js";
 
 const INACTIVE = { status: "inactive" } as const;
 
 export function createConnectionMonitor(
-    manager: Pick<ConnectionManagerService, "connections" | "reportUnauthenticated">,
+    manager: Pick<ConnectionManagerService, "connections" | "subscribeConnection" | "reportUnauthenticated">,
     userId: string
 ): ConnectionMonitor {
     const getState = () => manager.connections.get(userId)?.state ?? INACTIVE;
@@ -13,26 +12,14 @@ export function createConnectionMonitor(
         get state() {
             return getState();
         },
-        subscribe(listener) {
-            const subscription = manager.connections.subscribeChanges(
-                () => {
-                    listener(getState());
-                },
-                {
-                    where: (connection) => eq(connection.userId, userId),
-                }
-            );
-            return () => subscription.unsubscribe();
-        },
+        subscribe: (listener) => manager.subscribeConnection(userId, listener),
         changes: Stream.callback<ConnectionState>((queue) =>
             Effect.acquireRelease(
                 Effect.sync(() => {
                     Queue.offerUnsafe(queue, getState());
-                    return manager.connections.subscribeChanges(() => Queue.offerUnsafe(queue, getState()), {
-                        where: (connection) => eq(connection.userId, userId),
-                    });
+                    return manager.subscribeConnection(userId, (state) => Queue.offerUnsafe(queue, state));
                 }),
-                (subscription) => Effect.sync(() => subscription.unsubscribe())
+                (unsubscribe) => Effect.sync(unsubscribe)
             )
         ),
         reportUnauthenticated: (error) => manager.reportUnauthenticated(userId, error),

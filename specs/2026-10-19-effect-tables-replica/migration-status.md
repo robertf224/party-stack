@@ -35,8 +35,11 @@ covered in [native-actions.md](./native-actions.md).
   Foundry/Salesforce object, metadata, and user collection helpers are removed.
   The Foundry watcher callback facade is isolated behind its explicit `/callback`
   export; native backend execution uses the scoped Effect watcher.
-- **Collection integration:** ontology-tanstack owns local/replicated collection
-  options, demand translation and diagnostics, above the platform Runtime. Runtime
+- **Collection integration:** ontology/tanstack owns local/replicated collection
+  options, demand translation and diagnostics, above the platform Runtime.
+  Connect has no TanStack dependency: session status uses direct table transactions
+  with read-only snapshots and per-user monitors. Its credential definitions still
+  use the small Connect ontology. Runtime
   no longer depends on Replica or TanStack DB. Scoped DbClient, demand-driven TanStack subsets,
   join/include forwarding, and persisted-only inspection. No explicit preloads or
   TanStack persistence coordinator. Initial demand attempts sync before its view
@@ -581,3 +584,20 @@ expected cleanup-warning failure; web-runtime browser acceptance nine cases pass
 Foundry upload tests include a real loopback HTTP socket receiving bytes before an
 unknown-length producer completes, plus structured/non-JSON error classification.
 These HTTP boundary tests do not claim live-provider media upload acceptance.
+
+## October 27: base and connection-state simplification
+
+Protocol children now use the ordinary bounded row collector. Confirmed parent
+rows and sparse inherited overrides are the logical base, composed directly at
+read time. The duplicate parent-visible table is gone. Own actions remain in one
+outbox through parent inclusion; a private inclusion flag prevents repeat replay
+and preserves their dependency roots until the final outcome. Same-revision refill
+is fenced by a bounded digest/residency record. Query windows, explicit pins,
+inherited creations/tombstones and accepted-action dependencies have regressions.
+Independent child BlobStorage/staged-byte handoff remains future work; attachment
+RPC delegation is unchanged. See [the current GC rules](./protocol-gc-examples.md).
+
+Connect's session-state TanStack collection is removed. Its direct table writes
+retain cross-context refresh/logout coordination; local snapshots and monitors
+serve consumers without a DB collection. The TanStack adapter and its tests now
+live at `ontology/tanstack`, and the standalone ontology-tanstack package is removed.

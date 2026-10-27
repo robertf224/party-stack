@@ -30,6 +30,7 @@
         "@tanstack/db": "0.14.0",
         "better-auth": "^1.7.1",
         "typescript": "~7.0.2",
+        "vite": "catalog:",
         "vite-plus": "catalog:"
     },
     "peerDependencies": {

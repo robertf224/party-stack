@@ -1,11 +1,11 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { storageSubset } from "@party-stack/ontology-tanstack";
 import { BasicIndex, whenSyncAccepted, DbClient, collectionOptions } from "@tanstack/db";
 import { Effect, Fiber } from "effect";
 import { resolveActionParameters } from "../live/expression.js";
 import { createReadTx } from "../live/mutators/createMutatorTx.js";
 import { runOptimisticAction } from "../live/mutators/runOptimisticAction.js";
+import { storageSubset } from "../tanstack/index.js";
 import type { OntologyMutatorRegistry, PrepareTransactionSources } from "../live/mutators/types.js";
 import type { OwnedReadTransaction, OwnedTransaction } from "@party-stack/ontology-backend/owned";
 import type { OntologyIR, OntologyObject } from "@party-stack/ontology-spec";

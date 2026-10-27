@@ -22,12 +22,12 @@
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/ontology": "workspace:*",
         "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-replica": "workspace:*",
         "@party-stack/ontology-server": "workspace:*",
         "@party-stack/ontology-spec": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
-        "@party-stack/ontology-tanstack": "workspace:*",
         "@tanstack/db": "0.14.0",
         "playwright": "^1.61.1",
         "typescript": "~7.0.2",

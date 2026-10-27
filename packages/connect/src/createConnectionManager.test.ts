@@ -64,6 +64,7 @@ describe("createConnectionManager", () => {
         const monitor = createConnectionMonitor(
             {
                 connections: manager.connections,
+                subscribeConnection: (id, listener) => manager.subscribeConnection(id, listener),
                 reportUnauthenticated: (id, error) =>
                     Effect.tryPromise({
                         try: () => manager.reportUnauthenticated(id, error),
@@ -76,6 +77,7 @@ describe("createConnectionManager", () => {
         const unsubscribe = monitor.subscribe(listener);
         await manager.authentication.signIn("user-2");
         await Promise.resolve();
+        expect(manager.connections.get("user-1")).toBe(connection);
         expect(listener).not.toHaveBeenCalled();
 
         await manager.disconnect("user-1");
@@ -279,7 +281,7 @@ it("scope closure interrupts refresh, disposes sessions once and rejects late SD
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
     await runtime.cleanup?.();
     expect(interrupted).toHaveBeenCalledOnce();
-    expect(manager.connections.status).toBe("cleaned-up");
+    expect(manager.connections.size).toBe(0);
     expect(release).toHaveBeenCalledOnce();
     expect(releaseAdapter).toHaveBeenCalledOnce();
     const releaseNew = vi.fn();
@@ -533,7 +535,7 @@ it("attempts every session and adapter finalizer even when one session cleanup f
     await expect(manager.cleanup()).rejects.toThrow("Cleanup failed");
     expect(releaseOther).toHaveBeenCalledOnce();
     expect(releaseAdapter).toHaveBeenCalledOnce();
-    expect(manager.connections.status).toBe("cleaned-up");
+    expect(manager.connections.size).toBe(0);
     await runtime.cleanup?.();
 });
 
@@ -697,7 +699,7 @@ it("an additional caller scope cannot extend a connection beyond the runtime's l
         );
         await runtime.cleanup();
         expect(release).toHaveBeenCalledOnce();
-        expect(manager.connections.status).toBe("cleaned-up");
+        expect(manager.connections.size).toBe(0);
     } finally {
         await Effect.runPromise(Scope.close(caller, Exit.void));
         await manager.cleanup();

@@ -23,6 +23,7 @@
         "@party-stack/build-config": "workspace:*",
         "temporal-polyfill": "^0.3.0",
         "typescript": "~7.0.2",
+        "vite": "catalog:",
         "vite-plus": "catalog:"
     }
 }

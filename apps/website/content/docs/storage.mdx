@@ -42,15 +42,33 @@ In issue-tracker, tab attachment operations delegate to the SharedWorker over RP
 The worker manages durable staging, upload, and cached bytes. The tab does not have
 an independent durable attachment cache.
 
+The connected-client composer currently installs the RPC attachment API directly
+as `LiveOntology.attachments`. Applications do not select a special tab adapter:
+they provide a connection to `createConnectedLiveOntology`, and its composition
+contains `attachments: connection.operations.attachments`.
+
+`source(handle)` obtains metadata and returns a lazy RPC byte stream from the
+worker. `blob(handle)` deliberately collects that stream into a Blob. `create(input)`
+streams the input to the worker, which stages it in its own attachment storage.
+This applies to connected protocol clients, not a check for "is this a tab?".
+The normal-child target can use local BlobStorage with its parent as the remote
+byte provider. A cold miss in today's BlobManager finishes caching the remote
+source before exposing the local read stream; progressive read-through and range
+caching are future work. RPC streaming avoids collecting another Blob in the tab.
+
 ## Garbage collection
 
-Adapter-backed replicas use an age-based bounded mark-and-sweep for rows. Demand,
+All replicas use the same age-based bounded mark-and-sweep for rows. Demand,
 explicit pins, and pending-action dependencies are retention roots. Blob identity
 retention and byte retention can differ, so cached remote bytes can be evicted
 without losing an attachment's identity.
 
-Protocol children currently require row GC disabled and no independent blob
-service. Their selected snapshots still replace old imported membership, and
-action/session history has separate bounded retention. Supporting independent
-persistent protocol children is part of the
-[replication proposal](/docs/design/replication).
+Protocol children collect confirmed rows and inherited overrides together as one
+logical base, retaining their own action dependencies through parent inclusion.
+An evicted base can be reloaded even when the parent revision is unchanged.
+Selected snapshots also replace old imported membership. Action/session history
+has separate bounded retention.
+
+Independent protocol-child blob storage remains unfinished; connected clients
+currently delegate bytes to the parent. See the
+[GC rules and concrete examples](/docs/design/garbage-collection).

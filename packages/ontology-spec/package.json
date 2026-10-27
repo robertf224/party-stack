@@ -75,6 +75,7 @@
         "effect": "^4.0.5",
         "tsx": "^4.20.6",
         "typescript": "~7.0.2",
+        "vite": "catalog:",
         "vite-plus": "catalog:",
         "vitest": "catalog:"
     },

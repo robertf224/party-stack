@@ -1,5 +1,5 @@
 import { evaluateQuery } from "@party-stack/ontology-storage";
-import { loadVisible } from "@party-stack/ontology-storage/overlay";
+import { loadBaseline, loadVisible } from "@party-stack/ontology-storage/overlay";
 import { Effect } from "effect";
 import type { Key, Query, Row } from "@party-stack/ontology-storage";
 import type { Overlay } from "@party-stack/ontology-storage/overlay";
@@ -25,11 +25,17 @@ export const markQuery = Effect.fnUntraced(function* (
 ) {
     const prefix = retentionQuery(query);
     if (prefix.limit === undefined)
-        return (base: Row<Record<string, unknown>>, visible: Row<Record<string, unknown>> | undefined) =>
+        return (
+            base: Row<Record<string, unknown>>,
+            visible: Row<Record<string, unknown>> | undefined,
+            baseline?: Row<Record<string, unknown>>
+        ) =>
             evaluateQuery([base], prefix).length > 0 ||
+            (baseline !== undefined && evaluateQuery([baseline], prefix).length > 0) ||
             (visible !== undefined && evaluateQuery([visible], prefix).length > 0);
     const keys = new Set<Key>();
     for (const row of yield* tx.loadSubset(view.base, prefix)) keys.add(row.key);
+    for (const row of yield* loadBaseline(tx, view, prefix)) keys.add(row.key);
     for (const row of yield* loadVisible(tx, view, prefix)) keys.add(row.key);
     return (base: Row<Record<string, unknown>>) => keys.has(base.key);
 });
