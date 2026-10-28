@@ -59,8 +59,10 @@ export function openOntology(userId: string) {
 }
 ```
 
-The endpoint must expose the ontology protocol and authorize this user. A source
-that only supports stateless backend operations is not a protocol replica source.
+The endpoint must expose native ontology RPC and authorize this user. The client
+automatically uses the committed backend API for owned/proxy/cached-proxy servers,
+or the speculative state extension for an intermediate replica server. Both use
+normal local row and attachment storage.
 With memory-only storage, actions not yet durably accepted by a persistent parent
 are lost on page exit. Offline queuing needs a reachable persistent device owner
 or a directly persistent replica, rather than only a remote HTTP parent.
@@ -226,4 +228,3 @@ in memory; their persistent worker stages and caches its own durable copies.
 Cold reads stream through while filling the local cache. Metadata-only requests
 use the provider metadata capability when available. This does not fetch every
 attachment or keep duplicate bytes forever; each replica owns its byte GC.
-See the [replication and retention proposal](/docs/design/replication).

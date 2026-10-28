@@ -133,12 +133,12 @@ function Home() {
                 </section>
                 <section className="docs-callout">
                     <div>
-                        <p className="eyebrow">BUILDING IN THE OPEN</p>
-                        <h2>Follow the architecture as it takes shape.</h2>
-                        <p>Working concepts, real examples, and proposals you can inspect.</p>
+                        <p className="eyebrow">GET STARTED</p>
+                        <h2>Connect your app.</h2>
+                        <p>Set up storage, choose a runtime, and query your ontology.</p>
                     </div>
-                    <Link to="/docs/$" params={{ _splat: "design/replication" }}>
-                        Read the replication proposal <ArrowRight size={16} />
+                    <Link to="/docs/$" params={{ _splat: "getting-started" }}>
+                        Installation and setup <ArrowRight size={16} />
                     </Link>
                 </section>
             </main>

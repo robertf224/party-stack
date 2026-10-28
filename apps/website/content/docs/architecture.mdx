@@ -18,23 +18,24 @@ description: Definitions, storage, backends, replicas, and servers.
 
 ## Where state lives
 
-| Location                    | State                                                                         |
-| --------------------------- | ----------------------------------------------------------------------------- |
-| Owned authoritative backend | Committed object rows, action receipts, and a change journal in its storage.  |
-| Intermediate replica        | Imported state, its own pending outbox, and an optimistic overlay.            |
-| Browser SharedWorker        | Persistent device replica using IndexedDB tables and OPFS bytes.              |
-| Browser tab                 | Memory replica of its selected parent state, plus its own unaccepted actions. |
-| TanStack DB                 | Materialized collections and query results supplied by the local replica.     |
+| Location                    | State                                                                        |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| Owned authoritative backend | Committed object rows, action receipts, and a change journal in its storage. |
+| Intermediate replica        | Imported state, its own pending outbox, and an optimistic overlay.           |
+| Browser SharedWorker        | Persistent device replica using IndexedDB tables and OPFS bytes.             |
+| Browser tab                 | Memory replica of selected parent state, plus its own unresolved actions.    |
+| TanStack DB                 | Materialized collections and query results supplied by the local replica.    |
 
 An intermediate's acceptance means it has taken responsibility for an action.
 That is distinct from authoritative confirmation. The child removes its duplicate
 prediction when it imports a parent update that includes that action.
 
-## Three server roles
+## Server roles
 
 - **Owned server:** executes authoritative actions against storage it controls.
-- **Proxy server:** forwards actions upstream. It can forward reads directly or
-  use an internal replica as a read cache.
+- **Proxy server:** forwards reads and actions upstream.
+- **Cached proxy server:** serves confirmed reads through an internal replica;
+  actions forward upstream without entering the read cache's outbox.
 - **Replica server:** can durably queue actions and publish their optimistic
   results before its own upstream confirms them.
 
@@ -43,11 +44,13 @@ by itself decide whether a component is authoritative.
 
 ## Two upstream acquisition paths today
 
-A replica can use a backend adapter, such as Foundry, or a protocol source, such
-as an ontology server. Adapter acquisition uses subsets and optional committed
-change pages. Protocol acquisition currently uses change notifications followed
-by selected-state snapshots, including inherited overlays and action progress.
+A replica uses the committed backend contract for providers such as Foundry and
+for owned, proxy and cached-proxy servers. It loads subsets and can consume
+committed change pages when that backend exposes a journal. Change watchers are
+wake-up hints; journal pages carry the actual committed row changes.
 
-Both feed the same Replica implementation. Their incoming-state installation
-still has separate paths. The [replication proposal](/docs/design/replication)
-describes the next extraction and an incremental protocol.
+An intermediate replica server additionally exposes speculative state, including
+inherited predictions and action progress. Connected children currently receive
+change notifications and then read selected replacement snapshots. This path does
+not yet deliver incremental patches. Both paths use the same Replica, local
+BlobStorage and retention machinery.
