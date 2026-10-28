@@ -39,6 +39,7 @@ import type { ClientSubmission, ClientView, OntologySource } from "@party-stack/
 import type { Headers } from "effect/http/Headers";
 
 const Counter = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }));
+const DeliveryStrategy = Schema.Literals(["auto", "snapshot", "incremental"]);
 const Description = Schema.Struct({
     version: Schema.Literal(1),
     replication: Schema.Literals(["committed", "speculative"]),
@@ -163,6 +164,10 @@ export type OntologyRpcRequest =
  */
 export interface OntologyRpcServerOptions<R = never> extends ErrorProjectionOptions {
     readonly attachmentTransfers?: AttachmentTransferPolicy<R>;
+    /** Outgoing replication only. Snapshot uses invalidations and finite reads;
+     * incremental requires native selected delivery. Auto preserves capability selection.
+     */
+    readonly deliveryStrategy?: Schema.Schema.Type<typeof DeliveryStrategy>;
     /** Server-controlled selected-delivery capacity, frame and acknowledgment bounds. */
     readonly delivery?: import("@party-stack/ontology-backend/delivery").DeliveryPolicy;
     readonly source?: OntologySource;
@@ -181,12 +186,42 @@ export interface OntologyRpcServerOptions<R = never> extends ErrorProjectionOpti
 
 export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => {
     const authorize = options.authorize;
+    const snapshots = options.deliveryStrategy === "snapshot";
+    // Snapshot readers must not silently switch to the committed journal path.
+    // Its watch stream can still provide ordinary subset invalidation hints.
+    const operationOptions = snapshots
+        ? {
+              ...options,
+              get ontology() {
+                  return options.ontology;
+              },
+              get backend() {
+                  const backend = options.backend;
+                  if (!backend) return undefined;
+                  const watch = backend.changes?.watch;
+                  return {
+                      ...backend,
+                      changes: undefined,
+                      watchSubset: backend.watchSubset ?? (watch ? () => watch : undefined),
+                  };
+              },
+          }
+        : options;
     const unavailableSource = () =>
         Effect.fail(
             new BackendError({
                 operation: "replication",
                 kind: "NotImplemented",
                 message: "This endpoint serves stateless operations only.",
+                retryable: false,
+            })
+        );
+    const unavailableDelivery = () =>
+        Effect.fail(
+            new BackendError({
+                operation: "delivery",
+                kind: "NotImplemented",
+                message: "Selected incremental delivery is disabled or unavailable on this endpoint.",
                 retryable: false,
             })
         );
@@ -206,6 +241,35 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                 Effect.andThen(options.ready ?? Effect.void),
                 Effect.andThen(
                     Effect.gen(function* () {
+                        const strategy = yield* Schema.decodeUnknownEffect(DeliveryStrategy)(
+                            options.deliveryStrategy ?? "auto"
+                        ).pipe(
+                            Effect.mapError(
+                                () =>
+                                    new BackendError({
+                                        operation: "describe",
+                                        kind: "InvalidConfiguration",
+                                        message: "Invalid delivery strategy.",
+                                        retryable: false,
+                                    })
+                            )
+                        );
+                        const committedDelivery = Boolean(
+                            options.backend?.subscribeSelection && options.backend.acknowledgeDelivery
+                        );
+                        const speculativeDelivery = Boolean(
+                            source.subscribe && source.acknowledgeDelivery && source.accept
+                        );
+                        if (
+                            strategy === "incremental" &&
+                            !(options.source ? speculativeDelivery : committedDelivery)
+                        )
+                            return yield* new BackendError({
+                                operation: "describe",
+                                kind: "NotImplemented",
+                                message: "This source does not support incremental selected delivery.",
+                                retryable: false,
+                            });
                         const definitionHash = options.ir
                             ? yield* digestBytes({
                                   type: "application/json",
@@ -218,16 +282,13 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                             definitionHash,
                             sourceId: source.sourceId,
                             supportsIdempotency: source.supportsIdempotency,
-                            delivery: Boolean(
-                                options.backend?.subscribeSelection && options.backend.acknowledgeDelivery
-                            ),
-                            stateDelivery: Boolean(
-                                source.subscribe && source.acknowledgeDelivery && source.accept
-                            ),
-                            changes: Boolean(options.backend?.changes),
-                            watchChanges: Boolean(options.backend?.changes?.watch),
+                            delivery: !snapshots && committedDelivery,
+                            stateDelivery: !snapshots && speculativeDelivery,
+                            changes: Boolean(operationOptions.backend?.changes),
+                            watchChanges: Boolean(operationOptions.backend?.changes?.watch),
                             watchSubset: Boolean(
-                                options.backend?.watchSubset || options.backend?.pollIntervalMs
+                                operationOptions.backend?.watchSubset ||
+                                operationOptions.backend?.pollIntervalMs
                             ),
                             actionParameterResolution: Boolean(
                                 options.backend?.resolveActionParameters || options.ontology
@@ -240,7 +301,8 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
             Stream.unwrap(
                 Effect.gen(function* () {
                     yield* authorize({ operation: "SubscribeSelection", selection }, context.headers);
-                    if (!options.backend?.subscribeSelection) return yield* unavailableSource();
+                    if (snapshots || !options.backend?.subscribeSelection)
+                        return yield* unavailableDelivery();
                     const delivery = yield* options.backend.subscribeSelection(selection, options.delivery);
                     return delivery.frames.pipe(
                         Stream.mapEffect((frame) =>
@@ -268,7 +330,7 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
             Stream.unwrap(
                 Effect.gen(function* () {
                     yield* authorize({ operation: "SubscribeState", ...request }, context.headers);
-                    if (!source.subscribe) return yield* unavailableSource();
+                    if (snapshots || !source.subscribe) return yield* unavailableDelivery();
                     const delivery = yield* source.subscribe(request.session, request.view, options.delivery);
                     return delivery.frames.pipe(
                         Stream.map((frame) => ({
@@ -292,6 +354,7 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
         AckDelivery: (request, context) =>
             authorize({ operation: "AckDelivery", ...request }, context.headers).pipe(
                 Effect.andThen(() => {
+                    if (snapshots) return unavailableDelivery();
                     const ack =
                         request.kind === "committed"
                             ? options.backend?.acknowledgeDelivery
@@ -363,7 +426,10 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                     );
                 })
             ),
-    }).pipe(Layer.merge(ontologyOperationHandlers(options)), Layer.merge(errorProjectionLayer(options)));
+    }).pipe(
+        Layer.merge(ontologyOperationHandlers(operationOptions)),
+        Layer.merge(errorProjectionLayer(options))
+    );
 };
 
 export type OntologyRpcClient = Effect.Success<

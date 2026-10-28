@@ -2,6 +2,10 @@
 
 This is a design note, not an implemented ontology query API.
 
+The [October 28 initial proposal](./query-ir-proposal.md) develops this direction
+with Streamline project-admin and Post Approval token examples, authorized-view
+semantics, property guards, planning/oracle tests and fragment composition.
+
 The October 19 discussion adds Rindle's `.sub`/`rel` approach as a reference,
 alongside TanStack DB's includes system. Rindle's current
 [API map](https://rindle.sh/docs/api) lists `rel` and relationship definitions;

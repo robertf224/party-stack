@@ -107,6 +107,21 @@ durable delta history/resume, general untrusted replica-state projection and
 advertised/versioned idempotency windows remain future work. See
 [Gateway gates](./gateway-v0-parity.md).
 
+The [Query IR proposal](./query-ir-proposal.md) now grounds that final phase in
+Streamline admin/token scopes, authorized views, property checks, oracle tests
+and composable UI fragments. Delivery resume is recorded separately in
+[incremental-delivery.md](./incremental-delivery.md#future-work-resume-after-a-transport-interruption);
+persisted client sessions do not yet make delivery subscriptions resumable.
+
+Native server delivery is now explicitly selectable with deliveryStrategy:
+auto (default), snapshot or incremental. Both committed and speculative clients
+follow the advertised strategy. Snapshot mode keeps invalidation/finite reads and
+does not silently use journal delivery. HTTP acceptance covers both strategies
+for owned, cached-proxy and replica servers; the server suite passes 85 tests.
+Result-maintenance/IVM strategy remains future work. Context-principal metadata,
+one-syntax entity-use validation and policy action-read rules remain design work
+in the Query IR proposal, not implemented schema/API claims.
+
 1. **Protocol hardening.** Native delivery starts with a selected snapshot and then
    sends atomic incremental patches. Reconnect snapshots preserve local pending
    work. Comparison/staging state and admission history are bounded. Every child

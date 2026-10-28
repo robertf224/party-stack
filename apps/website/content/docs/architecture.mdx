@@ -60,6 +60,24 @@ has one outstanding batch; changes while a client is slow are coalesced. Closing
 the Scope releases that state. Reconnecting starts a fresh selected snapshot while
 the child's local outbox remains intact.
 
+Native HTTP and worker servers accept `deliveryStrategy`:
+
+- `"auto"` (default) selects delivery from the available source capabilities.
+- `"snapshot"` uses invalidation hints and finite selected reads, without selected
+  patch streams or journal delivery on that endpoint.
+- `"incremental"` requires native selected delivery and reports `NotImplemented`
+  during connection setup if the source cannot provide it.
+
+For example, add `deliveryStrategy: "snapshot"` to `makeOntologyServer(...)` or
+`serveOntologyWorker(...)` options. The setting controls outgoing delivery; a
+cached/intermediate server's upstream synchronization is configured independently.
+The `delivery` option continues to configure patch capacity/frame/acknowledgment
+bounds. Server query maintenance currently recomputes selections; IVM maintenance
+is future work and has no configuration flag yet.
+Snapshot mode still retains the ordinary speculative action/session bookkeeping
+when serving a replica; it removes selected-delivery comparison state, not outboxes
+or normal row/blob retention.
+
 Local TanStack collections consume composed row changes. Simple predicates apply
 changed keys directly; sorted/limited windows query local storage for their new
 membership. Unchanged rows are not rewritten into the collection. Both upstream

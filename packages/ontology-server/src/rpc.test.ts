@@ -949,9 +949,13 @@ test.each([
     );
 });
 
-test.each(["owned", "cached-proxy", "replica"] as const)(
-    "%s HTTP delivery installs patches and acknowledges across request scopes",
-    async (kind) => {
+test.each(
+    (["owned", "cached-proxy", "replica"] as const).flatMap((kind) =>
+        (["snapshot", "incremental"] as const).map((deliveryStrategy) => ({ kind, deliveryStrategy }))
+    )
+)(
+    "$kind HTTP $deliveryStrategy delivery preserves external edits and action settlement",
+    async ({ kind, deliveryStrategy }) => {
         await Effect.runPromise(
             Effect.scoped(
                 Effect.gen(function* () {
@@ -974,6 +978,7 @@ test.each(["owned", "cached-proxy", "replica"] as const)(
                     const requests: string[] = [];
                     const common = {
                         ir,
+                        deliveryStrategy,
                         authorize: (request: import("./rpc.js").OntologyRpcRequest) =>
                             Effect.sync(() => {
                                 requests.push(request.operation);
@@ -992,7 +997,7 @@ test.each(["owned", "cached-proxy", "replica"] as const)(
                         }).pipe(Effect.timeout("3 seconds"));
                     yield* Effect.gen(function* () {
                         const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
-                        if (kind === "replica") {
+                        if (kind === "replica" && deliveryStrategy === "incremental") {
                             // Its ordinary committed facet must use the endpoint's advertised identity too.
                             yield* Effect.scoped(
                                 Effect.gen(function* () {
@@ -1045,12 +1050,25 @@ test.each(["owned", "cached-proxy", "replica"] as const)(
                                 .pipe(Effect.map((status) => status.receipt?.outcome === "committed"))
                         );
                         expect((yield* child.get("Counter", "one"))?.count).toBe(3);
-                        expect(requests).toContain("AckDelivery");
-                        expect(requests).toContain(
-                            kind === "replica" ? "SubscribeState" : "SubscribeSelection"
-                        );
-                        expect(requests).toContain(kind === "replica" ? "Accept" : "ApplyAction");
-                        expect(requests).not.toContain("Submit");
+                        if (deliveryStrategy === "incremental") {
+                            expect(requests).toContain("AckDelivery");
+                            expect(requests).toContain(
+                                kind === "replica" ? "SubscribeState" : "SubscribeSelection"
+                            );
+                            expect(requests).toContain(kind === "replica" ? "Accept" : "ApplyAction");
+                            expect(requests).not.toContain("Submit");
+                        } else {
+                            expect(connection.backend.subscribeSelection).toBeUndefined();
+                            expect(connection.backend.changes).toBeUndefined();
+                            if (connection.replication.kind === "speculative")
+                                expect(connection.replication.source.subscribe).toBeUndefined();
+                            expect(requests).toContain(kind === "replica" ? "Read" : "LoadSubset");
+                            expect(requests).toContain(kind === "replica" ? "Submit" : "ApplyAction");
+                            expect(requests).not.toContain("SubscribeState");
+                            expect(requests).not.toContain("SubscribeSelection");
+                            expect(requests).not.toContain("AckDelivery");
+                            expect(requests).not.toContain("PullChanges");
+                        }
                     }).pipe(
                         Effect.provide(FetchHttpClient.layer),
                         Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
@@ -1062,3 +1080,78 @@ test.each(["owned", "cached-proxy", "replica"] as const)(
         );
     }
 );
+
+test("snapshot endpoints reject direct incremental calls and retain subset invalidation hints", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* setup();
+                const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
+                    Effect.provide(
+                        ontologyRpcHandlers({
+                            backend,
+                            ir,
+                            deliveryStrategy: "snapshot",
+                            authorize: () => Effect.void,
+                        })
+                    )
+                );
+                expect(yield* client.Describe()).toMatchObject({
+                    delivery: false,
+                    changes: false,
+                    watchSubset: true,
+                });
+                const subscription = yield* Effect.result(
+                    Stream.runDrain(
+                        client.SubscribeSelection({
+                            subsets: [{ objectType: "Counter" }],
+                            actionIds: [],
+                        })
+                    )
+                );
+                expect(subscription).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "NotImplemented" },
+                });
+                const journal = yield* Effect.result(client.PullChanges({}));
+                expect(journal).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "NotImplemented" },
+                });
+                expect(
+                    yield* Stream.runCollect(
+                        client.WatchSubset({ objectType: "Counter" }).pipe(Stream.take(1))
+                    )
+                ).toEqual(["invalidate"]);
+            })
+        )
+    );
+});
+
+test("explicit incremental configuration rejects a source without native delivery", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* setup();
+                const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
+                    Effect.provide(
+                        ontologyRpcHandlers({
+                            backend: {
+                                ...backend,
+                                subscribeSelection: undefined,
+                                acknowledgeDelivery: undefined,
+                            },
+                            ir,
+                            deliveryStrategy: "incremental",
+                            authorize: () => Effect.void,
+                        })
+                    )
+                );
+                expect(yield* Effect.result(client.Describe())).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "NotImplemented", retryable: false },
+                });
+            })
+        )
+    );
+});

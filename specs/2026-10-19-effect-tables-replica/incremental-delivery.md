@@ -108,3 +108,47 @@ Future Query IR/IVM replaces selection reevaluation/diff production. Atomic reco
 batches, position acknowledgment, backpressure and child installation remain.
 Durable resumable delivery history, storage-budget-aware eviction and incremental
 operator state are future work. Current window recomputation is not server IVM.
+
+Snapshot/invalidation remains a working production fallback and test oracle.
+Native HTTP/worker server options now expose deliveryStrategy: auto (default),
+snapshot, or incremental. Snapshot advertises finite reads plus invalidation hints
+and rejects selected streams/journal delivery. Incremental requires the selected
+delivery capability; an unsupported explicit request fails the handshake. Auto
+preserves the existing capability-based choice. This controls outgoing delivery,
+not how a cached/intermediate server synchronizes with its own upstream. Query
+maintenance/IVM configuration remains future work. See the
+[strategy discussion](./query-ir-proposal.md#delivery-strategy-and-query-execution-are-separate-choices).
+
+## Future work: resume after a transport interruption
+
+This is a bounded protocol extension of moderate complexity, not just a client
+session GC setting. The action client session/token and submission acknowledgments
+already use storage. Delivery witnesses, candidate patches and acknowledgments
+also use tables, but the current Scope finalizer deletes them; the producer's
+installed sequence, signature and loop state still live in memory.
+
+A resume implementation should:
+
+- Store a reconstructible delivery head and bind its resume token to source,
+  definition, authorized principal/policy revision and selection identity.
+- Retain the last acknowledged baseline and at most one outstanding candidate
+  batch for a configurable idle window, instead of deleting them on disconnection.
+- Recover an applied-but-unacknowledged batch by resending the identical batch;
+  finish acknowledgment/promotion idempotently after either process restarts.
+- Once that batch is settled, reevaluate the current selection and diff it
+  against the retained baseline. State replication does not require recording
+  every intermediate disconnected update or keeping a continuously running query.
+- Expire delivery state independently of action recovery/session state, with
+  per-principal/namespace byte and subscription budgets. Expired, incompatible or
+  unauthorized resumes explicitly fall back to a fresh authorized snapshot.
+- Test disconnects around every staging/apply/ack boundary, server restart,
+  selection changes, authorization changes and retention cleanup against snapshots.
+
+Thus a short broken delivery connection could resume with only changed records
+while retained state remains valid. A network blip that does not break the stream
+requires no new acquisition today. Internet loss also need not break a tab's
+local SharedWorker MessagePort. Memory tabs still start with empty rows after a
+reload; their old delivery position alone cannot resume a new empty replica.
+
+No implementation is added in this checkpoint. This remains separate from full
+event/audit-history replay and from the current v0 Query IR/authorization work.
