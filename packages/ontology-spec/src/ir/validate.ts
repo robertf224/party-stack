@@ -505,9 +505,27 @@ function resolveExpressionType(
             return { kind: "string", value: {} };
         case "now":
             return { kind: "timestamp", value: {} };
-        case "operation":
-        case "conditional":
-        case "queryTest":
+        case "eq":
+        case "ne":
+        case "lt":
+        case "lte":
+        case "gt":
+        case "gte":
+        case "in":
+        case "contains":
+        case "like":
+        case "ilike":
+        case "add":
+        case "subtract":
+        case "multiply":
+        case "divide":
+        case "and":
+        case "or":
+        case "concat":
+        case "coalesce":
+        case "not":
+        case "case":
+        case "exists":
             return undefined;
     }
 }
@@ -683,9 +701,27 @@ function validateExpression(
         case "now":
         case "literal":
             return [];
-        case "operation":
-        case "conditional":
-        case "queryTest":
+        case "eq":
+        case "ne":
+        case "lt":
+        case "lte":
+        case "gt":
+        case "gte":
+        case "in":
+        case "contains":
+        case "like":
+        case "ilike":
+        case "add":
+        case "subtract":
+        case "multiply":
+        case "divide":
+        case "and":
+        case "or":
+        case "concat":
+        case "coalesce":
+        case "not":
+        case "case":
+        case "exists":
             return [{ message: "Query expressions are not supported in action defaults yet.", path }];
     }
 }

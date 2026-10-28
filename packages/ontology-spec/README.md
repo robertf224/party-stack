@@ -39,8 +39,12 @@ meaning; no new storage schema or migration API is introduced by the extraction.
 | `/examples/blog`  | Pure example ontology used by validation and live examples                     |
 | `/generate`       | Build-time generators, formatting, and file generation                         |
 
-The query grammar describes multi-root selections, joins and correlations,
-guarded fields, ordering and pagination. Query execution, semantic validation and
+The query grammar describes multi-root selections, correlated subqueries,
+conditional fields, ordering and pagination. A `Query` combines `from`, an optional
+`subset`, and `select`. The named `Subset` definition owns `where`, `orderBy` and
+`page`. Expressions use top-level operator tags, including `case` and `exists`;
+selections use `field`, `sub` and recursively branching `selectCase`. Flat joins
+are deferred. Query execution, semantic validation and
 authorization are still being implemented; these constructors alone do not enforce
 permissions. The `/query` entry does not require Effect.
 

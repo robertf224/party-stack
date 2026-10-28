@@ -2,45 +2,40 @@
 
 import * as v from "../../utils/values.js";
 
-/** A closed portable operator applied to expression arguments. */
-export type OperationExpression = {
-    operator:
-        | "eq"
-        | "ne"
-        | "lt"
-        | "lte"
-        | "gt"
-        | "gte"
-        | "in"
-        | "contains"
-        | "like"
-        | "ilike"
-        | "and"
-        | "or"
-        | "not"
-        | "add"
-        | "subtract"
-        | "multiply"
-        | "divide"
-        | "concat"
-        | "coalesce";
-    arguments: Array<Expression>;
+/** Two operands for a top-level binary expression variant. */
+export type BinaryExpression = {
+    left: Expression;
+    right: Expression;
 };
 
-/** Chooses a scalar value; distinct from a guarded field selection. */
-export type ConditionalExpression = {
+/** An ordered list of operands for a variadic expression variant. */
+export type VariadicExpression = {
+    expressions: Array<Expression>;
+};
+
+/** Negates a boolean expression, preserving evaluation uncertainty. */
+export type NotExpression = {
+    expression: Expression;
+};
+
+/** A condition and its scalar result; branches are tested in order. */
+export type CaseBranch = {
     condition: Expression;
-    whenTrue: Expression;
-    whenFalse: Expression;
+    result: Expression;
 };
 
-/** Tests correlated query membership without selecting its result. */
-export type QueryTestExpression = {
+/** Computes the first matching branch result, or the explicit else result. */
+export type CaseExpression = {
+    branches: Array<CaseBranch>;
+    else: Expression;
+};
+
+/** Whether a correlated query produces at least one result. */
+export type ExistsExpression = {
     query: Query;
-    test: "some" | "none";
 };
 
-/** A logical object source resolved by the execution binding, not a SQL identifier. */
+/** A logical object source, resolved by an execution binding rather than raw SQL. */
 export type QuerySource = {
     ontology?: string;
     objectType: string;
@@ -52,13 +47,6 @@ export type QueryFrom = {
     binding: string;
 };
 
-/** An explicit relational join; output fields do not define correlation scope. */
-export type QueryJoin = {
-    kind: "inner" | "left";
-    from: QueryFrom;
-    on: Expression;
-};
-
 /** Orders by an expression with explicit nullish placement when requested. */
 export type QueryOrder = {
     expression: Expression;
@@ -66,54 +54,63 @@ export type QueryOrder = {
     nulls?: "first" | "last";
 };
 
-/** An exclusive cursor over the query's complete sort order and result identity. */
+/** An exclusive boundary in the complete order, with source primary-key tie-breaking. */
 export type QueryCursor = {
     values: Array<unknown>;
     key: unknown;
 };
 
-/** A window; correlated child windows apply independently per parent. */
+/** A result window; correlated child windows apply independently per parent. */
 export type QueryPage = {
     limit?: v.integer;
     offset?: v.integer;
     after?: QueryCursor;
 };
 
-/** Selects a named value. Entity uses require source-preserving property identity. */
+/** Filter, order and window over a supplied source; no arbitrary result projection. */
+export type Subset = {
+    where?: Expression;
+    orderBy?: Array<QueryOrder>;
+    page?: QueryPage;
+};
+
+/** Selects a named value; entity uses require source-preserving identity. */
 export type QueryFieldSelection = {
     name: string;
     expression: Expression;
 };
 
 /** Selects a nested correlated query with explicit result cardinality. */
-export type QueryNestedSelection = {
+export type QuerySubSelection = {
     name: string;
     query: Query;
     cardinality: "one" | "many";
 };
 
-/** Conditionally includes fields/subtrees, preserving their source identities. */
-export type QueryGuardedSelection = {
+/** A condition and its selection group; branches are tested in order. */
+export type SelectCaseBranch = {
     condition: Expression;
-    whenTrue: Array<QuerySelection>;
-    whenFalse?: Array<QuerySelection>;
+    select: Array<QuerySelection>;
 };
 
-/** The same selection grammar supports result projections and entity-use validation. */
+/** Includes the first matching selection group, or else; groups can nest. */
+export type SelectCaseSelection = {
+    branches: Array<SelectCaseBranch>;
+    else?: Array<QuerySelection>;
+};
+
+/** Named values, hierarchical queries and conditional inline selection groups. */
 export type QuerySelection = v.Union<{
     field: QueryFieldSelection;
-    query: QueryNestedSelection;
-    when: QueryGuardedSelection;
+    sub: QuerySubSelection;
+    selectCase: SelectCaseSelection;
 }>;
 
-/** A finite relational query. Nested reads may capture ancestor row bindings. */
+/** A finite query; nested reads may capture ancestor row bindings. */
 export type Query = {
     from: QueryFrom;
-    joins?: Array<QueryJoin>;
-    where?: Expression;
+    subset?: Subset;
     select: Array<QuerySelection>;
-    orderBy?: Array<QueryOrder>;
-    page?: QueryPage;
 };
 
 /** A multi-root selection without a mandatory starting object type. */
@@ -608,9 +605,27 @@ export type Expression = v.Union<{
     uuid: UuidExpression;
     now: NowExpression;
     literal: LiteralExpression;
-    operation: OperationExpression;
-    conditional: ConditionalExpression;
-    queryTest: QueryTestExpression;
+    eq: BinaryExpression;
+    ne: BinaryExpression;
+    lt: BinaryExpression;
+    lte: BinaryExpression;
+    gt: BinaryExpression;
+    gte: BinaryExpression;
+    in: BinaryExpression;
+    contains: BinaryExpression;
+    like: BinaryExpression;
+    ilike: BinaryExpression;
+    add: BinaryExpression;
+    subtract: BinaryExpression;
+    multiply: BinaryExpression;
+    divide: BinaryExpression;
+    and: VariadicExpression;
+    or: VariadicExpression;
+    concat: VariadicExpression;
+    coalesce: VariadicExpression;
+    not: NotExpression;
+    case: CaseExpression;
+    exists: ExistsExpression;
 }>;
 
 /** Assigns an expression to a property path on an object written by an action. */

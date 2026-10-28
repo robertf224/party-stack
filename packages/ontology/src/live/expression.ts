@@ -289,9 +289,27 @@ async function evaluateExpressionWithLocals(
         }
         case "now":
             return options.replay ? Temporal.Instant.from(options.replay.now) : Temporal.Now.instant();
-        case "operation":
-        case "conditional":
-        case "queryTest":
+        case "eq":
+        case "ne":
+        case "lt":
+        case "lte":
+        case "gt":
+        case "gte":
+        case "in":
+        case "contains":
+        case "like":
+        case "ilike":
+        case "add":
+        case "subtract":
+        case "multiply":
+        case "divide":
+        case "and":
+        case "or":
+        case "concat":
+        case "coalesce":
+        case "not":
+        case "case":
+        case "exists":
             throw new BackendError({
                 operation: "expression.evaluate",
                 kind: "NotImplemented",

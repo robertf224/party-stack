@@ -4,27 +4,49 @@ import { compileEffectSchemas } from "../codecs/compiler.js";
 import { o } from "../ir/generated/builders.js";
 import irSchema from "../ir/schema.js";
 import { validate } from "../ir/validate.js";
-import { context, field, input, literal, nested, operation, some, value, when } from "./index.js";
-import type { Query, QueryDocument } from "./index.js";
+import {
+    and,
+    caseExpression,
+    context,
+    eq,
+    exists,
+    field,
+    ilike,
+    input,
+    literal,
+    not,
+    selectCase,
+    selectField,
+    sub,
+} from "./index.js";
+import type { Query, QueryDocument, Subset } from "./index.js";
 
 const codecs = compileEffectSchemas(irSchema);
 const codec = codecs.namedSchemas.QueryDocument!;
 const json = Schema.fromJsonString(Schema.toCodecJson(codec));
+const decode = Schema.decodeUnknownSync(codec, { onExcessProperty: "error" });
 
 const approvals = (): Query => ({
     from: { source: { objectType: "PostApproval" }, binding: "approval" },
-    where: operation("eq", field("approval", "id"), context("approvalId")),
+    subset: { where: eq(field("approval", "id"), context("approvalId")) },
     select: [
-        value("id", field("approval", "id")),
-        nested(
+        selectField("id", field("approval", "id")),
+        sub(
             "person",
             {
                 from: { source: { objectType: "Person" }, binding: "person" },
-                where: operation("eq", field("person", "id"), field("approval", "personId")),
+                subset: { where: eq(field("person", "id"), field("approval", "personId")) },
                 select: [
-                    value("id", field("person", "id")),
-                    value("name", field("person", "name")),
-                    when(context("permissions", "pii"), [value("ssn", field("person", "ssn"))]),
+                    selectField("id", field("person", "id")),
+                    selectField("name", field("person", "name")),
+                    selectCase({
+                        branches: [
+                            {
+                                condition: context("permissions", "pii"),
+                                select: [selectField("ssn", field("person", "ssn"))],
+                            },
+                        ],
+                    }),
                 ],
             },
             "one"
@@ -33,79 +55,168 @@ const approvals = (): Query => ({
 });
 
 describe("portable Query IR grammar", () => {
-    it("round-trips multiple roots, ancestor correlations, guarded fields and per-parent windows", () => {
+    it("round-trips multiple roots, ancestor correlations and shared subset windows", () => {
+        const subset: Subset = {
+            where: and(
+                ilike(field("post", "name"), input("search")),
+                not(eq(field("post", "id"), literal("hidden")))
+            ),
+            orderBy: [{ expression: field("post", "name"), direction: "asc" }],
+            page: { limit: 20, after: { values: ["Paris"], key: "post-20" } },
+        };
         const document: QueryDocument = {
             inputs: [{ name: "search", displayName: "Search", type: o.string({}) }],
             select: [
-                nested("approval", approvals(), "one"),
-                nested("locations", {
+                sub("approval", approvals(), "one"),
+                sub("locations", {
                     from: { source: { ontology: "reference", objectType: "Post" }, binding: "post" },
-                    where: operation("ilike", field("post", "name"), input("search")),
-                    select: [value("id", field("post", "id")), value("name", field("post", "name"))],
-                    orderBy: [{ expression: field("post", "name"), direction: "asc" }],
-                    page: { limit: 20 },
+                    subset,
+                    select: [
+                        selectField("id", field("post", "id")),
+                        selectField("name", field("post", "name")),
+                    ],
                 }),
             ],
         };
-        const encoded = Schema.encodeSync(json)(document);
-        expect(Schema.decodeUnknownSync(json)(encoded)).toEqual(document);
-        expect(JSON.parse(encoded).select[1].value.query.from.source.ontology).toBe("reference");
+        expect(Schema.decodeUnknownSync(json)(Schema.encodeSync(json)(document))).toEqual(document);
+        expect(Schema.decodeUnknownSync(codecs.namedSchemas.Subset!)(subset)).toEqual(subset);
     });
 
-    it("keeps scalar branching, conditional selection, query tests and singular/plural shapes distinct", () => {
+    it("round-trips multi-branch CASE and recursively nested selection cases with alternate subqueries", () => {
         const query = approvals();
         const document: QueryDocument = {
             select: [
-                value("eligible", some(query)),
-                value(
+                selectField("eligible", exists(query)),
+                selectField(
                     "label",
-                    o.Expression.conditional({
-                        condition: literal(true),
-                        whenTrue: literal("allowed"),
-                        whenFalse: literal("denied"),
+                    caseExpression({
+                        branches: [
+                            { condition: literal(false), result: literal("first") },
+                            { condition: literal(true), result: literal("second") },
+                        ],
+                        else: literal("fallback"),
                     })
                 ),
-                when(literal(false), [nested("optional", query, "one")]),
-                nested("oneApproval", query, "one"),
-                nested("approvalList", { ...query, page: { limit: 1 } }),
+                selectCase({
+                    branches: [
+                        {
+                            condition: context("isAdmin"),
+                            select: [
+                                sub("approval", query, "one"),
+                                selectCase({
+                                    branches: [
+                                        {
+                                            condition: context("canReadPII"),
+                                            select: [selectField("ssn", field("person", "ssn"))],
+                                        },
+                                    ],
+                                    else: [selectField("notice", literal("Restricted"))],
+                                }),
+                            ],
+                        },
+                        { condition: context("isSelf"), select: [sub("approval", query, "one")] },
+                    ],
+                    else: [sub("publicApprovals", query)],
+                }),
+                sub("oneApproval", query, "one"),
+                sub("approvalList", { ...query, subset: { ...query.subset, page: { limit: 1 } } }),
             ],
         };
         expect(Schema.decodeUnknownSync(json)(Schema.encodeSync(json)(document))).toEqual(document);
+        expect(document.select[1]?.kind).toBe("field");
+        expect(document.select[2]?.kind).toBe("selectCase");
         expect(document.select[3]).not.toEqual(document.select[4]);
     });
 
-    it("rejects unknown wire operators and malformed nested query/cardinality shapes", () => {
-        const decode = Schema.decodeUnknownSync(codec);
-        expect(() =>
-            decode({
-                select: [
-                    value("bad", {
-                        kind: "operation",
-                        value: { operator: "raw-sql", arguments: [] },
-                    } as never),
-                ],
-            })
-        ).toThrow(/operator/);
+    it("uses operator-specific payloads and rejects missing binary operands", () => {
+        expect(decode({ select: [selectField("same", eq(literal(1), literal(1)))] })).toMatchObject({
+            select: [
+                {
+                    value: {
+                        expression: {
+                            kind: "eq",
+                            value: { left: { kind: "literal" }, right: { kind: "literal" } },
+                        },
+                    },
+                },
+            ],
+        });
         expect(() =>
             decode({
                 select: [
                     {
-                        kind: "query",
+                        kind: "field",
+                        value: { name: "bad", expression: { kind: "eq", value: { left: literal(1) } } },
+                    },
+                ],
+            })
+        ).toThrow(/right/);
+        expect(() =>
+            decode({
+                select: [
+                    {
+                        kind: "field",
                         value: {
                             name: "bad",
-                            query: approvals(),
-                            cardinality: "maybe",
+                            expression: { kind: "not", value: { expressions: [literal(true)] } },
                         },
                     },
                 ],
             })
-        ).toThrow(/cardinality/);
-        expect(() =>
-            decode({ select: [nested("missingSource", { ...approvals(), from: undefined } as never)] })
-        ).toThrow(/from/);
+        ).toThrow(/expression/);
     });
 
-    it("does not silently enable query expressions in the existing action-default evaluator", () => {
+    it("rejects generic operations, flat joins and malformed subquery cardinality", () => {
+        expect(() =>
+            decode({
+                select: [
+                    {
+                        kind: "field",
+                        value: {
+                            name: "bad",
+                            expression: { kind: "operation", value: { operator: "raw-sql", arguments: [] } },
+                        },
+                    },
+                ],
+            })
+        ).toThrow(/expression/);
+        expect(() =>
+            decode({
+                select: [{ kind: "sub", value: { name: "bad", query: approvals(), cardinality: "maybe" } }],
+            })
+        ).toThrow(/cardinality/);
+        expect(() =>
+            decode({ select: [sub("missingSource", { ...approvals(), from: undefined } as never)] })
+        ).toThrow(/from/);
+        expect(() => decode({ select: [sub("flat", { ...approvals(), joins: [] } as never)] })).toThrow(
+            /joins/
+        );
+    });
+
+    it("keeps scalar CASE results and selection CASE groups structurally distinct", () => {
+        expect(() =>
+            decode({
+                select: [
+                    selectField("bad", {
+                        kind: "case",
+                        value: { branches: [{ condition: literal(true), select: [] }], else: literal(false) },
+                    } as never),
+                ],
+            })
+        ).toThrow(/branches/);
+        expect(() =>
+            decode({
+                select: [
+                    {
+                        kind: "selectCase",
+                        value: { branches: [{ condition: literal(true), result: literal("bad") }] },
+                    },
+                ],
+            })
+        ).toThrow(/select/);
+    });
+
+    it("does not silently enable query expressions in existing action defaults", () => {
         const definition = {
             types: [],
             objectTypes: [],
@@ -121,7 +232,7 @@ describe("portable Query IR grammar", () => {
                             name: "test",
                             displayName: "Test",
                             type: o.boolean({}),
-                            defaultValue: some(approvals()),
+                            defaultValue: exists(approvals()),
                         },
                     ],
                 },

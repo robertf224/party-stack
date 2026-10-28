@@ -66,8 +66,13 @@ selecting a live related subset remain distinct operations.
 ## Current implementation boundary
 
 `ontology-spec/query` now supplies a structural query grammar and low-level pure
-constructors. It covers multiple roots, correlated queries, joins, guarded fields,
+constructors. It covers multiple roots, correlated subqueries, conditional fields,
 cardinality, ordering and windows, with generated types and optional Effect codecs.
+Query contains from/subset/select; the named Subset owns where/orderBy/page.
+Expression operators are top-level variants with unary/binary/variadic payloads;
+case and selectCase have distinct tags and recursive multi-branch groups. Flat
+joins are deferred. Storage lowering still needs to consume the shared Subset;
+the existing driver query representation continues to execute current loads.
 Scope/type/provenance validation, query execution and policy enforcement remain
 unfinished; the structural codecs alone do not make a query safe to execute.
 

@@ -721,6 +721,163 @@ availability, hidden policy dependencies and permission-change removals. Current
 finite authorization does not automatically make speculative state safe for
 untrusted children; that remains the separate deferred protocol project.
 
+## Current structural format — October 28
+
+The reviewed structural grammar now uses top-level unary/binary/variadic
+Expression variants, exists, scalar case, sub selections and recursively
+branching selectCase selections. Query is from/subset/select, and Subset is the
+named where/orderBy/page definition shared by query construction. Flat joins and
+the earlier operation/queryTest/conditional variants have been removed. Generated
+builders/types and optional codecs reflect these names. The detailed examples
+earlier in this proposal are still conceptual and may use superseded spellings.
+
+Scope/type/provenance validation, execution and storage lowering remain next.
+Current storage loads continue through their existing flat query representation;
+do not infer that adding the shared type has already ported driver execution.
+case().when().else() builder ergonomics and builder-codegen changes are deferred.
+
+## Review refinements and pagination research — October 28
+
+These record the design decisions and research; the current structural status is
+listed above. Runtime execution/policy claims remain unimplemented unless
+explicitly marked otherwise.
+
+- Reuse top-level Expression variants for eq/lt/and/not and other operators,
+  rather than the draft operation(operator, arguments) wrapper. Give unary,
+  binary and variadic operations their proper argument shapes.
+- Replace queryTest/some/none with exists(query), negated through ordinary not.
+- Use sub() for a hierarchical subquery selection. Named object selections in a
+  typed builder can avoid the low-level value(name, expression) helper.
+- Conditional selection groups compose inline, without introducing an output
+  field. Builder object spread is construction syntax, not a general runtime
+  object-spread operation in the wire IR. Unconditional fragments can inline;
+  named fragment references/provenance can be added if independently justified.
+- Proposed scalar CASE has ordered condition/result branches and an else result;
+  expr.case().when(condition, result).when(condition, result).else(result) is
+  illustrative builder syntax. Conditional groups may likewise have alternative
+  selection branches, including nested queries. A type-test branch must carry
+  enough information for interface narrowing/provenance validation.
+- Keep map for list-value transformations. Defer public flat inner/left joins in
+  the first Gateway pass; correlated subqueries, related and exists still need
+  relational execution and may lower into physical joins.
+
+Use distinct discriminants for scalar CASE and conditional selection groups:
+Expression.kind="case" and Selection.kind="selectCase". Both can carry ordered branches
+and else, but scalar branch results are Expressions and selection branches contain
+Selection arrays recursively. Function/object-style helpers need not use fluent
+method chains. The names and helper syntax in older examples are illustrative.
+
+The existing Uncertain<T> represents partial evaluation knowledge, not a SQL null.
+Known null/undefined values remain certain values. Reuse its lifting rules:
+false AND unknown is false; true AND unknown is unknown; true OR unknown is true;
+false OR unknown and NOT unknown remain unknown. The Foundry action validator
+already implements these rules. An uncertain CASE condition cannot simply choose
+its else branch. Incomplete cache membership also cannot establish exists=false;
+one known match can establish exists=true. Trusted policy execution must resolve
+necessary dependencies or fail closed, never grant on an unknown condition.
+Do not wrap every stored scalar in Uncertain; it belongs to evaluation/readiness.
+
+Live pagination is an ordered result window. ORDER BY plus limit K denotes the
+first K eligible rows, with primary-key tie-breaking. Updates can insert, remove
+or move rows into/out of that window. A deletion can require an indexed refill.
+Growing a prefix (20 to 40) avoids treating independent moving pages as a frozen
+concatenation. Fixed cursor windows remain useful but do not imply a shared
+snapshot across page reads.
+
+Each correlated selection has its own window per bound parent. A request to grow
+Project A's issues must not grow every project's issues. A bound child query or
+fragment/controller can own that demand while the physical planner batches
+acquisition. Controller syntax and transport binding are still design work;
+serializable query window semantics belong in the IR, UI load-more controls do not.
+
+Verified against installed @tanstack/db 0.14.0 and query-db-collection 1.4.4:
+
+- Global and grouped fractional-index top-K operators maintain ordered results.
+  Grouped operators use separate state per correlation group. The installed
+  compiler skips its global lazy-prefix optimization for grouped includes, so
+  per-parent output limits do not establish per-parent bounded source acquisition.
+- The shared window controller backs useLiveInfiniteQuery; it grows the prefix
+  and retains one extra row for hasNextPage. This is not a remote pageParam API.
+- createCursorPager is shipped code, not merely an issue proposal. It uses
+  InfiniteQueryObserver internally to cache opaque provider pages and fulfill
+  offset/limit requests. Cache identity includes source/filter/order/scope, not
+  the requested window. Fresh growth fetches the missing suffix; stale refresh
+  rebuilds the loaded prefix. Short/empty nonterminal pages must continue; only
+  nextCursor=null means exhaustion. Repeated tokens fail.
+- PR #1824 merged September 16. Issue #863's collection metadata/no-peek design
+  was intentionally excluded; the shipped helper retains N+1. Older RFC #1657
+  coverage-registry/outcome designs were also withdrawn in favor of the later
+  exact-request/applied-settlement design. Historical issue text is not the API.
+- Open issue #2166 documents extra tie-boundary acquisitions even with unique
+  leading order. Our ontology primary-key metadata can inform a complete logical
+  cursor; provider capability and collation still determine correct lowering.
+- Open issue #2151 documents transient parent windows causing child acquisitions
+  beyond the final visible parents. Correct final rows and bounded acquisition
+  are separate properties; test both.
+
+Zero's Take operator keeps size/bound state through its Storage interface, with
+partitioned limits and deficit refills from its ordered input. This is a useful
+model for future storage-backed operator state. A bounded result does not imply
+bounded candidate state: TanStack's array-based top-K retains its delivered
+candidate set. Neither implementation alone proves our future DO memory budget.
+
+For our adapters, keep opaque provider continuation tokens at acquisition
+boundaries. Preserve/reuse them where semantics permit; don't equate them with
+the logical query cursor or the change-journal cursor. Authoritative ordered
+coverage/refill must account for authorization and residual filters before the
+executor declares a logical window complete. Reuse our storage for continuation
+state rather than adding a second QueryClient cache to the replication engine.
+
+### Recursive queries — future work
+
+Add explicit recursive/transitive query semantics for cases such as nested group
+membership, organization hierarchies and graph reachability. Distinguish arbitrary
+depth traversal from a finite nesting of subqueries. Define cycle handling,
+duplicate/identity semantics, termination, depth/work budgets and cancellation,
+plus authorization at every traversed source. Compare a bounded reference
+evaluator with provider-native transitive operations and SQL recursive lowering
+where available. Do not implicitly enable recursive authorization-policy cycles.
+
+Keep Foundry's criteria adapter in place until a translation preserves its
+semantics. Foundry group membership already uses a provider transitive endpoint;
+it does not require the common engine to implement recursion first. Shared
+policy checks can absorb portable conditions incrementally, while redacted or
+unsupported provider conditions retain uncertainty and authoritative validation.
+
+### Subsets and execution boundary
+
+Retain subsets as the single-source entity-acquisition restriction of Query IR:
+filter, order and window, with the source supplied by an object type/table handle.
+Derive shared expression/window definitions rather than maintaining independent
+predicate semantics. Rich hierarchical queries lower into subset demands for
+storage/providers that do not implement full queries. A subset is not an arbitrary
+query with from/select deleted: correlations must first bind parent values or
+become executable batches, and selected entity identity/authorized properties
+must remain explicit at the higher boundary.
+
+Current storage Query already supports where, orderBy, limit, offset and exclusive
+after={values,key}; BackendSubset carries it through its query field. The existing
+TanStack bridge conservatively translates cursor hints to a predicate including
+the complete leading-value tie and leaves final ordering/windowing to TanStack;
+it does not blindly install the local lastKey as proof of provider coverage.
+Foundry currently rechecks/sorts/windows in the adapter after acquiring candidates.
+The new structural Query IR has no executing server query implementation yet.
+Keep TanStack for existing UI/transaction query execution and live IVM. New native
+query/authorization execution needs validation, shared expression evaluation and
+trusted planning; it can use TanStack as a physical execution target without
+requiring a new production IVM implementation. Keep the reference evaluator
+independent for correctness tests.
+
+Sources: [TanStack Query Collection pagination](https://tanstack.com/db/latest/docs/collections/query-collection),
+[opaque cursor pager PR](https://github.com/TanStack/db/pull/1824),
+[metadata proposal disposition](https://github.com/TanStack/db/issues/863#issuecomment-5684653351),
+[loadSubset RFC disposition](https://github.com/TanStack/db/issues/1657),
+[tie-boundary issue](https://github.com/TanStack/db/issues/2166),
+[nested acquisition issue](https://github.com/TanStack/db/issues/2151),
+[Zero paging and relationships](https://zero.rocicorp.dev/docs/zql),
+[Zero Take](https://github.com/rocicorp/mono/blob/main/packages/zql/src/ivm/take.ts),
+and the installed package sources listed above.
+
 ## Research sources
 
 - Local Streamline files listed above; no Streamline source edits or production

@@ -89,14 +89,13 @@ export const QuerySelection = {
         kind: "field" as const,
         value,
     }),
-    query: <const Value extends Extract<t.QuerySelection, { kind: "query" }>["value"]>(value: Value) => ({
-        kind: "query" as const,
+    sub: <const Value extends Extract<t.QuerySelection, { kind: "sub" }>["value"]>(value: Value) => ({
+        kind: "sub" as const,
         value,
     }),
-    when: <const Value extends Extract<t.QuerySelection, { kind: "when" }>["value"]>(value: Value) => ({
-        kind: "when" as const,
-        value,
-    }),
+    selectCase: <const Value extends Extract<t.QuerySelection, { kind: "selectCase" }>["value"]>(
+        value: Value
+    ) => ({ kind: "selectCase" as const, value }),
 };
 
 export const StringConstraint = {
@@ -157,15 +156,88 @@ export const Expression = {
         kind: "literal" as const,
         value,
     }),
-    operation: <const Value extends Extract<t.Expression, { kind: "operation" }>["value"]>(value: Value) => ({
-        kind: "operation" as const,
+    eq: <const Value extends Extract<t.Expression, { kind: "eq" }>["value"]>(value: Value) => ({
+        kind: "eq" as const,
         value,
     }),
-    conditional: <const Value extends Extract<t.Expression, { kind: "conditional" }>["value"]>(
-        value: Value
-    ) => ({ kind: "conditional" as const, value }),
-    queryTest: <const Value extends Extract<t.Expression, { kind: "queryTest" }>["value"]>(value: Value) => ({
-        kind: "queryTest" as const,
+    ne: <const Value extends Extract<t.Expression, { kind: "ne" }>["value"]>(value: Value) => ({
+        kind: "ne" as const,
+        value,
+    }),
+    lt: <const Value extends Extract<t.Expression, { kind: "lt" }>["value"]>(value: Value) => ({
+        kind: "lt" as const,
+        value,
+    }),
+    lte: <const Value extends Extract<t.Expression, { kind: "lte" }>["value"]>(value: Value) => ({
+        kind: "lte" as const,
+        value,
+    }),
+    gt: <const Value extends Extract<t.Expression, { kind: "gt" }>["value"]>(value: Value) => ({
+        kind: "gt" as const,
+        value,
+    }),
+    gte: <const Value extends Extract<t.Expression, { kind: "gte" }>["value"]>(value: Value) => ({
+        kind: "gte" as const,
+        value,
+    }),
+    in: <const Value extends Extract<t.Expression, { kind: "in" }>["value"]>(value: Value) => ({
+        kind: "in" as const,
+        value,
+    }),
+    contains: <const Value extends Extract<t.Expression, { kind: "contains" }>["value"]>(value: Value) => ({
+        kind: "contains" as const,
+        value,
+    }),
+    like: <const Value extends Extract<t.Expression, { kind: "like" }>["value"]>(value: Value) => ({
+        kind: "like" as const,
+        value,
+    }),
+    ilike: <const Value extends Extract<t.Expression, { kind: "ilike" }>["value"]>(value: Value) => ({
+        kind: "ilike" as const,
+        value,
+    }),
+    add: <const Value extends Extract<t.Expression, { kind: "add" }>["value"]>(value: Value) => ({
+        kind: "add" as const,
+        value,
+    }),
+    subtract: <const Value extends Extract<t.Expression, { kind: "subtract" }>["value"]>(value: Value) => ({
+        kind: "subtract" as const,
+        value,
+    }),
+    multiply: <const Value extends Extract<t.Expression, { kind: "multiply" }>["value"]>(value: Value) => ({
+        kind: "multiply" as const,
+        value,
+    }),
+    divide: <const Value extends Extract<t.Expression, { kind: "divide" }>["value"]>(value: Value) => ({
+        kind: "divide" as const,
+        value,
+    }),
+    and: <const Value extends Extract<t.Expression, { kind: "and" }>["value"]>(value: Value) => ({
+        kind: "and" as const,
+        value,
+    }),
+    or: <const Value extends Extract<t.Expression, { kind: "or" }>["value"]>(value: Value) => ({
+        kind: "or" as const,
+        value,
+    }),
+    concat: <const Value extends Extract<t.Expression, { kind: "concat" }>["value"]>(value: Value) => ({
+        kind: "concat" as const,
+        value,
+    }),
+    coalesce: <const Value extends Extract<t.Expression, { kind: "coalesce" }>["value"]>(value: Value) => ({
+        kind: "coalesce" as const,
+        value,
+    }),
+    not: <const Value extends Extract<t.Expression, { kind: "not" }>["value"]>(value: Value) => ({
+        kind: "not" as const,
+        value,
+    }),
+    case: <const Value extends Extract<t.Expression, { kind: "case" }>["value"]>(value: Value) => ({
+        kind: "case" as const,
+        value,
+    }),
+    exists: <const Value extends Extract<t.Expression, { kind: "exists" }>["value"]>(value: Value) => ({
+        kind: "exists" as const,
         value,
     }),
 };
