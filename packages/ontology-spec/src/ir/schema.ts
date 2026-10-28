@@ -1,9 +1,11 @@
 import { IconNames } from "@party-stack/icons";
 import { o } from "./generated/builders.js";
+import { queryTypes } from "./query-schema.js";
 import type { OntologyIR } from "./generated/types.js";
 
 export default {
     types: [
+        ...queryTypes,
         {
             name: "IconName",
             description: "A renderer-independent icon name from @party-stack/icons.",
@@ -1024,6 +1026,18 @@ export default {
                     {
                         name: "literal",
                         type: o.ref({ name: "LiteralExpression" }),
+                    },
+                    {
+                        name: "operation",
+                        type: o.ref({ name: "OperationExpression" }),
+                    },
+                    {
+                        name: "conditional",
+                        type: o.ref({ name: "ConditionalExpression" }),
+                    },
+                    {
+                        name: "queryTest",
+                        type: o.ref({ name: "QueryTestExpression" }),
                     },
                 ],
             }),

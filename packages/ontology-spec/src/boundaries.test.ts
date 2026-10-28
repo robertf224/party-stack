@@ -16,7 +16,7 @@ describe("spec package boundary", () => {
                 else external.add(name);
             }
         };
-        for (const entry of ["index.js", "json/index.js", "meta/index.js"])
+        for (const entry of ["index.js", "json/index.js", "meta/index.js", "query/index.js"])
             await visit(new URL(`../lib/${entry}`, import.meta.url));
         expect(
             [...external].filter(

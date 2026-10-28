@@ -84,6 +84,21 @@ export const unknown = <const Value extends Extract<t.TypeDef, { kind: "unknown"
     value: Value
 ) => ({ kind: "unknown" as const, value });
 
+export const QuerySelection = {
+    field: <const Value extends Extract<t.QuerySelection, { kind: "field" }>["value"]>(value: Value) => ({
+        kind: "field" as const,
+        value,
+    }),
+    query: <const Value extends Extract<t.QuerySelection, { kind: "query" }>["value"]>(value: Value) => ({
+        kind: "query" as const,
+        value,
+    }),
+    when: <const Value extends Extract<t.QuerySelection, { kind: "when" }>["value"]>(value: Value) => ({
+        kind: "when" as const,
+        value,
+    }),
+};
+
 export const StringConstraint = {
     enum: <const Value extends Extract<t.StringConstraint, { kind: "enum" }>["value"]>(value: Value) => ({
         kind: "enum" as const,
@@ -142,6 +157,17 @@ export const Expression = {
         kind: "literal" as const,
         value,
     }),
+    operation: <const Value extends Extract<t.Expression, { kind: "operation" }>["value"]>(value: Value) => ({
+        kind: "operation" as const,
+        value,
+    }),
+    conditional: <const Value extends Extract<t.Expression, { kind: "conditional" }>["value"]>(
+        value: Value
+    ) => ({ kind: "conditional" as const, value }),
+    queryTest: <const Value extends Extract<t.Expression, { kind: "queryTest" }>["value"]>(value: Value) => ({
+        kind: "queryTest" as const,
+        value,
+    }),
 };
 
 export const ActionLogicStep = {
@@ -187,6 +213,7 @@ export const o = {
     attachment,
     objectReference,
     unknown,
+    QuerySelection,
     StringConstraint,
     AttachmentContentConstraint,
     Expression,

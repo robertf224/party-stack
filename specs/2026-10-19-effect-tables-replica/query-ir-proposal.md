@@ -1,8 +1,11 @@
 # Query IR and authorized ontology views — initial proposal
 
-October 28, 2026. Research/design only; the APIs below are illustrative and are not
-implemented exports. This develops [query-ir.md](./query-ir.md) using Streamline's
-actual integration and the two referenced design conversations.
+October 28, 2026. Execution and policy APIs below remain design proposals. The
+structural Query IR and low-level construction helpers now exist in
+`ontology-spec/query`; they do not execute queries or enforce permissions yet.
+Builder examples below remain illustrative. This develops
+[query-ir.md](./query-ir.md) using Streamline's actual integration and the two
+referenced design conversations.
 
 ## Recommendation
 
@@ -245,30 +248,46 @@ be identical to a User record. A tenant supplied here must still be authenticate
 or authorized for this principal; an arbitrary request value is not trusted merely
 because it is placed in context. Project only permitted context back to clients.
 
-Extend the schema metadata with a principal path alongside contextType (working
-name `contextPrincipal: ["actor"]`). Resolve that path from validated trusted
-context to a stable scalar identity or canonical object reference; do not hash the
-entire context. Existing installations can keep supplying context.user and use
-that convention by default. A token-context policy can instead identify its token
-subject. The principal identifies who is invoking, not merely the token's creator.
-An absent/invalid declared principal is a binding error, not fallback to a shared
-anonymous owner. Explicit public/system bindings can supply their own owner.
+The proposed schema annotation is contextPartition, not contextPrincipal. It is
+only for data partitioning and can select several paths, for example
+`contextPartition: [["user"], ["tenantId"]]`, or
+`contextPartition: [["token", "subjectId"], ["approvalId"]]`. Authentication and
+policy context remain responsible for identifying the actual caller. A storage
+partition key is not an authorization claim or a provider credential selector.
 
-The schema declaration guides the authentication binding; it is not evidence that
-an untrusted request's identity is authentic. Reconcile it with the connected
-account/validated token. Keep tenant/form/approval scope in the binding's stable
-namespace/view scope; equal principals can still have different permitted views.
-Per-policy context metadata can specialize the default context declaration. This
-generalizes the existing user-ID path rather than replacing installation identity
-and Runtime ownership with a new unrelated identity system.
+Unconfigured definitions preserve the exact current partition behavior: the
+string context.user selects the runtime owner, otherwise the current anonymous
+default applies. Configuring paths explicitly opts into a composite storage key;
+do not pretend it automatically migrates prior partitions. Resolve only declared
+stable identity/scope values from validated context, not every context field.
+Include path/value boundaries and types in canonical identity; reject missing or
+invalid configured components instead of falling back to a shared partition.
+Raw bearer secrets are not suitable partition components.
+
+The application binding/installation remains responsible for authenticated account
+identity and credential lifetime. Connect uses explicit connection.userId keys
+for sessions, refresh, egress and logout; it does not directly depend on context.user.
+The installation bridges them by selecting egress(userId) and populating context.user.
+Other current consumers are makeLiveOntology's runtime owner selection, owned
+receipt-scope defaults and Foundry validation's provider-user lookup. Preserve
+those defaults until their explicit binding inputs are wired; do not substitute a
+token's partition identity for the upstream service account identity.
+
+Gateway can therefore use a Foundry service-user connection while its policy
+context and data partition describe a separate token subject/form/approval scope.
+Forgetting an account must enumerate all its data partitions, including composite
+ones; tenant/context cache keys must not accidentally pick different OAuth credentials.
+This is a design refinement, not a runtime partitioning change in this slice.
 
 ### Query construction references
 
-The short helpers in this note are proposed query-builder APIs. Today field() is
-exported by ontology-storage, and ontology-spec's generated expression constructors
-already have inputReference/contextReference/localReference/getAt. Unify the query
-helpers in a portable ontology-spec/query export, with schema-aware construction
-in ontology rather than creating a new package.
+The short helpers in this note illustrate the eventual query-builder APIs.
+`ontology-spec/query` now exposes low-level `input`, `context`, `row`, `field`,
+`operation`, `conditional`, `some`, `none`, `value`, `nested` and `when` constructors
+using the existing Expression vocabulary. These structural constructors do not yet
+validate binding scopes, property provenance or operator types. Schema-aware
+construction belongs in ontology rather than a new package. The storage package's
+flat-subset `field()` remains separate until query lowering is implemented.
 
 | Reference               | Meaning                                                        | Who supplies the value                     |
 | ----------------------- | -------------------------------------------------------------- | ------------------------------------------ |
@@ -671,6 +690,15 @@ strategy; future client preferences can negotiate a supported strategy without
 forcing the server to acquire unoffered maintenance state or bypass authorization.
 
 ## First implementation slice
+
+Implemented so far: serializable multi-root selections, source/binding and join
+descriptions, scalar operators and conditions, query existence tests, guarded and
+nested selections, order and pagination descriptions. Generated core types/builders
+and optional Effect codecs round-trip the recursive grammar; root/query exports
+remain Effect-independent. Existing action defaults explicitly reject the new
+query-only expression variants. This is the structural foundation, not semantic
+query validation, query execution or authorization. The steps below remain the
+completion plan; contextPartition has not changed runtime identity or storage.
 
 1. Add/query-validate multi-root documents, bindings, common operators,
    correlations, related lowering, guarded selections/cardinality/windows, and

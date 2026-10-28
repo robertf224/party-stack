@@ -28,6 +28,7 @@ meaning; no new storage schema or migration API is introduced by the extraction.
 | `.`               | Ontology types/builders, inference, validation, and lenses                     |
 | `/values`         | Type-only value primitives, including Temporal and attachment handles          |
 | `/utils`          | Pure type/path/link/target helpers                                             |
+| `/query`          | Structural query types and pure low-level construction helpers                 |
 | `/json`           | Existing schema-aware JSON encoding and decoding                               |
 | `/effect`         | Runtime schema compiler, Temporal schemas, and portable-to-Effect Result codec |
 | `/effect/values`  | Type-only value view using Effect Result                                       |
@@ -37,6 +38,11 @@ meaning; no new storage schema or migration API is introduced by the extraction.
 | `/meta/constants` | Generated meta-ontology constants                                              |
 | `/examples/blog`  | Pure example ontology used by validation and live examples                     |
 | `/generate`       | Build-time generators, formatting, and file generation                         |
+
+The query grammar describes multi-root selections, joins and correlations,
+guarded fields, ordering and pagination. Query execution, semantic validation and
+authorization are still being implemented; these constructors alone do not enforce
+permissions. The `/query` entry does not require Effect.
 
 ## Code generation and bootstrap
 

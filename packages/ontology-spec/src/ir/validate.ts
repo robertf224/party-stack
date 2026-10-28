@@ -505,6 +505,10 @@ function resolveExpressionType(
             return { kind: "string", value: {} };
         case "now":
             return { kind: "timestamp", value: {} };
+        case "operation":
+        case "conditional":
+        case "queryTest":
+            return undefined;
     }
 }
 
@@ -679,6 +683,10 @@ function validateExpression(
         case "now":
         case "literal":
             return [];
+        case "operation":
+        case "conditional":
+        case "queryTest":
+            return [{ message: "Query expressions are not supported in action defaults yet.", path }];
     }
 }
 

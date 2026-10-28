@@ -1,3 +1,4 @@
+import { BackendError } from "@party-stack/ontology-backend";
 import { isRelatedFromForeignKeySource, resolveRelatedLink } from "@party-stack/ontology-spec/utils";
 import { getAtPath } from "@party-stack/ontology-spec/utils";
 import { resolveType, unwrapType } from "@party-stack/ontology-spec/utils";
@@ -288,6 +289,15 @@ async function evaluateExpressionWithLocals(
         }
         case "now":
             return options.replay ? Temporal.Instant.from(options.replay.now) : Temporal.Now.instant();
+        case "operation":
+        case "conditional":
+        case "queryTest":
+            throw new BackendError({
+                operation: "expression.evaluate",
+                kind: "NotImplemented",
+                message: "Query expressions require a query execution context.",
+                retryable: false,
+            });
     }
 }
 

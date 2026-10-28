@@ -17,6 +17,10 @@
             "types": "./lib/utils/index.d.ts",
             "default": "./lib/utils/index.js"
         },
+        "./query": {
+            "types": "./lib/query/index.d.ts",
+            "default": "./lib/query/index.js"
+        },
         "./values": {
             "types": "./lib/utils/values.d.ts"
         },

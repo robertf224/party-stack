@@ -2,6 +2,126 @@
 
 import * as v from "../../utils/values.js";
 
+/** A closed portable operator applied to expression arguments. */
+export type OperationExpression = {
+    operator:
+        | "eq"
+        | "ne"
+        | "lt"
+        | "lte"
+        | "gt"
+        | "gte"
+        | "in"
+        | "contains"
+        | "like"
+        | "ilike"
+        | "and"
+        | "or"
+        | "not"
+        | "add"
+        | "subtract"
+        | "multiply"
+        | "divide"
+        | "concat"
+        | "coalesce";
+    arguments: Array<Expression>;
+};
+
+/** Chooses a scalar value; distinct from a guarded field selection. */
+export type ConditionalExpression = {
+    condition: Expression;
+    whenTrue: Expression;
+    whenFalse: Expression;
+};
+
+/** Tests correlated query membership without selecting its result. */
+export type QueryTestExpression = {
+    query: Query;
+    test: "some" | "none";
+};
+
+/** A logical object source resolved by the execution binding, not a SQL identifier. */
+export type QuerySource = {
+    ontology?: string;
+    objectType: string;
+};
+
+/** Introduces a source with an explicit lexical row binding. */
+export type QueryFrom = {
+    source: QuerySource;
+    binding: string;
+};
+
+/** An explicit relational join; output fields do not define correlation scope. */
+export type QueryJoin = {
+    kind: "inner" | "left";
+    from: QueryFrom;
+    on: Expression;
+};
+
+/** Orders by an expression with explicit nullish placement when requested. */
+export type QueryOrder = {
+    expression: Expression;
+    direction?: "asc" | "desc";
+    nulls?: "first" | "last";
+};
+
+/** An exclusive cursor over the query's complete sort order and result identity. */
+export type QueryCursor = {
+    values: Array<unknown>;
+    key: unknown;
+};
+
+/** A window; correlated child windows apply independently per parent. */
+export type QueryPage = {
+    limit?: v.integer;
+    offset?: v.integer;
+    after?: QueryCursor;
+};
+
+/** Selects a named value. Entity uses require source-preserving property identity. */
+export type QueryFieldSelection = {
+    name: string;
+    expression: Expression;
+};
+
+/** Selects a nested correlated query with explicit result cardinality. */
+export type QueryNestedSelection = {
+    name: string;
+    query: Query;
+    cardinality: "one" | "many";
+};
+
+/** Conditionally includes fields/subtrees, preserving their source identities. */
+export type QueryGuardedSelection = {
+    condition: Expression;
+    whenTrue: Array<QuerySelection>;
+    whenFalse?: Array<QuerySelection>;
+};
+
+/** The same selection grammar supports result projections and entity-use validation. */
+export type QuerySelection = v.Union<{
+    field: QueryFieldSelection;
+    query: QueryNestedSelection;
+    when: QueryGuardedSelection;
+}>;
+
+/** A finite relational query. Nested reads may capture ancestor row bindings. */
+export type Query = {
+    from: QueryFrom;
+    joins?: Array<QueryJoin>;
+    where?: Expression;
+    select: Array<QuerySelection>;
+    orderBy?: Array<QueryOrder>;
+    page?: QueryPage;
+};
+
+/** A multi-root selection without a mandatory starting object type. */
+export type QueryDocument = {
+    inputs?: Array<FieldDef>;
+    select: Array<QuerySelection>;
+};
+
 /** A renderer-independent icon name from @party-stack/icons. */
 export type IconName =
     | "activity"
@@ -446,6 +566,9 @@ export type Expression = v.Union<{
     uuid: UuidExpression;
     now: NowExpression;
     literal: LiteralExpression;
+    operation: OperationExpression;
+    conditional: ConditionalExpression;
+    queryTest: QueryTestExpression;
 }>;
 
 /** Assigns an expression to a property path on an object written by an action. */

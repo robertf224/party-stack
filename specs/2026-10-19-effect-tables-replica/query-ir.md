@@ -65,6 +65,12 @@ selecting a live related subset remain distinct operations.
 
 ## Current implementation boundary
 
+`ontology-spec/query` now supplies a structural query grammar and low-level pure
+constructors. It covers multiple roots, correlated queries, joins, guarded fields,
+cardinality, ordering and windows, with generated types and optional Effect codecs.
+Scope/type/provenance validation, query execution and policy enforcement remain
+unfinished; the structural codecs alone do not make a query safe to execute.
+
 The former `linkHop` expression is now `related`. Static validation recognizes
 to-one object results and to-many object lists, including typed map bindings and
 nested traversal. The existing action evaluator still executes only to-one
