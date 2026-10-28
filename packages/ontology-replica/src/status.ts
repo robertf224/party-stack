@@ -1,4 +1,4 @@
-import { SourceQueryPlanSchema } from "@party-stack/ontology-backend";
+import { SourceQueryPlanSchema, BackendErrorKindSchema } from "@party-stack/ontology-backend";
 import { BackendSubsetSchema } from "@party-stack/ontology-backend/protocol";
 import { Cause, Clock, Effect, Exit, Fiber, Option, PubSub, Schema, Stream } from "effect";
 import type { BackendError } from "@party-stack/ontology-backend";
@@ -29,6 +29,13 @@ export const ReplicaStatusSchema = Schema.Struct({
     upstreamId: Schema.String,
     mode: Schema.Literals(["adapter", "protocol"]),
     online: Schema.optional(Schema.Boolean),
+    replicationError: Schema.optional(
+        Schema.Struct({
+            kind: BackendErrorKindSchema,
+            message: Schema.String,
+            recovery: Schema.Literals(["snapshot", "session", "reconnect", "stop"]),
+        })
+    ),
     syncing: Schema.Boolean,
     lastSync: Schema.optional(
         Schema.Struct({

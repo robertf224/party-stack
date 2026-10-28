@@ -906,3 +906,159 @@ test("committed RPC subset watching preserves provider hints and releases its sc
         )
     );
 });
+
+test.each([
+    "InvalidRequest",
+    "InvalidResponse",
+    "InvalidConfiguration",
+    "ValidationFailed",
+    "HistoryExpired",
+] as const)("RPC preserves %s in the typed failure channel", async (kind) => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* setup();
+                const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
+                    Effect.provide(
+                        ontologyRpcHandlers({
+                            backend: {
+                                ...owned,
+                                loadSubset: () =>
+                                    Effect.fail(
+                                        new BackendError({
+                                            operation: "loadSubset",
+                                            kind,
+                                            message: "private detail",
+                                            retryable: false,
+                                        })
+                                    ),
+                            },
+                            authorize: () => Effect.void,
+                        })
+                    )
+                );
+                const result = yield* Effect.result(client.LoadSubset({ objectType: "Counter" }));
+                expect(result).toMatchObject({
+                    _tag: "Failure",
+                    failure: { _tag: "BackendError", kind, retryable: false },
+                });
+                expect(result._tag === "Failure" && result.failure instanceof BackendError).toBe(true);
+                expect(JSON.stringify(result)).not.toContain("private detail");
+            })
+        )
+    );
+});
+
+test.each(["owned", "cached-proxy", "replica"] as const)(
+    "%s HTTP delivery installs patches and acknowledges across request scopes",
+    async (kind) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const owned = yield* setup();
+                    yield* owned.applyAction({ id: "seed", name: "increment", parameters: {} });
+                    const execute = Effect.fnUntraced(function* (
+                        tx: import("@party-stack/ontology-backend/owned").OwnedTransaction
+                    ) {
+                        const old = yield* tx.get("Counter", "one");
+                        yield* tx.put("Counter", { id: "one", count: Number(old?.count ?? 0) + 1 });
+                    });
+                    const parent = yield* makeReplica({
+                        namespace: `http-${kind}`,
+                        ir,
+                        execute,
+                        backend: owned,
+                        tables: yield* Memory.make(),
+                        startSync: false,
+                    });
+                    const requests: string[] = [];
+                    const common = {
+                        ir,
+                        authorize: (request: import("./rpc.js").OntologyRpcRequest) =>
+                            Effect.sync(() => {
+                                requests.push(request.operation);
+                            }),
+                    };
+                    const { handleRequest } = yield* makeOntologyServer(
+                        kind === "owned"
+                            ? { ...common, kind, backend: owned }
+                            : kind === "cached-proxy"
+                              ? { ...common, kind, backend: owned, cache: parent }
+                              : { ...common, kind, backend: owned, replica: parent }
+                    );
+                    const wait = (condition: Effect.Effect<boolean, BackendError>) =>
+                        Effect.gen(function* () {
+                            while (!(yield* condition)) yield* Effect.sleep(2);
+                        }).pipe(Effect.timeout("3 seconds"));
+                    yield* Effect.gen(function* () {
+                        const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
+                        if (kind === "replica") {
+                            // Its ordinary committed facet must use the endpoint's advertised identity too.
+                            yield* Effect.scoped(
+                                Effect.gen(function* () {
+                                    const subscription = yield* connection.backend.subscribeSelection!({
+                                        subsets: [{ objectType: "Counter" }],
+                                        actionIds: [],
+                                    });
+                                    const pull = yield* Stream.toPull(subscription.frames);
+                                    for (;;) {
+                                        const frames = yield* pull;
+                                        const end = frames.find((frame) => frame.end);
+                                        if (end) {
+                                            expect(end.metadata?.sourceId).toBe(connection.backend.sourceId);
+                                            yield* subscription.acknowledge(end);
+                                            break;
+                                        }
+                                    }
+                                })
+                            );
+                        }
+                        const child = yield* makeReplica({
+                            namespace: "http-child",
+                            ir,
+                            execute,
+                            tables: yield* Memory.make(),
+                            ...(connection.replication.kind === "speculative"
+                                ? { source: connection.replication.source }
+                                : { backend: connection.backend }),
+                        });
+                        yield* child.demand({ objectType: "Counter" });
+                        yield* child.syncOnce;
+                        yield* wait(child.get("Counter", "one").pipe(Effect.map((row) => row?.count === 1)));
+                        yield* owned.applyAction({ id: "external", name: "increment", parameters: {} });
+                        if (kind !== "owned") yield* parent.syncOnce;
+                        yield* wait(child.get("Counter", "one").pipe(Effect.map((row) => row?.count === 2)));
+                        yield* child.enqueue({ id: "http-write", name: "increment", parameters: {} });
+                        if (kind === "replica") {
+                            yield* wait(
+                                parent.pending.pipe(
+                                    Effect.map((entries) =>
+                                        entries.some((entry) => entry.invocation.id === "http-write")
+                                    )
+                                )
+                            );
+                            yield* parent.syncOnce;
+                        }
+                        yield* wait(
+                            child
+                                .actionStatus("http-write")
+                                .pipe(Effect.map((status) => status.receipt?.outcome === "committed"))
+                        );
+                        expect((yield* child.get("Counter", "one"))?.count).toBe(3);
+                        expect(requests).toContain("AckDelivery");
+                        expect(requests).toContain(
+                            kind === "replica" ? "SubscribeState" : "SubscribeSelection"
+                        );
+                        expect(requests).toContain(kind === "replica" ? "Accept" : "ApplyAction");
+                        expect(requests).not.toContain("Submit");
+                    }).pipe(
+                        Effect.provide(FetchHttpClient.layer),
+                        Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                            handleRequest(new Request(input, init))
+                        )
+                    );
+                })
+            )
+        );
+    }
+);

@@ -26,8 +26,8 @@ export function decodeFoundryCiphertext(value: unknown, source?: Encrypted["sour
 export const encodeFoundryCiphertext = (value: unknown): string =>
     Schema.decodeUnknownSync(Handle)(value).ciphertext;
 
-const rejected = (operation: string, message: string) =>
-    new BackendError({ operation, kind: "ValidationFailed", message, retryable: false });
+const rejected = (operation: string, message: string, kind: BackendError["kind"] = "InvalidRequest") =>
+    new BackendError({ operation, kind, message, retryable: false });
 
 function requestError(operation: string, cause: unknown): BackendError {
     const status = Predicate.isObject(cause) ? cause.statusCode : undefined;
@@ -38,9 +38,17 @@ function requestError(operation: string, cause: unknown): BackendError {
         kind:
             status === 404
                 ? "NotFound"
-                : status === 401 || status === 403
-                  ? "ValidationFailed"
-                  : "Unavailable",
+                : status === 401
+                  ? "Unauthenticated"
+                  : status === 403
+                    ? "Forbidden"
+                    : status === 429
+                      ? "RateLimited"
+                      : status === 400
+                        ? "InvalidRequest"
+                        : status === 200
+                          ? "InvalidResponse"
+                          : "Unavailable",
         message: "Foundry CipherText request failed.",
         retryable: status === undefined || status === 429 || (Predicate.isNumber(status) && status >= 500),
     });
@@ -91,7 +99,7 @@ export function makeFoundryEncryptedValues(client: OntologyClient, ir: OntologyI
                 // TODO(Foundry FR): require the decrypt response to echo its ciphertext.
                 // Until then, assume the property has not changed since this handle was read.
                 try: () => ({ value: codec.encode(result.plaintext), ciphertext: handle.ciphertext }),
-                catch: () => rejected("foundry.decrypt", "Invalid decrypted plaintext."),
+                catch: () => rejected("foundry.decrypt", "Invalid decrypted plaintext.", "InvalidResponse"),
             });
         }),
     };

@@ -14,7 +14,6 @@ test("query streams do not miss a commit racing the initial snapshot and release
                 const requested: BackendSubset[] = [];
                 const stream = observeReplicaRows(
                     {
-                        subscribeChanges: PubSub.subscribe(events).pipe(Effect.map(Stream.fromSubscription)),
                         demand: (value) =>
                             Effect.acquireRelease(
                                 Effect.sync(() => {
@@ -27,17 +26,33 @@ test("query streams do not miss a commit racing the initial snapshot and release
                                     })
                             ),
                         retainLocal: () => Effect.die("Remote query used inspection lease"),
-                        loadSubset: (type, query) =>
-                            Effect.gen(function* () {
-                                expect(type).toBe("Note");
-                                expect(query).toEqual({ limit: 1 });
-                                const value = revision;
-                                if (revision === 0) {
-                                    revision++;
-                                    yield* PubSub.publish(events, undefined);
-                                }
-                                return [{ key: "one", value: { id: "one", revision: value } }];
-                            }),
+                        observeRows: (type, query) =>
+                            Stream.unwrap(
+                                Effect.gen(function* () {
+                                    const changes = yield* PubSub.subscribe(events);
+                                    expect(type).toBe("Note");
+                                    expect(query).toEqual({ limit: 1 });
+                                    const value = revision;
+                                    if (revision === 0) {
+                                        revision++;
+                                        yield* PubSub.publish(events, undefined);
+                                    }
+                                    return Stream.concat(
+                                        Stream.succeed({
+                                            reset: true,
+                                            removed: [],
+                                            rows: [{ key: "one", value: { id: "one", revision: value } }],
+                                        }),
+                                        Stream.fromSubscription(changes).pipe(
+                                            Stream.map(() => ({
+                                                reset: false,
+                                                removed: [],
+                                                rows: [{ key: "one", value: { id: "one", revision } }],
+                                            }))
+                                        )
+                                    );
+                                })
+                            ),
                     },
                     subset
                 );
@@ -62,9 +77,6 @@ test("inspection streams hold only a local reader lease and cancellation release
                 const fiber = yield* Stream.runForEach(
                     observeReplicaRows(
                         {
-                            subscribeChanges: PubSub.subscribe(events).pipe(
-                                Effect.map(Stream.fromSubscription)
-                            ),
                             demand: () =>
                                 Effect.sync(() => {
                                     remote++;
@@ -79,7 +91,15 @@ test("inspection streams hold only a local reader lease and cancellation release
                                             readers--;
                                         })
                                 ),
-                            loadSubset: () => Effect.succeed([{ key: "one", value: { id: "one" } }]),
+                            observeRows: () =>
+                                Stream.concat(
+                                    Stream.succeed({
+                                        reset: true,
+                                        removed: [],
+                                        rows: [{ key: "one", value: { id: "one" } }],
+                                    }),
+                                    Stream.never
+                                ),
                         },
                         { objectType: "Note" },
                         { persistedOnly: true }

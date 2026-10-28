@@ -45,7 +45,7 @@ export function createLocalMetaOntologyBackendAdapter(ir: OntologyIR): OntologyB
                             return Effect.fail(
                                 new BackendError({
                                     operation: "loadSubset",
-                                    kind: "ValidationFailed",
+                                    kind: "InvalidRequest",
                                     message: "Unknown metadata object type.",
                                     retryable: false,
                                 })

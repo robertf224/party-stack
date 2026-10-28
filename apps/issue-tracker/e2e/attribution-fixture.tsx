@@ -63,6 +63,9 @@ const ontology = await createLiveOntology<Definition>({
         open: () =>
             Effect.succeed({
                 ...backend,
+                // This fixture specifically exercises finite-load pushdown diagnostics.
+                subscribeSelection: undefined,
+                acknowledgeDelivery: undefined,
                 loadSubset: (query) =>
                     Effect.suspend(() => {
                         loads++;

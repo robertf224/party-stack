@@ -17,8 +17,10 @@
         "@party-stack/ontology-storage": "workspace:*"
     },
     "devDependencies": {
+        "@fast-check/vitest": "^0.5.0",
         "@party-stack/build-config": "workspace:*",
         "effect": "^4.0.5",
+        "fast-check": "^4.10.2",
         "typescript": "~7.0.2",
         "vite": "catalog:",
         "vite-plus": "catalog:",

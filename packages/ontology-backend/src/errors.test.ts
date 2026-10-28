@@ -159,3 +159,44 @@ describe("normalized failures", () => {
         ).toBe("Unavailable");
     });
 });
+
+it("separates bad requests and provider validation, and preserves storage classifications", async () => {
+    const { OntologyStorageError, QueryError, CodecError, ConfigurationError } =
+        await import("@party-stack/ontology-storage");
+    expect(classifyBackendFailure("loadSubset", { status: 400 })).toMatchObject({
+        kind: "InvalidRequest",
+        retryable: false,
+    });
+    expect(
+        classifyBackendFailure("applyAction", { errorCode: "FIELD_CUSTOM_VALIDATION_EXCEPTION" }).kind
+    ).toBe("ValidationFailed");
+    for (const [reason, kind] of [
+        [new QueryError({ message: "bad predicate" }), "InvalidRequest"],
+        [new CodecError({ message: "corrupt stored row", direction: "decode" }), "Internal"],
+        [new ConfigurationError({ message: "invalid setup" }), "InvalidConfiguration"],
+    ] as const)
+        expect(
+            classifyBackendFailure("storage", new OntologyStorageError({ operation: "test", reason }))
+        ).toMatchObject({ kind, retryable: false });
+});
+
+it("does not disguise native Effect RPC decoding failures as retryable network failures", async () => {
+    const { RpcClientError } = await import("effect/rpc");
+    const cause = new RpcClientError.RpcClientError({
+        reason: new RpcClientError.RpcClientDefect({ message: "bad response", cause: { private: "secret" } }),
+    });
+    const error = classifyBackendFailure("applyAction", cause);
+    expect(error).toMatchObject({ kind: "InvalidResponse", retryable: false, actionOutcome: "unknown" });
+    expect(isUnknownActionOutcome(error)).toBe(true);
+    expect(JSON.stringify(projectBackendError(error))).not.toContain("secret");
+});
+
+it("keeps HTTP status separate from the detailed error kind", async () => {
+    const { backendErrorStatus } = await import("./errors.js");
+    expect(backendErrorStatus({ kind: "ValidationFailed" })).toBe(422);
+    expect(backendErrorStatus({ kind: "InvalidRequest" })).toBe(400);
+    expect(backendErrorStatus({ kind: "InvalidResponse" })).toBe(502);
+    expect(backendErrorStatus({ kind: "InvalidConfiguration" })).toBe(500);
+    expect(backendErrorStatus({ kind: "HistoryExpired" })).toBe(409);
+    expect(backendErrorStatus({ kind: "SchemaMismatch" })).toBe(409);
+});

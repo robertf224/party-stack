@@ -42,15 +42,25 @@ prediction when it imports a parent update that includes that action.
 A Durable Object can take any of these roles. Being a worker or a server does not
 by itself decide whether a component is authoritative.
 
-## Two upstream acquisition paths today
+## Receiving updates
 
-A replica uses the committed backend contract for providers such as Foundry and
-for owned, proxy and cached-proxy servers. It loads subsets and can consume
-committed change pages when that backend exposes a journal. Change watchers are
-wake-up hints; journal pages carry the actual committed row changes.
+Provider adapters load subsets and, where available, committed change pages.
+Their watchers wake the replica so it can acquire fresh data.
 
-An intermediate replica server additionally exposes speculative state, including
-inherited predictions and action progress. Connected children currently receive
-change notifications and then read selected replacement snapshots. This path does
-not yet deliver incremental patches. Both paths use the same Replica, local
-BlobStorage and retention machinery.
+Native servers can stream a selected snapshot followed by incremental batches.
+Owned and cached-proxy servers publish committed rows. An intermediate replica
+server also publishes inherited predictions and selected action progress.
+A child installs each complete batch in one storage transaction, rebases its own
+outbox, and then acknowledges the delivery. Updates to rows, inherited overrides,
+action handoff, coverage and the installed position become visible together.
+
+The server reevaluates the selected subsets and compares their keyed results.
+It stores bounded comparison/staging state in its table store. Each subscription
+has one outstanding batch; changes while a client is slow are coalesced. Closing
+the Scope releases that state. Reconnecting starts a fresh selected snapshot while
+the child's local outbox remains intact.
+
+Local TanStack collections consume composed row changes. Simple predicates apply
+changed keys directly; sorted/limited windows query local storage for their new
+membership. Unchanged rows are not rewritten into the collection. Both upstream
+paths use the same Replica, local BlobStorage and retention machinery.

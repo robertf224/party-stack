@@ -64,7 +64,8 @@ without losing an attachment's identity.
 Protocol children collect confirmed rows and inherited overrides together as one
 logical base, retaining their own action dependencies through parent inclusion.
 An evicted base can be reloaded even when the parent revision is unchanged.
-Selected snapshots also replace old imported membership. Action/session history
+Selected batches reconcile their selected region. Other cached rows keep the
+same retention rules; local-only readers do not acquire remote demand. Action/session history
 has separate bounded retention.
 
 Each replica collects its own cached bytes independently. Evicting a child's copy

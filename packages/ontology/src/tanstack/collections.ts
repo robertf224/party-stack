@@ -1,7 +1,7 @@
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Runtime } from "@party-stack/runtime";
 import { BasicIndex, createCollection, collectionOptions, whenSyncAccepted } from "@tanstack/db";
-import { Effect, Exit, Fiber, Scope, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { registerCollectionDemands, type CollectionDemandDiagnostic } from "./diagnostics.js";
 import { analyzeStorageSubset, storageSubset } from "./subset.js";
 import type { ReplicaService } from "@party-stack/ontology-replica";
@@ -24,6 +24,14 @@ export const persistedCollectionOptions = Effect.fnUntraced(function* <
         | Effect.Effect<readonly { key: Key; value: A }[], unknown>
         | ((subset: LoadSubsetOptions) => Effect.Effect<readonly { key: Key; value: A }[], unknown>);
     readonly changes: Stream.Stream<void>;
+    readonly observe?: (subset: LoadSubsetOptions) => Stream.Stream<
+        {
+            readonly reset: boolean;
+            readonly rows: readonly { key: Key; value: A }[];
+            readonly removed: readonly Key[];
+        },
+        unknown
+    >;
     readonly persist?: (mutations: readonly Change<A>[]) => Effect.Effect<void, unknown>;
     readonly acquireDemand?:
         | Effect.Effect<void, unknown, Scope.Scope>
@@ -81,6 +89,7 @@ export const persistedCollectionOptions = Effect.fnUntraced(function* <
                         ready: Promise<void>;
                         subset: LoadSubsetOptions;
                         release: () => void;
+                        rows: Map<Key, A>;
                     }
                 >();
                 const releaseDiagnostics = options.describeSubset
@@ -91,31 +100,53 @@ export const persistedCollectionOptions = Effect.fnUntraced(function* <
                           }))
                       )
                     : undefined;
+                const installed = new Map<Key, string | undefined>();
+                const codec = Table.make<A>({ name: "collection-value" });
+                // Diagnostic rows can include typed Error instances. Their display
+                // values need no storage codec; conservatively rewrite such rows.
+                const fingerprint = (value: A): string | undefined => {
+                    try {
+                        return codec.encode(value);
+                    } catch {
+                        return undefined;
+                    }
+                };
+                const writeRows = async (rows: ReadonlyMap<Key, A>) => {
+                    if (!active || !alive) return;
+                    const stale = new Set(installed.keys());
+                    const updates = [...rows].filter(([key, value]) => {
+                        const encoded = fingerprint(value);
+                        return encoded === undefined || installed.get(key) !== encoded;
+                    });
+                    for (const key of rows.keys()) stale.delete(key);
+                    if (!updates.length && !stale.size) return;
+                    begin();
+                    for (const [key, value] of updates)
+                        write({ type: installed.has(key) ? "update" : "insert", value });
+                    for (const key of stale) write({ type: "delete", key: key as K });
+                    const receipt = commit();
+                    await whenSyncAccepted(receipt);
+                    for (const key of stale) installed.delete(key);
+                    for (const [key, value] of updates) installed.set(key, fingerprint(value));
+                };
                 const load = () => {
                     const next = tail.then(async () => {
                         if (!active || !alive) return;
                         const rows = new Map<Key, A>();
-                        if (typeof options.load !== "function") {
-                            for (const row of await run(options.load)) rows.set(row.key, row.value);
+                        if (options.observe) {
+                            for (const demand of demands.values())
+                                for (const [key, value] of demand.rows) rows.set(key, value);
+                        } else {
+                            if (typeof options.load !== "function")
+                                for (const row of await run(options.load)) rows.set(row.key, row.value);
+                            for (const [key, demand] of demands) {
+                                if (typeof options.load !== "function") break;
+                                const loaded = await run(options.load(demand.subset));
+                                if (demands.get(key) !== demand) continue;
+                                for (const row of loaded) rows.set(row.key, row.value);
+                            }
                         }
-                        const current = Array.from(demands.entries());
-                        for (const [key, demand] of current) {
-                            if (typeof options.load !== "function") break;
-                            const loaded = await run(options.load(demand.subset));
-                            if (demands.get(key) !== demand) continue;
-                            for (const row of loaded) rows.set(row.key, row.value);
-                        }
-                        if (!active || !alive) return;
-                        const stale = new Set(collection.keys());
-                        begin();
-                        for (const [key, value] of rows) {
-                            write({ type: stale.has(key as K) ? "update" : "insert", value });
-                            stale.delete(key as K);
-                        }
-                        for (const key of stale) write({ type: "delete", key });
-                        const receipt = commit();
-                        if (receipt !== true) void receipt.catch(markError);
-                        await whenSyncAccepted(receipt);
+                        await writeRows(rows);
                     });
                     tail = next.catch(() => undefined);
                     return next;
@@ -123,7 +154,7 @@ export const persistedCollectionOptions = Effect.fnUntraced(function* <
                 refresh = load;
                 const watcher = run(
                     Effect.forkIn(
-                        Stream.runForEach(options.changes, () =>
+                        Stream.runForEach(options.observe ? Stream.empty : options.changes, () =>
                             queried && (demands.size || typeof options.load !== "function")
                                 ? Effect.tryPromise({ try: load, catch: (cause) => cause })
                                 : Effect.void
@@ -152,10 +183,11 @@ export const persistedCollectionOptions = Effect.fnUntraced(function* <
                             demand = {
                                 scope: child,
                                 subset,
+                                rows: new Map(),
                                 ready: Promise.resolve(),
                                 release: () => {
                                     subset.signal?.removeEventListener("abort", demand!.release);
-                                    if (demands.get(key) !== demand) return;
+                                    if (!demand || demands.get(key) !== demand) return;
                                     demands.delete(key);
                                     const closing = Effect.runPromise(Scope.close(child, Exit.void));
                                     releasing.add(closing);
@@ -171,15 +203,44 @@ export const persistedCollectionOptions = Effect.fnUntraced(function* <
                             };
                             demands.set(key, demand);
                             subset.signal?.addEventListener("abort", demand.release, { once: true });
-                            demand.ready = acquire
-                                ? run(
-                                      Scope.provide(
-                                          typeof acquire === "function" ? acquire(subset) : acquire,
-                                          child
-                                      ),
-                                      child
-                                  )
-                                : Promise.resolve();
+                            demand.ready = run(
+                                Scope.provide(
+                                    Effect.gen(function* () {
+                                        if (acquire)
+                                            yield* typeof acquire === "function" ? acquire(subset) : acquire;
+                                        if (options.observe) {
+                                            const ready = yield* Deferred.make<void, unknown>();
+                                            yield* Stream.runForEach(options.observe(subset), (batch) =>
+                                                Effect.tryPromise({
+                                                    try: async () => {
+                                                        if (!demand || demands.get(key) !== demand) return;
+                                                        if (batch.reset) demand.rows.clear();
+                                                        for (const removed of batch.removed)
+                                                            demand.rows.delete(removed);
+                                                        for (const row of batch.rows)
+                                                            demand.rows.set(row.key, row.value);
+                                                        await load();
+                                                        Effect.runSync(Deferred.succeed(ready, undefined));
+                                                    },
+                                                    catch: (cause) => cause,
+                                                })
+                                            ).pipe(
+                                                Effect.catch((error) =>
+                                                    Effect.gen(function* () {
+                                                        yield* Deferred.fail(ready, error);
+                                                        if (alive && active && demands.get(key) === demand)
+                                                            markError(error);
+                                                    })
+                                                ),
+                                                Effect.forkIn(child)
+                                            );
+                                            yield* Deferred.await(ready);
+                                        }
+                                    }),
+                                    child
+                                ),
+                                child
+                            );
                             void demand.ready.catch(() => demand!.release());
                         }
                         return demand.ready.then(load);
@@ -275,6 +336,21 @@ export const replicatedCollectionOptions = Effect.fnUntraced(function* <A extend
                     }))
             ),
         changes: yield* options.replica.subscribeChanges,
+        observe: (subset) =>
+            options.replica
+                .observeRows(
+                    options.objectType,
+                    storageSubset(subset, options.replica.ir, options.objectType)
+                )
+                .pipe(
+                    Stream.map((batch) => ({
+                        ...batch,
+                        rows: batch.rows.map((row) => ({
+                            key: row.key,
+                            value: options.map ? options.map(row.value as A) : (row.value as A),
+                        })),
+                    }))
+                ),
         acquireDemand: (subset) =>
             options.persistedOnly
                 ? options.replica.retainLocal(

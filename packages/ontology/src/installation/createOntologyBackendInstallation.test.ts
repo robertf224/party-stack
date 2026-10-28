@@ -248,9 +248,9 @@ describe("createOntologyBackendInstallation", () => {
             userId: connection.userId,
             ontologyId: "ontology",
         });
-        await queryOnce((q) => q.from({ row: meta.objects.ValueType }));
+        const valueTypes = await queryOnce((q) => q.from({ row: meta.objects.ValueType }));
 
-        expect(meta.objects.ValueType.get("Priority")).toMatchObject({
+        expect(valueTypes.find((type) => type.name === "Priority")).toMatchObject({
             name: "Priority",
             type: o.string({}),
         });

@@ -78,7 +78,7 @@ const setup = Effect.fnUntraced(function* () {
                                 ? cause
                                 : new BackendError({
                                       operation: "applyAction",
-                                      kind: "ValidationFailed",
+                                      kind: "InvalidRequest",
                                       message: "Invalid upload.",
                                       retryable: false,
                                   })
@@ -197,7 +197,7 @@ test("multipart actions reauthorize before final EOF and reject truncated upload
                     yield* Deferred.succeed(finish, undefined);
                     expect(yield* Fiber.join(action)).toMatchObject({
                         _tag: "Failure",
-                        failure: { kind: mode === "revoked" ? "Forbidden" : "ValidationFailed" },
+                        failure: { kind: mode === "revoked" ? "Forbidden" : "InvalidRequest" },
                     });
                     expect(committed).not.toHaveBeenCalled();
                 })

@@ -48,24 +48,31 @@ export function projectStateFailures(
     state: ReplicaStateSnapshot,
     options: ErrorProjectionOptions
 ): ReplicaStateSnapshot {
-    const action = (entry: ReplicaStateSnapshot["pending"][number]) => {
-        if (!entry.failure) return entry;
-        const error = projectBackendError(
-            new BackendError({
-                operation: "applyAction",
-                kind: entry.failure,
-                message: entry.failureMessage ?? "Action failed.",
-                issues: entry.failureIssues,
-                retryable: entry.failureRetryable ?? false,
-                actionOutcome: entry.failureOutcome,
-            }),
-            options.errors,
-            errorContext(options, entry.invocation.name)
-        );
-        return { ...entry, failure: error.kind, failureMessage: error.message, failureIssues: error.issues };
+    return {
+        ...state,
+        pending: state.pending.map((entry) => projectActionFailure(entry, options)),
+        completed: state.completed.map((entry) => projectActionFailure(entry, options)),
     };
-    return { ...state, pending: state.pending.map(action), completed: state.completed.map(action) };
 }
+export const projectActionFailure = (
+    entry: ReplicaStateSnapshot["pending"][number],
+    options: ErrorProjectionOptions
+) => {
+    if (!entry.failure) return entry;
+    const error = projectBackendError(
+        new BackendError({
+            operation: "applyAction",
+            kind: entry.failure,
+            message: entry.failureMessage ?? "Action failed.",
+            issues: entry.failureIssues,
+            retryable: entry.failureRetryable ?? false,
+            actionOutcome: entry.failureOutcome,
+        }),
+        options.errors,
+        errorContext(options, entry.invocation.name)
+    );
+    return { ...entry, failure: error.kind, failureMessage: error.message, failureIssues: error.issues };
+};
 export class OntologyErrorProjection extends RpcMiddleware.Service<OntologyErrorProjection>()(
     "@party-stack/ontology-server/ErrorProjection",
     { error: BackendError }

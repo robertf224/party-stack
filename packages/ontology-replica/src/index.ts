@@ -1,7 +1,20 @@
 import { isUnknownActionOutcome } from "@party-stack/ontology-backend";
 export { makeCachedProxy } from "./proxy.js";
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { clientRegistry } from "@party-stack/ontology-backend/clients";
+import {
+    acknowledgeDelivery,
+    makeDelivery,
+    makeDeliveryReceiver,
+    scanSelectedRows,
+    scanDeliveryRows,
+    deliveryKey,
+    type DeliveryFrame,
+    type DeliveryMetadata,
+    type DeliveryPolicy,
+    type DeliveryRecord,
+    type DeliverySubscription,
+} from "@party-stack/ontology-backend/delivery";
 import { stateIdentity } from "@party-stack/ontology-backend/protocol";
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import { resolveType } from "@party-stack/ontology-spec/utils";
@@ -39,8 +52,11 @@ import type { ReplicaLoad, ReplicaStatus } from "./status.js";
 import type { Encrypted } from "@party-stack/ontology-spec/values";
 export { ReplicaStatusSchema, makeReplicaMonitor } from "./status.js";
 export type { ReplicaStatus, ReplicaLoad, ReplicaMonitor } from "./status.js";
-import { connectReplicaParent } from "./parent.js";
+import { putIncomingRow } from "./incoming.js";
+import { connectReplicaParent, connectReplicaDelivery } from "./parent.js";
+import { deliveryRecovery } from "./recovery.js";
 import { affectsCoverage, markQuery, retentionQuery } from "./retention.js";
+import { trackVisible, observeRows, type VisibleCommit, type ReplicaRowsBatch } from "./visible.js";
 import type {
     ActionRequest,
     ActionReceipt,
@@ -142,7 +158,12 @@ export interface ReplicaService extends OwnedReadTransaction {
         readonly put: (value: Encrypted, local: Encrypted) => Effect.Effect<void, BackendError>;
     };
     readonly changes: Stream.Stream<void>;
-    /** Acquires the subscription now, before a caller reads its initial snapshot. */
+    readonly reportReplicationFailure: (error?: BackendError) => Effect.Effect<void>;
+    readonly observeRows: (
+        objectType: string,
+        query?: Query
+    ) => Stream.Stream<ReplicaRowsBatch, BackendError>;
+    /** Acquires the subscription before reading an initial snapshot. */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<void>, BackendError, import("effect").Scope.Scope>;
     readonly pending: Effect.Effect<readonly PendingAction[], BackendError>;
     /** Observed parent actions plus the local tail, with forwarding stage captured in the same read.
@@ -152,11 +173,42 @@ export interface ReplicaService extends OwnedReadTransaction {
         BackendError
     >;
     readonly snapshotState: Effect.Effect<ReplicaStateSnapshot, BackendError>;
+    readonly subscribeSelection: (
+        selection: import("@party-stack/ontology-backend/protocol").StateSelection,
+        policy?: DeliveryPolicy
+    ) => Effect.Effect<DeliverySubscription, BackendError, import("effect").Scope.Scope>;
+    readonly subscribeClient: (
+        session: ClientSession,
+        view: ClientView,
+        policy?: DeliveryPolicy
+    ) => Effect.Effect<DeliverySubscription, BackendError, import("effect").Scope.Scope>;
+    readonly receiveDelivery: (frame: DeliveryFrame) => Effect.Effect<
+        | {
+              position: import("@party-stack/ontology-backend/delivery").DeliveryPosition;
+              metadata: DeliveryMetadata;
+              duplicate: boolean;
+          }
+        | undefined,
+        BackendError
+    >;
+    readonly openParentDelivery: (
+        source?: OntologySource
+    ) => Effect.Effect<
+        { subscription: DeliverySubscription; generation: number },
+        BackendError,
+        import("effect").Scope.Scope
+    >;
+    readonly parentDeliveryGeneration: Effect.Effect<number, BackendError>;
     readonly openClient: (resume?: ClientToken) => Effect.Effect<ClientLease, BackendError>;
     readonly readClient: (
         session: ClientSession,
         view?: ClientView
     ) => Effect.Effect<ClientState, BackendError>;
+    readonly acknowledgeDelivery: (
+        position: import("@party-stack/ontology-backend/delivery").DeliveryPosition,
+        speculative?: boolean
+    ) => Effect.Effect<void, BackendError>;
+    readonly acceptClient: (request: ClientSubmission) => Effect.Effect<void, BackendError>;
     readonly submitClient: (request: ClientSubmission) => Effect.Effect<ClientState, BackendError>;
     readonly acknowledgeClient: (
         session: ClientSession,
@@ -276,20 +328,26 @@ export type ReplicaOptions = ReplicaCommonOptions &
 const fault = (kind: BackendError["kind"], message: string, cause?: unknown) =>
     new BackendError({ operation: "replica", kind, message, retryable: kind === "Unavailable", cause });
 const boundary = <A, E, R>(work: Effect.Effect<A, E, R>) =>
-    work.pipe(
-        Effect.mapError((cause) =>
-            cause instanceof BackendError ? cause : fault("Unavailable", "Replica storage failed.", cause)
-        )
-    );
+    work.pipe(Effect.mapError((cause) => classifyBackendFailure("replica.storage", cause)));
 const identity = (type: string, key: Key) => JSON.stringify([type, key]);
-const subsetKey = (subset: BackendSubset) =>
-    Table.make<BackendSubset>({ name: "subset-identity" }).encode(subset);
+const subsetKey = (subset: BackendSubset) => {
+    // Optional query/order settings can be omitted by wire schemas. Undefined
+    // predicate operands remain meaningful and must retain their identity.
+    const defined = (value: object) =>
+        Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined));
+    const query = defined(subset.query ?? {});
+    if (subset.query?.orderBy) query.orderBy = subset.query.orderBy.map(defined);
+    return Table.make<BackendSubset>({ name: "subset-identity" }).encode({
+        objectType: subset.objectType,
+        query,
+    });
+};
 
 // Keep a bounded identity witness, not another retained copy of the parent's rows.
 const snapshotDigest = Effect.fnUntraced(function* (snapshot: ReplicaStateSnapshot) {
     const encoded = yield* Effect.try({
         try: () => new TextEncoder().encode(stateIdentity(snapshot)),
-        catch: (cause) => fault("ValidationFailed", "Invalid parent state.", cause),
+        catch: (cause) => fault("InvalidResponse", "Invalid parent state.", cause),
     });
     return yield* boundary(digestBytes({ type: "application/json", stream: Stream.make(encoded) }));
 });
@@ -305,19 +363,21 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         retryDelayMs < 0 ||
         retryDelayMs > 60_000
     )
-        return yield* fault("ValidationFailed", "Invalid outbox retry policy.");
+        return yield* fault("InvalidConfiguration", "Invalid outbox retry policy.");
     if (
         options.resultRetentionMs !== undefined &&
         (options.resultRetentionMs <= 0 || Number.isNaN(options.resultRetentionMs))
     )
-        return yield* fault("ValidationFailed", "Result retention must be positive.");
+        return yield* fault("InvalidConfiguration", "Result retention must be positive.");
     const adapter = options.backend;
     const sourceId = options.source?.sourceId ?? adapter!.sourceId;
     const backendEffect = adapter
         ? Effect.succeed(adapter)
         : Effect.fail(fault("NotImplemented", "This Replica receives state through its protocol source."));
     const name = (part: string) => JSON.stringify(["replica", options.namespace, part]);
-    const stateHead = Table.make<{ sourceId: string; revision: number }>({ name: name("state-head") });
+    const stateHead = Table.make<{ sourceId: string; revision: number; visibleRevision?: number }>({
+        name: name("state-head"),
+    });
     const imported = Table.make<
         Omit<ReplicaStateSnapshot, "objects" | "pending" | "completed"> & {
             /** Digest fences reused revisions even when local cache rows have been evicted. */
@@ -329,25 +389,46 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     });
     const importedPending = Table.make<PendingAction>({ name: name("parent-pending") });
     const importedCompleted = Table.make<PendingAction>({ name: name("parent-completed") });
+    const views = new Map<string, Overlay<ObjectValue>>();
+    const visibleEvents = yield* PubSub.sliding<VisibleCommit>(16);
+    yield* Effect.addFinalizer(() => PubSub.shutdown(visibleEvents));
     const tables: TablesService = {
         ...options.tables,
         transaction: (body) =>
-            options.tables.transaction((tx) =>
-                Effect.gen(function* () {
-                    const result = yield* body(tx);
-                    const head = yield* tx.get(stateHead, "head");
-                    if (head && !Number.isSafeInteger(head.revision + 1))
-                        return yield* new OntologyStorageError({
-                            operation: "replica.revision",
-                            reason: new ConfigurationError({ message: "Replica state revision exhausted." }),
+            options.tables
+                .transaction((tx) =>
+                    Effect.gen(function* () {
+                        const tracked = trackVisible(tx, views);
+                        const result = yield* body(tracked.tx);
+                        const delta = yield* tracked.finish;
+                        const head = yield* tx.get(stateHead, "head");
+                        if (head && !Number.isSafeInteger(head.revision + 1))
+                            return yield* new OntologyStorageError({
+                                operation: "replica.revision",
+                                reason: new ConfigurationError({
+                                    message: "Replica state revision exhausted.",
+                                }),
+                            });
+                        const previous = head?.visibleRevision ?? 0;
+                        const changed = delta.reset || delta.changes.length > 0;
+                        const visibleRevision = previous + (changed ? 1 : 0);
+                        yield* tx.put(stateHead, "head", {
+                            sourceId: head?.sourceId ?? crypto.randomUUID(),
+                            revision: (head?.revision ?? 0) + 1,
+                            visibleRevision,
                         });
-                    yield* tx.put(stateHead, "head", {
-                        sourceId: head?.sourceId ?? crypto.randomUUID(),
-                        revision: (head?.revision ?? 0) + 1,
-                    });
-                    return result;
-                })
-            ),
+                        return {
+                            result,
+                            commit: changed ? { ...delta, previous, revision: visibleRevision } : undefined,
+                        };
+                    })
+                )
+                .pipe(
+                    Effect.tap(({ commit }) =>
+                        commit ? PubSub.publish(visibleEvents, commit) : Effect.void
+                    ),
+                    Effect.map(({ result }) => result)
+                ),
     };
     const gc =
         options.gc === false
@@ -367,17 +448,16 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             gc.limit < 1 ||
             gc.limit > 10_000)
     )
-        return yield* fault("ValidationFailed", "Invalid automatic GC policy.");
+        return yield* fault("InvalidConfiguration", "Invalid automatic GC policy.");
     if (Boolean(options.registerOwner) !== Boolean(options.isOwnerAlive))
         return yield* fault(
-            "ValidationFailed",
+            "InvalidConfiguration",
             "Owner registration and liveness checks must be supplied together."
         );
     const schemas = yield* Effect.try({
         try: () => compileEffectSchemas(options.ir),
-        catch: (cause) => fault("ValidationFailed", "Invalid ontology definition.", cause),
+        catch: (cause) => fault("InvalidConfiguration", "Invalid ontology definition.", cause),
     });
-    const views = new Map<string, Overlay<ObjectValue>>();
     const definitions = new Map(options.ir.objectTypes.map((type) => [type.name, type]));
     const encryptedProperties = new Map<string, readonly string[]>();
     for (const type of options.ir.objectTypes) {
@@ -473,6 +553,11 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     const rootGate = yield* Semaphore.make(1);
     const pins = Table.make<{ objectType: string; key: Key }>({ name: name("pins") });
     const signature = JSON.stringify(options.ir);
+    const schemaHash = yield* boundary(
+        digestBytes({ type: "application/json", stream: Stream.make(new TextEncoder().encode(signature)) })
+    );
+    const deliveryActive =
+        options.startSync !== false && Boolean(options.source?.subscribe || adapter?.subscribeSelection);
     const events = yield* PubSub.sliding<void>(1);
     const queue = yield* Queue.sliding<void>(1);
     yield* Effect.addFinalizer(() => PubSub.shutdown(events));
@@ -495,7 +580,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     const actionInterests = new Map<string, readonly string[] | undefined>();
     let closed = false;
     const open = Effect.suspend(() =>
-        closed ? Effect.fail(fault("ValidationFailed", "Replica scope is closed.")) : Effect.void
+        closed ? Effect.fail(fault("InvalidRequest", "Replica scope is closed.")) : Effect.void
     );
     yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
@@ -506,7 +591,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         const found = views.get(type);
         return found
             ? Effect.succeed(found)
-            : Effect.fail(fault("ValidationFailed", `Unknown object type ${JSON.stringify(type)}.`));
+            : Effect.fail(fault("InvalidRequest", `Unknown object type ${JSON.stringify(type)}.`));
     };
     const putBase = Effect.fnUntraced(function* (
         tx: Transaction,
@@ -516,10 +601,13 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     ) {
         const v = yield* view(type);
         const properties = encryptedProperties.get(type)!;
-        const previous = properties.length ? yield* tx.get(v.base, key) : undefined;
-        yield* tx.put(v.base, key, preserveCachedCopies(previous, value, properties));
+        yield* putIncomingRow(tx, v, definitions.get(type)!.primaryKey, properties, key, {
+            kind: "base",
+            value,
+        });
     });
     const diagnostics = yield* makeReplicaDiagnostics();
+    let replicationError: ReplicaStatus["replicationError"];
     const localNotify = PubSub.publish(events, undefined).pipe(
         Effect.andThen(diagnostics.changed),
         Effect.asVoid
@@ -539,8 +627,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         if (subset)
                             yield* Effect.try({
                                 try: () => evaluateQuery([], subset.query ?? {}),
-                                catch: (cause) =>
-                                    fault("ValidationFailed", "Invalid retention query.", cause),
+                                catch: (cause) => fault("InvalidRequest", "Invalid retention query.", cause),
                             });
                         const count = rootCounts.get(key) ?? 0;
                         if (!count)
@@ -565,7 +652,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             yield* wake;
                         }
                         yield* diagnostics.changed;
-                        if (options.source) yield* localNotify;
+                        if (options.source || deliveryActive) yield* localNotify;
                         return key;
                     })
                 )
@@ -585,7 +672,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                 else demands.delete(key);
                             }
                             yield* diagnostics.changed;
-                            if (options.source) yield* localNotify;
+                            if (options.source || deliveryActive) yield* localNotify;
                         })
                     )
                     .pipe(Effect.orDie)
@@ -666,7 +753,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         let active = true;
         const guard = <A, E>(effect: Effect.Effect<A, E>) =>
             Effect.suspend<A, E | BackendError, never>(() =>
-                active ? effect : Effect.fail(fault("ValidationFailed", "Replay transaction is closed."))
+                active ? effect : Effect.fail(fault("InvalidRequest", "Replay transaction is closed."))
             );
         const read = reader(tx, false);
         const local: OwnedTransaction = {
@@ -697,7 +784,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             }
                         const result = yield* Effect.try({
                             try: () => evaluateQuery([...rows.values()], query),
-                            catch: (cause) => fault("ValidationFailed", "Invalid replay query.", cause),
+                            catch: (cause) => fault("InvalidRequest", "Invalid replay query.", cause),
                         });
                         for (const row of result) rememberKey(type, row.key);
                         return result;
@@ -709,12 +796,11 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         const v = yield* view(type);
                         const copy = yield* Effect.try({
                             try: () => v.base.decode(v.base.encode(value)),
-                            catch: () =>
-                                fault("ValidationFailed", "Mutation does not match the object definition."),
+                            catch: () => fault("Internal", "Mutation does not match the object definition."),
                         });
                         const key = copy[definitions.get(type)!.primaryKey];
                         if (typeof key !== "string" && typeof key !== "number")
-                            return yield* fault("ValidationFailed", "Mutation has an invalid primary key.");
+                            return yield* fault("Internal", "Mutation has an invalid primary key.");
                         rememberKey(type, key);
                         staged.set(identity(type, key), { type, key, value: copy });
                     })
@@ -946,7 +1032,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             for (const key of keys) repaired.set(key, undefined);
             for (const row of snapshot.rows) {
                 if (!keys.includes(row.key))
-                    return yield* fault("ValidationFailed", "Action read-back returned an unrequested key.");
+                    return yield* fault("InvalidResponse", "Action read-back returned an unrequested key.");
                 repaired.delete(row.key);
             }
         } else if (!backend.changes && snapshot.complete && !isWholeCollection(subset.query)) {
@@ -970,7 +1056,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 for (const row of repair.rows) {
                     if (!keys.includes(row.key))
                         return yield* fault(
-                            "ValidationFailed",
+                            "InvalidResponse",
                             "Snapshot repair returned an unrequested key."
                         );
                     repaired.set(row.key, row.value);
@@ -1005,7 +1091,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 }
                 for (const row of incoming) {
                     if (row.value[definitions.get(subset.objectType)!.primaryKey] !== row.key)
-                        return yield* fault("ValidationFailed", "Snapshot key does not match its row.");
+                        return yield* fault("InvalidResponse", "Snapshot key does not match its row.");
                     yield* retainRowBlobs(tx, subset.objectType, row.key, row.value, "base");
                     yield* tx.put(v.base, row.key, preserved.get(row.key) ?? row.value);
                     yield* tx.put(retention, identity(subset.objectType, row.key), {
@@ -1086,7 +1172,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                         change.key
                                     )
                                         return yield* fault(
-                                            "ValidationFailed",
+                                            "InvalidResponse",
                                             "Change key does not match its row."
                                         );
                                     yield* retainRowBlobs(
@@ -1212,7 +1298,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         yield* notify;
     });
     const pull = () =>
-        adapter?.changes
+        adapter?.changes && !deliveryActive
             ? pullJournal().pipe(
                   Effect.catch((error) =>
                       error.kind === "HistoryExpired" ? recoverHistory() : Effect.fail(error)
@@ -1245,7 +1331,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             else {
                 const primaryKey = definitions.get(objectType)?.primaryKey;
                 if (!primaryKey)
-                    return yield* fault("ValidationFailed", "Receipt named an unknown object type.");
+                    return yield* fault("InvalidResponse", "Receipt named an unknown object type.");
                 const values = [...keys];
                 for (let offset = 0; offset < values.length; offset += 128) {
                     const batch = values.slice(offset, offset + 128);
@@ -1342,6 +1428,8 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         );
     const sync = Effect.fn("Replica.sync", { root: true })(function* () {
         yield* open;
+        if (replicationError?.recovery === "stop")
+            return yield* fault(replicationError.kind, replicationError.message);
         yield* service.collectClientGarbage;
         yield* collectResults;
         const backend = yield* backendEffect;
@@ -1386,7 +1474,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             if (
                 !entry?.receipt ||
                 entry.receipt.outcome !== "committed" ||
-                (entry.receipt.cursor && backend.changes)
+                (entry.receipt.cursor && backend.changes && !deliveryActive)
             )
                 break;
             yield* confirmReceipt(entry, entry.receipt);
@@ -1441,6 +1529,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         });
         // Snapshot refresh follows journal catch-up, so historical commits cannot replace newer snapshots.
         for (const demand of demands.values()) {
+            if (deliveryActive) continue;
             const cached = yield* boundary(tables.get(coverage, subsetKey(demand.subset)));
             const coveringSubset = yield* covered(demand.subset);
             if (coveringSubset) {
@@ -1470,7 +1559,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             let head: PendingAction = first;
             let receipt = head.receipt;
             if (head.state === "acknowledged" && !receipt)
-                return yield* fault("ValidationFailed", "Acknowledged invocation is missing its receipt.");
+                return yield* fault("Internal", "Acknowledged invocation is missing its receipt.");
             if (!receipt) {
                 const claimed = yield* boundary(
                     tables.transaction((tx) =>
@@ -1518,7 +1607,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 receipt = result.success;
                 if (receipt.operationId !== head.invocation.id)
                     return yield* fault(
-                        "ValidationFailed",
+                        "InvalidResponse",
                         "Backend returned a receipt for another invocation."
                     );
                 // Normally mappings and acknowledgement share one commit. If a local mapping
@@ -1534,7 +1623,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             }
             yield* boundary(tables.transaction((tx) => bindReceiptBlobs(tx, receipt!, head.invocation)));
             yield* options.onReceipt?.(receipt) ?? Effect.void;
-            if (receipt.cursor && backend.changes) {
+            if (receipt.cursor && backend.changes && !deliveryActive) {
                 yield* pull();
                 const remains = yield* boundary(
                     tables.transaction((tx) =>
@@ -1591,7 +1680,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             yield* view(subset.objectType);
             yield* Effect.try({
                 try: () => evaluateQuery([], subset.query ?? {}),
-                catch: (cause) => fault("ValidationFailed", "Invalid selected query.", cause),
+                catch: (cause) => fault("InvalidRequest", "Invalid selected query.", cause),
             });
         }
         for (const [objectType, v] of views) {
@@ -1718,6 +1807,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     const clients = clientRegistry(options.namespace, ownSourceId, options.clients);
     yield* boundary(options.tables.transaction(clients.initialize));
     let parentSession: ClientLease | undefined;
+    const sessionGate = yield* Semaphore.make(1);
     const sessionFor = Effect.fnUntraced(function* (source: OntologySource) {
         if (!options.source || source.sourceId !== sourceId)
             return yield* fault(
@@ -1790,7 +1880,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         );
         parentSession = lease;
         return lease;
-    });
+    }, sessionGate.withPermits(1));
     const requestedView = Effect.fnUntraced(function* (): Effect.fn.Return<ClientView, BackendError> {
         return yield* access(
             options.tables.transaction((tx) =>
@@ -1798,7 +1888,11 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     const subsets = new Map<string, BackendSubset>();
                     const include = (subset: BackendSubset) => subsets.set(subsetKey(subset), subset);
                     for (const row of yield* tx.loadSubset(roots, { where: eq(field("owner"), rootOwner) }))
-                        include({ objectType: row.value.objectType, query: retentionQuery(row.value.query) });
+                        if (options.source || row.value.kind === "remote")
+                            include({
+                                objectType: row.value.objectType,
+                                query: retentionQuery(row.value.query),
+                            });
                     for (const row of yield* tx.loadSubset(pins))
                         include({
                             objectType: row.value.objectType,
@@ -1850,7 +1944,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         (current.parentViewGeneration ?? 0) +
                         (current.parentViewIdentity === identity ? 0 : 1);
                     if (!Number.isSafeInteger(generation) || generation < 1)
-                        return yield* fault("ValidationFailed", "Selected view generation exhausted.");
+                        return yield* fault("Internal", "Selected view generation exhausted.");
                     if (current.parentViewIdentity !== identity)
                         yield* tx.put(metadata, "head", {
                             ...current,
@@ -1884,7 +1978,532 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             batch.state.view?.generation
         );
     });
+    const settleParentActions = Effect.fnUntraced(function* (
+        tx: Transaction,
+        pending: readonly PendingAction[],
+        results: readonly PendingAction[],
+        requestedActionIds?: readonly string[]
+    ) {
+        const terminal = new Map(results.map((entry) => [entry.invocation.id, entry]));
+        // The parent's result window may expire after a mapping failure. A
+        // locally saved committed receipt still proves the action outcome.
+        for (const { value: entry } of yield* tx.loadSubset(outbox))
+            if (entry.receipt?.outcome === "committed" && !terminal.has(entry.invocation.id))
+                terminal.set(entry.invocation.id, publicAction(entry));
+        const known = new Map(
+            [...pending, ...terminal.values()].map((entry) => [entry.invocation.id, entry])
+        );
+        for (const entry of yield* pendingIn(tx)) {
+            const observed = known.get(entry.invocation.id);
+            if (!observed) continue;
+            const identity = Table.make<ActionRequest>({ name: "invocation" }).encode(entry.invocation);
+            if (observed.requestIdentity !== entry.requestIdentity && observed.requestIdentity !== identity)
+                return yield* fault("Conflict", "Parent invocation identity differs from the local action.");
+            yield* tx.put(outbox, entry.invocation.id, { ...entry, includedInBase: true });
+        }
+        for (const row of yield* acceptedIn(tx)) {
+            const observed = pending.find((entry) => entry.invocation.id === row.key);
+            if (
+                observed &&
+                Table.make({ name: "invocation" }).encode(observed.invocation) !==
+                    Table.make({ name: "invocation" }).encode(row.value.invocation)
+            )
+                yield* tx.put(outbox, row.key, {
+                    ...row.value,
+                    invocation: observed.invocation,
+                    requestIdentity: observed.requestIdentity,
+                });
+        }
+        for (const entry of terminal.values()) {
+            const local = yield* tx.get(outbox, entry.invocation.id);
+            if (local?.includedInBase && (entry.receipt || entry.failure)) {
+                if (entry.receipt) yield* bindReceiptBlobs(tx, entry.receipt, local.invocation);
+                yield* tx.put(completed, entry.invocation.id, {
+                    ...entry,
+                    requestIdentity:
+                        Table.make({ name: "invocation" }).encode(entry.invocation) ===
+                        Table.make({ name: "invocation" }).encode(local.invocation)
+                            ? local.requestIdentity
+                            : entry.requestIdentity,
+                    sequence: local.sequence,
+                    completedAt: yield* Clock.currentTimeMillis,
+                    state: entry.receipt ? "acknowledged" : "blocked",
+                    receipt: entry.receipt,
+                });
+                yield* deletePending(tx, entry.invocation.id);
+            }
+        }
+        if (requestedActionIds)
+            for (const row of yield* acceptedIn(tx)) {
+                if (!requestedActionIds.includes(row.key as string) || known.has(row.key as string)) continue;
+                yield* tx.put(outbox, row.key, {
+                    ...publicAction(row.value),
+                    state: "blocked",
+                    retryRequiresAcknowledgement: true,
+                    optimistic: false,
+                    failure: "ResultExpired",
+                    failureOutcome: "unknown",
+                    failureRetryable: false,
+                    failureMessage:
+                        "The parent no longer retains this accepted action's result. Reconcile, retry explicitly, or discard it.",
+                });
+            }
+    });
+    const captureSelection = Effect.fnUntraced(function* (
+        tx: Transaction,
+        selected: ClientView,
+        emit: (record: DeliveryRecord) => Effect.Effect<void, BackendError>,
+        speculative: boolean
+    ) {
+        for (const subset of selected.selection.subsets) {
+            const v = yield* view(subset.objectType);
+            yield* scanSelectedRows(
+                (query) => boundary(speculative ? loadVisible(tx, v, query) : tx.loadSubset(v.base, query)),
+                subset.query,
+                (row) =>
+                    Effect.gen(function* () {
+                        const base = speculative ? yield* boundary(tx.get(v.base, row.key)) : row.value;
+                        if (base !== undefined)
+                            yield* emit({
+                                kind: "base",
+                                objectType: subset.objectType,
+                                key: row.key,
+                                value: base,
+                            });
+                        if (
+                            speculative &&
+                            (base === undefined || v.base.encode(base) !== v.base.encode(row.value))
+                        )
+                            yield* emit({
+                                kind: "override",
+                                objectType: subset.objectType,
+                                key: row.key,
+                                value: { deleted: false, value: row.value },
+                            });
+                    })
+            );
+        }
+        if (speculative) {
+            const send = (table: Table<PendingAction>, kind: "pending" | "completed", own = false) =>
+                selected.selection.inspectActions
+                    ? boundary(
+                          scanDeliveryRows(tx, table, {}, (row) =>
+                              own && (row.value as LocalAction).includedInBase
+                                  ? Effect.void
+                                  : emit({
+                                        kind,
+                                        id: row.value.invocation.id,
+                                        value: publicAction(row.value),
+                                    })
+                          )
+                      )
+                    : Effect.forEach(
+                          selected.selection.actionIds,
+                          (id) =>
+                              Effect.gen(function* () {
+                                  const entry = yield* boundary(tx.get(table, id));
+                                  if (entry && !(own && (entry as LocalAction).includedInBase))
+                                      yield* emit({ kind, id, value: publicAction(entry) });
+                              }),
+                          { discard: true }
+                      );
+            yield* send(importedPending, "pending");
+            yield* send(outbox, "pending", true);
+            yield* send(importedCompleted, "completed");
+            yield* send(completed, "completed");
+        }
+        const coverageEntries: DeliveryMetadata["coverage"][number][] = [];
+        for (const subset of selected.selection.subsets) {
+            const demand = demands.get(subsetKey(subset));
+            const proof = yield* tx.get(coverage, subsetKey(demand?.coveredBy ?? subset));
+            coverageEntries.push({
+                subset,
+                complete: proof?.complete === true && (!demand || demand.installed === demand.revision),
+            });
+        }
+        return {
+            sourceId: speculative ? ownSourceId : sourceId,
+            schemaHash,
+            generation: selected.generation,
+            revision: (yield* tx.get(stateHead, "head"))!.revision,
+            cursor: (yield* position(tx)).cursor,
+            coverage: coverageEntries,
+        } satisfies DeliveryMetadata;
+    });
+    const checkDelivery = Effect.fnUntraced(function* (tx: Transaction, meta: DeliveryMetadata) {
+        if (meta.sourceId !== sourceId) return yield* fault("SourceMismatch", "Delivery source changed.");
+        if (meta.schemaHash !== schemaHash)
+            return yield* fault("SchemaMismatch", "Delivery definition changed.");
+        if (
+            options.source &&
+            (!meta.client ||
+                !parentSession ||
+                meta.client.client.clientId !== parentSession.client.clientId ||
+                meta.client.connectionId !== parentSession.connectionId ||
+                meta.client.client.sourceId !== sourceId)
+        )
+            return yield* fault("InvalidResponse", "Delivery belongs to a different client session.");
+        const current = yield* position(tx);
+        if (current.parentViewGeneration !== meta.generation)
+            return yield* fault("ViewReplaced", "Delivery selection was superseded.");
+    });
+    const preserveReceipt = Effect.fnUntraced(function* (tx: Transaction, entry: PendingAction) {
+        const local = yield* tx.get(outbox, entry.invocation.id);
+        if (!local || !entry.receipt) return;
+        if (
+            entry.receipt.operationId !== local.invocation.id ||
+            (entry.requestIdentity !== local.requestIdentity &&
+                entry.requestIdentity !==
+                    Table.make<ActionRequest>({ name: "invocation" }).encode(local.invocation))
+        )
+            return yield* fault("Conflict", "Parent result differs from the local action.");
+        yield* tx.put(outbox, entry.invocation.id, {
+            ...local,
+            receipt: entry.receipt,
+            state: "acknowledged",
+        });
+    });
+    const snapshotRows = Table.make<boolean>({ name: name("delivery-seen") });
+    const receiver = yield* makeDeliveryReceiver({
+        tables,
+        namespace: name("upstream"),
+        beforeApply: (tx, batch) =>
+            boundary(
+                Effect.gen(function* () {
+                    yield* checkDelivery(tx, batch.metadata);
+                    if (options.source)
+                        yield* batch.forEach((change) =>
+                            change.kind === "put" && change.record.kind === "completed"
+                                ? boundary(preserveReceipt(tx, change.record.value))
+                                : Effect.void
+                        );
+                })
+            ),
+        apply: (tx, batch) =>
+            boundary(
+                Effect.gen(function* () {
+                    yield* checkDelivery(tx, batch.metadata);
+                    if (batch.kind === "snapshot") {
+                        yield* tx.clear(snapshotRows);
+                        for (const [type] of views) {
+                            yield* clearRowBlobs(tx, type, "base");
+                        }
+                        if (options.source) {
+                            yield* tx.clear(importedPending);
+                            yield* tx.clear(importedCompleted);
+                        }
+                        yield* tx.clear(coverage);
+                    }
+                    yield* batch.forEach((change) =>
+                        boundary(
+                            Effect.gen(function* () {
+                                const ref = change.kind === "put" ? change.record : change.ref;
+                                if (!("objectType" in ref)) {
+                                    if (!options.source)
+                                        return yield* fault(
+                                            "InvalidResponse",
+                                            "A committed source published speculative actions."
+                                        );
+                                    const table =
+                                        ref.kind === "pending" ? importedPending : importedCompleted;
+                                    if (
+                                        change.kind === "put" &&
+                                        (change.record.kind === "pending" ||
+                                            change.record.kind === "completed")
+                                    ) {
+                                        if (change.record.value.invocation.id !== ref.id)
+                                            return yield* fault(
+                                                "InvalidResponse",
+                                                "Incoming action key differs from its ID."
+                                            );
+                                        yield* tx.put(table, ref.id, change.record.value);
+                                    } else yield* tx.delete(table, ref.id);
+                                    return;
+                                }
+                                const v = yield* view(ref.objectType);
+                                if (batch.kind === "snapshot" && change.kind === "put")
+                                    yield* tx.put(snapshotRows, deliveryKey(ref), true);
+                                if (ref.kind === "override" && !v.inherited)
+                                    return yield* fault(
+                                        "InvalidResponse",
+                                        "A committed source published an override."
+                                    );
+                                if (change.kind === "remove")
+                                    yield* ref.kind === "base"
+                                        ? tx.delete(v.base, ref.key)
+                                        : tx.delete(v.inherited!, ref.key);
+                                else if (change.record.kind === "base" || change.record.kind === "override")
+                                    yield* putIncomingRow(
+                                        tx,
+                                        v,
+                                        definitions.get(ref.objectType)!.primaryKey,
+                                        encryptedProperties.get(ref.objectType)!,
+                                        ref.key,
+                                        change.record
+                                    );
+                                yield* touch(tx, ref.objectType, ref.key);
+                                yield* retainRowBlobs(
+                                    tx,
+                                    ref.objectType,
+                                    ref.key,
+                                    yield* tx.get(v.base, ref.key),
+                                    "base",
+                                    yield* getBaseline(tx, v, ref.key)
+                                );
+                            })
+                        )
+                    );
+                    if (batch.kind === "snapshot") {
+                        // A replacement only repairs its selected region. Other cached
+                        // rows retain ordinary demand/pin/outbox/age-based GC semantics.
+                        for (const [objectType, v] of views) {
+                            for (const [kind, table] of [
+                                ["base", v.base],
+                                ["override", v.inherited],
+                            ] as const) {
+                                if (!table) continue;
+                                yield* scanDeliveryRows(
+                                    tx,
+                                    table as Table<ObjectValue | Override<ObjectValue>>,
+                                    {},
+                                    (row) =>
+                                        boundary(
+                                            Effect.gen(function* () {
+                                                if (
+                                                    !(yield* tx.get(
+                                                        snapshotRows,
+                                                        deliveryKey({ kind, objectType, key: row.key })
+                                                    ))
+                                                ) {
+                                                    const base = yield* tx.get(v.base, row.key);
+                                                    const baseline = yield* getBaseline(tx, v, row.key);
+                                                    const visible = yield* getVisible(tx, v, row.key);
+                                                    const refreshed =
+                                                        (yield* tx.get(
+                                                            snapshotRows,
+                                                            deliveryKey({
+                                                                kind: kind === "base" ? "override" : "base",
+                                                                objectType,
+                                                                key: row.key,
+                                                            })
+                                                        )) ||
+                                                        [base, baseline, visible].some(
+                                                            (value) =>
+                                                                value !== undefined &&
+                                                                batch.metadata.coverage.some(
+                                                                    (entry) =>
+                                                                        entry.subset.objectType ===
+                                                                            objectType &&
+                                                                        evaluateQuery(
+                                                                            [{ key: row.key, value }],
+                                                                            {
+                                                                                where: entry.subset.query
+                                                                                    ?.where,
+                                                                            }
+                                                                        ).length > 0
+                                                                )
+                                                        );
+                                                    if (refreshed) {
+                                                        yield* tx.delete(
+                                                            table as Table<
+                                                                ObjectValue | Override<ObjectValue>
+                                                            >,
+                                                            row.key
+                                                        );
+                                                        if (
+                                                            kind === "base" &&
+                                                            v.inherited &&
+                                                            !(yield* tx.get(
+                                                                snapshotRows,
+                                                                deliveryKey({
+                                                                    kind: "override",
+                                                                    objectType,
+                                                                    key: row.key,
+                                                                })
+                                                            ))
+                                                        )
+                                                            yield* tx.delete(v.inherited, row.key);
+                                                    }
+                                                }
+                                                yield* retainRowBlobs(
+                                                    tx,
+                                                    objectType,
+                                                    row.key,
+                                                    yield* tx.get(v.base, row.key),
+                                                    "base",
+                                                    yield* getBaseline(tx, v, row.key)
+                                                );
+                                            })
+                                        )
+                                );
+                            }
+                        }
+                        yield* tx.clear(snapshotRows);
+                    }
+                    const current = yield* position(tx);
+                    for (const entry of batch.metadata.coverage) {
+                        yield* tx.put(coverage, subsetKey(entry.subset), {
+                            subset: entry.subset,
+                            complete: entry.complete,
+                            snapshotCursor: batch.metadata.cursor,
+                            updatedAt: yield* Clock.currentTimeMillis,
+                        });
+                        for (const demand of demands.values()) {
+                            if (
+                                subsetKey({
+                                    ...demand.subset,
+                                    query: retentionQuery(demand.subset.query),
+                                }) === subsetKey(entry.subset)
+                            )
+                                yield* tx.put(coverage, subsetKey(demand.subset), {
+                                    subset: demand.subset,
+                                    complete: entry.complete,
+                                    snapshotCursor: batch.metadata.cursor,
+                                    updatedAt: yield* Clock.currentTimeMillis,
+                                });
+                        }
+                    }
+                    yield* tx.put(metadata, "head", { ...current, cursor: batch.metadata.cursor });
+                    if (options.source) {
+                        const selected = current.parentViewIdentity
+                            ? Table.make<{ actionIds: readonly string[] }>({ name: "view-identity" }).decode(
+                                  current.parentViewIdentity
+                              )
+                            : undefined;
+                        yield* settleParentActions(
+                            tx,
+                            (yield* tx.loadSubset(importedPending)).map((row) => row.value),
+                            (yield* tx.loadSubset(importedCompleted)).map((row) => row.value),
+                            selected?.actionIds
+                        );
+                        yield* tx.put(imported, "head", {
+                            sourceId,
+                            revision: batch.metadata.revision,
+                            definition: signature,
+                            resident: true,
+                            view: { generation: batch.metadata.generation },
+                        });
+                    }
+                    yield* rebase(tx);
+                })
+            ),
+    });
     const service: ReplicaService = {
+        reportReplicationFailure: (error) =>
+            Effect.gen(function* () {
+                const recovery = error && deliveryRecovery(error);
+                replicationError =
+                    error && recovery !== "selection"
+                        ? { kind: error.kind, message: error.message, recovery: recovery! }
+                        : undefined;
+                yield* diagnostics.changed;
+            }),
+        observeRows: (objectType, query) =>
+            observeRows({
+                objectType,
+                query,
+                changes: access(PubSub.subscribe(visibleEvents)).pipe(Effect.map(Stream.fromSubscription)),
+                read: (body) => access(tables.read(body)),
+                snapshot: (tx) =>
+                    Effect.gen(function* () {
+                        const v = views.get(objectType);
+                        if (!v)
+                            return yield* new OntologyStorageError({
+                                operation: "replica.observe",
+                                reason: new ConfigurationError({ message: "Unknown object type." }),
+                            });
+                        return {
+                            revision: (yield* tx.get(stateHead, "head"))?.visibleRevision ?? 0,
+                            rows: yield* loadVisible(tx, v, query),
+                        };
+                    }),
+            }),
+        subscribeSelection: (selection, policy) =>
+            Effect.gen(function* () {
+                for (const subset of selection.subsets) yield* service.demand(subset);
+                yield* service.syncOnce;
+                return yield* makeDelivery({
+                    tables: options.tables,
+                    namespace: name("committed"),
+                    policy,
+                    changes: service.subscribeChanges,
+                    capture: (tx, emit) =>
+                        boundary(captureSelection(tx, { generation: 1, selection }, emit, false)),
+                });
+            }),
+        subscribeClient: (session, selected, policy) =>
+            Effect.gen(function* () {
+                for (const subset of selected.selection.subsets)
+                    yield* service.retainLocal(subset.objectType, subset.query);
+                return yield* makeDelivery({
+                    tables: options.tables,
+                    namespace: name("speculative"),
+                    policy,
+                    changes: service.subscribeChanges,
+                    capture: (tx, emit) =>
+                        boundary(
+                            Effect.gen(function* () {
+                                yield* clients.select(tx, session, selected);
+                                const meta = yield* captureSelection(tx, selected, emit, true);
+                                return {
+                                    ...meta,
+                                    client: yield* clients.deliver(tx, session, meta.revision),
+                                };
+                            })
+                        ),
+                });
+            }),
+        parentDeliveryGeneration: requestedView().pipe(Effect.map((selected) => selected.generation)),
+        openParentDelivery: (source) =>
+            Effect.gen(function* () {
+                const selected = yield* requestedView();
+                const subscription = source?.subscribe
+                    ? yield* source.subscribe(yield* sessionFor(source), selected)
+                    : yield* adapter!.subscribeSelection!(selected.selection);
+                return {
+                    generation: selected.generation,
+                    subscription: source?.subscribe
+                        ? subscription
+                        : {
+                              ...subscription,
+                              frames: subscription.frames.pipe(
+                                  Stream.map((frame) =>
+                                      frame.metadata
+                                          ? {
+                                                ...frame,
+                                                metadata: {
+                                                    ...frame.metadata,
+                                                    generation: selected.generation,
+                                                },
+                                            }
+                                          : frame
+                                  )
+                              ),
+                          },
+                };
+            }),
+        receiveDelivery: Effect.fn("Replica.receiveDelivery")(function* (frame) {
+            if (frame.end) yield* requestedView();
+            const result = yield* !options.source && frame.end
+                ? gate.withPermits(1)(Effect.andThen(requestedView(), receiver.receive(frame)))
+                : receiver.receive(frame);
+            if (result && !result.duplicate) {
+                for (const demand of demands.values())
+                    if (
+                        result.metadata.coverage.some(
+                            (entry) =>
+                                subsetKey({
+                                    ...demand.subset,
+                                    query: retentionQuery(demand.subset.query),
+                                }) === subsetKey(entry.subset)
+                        )
+                    )
+                        demand.installed = demand.revision;
+                yield* notify;
+                yield* wake;
+            }
+            return result;
+        }),
         snapshotSubset: (subset, confirmed = true) =>
             access(
                 tables.read((tx) =>
@@ -1910,6 +2529,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 upstreamId: sourceId,
                 mode: options.source ? ("protocol" as const) : ("adapter" as const),
                 ...diagnostics.snapshot(),
+                replicationError,
                 outbox,
                 demands: [...demands.values()].map((demand) => ({
                     ...demand.subset,
@@ -2009,11 +2629,11 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     })
                 )
             ),
-        submitClient: Effect.fn("Replica.submitClient")(function* (request: ClientSubmission) {
+        acceptClient: Effect.fn("Replica.acceptClient")(function* (request: ClientSubmission) {
             yield* open;
             if (!request.invocation.id || request.invocation.attachmentUploads?.length)
                 return yield* fault(
-                    "ValidationFailed",
+                    "InvalidRequest",
                     "Protocol submissions require an invocation ID and staged attachment handles."
                 );
             if (
@@ -2021,10 +2641,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 !request.view.selection.inspectActions &&
                 !request.view.selection.actionIds.includes(request.invocation.id)
             )
-                return yield* fault(
-                    "ValidationFailed",
-                    "The submission view must include its action outcome."
-                );
+                return yield* fault("InvalidRequest", "The submission view must include its action outcome.");
             const fingerprint = Table.make<unknown>({ name: "submission-identity" }).encode({
                 invocation: request.invocation,
                 optimistic: request.optimistic,
@@ -2037,7 +2654,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             yield* view(subset.objectType);
                             yield* Effect.try({
                                 try: () => evaluateQuery([], subset.query ?? {}),
-                                catch: (cause) => fault("ValidationFailed", "Invalid selected query.", cause),
+                                catch: (cause) => fault("InvalidRequest", "Invalid selected query.", cause),
                             });
                         }
                         return yield* clients.admit(tx, request.session, request.sequence, fingerprint, () =>
@@ -2046,7 +2663,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                     const declared = new Set(attachmentIds(request.invocation));
                                     if (request.stagedAttachments.some((id) => !declared.has(id)))
                                         return yield* fault(
-                                            "ValidationFailed",
+                                            "InvalidRequest",
                                             "Staged attachments must belong to the submitted action."
                                         );
                                     if (!options.blobs)
@@ -2086,8 +2703,13 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             );
             yield* notify;
             yield* wake;
-            return yield* service.readClient(request.session, request.view);
         }),
+        submitClient: (request) =>
+            service
+                .acceptClient(request)
+                .pipe(Effect.andThen(() => service.readClient(request.session, request.view))),
+        acknowledgeDelivery: (position, speculative = true) =>
+            acknowledgeDelivery(options.tables, name(speculative ? "speculative" : "committed"), position),
         acknowledgeClient: (session, revision, through, viewGeneration) =>
             access(
                 options.tables.transaction((tx) =>
@@ -2127,12 +2749,12 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     "Parent definition changed; migrate or reset explicitly."
                 );
             if (!Number.isSafeInteger(snapshot.revision) || snapshot.revision < 1)
-                return yield* fault("ValidationFailed", "Invalid parent revision.");
+                return yield* fault("InvalidResponse", "Invalid parent revision.");
             if (
                 snapshot.view &&
                 (!Number.isSafeInteger(snapshot.view.generation) || snapshot.view.generation < 1)
             )
-                return yield* fault("ValidationFailed", "Invalid parent view generation.");
+                return yield* fault("InvalidResponse", "Invalid parent view generation.");
             const digest = yield* snapshotDigest(snapshot);
             const fresh = yield* boundary(
                 tables.transaction((tx) =>
@@ -2202,7 +2824,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         const objectTypes = new Set(snapshot.objects.map((object) => object.objectType));
                         if (objectTypes.size !== views.size || snapshot.objects.length !== views.size)
                             return yield* fault(
-                                "ValidationFailed",
+                                "InvalidResponse",
                                 "The proof requires a complete snapshot of all modeled types."
                             );
                         for (const object of snapshot.objects) {
@@ -2239,7 +2861,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             for (const row of object.base) {
                                 if (row.value[primaryKey] !== row.key)
                                     return yield* fault(
-                                        "ValidationFailed",
+                                        "InvalidResponse",
                                         "Parent base key does not match its row."
                                     );
                                 yield* tx.put(v.base, row.key, preserved.get(row.key) ?? row.value);
@@ -2250,7 +2872,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                 if (!row.value.deleted) {
                                     if (row.value.value[primaryKey] !== row.key)
                                         return yield* fault(
-                                            "ValidationFailed",
+                                            "InvalidResponse",
                                             "Parent projection key does not match its row."
                                         );
                                 }
@@ -2280,90 +2902,12 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                     yield* getBaseline(tx, v, key)
                                 );
                         }
-                        const terminal = new Map(
-                            snapshot.completed.map((entry) => [entry.invocation.id, entry])
+                        yield* settleParentActions(
+                            tx,
+                            snapshot.pending,
+                            snapshot.completed,
+                            requestedActionIds
                         );
-                        // The parent's result window may expire after a mapping failure. A
-                        // locally saved committed receipt still proves the action outcome.
-                        for (const { value: entry } of yield* tx.loadSubset(outbox))
-                            if (entry.receipt?.outcome === "committed" && !terminal.has(entry.invocation.id))
-                                terminal.set(entry.invocation.id, publicAction(entry));
-                        const known = new Map(
-                            [...snapshot.pending, ...terminal.values()].map((entry) => [
-                                entry.invocation.id,
-                                entry,
-                            ])
-                        );
-                        for (const entry of yield* pendingIn(tx)) {
-                            const observed = known.get(entry.invocation.id);
-                            if (!observed) continue;
-                            const identity = Table.make<ActionRequest>({ name: "invocation" }).encode(
-                                entry.invocation
-                            );
-                            if (
-                                observed.requestIdentity !== entry.requestIdentity &&
-                                observed.requestIdentity !== identity
-                            )
-                                return yield* fault(
-                                    "Conflict",
-                                    "Parent invocation identity differs from the local action."
-                                );
-                            yield* tx.put(outbox, entry.invocation.id, { ...entry, includedInBase: true });
-                        }
-                        for (const row of yield* acceptedIn(tx)) {
-                            const observed = snapshot.pending.find(
-                                (entry) => entry.invocation.id === row.key
-                            );
-                            if (
-                                observed &&
-                                Table.make({ name: "invocation" }).encode(observed.invocation) !==
-                                    Table.make({ name: "invocation" }).encode(row.value.invocation)
-                            )
-                                yield* tx.put(outbox, row.key, {
-                                    ...row.value,
-                                    invocation: observed.invocation,
-                                    requestIdentity: observed.requestIdentity,
-                                });
-                        }
-                        for (const entry of terminal.values()) {
-                            const local = yield* tx.get(outbox, entry.invocation.id);
-                            if (local?.includedInBase && (entry.receipt || entry.failure)) {
-                                if (entry.receipt)
-                                    yield* bindReceiptBlobs(tx, entry.receipt, local.invocation);
-                                yield* tx.put(completed, entry.invocation.id, {
-                                    ...entry,
-                                    requestIdentity:
-                                        Table.make({ name: "invocation" }).encode(entry.invocation) ===
-                                        Table.make({ name: "invocation" }).encode(local.invocation)
-                                            ? local.requestIdentity
-                                            : entry.requestIdentity,
-                                    sequence: local.sequence,
-                                    completedAt: yield* Clock.currentTimeMillis,
-                                    state: entry.receipt ? "acknowledged" : "blocked",
-                                    receipt: entry.receipt,
-                                });
-                                yield* deletePending(tx, entry.invocation.id);
-                            }
-                        }
-                        if (requestedActionIds)
-                            for (const row of yield* acceptedIn(tx)) {
-                                if (
-                                    !requestedActionIds.includes(row.key as string) ||
-                                    known.has(row.key as string)
-                                )
-                                    continue;
-                                yield* tx.put(outbox, row.key, {
-                                    ...publicAction(row.value),
-                                    state: "blocked",
-                                    retryRequiresAcknowledgement: true,
-                                    optimistic: false,
-                                    failure: "ResultExpired",
-                                    failureOutcome: "unknown",
-                                    failureRetryable: false,
-                                    failureMessage:
-                                        "The parent no longer retains this accepted action's result. Reconcile, retry explicitly, or discard it.",
-                                });
-                            }
                         yield* tx.clear(importedPending);
                         yield* tx.clear(importedCompleted);
                         for (const entry of snapshot.pending)
@@ -2388,10 +2932,12 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         syncParent: Effect.fn("Replica.syncParent", { root: true })(
             function* (source: OntologySource) {
                 yield* open;
+                if (replicationError?.recovery === "stop")
+                    return yield* fault(replicationError.kind, replicationError.message);
                 yield* service.collectClientGarbage;
                 yield* collectResults;
                 // Validates source identity before any invocation can be submitted.
-                yield* service.refreshParent(source);
+                if (!deliveryActive) yield* service.refreshParent(source);
                 const session = yield* sessionFor(source);
                 for (;;) {
                     const entry = yield* access(
@@ -2415,7 +2961,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                     const sequence = (state.parentSubmissionSequence ?? 0) + 1;
                                     if (!Number.isSafeInteger(sequence))
                                         return yield* fault(
-                                            "ValidationFailed",
+                                            "Internal",
                                             "Client submission sequence exhausted."
                                         );
                                     claimed = {
@@ -2440,13 +2986,32 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     yield* notify;
                     const result = yield* Effect.result(
                         Effect.gen(function* () {
-                            const snapshot = yield* source.submit({
+                            const submission: ClientSubmission = {
                                 session: yield* sessionFor(source),
                                 sequence: entry.submission!.sequence,
                                 invocation: entry.invocation,
                                 optimistic: entry.optimistic,
                                 view: yield* requestedView(),
-                            });
+                            };
+                            if (deliveryActive) {
+                                if (source.accept) yield* source.accept(submission);
+                                else yield* source.submit(submission);
+                                yield* access(
+                                    tables.transaction((tx) =>
+                                        Effect.gen(function* () {
+                                            const current = yield* tx.get(outbox, entry.invocation.id);
+                                            if (current && !current.includedInBase)
+                                                yield* tx.put(outbox, entry.invocation.id, {
+                                                    ...current,
+                                                    state: "acknowledged",
+                                                });
+                                        })
+                                    )
+                                );
+                                yield* notify;
+                                return;
+                            }
+                            const snapshot = yield* source.submit(submission);
                             yield* adoptClientState(source, snapshot);
                             if (
                                 (yield* service.pending).some(
@@ -2552,7 +3117,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         if (entry.state === "blocked")
                             return yield* new BackendError({
                                 operation: "action.wait",
-                                kind: entry.failure ?? "ValidationFailed",
+                                kind: entry.failure ?? "Internal",
                                 message:
                                     entry.failureMessage ??
                                     (entry.retryRequiresAcknowledgement === true
@@ -2593,13 +3158,35 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 Effect.tap(() => wake)
             ),
         wake,
-        syncOnce,
+        syncOnce: syncOnce.pipe(
+            Effect.andThen(
+                Effect.gen(function* () {
+                    if (!deliveryActive || !(yield* options.online ?? Effect.succeed(true))) return;
+                    for (;;) {
+                        if (replicationError?.recovery === "stop")
+                            return yield* fault(replicationError.kind, replicationError.message);
+                        const selected = yield* requestedView();
+                        const installed = yield* receiver.installed;
+                        if (installed?.metadata?.generation === selected.generation) return;
+                        yield* Effect.sleep(2);
+                    }
+                }).pipe(
+                    Effect.timeoutOrElse({
+                        duration: 10_000,
+                        orElse: () =>
+                            Effect.fail(
+                                fault("Unavailable", "Waiting for the current selected delivery.", undefined)
+                            ),
+                    })
+                )
+            )
+        ),
         enqueue: Effect.fn("Replica.enqueue", { root: true })(function* (
             invocation: ActionRequest,
             settings?: { optimistic?: boolean }
         ) {
             yield* open;
-            if (!invocation.id) return yield* fault("ValidationFailed", "An invocation ID is required.");
+            if (!invocation.id) return yield* fault("InvalidRequest", "An invocation ID is required.");
             if (invocation.attachmentUploads?.length)
                 return yield* fault(
                     "NotImplemented",
@@ -2746,15 +3333,24 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             ).pipe(Effect.andThen(wake)),
         demand: (subset) =>
             Effect.gen(function* () {
-                const properties = new Set(
-                    definitions.get(subset.objectType)?.properties.map((property) => property.name)
-                );
-                for (const index of indexesForQuery(subset.query ?? {}, properties))
-                    yield* service.ensureIndex(subset.objectType, index);
-                const key = subsetKey(subset);
-                const copy = Table.make<BackendSubset>({ name: "subset-copy" }).decode(
-                    Table.make<BackendSubset>({ name: "subset-copy" }).encode(subset)
-                );
+                yield* view(subset.objectType);
+                const prepared = yield* Effect.try({
+                    try: () => {
+                        evaluateQuery([], subset.query ?? {});
+                        const properties = new Set(
+                            definitions.get(subset.objectType)!.properties.map((property) => property.name)
+                        );
+                        const codec = Table.make<BackendSubset>({ name: "subset-copy" });
+                        return {
+                            indexes: indexesForQuery(subset.query ?? {}, properties),
+                            key: subsetKey(subset),
+                            copy: codec.decode(codec.encode(subset)),
+                        };
+                    },
+                    catch: (cause) => fault("InvalidRequest", "Invalid subset query.", cause),
+                });
+                for (const index of prepared.indexes) yield* service.ensureIndex(subset.objectType, index);
+                const { key, copy } = prepared;
                 yield* retain(subset.objectType, "remote", key, copy);
                 yield* Effect.makeSpanScoped("Replica.demand", {
                     root: true,
@@ -2764,6 +3360,10 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     return yield* options.source.demand(
                         copy.query ? { ...copy, query: retentionQuery(copy.query) } : copy
                     );
+                if (deliveryActive) {
+                    yield* wake;
+                    return;
+                }
                 const watched = adapter!.watchSubset?.(copy);
                 const configuredInterval = adapter!.pollIntervalMs?.(copy);
                 const demand = demands.get(key)!;
@@ -2776,7 +3376,10 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     pollIntervalMs !== undefined &&
                     (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 100)
                 )
-                    return yield* fault("ValidationFailed", "Subset poll interval must be at least 100 ms.");
+                    return yield* fault(
+                        "InvalidConfiguration",
+                        "Subset poll interval must be at least 100 ms."
+                    );
                 const hints =
                     watched ??
                     (pollIntervalMs === undefined
@@ -2817,10 +3420,18 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     { startImmediately: true }
                 );
             }),
-        retainLocal: (objectType, query) => {
-            const subset = { objectType, query };
-            return retain(objectType, "reader", `reader:${subsetKey(subset)}`, subset);
-        },
+        retainLocal: (objectType, query) =>
+            Effect.gen(function* () {
+                const subset = { objectType, query };
+                const key = yield* Effect.try({
+                    try: () => {
+                        evaluateQuery([], query ?? {});
+                        return subsetKey(subset);
+                    },
+                    catch: (cause) => fault("InvalidRequest", "Invalid local query.", cause),
+                });
+                yield* retain(objectType, "reader", `reader:${key}`, subset);
+            }),
         retainActions: (ids) =>
             Effect.acquireRelease(
                 Effect.gen(function* () {
@@ -2828,7 +3439,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     if (ids)
                         yield* Schema.decodeUnknownEffect(Schema.Array(Schema.NonEmptyString))(ids).pipe(
                             Effect.mapError((cause) =>
-                                fault("ValidationFailed", "Invalid action inspection IDs.", cause)
+                                fault("InvalidRequest", "Invalid action inspection IDs.", cause)
                             )
                         );
                     const key = crypto.randomUUID();
@@ -2864,7 +3475,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 !Number.isFinite(age) ||
                 age < 0
             )
-                return yield* fault("ValidationFailed", "Invalid GC bounds.");
+                return yield* fault("InvalidRequest", "Invalid GC bounds.");
             const now = yield* Clock.currentTimeMillis;
             const removed = yield* access(
                 tables.transaction((tx) =>
@@ -2984,11 +3595,14 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         }),
     };
     if (options.startSync !== false && options.source) {
-        yield* connectReplicaParent(service, options.source);
+        yield* options.source.subscribe
+            ? connectReplicaDelivery(service, options.source)
+            : connectReplicaParent(service, options.source);
     } else if (options.startSync !== false) {
+        if (adapter?.subscribeSelection) yield* connectReplicaDelivery(service);
         const poll = options.pollIntervalMs ?? 5000;
         if (!Number.isFinite(poll) || poll < 100)
-            return yield* fault("ValidationFailed", "Sync poll interval must be at least 100 ms.");
+            return yield* fault("InvalidConfiguration", "Sync poll interval must be at least 100 ms.");
         yield* Effect.forkScoped(
             Effect.forever(
                 Effect.gen(function* () {

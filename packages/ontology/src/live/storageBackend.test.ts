@@ -7,7 +7,7 @@ import {
     type OntologyQueryFunctionRegistry,
 } from "@party-stack/ontology";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
-import { eq, inArray, queryOnce } from "@tanstack/db";
+import { eq, inArray, queryOnce, type Collection } from "@tanstack/db";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { createSQLiteTestBackend } from "../testing/sqliteBackend.js";
@@ -305,17 +305,17 @@ describe("SQLite LiveOntology MVP acceptance", () => {
     }
 
     async function readObjectById(
-        collection: { get: (id: string) => unknown },
+        collection: Collection<Record<string, unknown>>,
         primaryKey: string,
         id: string
-    ) {
-        await queryOnce((q) =>
+    ): Promise<unknown> {
+        const rows = await queryOnce((q) =>
             q
-                .from({ object: collection as never })
+                .from({ object: collection })
                 .where(({ object }) => eq((object as Record<string, unknown>)[primaryKey], id))
                 .select(({ object }) => object)
         );
-        return collection.get(id);
+        return rows[0];
     }
 
     it("supports primitive, struct, list, object-reference, and defaultValue parameters", async () => {

@@ -194,9 +194,10 @@ describe("Foundry encrypted properties", () => {
     });
 
     it.each([
-        [403, "ValidationFailed", false],
+        [401, "Unauthenticated", false],
+        [403, "Forbidden", false],
         [404, "NotFound", false],
-        [429, "Unavailable", true],
+        [429, "RateLimited", true],
         [503, "Unavailable", true],
     ])(
         "classifies status %s without retaining sensitive provider errors",

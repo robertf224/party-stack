@@ -183,7 +183,7 @@ test.skipIf(!url)(
                         .isVisible()
                 )
                 .toBe(true);
-            await second.getByRole("button", { name: "Replica.watchParent", exact: true }).click();
+            await second.getByRole("button", { name: "Replica.delivery", exact: true }).click();
             await visible(second, "table", "Subscription events");
             expect(await second.getByLabel("Trace details", { exact: true }).innerText()).toContain(
                 "subscribed"

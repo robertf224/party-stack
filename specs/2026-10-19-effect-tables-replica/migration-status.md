@@ -1,4 +1,4 @@
-# Migration status — October 27, 2026
+# Migration status — October 28, 2026
 
 Current inventory. The [execution log](./implementation.md) records historical
 checkpoints; this file describes the current implementation. The overall
@@ -93,31 +93,26 @@ covered in [native-actions.md](./native-actions.md).
 
 ## What remains, in recommended order
 
-The [October 27 incremental-state proposal](./incremental-state-proposal.md)
-describes scoped browser composition, shared incoming-state installation,
-bounded selected-state diffs, protocol-child GC/blobs and the later query-IVM
-extension. Scoped client/worker composition and the Runtime dependency cleanup
-and protocol-child row/blob retention are implemented; shared incoming-state
-extraction and retained delta delivery remain proposals. The new
-`apps/website` embeds this same document in its Fumadocs design section so it can
-be reviewed alongside the current architecture/runtime/storage documentation.
+The incremental delivery checkpoint is implemented; see
+[incremental-delivery.md](./incremental-delivery.md) for its state, limits,
+transaction boundaries and testing. Browser composition, shared incoming row
+installation, child GC/local bytes, native committed delivery and the speculative
+server extension are in place. Public website docs describe implemented setup and
+behavior; proposals remain in `specs/`.
 
-Recovery and bounded bookkeeping now use the existing selected-snapshot protocol.
-The current checkpoint is documented in [checkpoint-recovery.md](./checkpoint-recovery.md).
-The remaining v0 gates are finishing the streaming/recovery acceptance checkpoint,
-hierarchical Query IR/context binding and server authorization for Gateway parity,
-actual downstream form integration, legacy HTTP retirement, and final validation.
-Server IVM/live query watching, retained replica-state deltas, general untrusted
-replica-state access and advertised/versioned idempotency windows remain outside v0.
-See [the agreed v0 scope](./recovery-v0.md) and
-[Gateway gates](./gateway-v0-parity.md). The inventory below also includes post-v0 work.
+The remaining v0 gates are hierarchical Query IR/context binding and server
+authorization for Gateway parity, downstream form integration, legacy HTTP
+retirement, and final application acceptance. Server IVM/live full-query watching,
+durable delta history/resume, general untrusted replica-state projection and
+advertised/versioned idempotency windows remain future work. See
+[Gateway gates](./gateway-v0-parity.md).
 
-1. **Protocol hardening.** Retained delta history, general scoped returned-state
-   authorization. Source/session recovery, protocol-child row/blob retention and
-   configurable receipt/journal/session cleanup are implemented. Current
-   selected snapshots replace atomically; they are not a retained delta stream.
-   Every child uses local BlobStorage and ordinary row GC. The issue-tracker
-   placement is a trusted same-origin use, not a generic untrusted deployment.
+1. **Protocol hardening.** Native delivery starts with a selected snapshot and then
+   sends atomic incremental patches. Reconnect snapshots preserve local pending
+   work. Comparison/staging state and admission history are bounded. Every child
+   uses local BlobStorage and ordinary row GC. General scoped returned-state
+   authorization and durable delta history are separate follow-ups. The
+   issue-tracker SharedWorker remains a trusted same-origin deployment.
 2. **Provider synchronization.** Foundry durable edits-history catch-up with honest
    cursor guarantees, Salesforce CDC health/reconnect support, deeper predicate
    pushdown and narrower receipt read-back. Foundry watch invalidations currently
@@ -626,3 +621,24 @@ Describe advertises a definition digest, not private schema contents.
 
 The [subsystem review](./architecture-simplification-review.md) records simplifications
 and remaining candidates. Incremental selected-state deltas are still unimplemented.
+
+## October 28 error audit
+
+The [error taxonomy audit](./error-taxonomy.md) separates action validation from
+invalid requests, malformed upstream responses and configuration failures.
+Replication-specific control errors select explicit stream/session/snapshot
+recovery; source/schema mismatches and invalid data stop automatic delivery.
+Fatal delivery diagnostics are observable in Replica status. Typed-channel,
+RPC preservation and pending-action retention tests cover those distinctions.
+
+## October 28 checkpoint verification
+
+Full workspace CI passes all 133 tasks. The backend, replica, server and ontology
+suites pass 35, 106, 80 and 119 tests respectively. Fast-check runs 60 committed
+selection traces and 40 speculative traces against independent snapshot oracles.
+Web-runtime browser acceptance passes all nine cases; issue-tracker passes six
+functional cases plus the existing expected cleanup-warning failure. Browser
+acceptance includes offline cross-tab actions, initiating-tab closure, reload,
+native attachment caching, rejected-action toasts and devtools query/tracing views.
+The deferred TanStack cleanup warning and missing cold-offline app shell remain
+as recorded above. No dependency patch or automatic schema reset is added.

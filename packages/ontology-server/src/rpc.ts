@@ -4,11 +4,13 @@ import {
     ClientSessionSchema,
     ClientTokenSchema,
 } from "@party-stack/ontology-backend/clients";
+import { DeliveryFrameCodec, DeliveryPositionSchema } from "@party-stack/ontology-backend/delivery";
 import {
     BackendSubsetCodec,
     ClientStateCodec,
     ClientSubmissionCodec,
     ClientViewCodec,
+    StateSelectionCodec,
 } from "@party-stack/ontology-backend/protocol";
 import { digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Context, Deferred, Effect, Schema, Stream, Layer, Scope } from "effect";
@@ -17,6 +19,7 @@ import {
     OntologyErrorProjection,
     errorProjectionLayer,
     projectStateFailures,
+    projectActionFailure,
     type ErrorProjectionOptions,
 } from "./errorProjection.js";
 import {
@@ -42,6 +45,8 @@ const Description = Schema.Struct({
     definitionHash: Schema.optional(Schema.String),
     sourceId: Schema.NonEmptyString,
     supportsIdempotency: Schema.Boolean,
+    delivery: Schema.optional(Schema.Boolean),
+    stateDelivery: Schema.optional(Schema.Boolean),
     changes: Schema.optional(Schema.Boolean),
     watchChanges: Schema.optional(Schema.Boolean),
     watchSubset: Schema.optional(Schema.Boolean),
@@ -49,6 +54,23 @@ const Description = Schema.Struct({
 });
 const ReplicaRpcs = RpcGroup.make(
     Rpc.make("Describe", { success: Description, error: BackendError }),
+    Rpc.make("SubscribeSelection", {
+        payload: StateSelectionCodec,
+        success: DeliveryFrameCodec,
+        error: BackendError,
+        stream: true,
+    }),
+    Rpc.make("SubscribeState", {
+        payload: { session: ClientSessionSchema, view: ClientViewCodec },
+        success: DeliveryFrameCodec,
+        error: BackendError,
+        stream: true,
+    }),
+    Rpc.make("AckDelivery", {
+        payload: { kind: Schema.Literals(["committed", "speculative"]), position: DeliveryPositionSchema },
+        error: BackendError,
+    }),
+    Rpc.make("Accept", { payload: ClientSubmissionCodec, error: BackendError }),
     Rpc.make("OpenClient", {
         payload: { resume: Schema.optional(ClientTokenSchema) },
         success: ClientLeaseSchema,
@@ -115,7 +137,17 @@ export type OntologyRpcRequest =
     | { readonly operation: "Describe" | "Changes" }
     | { readonly operation: "OpenClient"; readonly resume?: ClientToken }
     | { readonly operation: "Read"; readonly session: ClientSession; readonly view?: ClientView }
-    | { readonly operation: "Submit"; readonly submission: ClientSubmission }
+    | { readonly operation: "Submit" | "Accept"; readonly submission: ClientSubmission }
+    | {
+          readonly operation: "SubscribeSelection";
+          readonly selection: import("@party-stack/ontology-backend/protocol").StateSelection;
+      }
+    | { readonly operation: "SubscribeState"; readonly session: ClientSession; readonly view: ClientView }
+    | {
+          readonly operation: "AckDelivery";
+          readonly kind: "committed" | "speculative";
+          readonly position: import("@party-stack/ontology-backend/delivery").DeliveryPosition;
+      }
     | {
           readonly operation: "Acknowledge";
           readonly session: ClientSession;
@@ -131,6 +163,8 @@ export type OntologyRpcRequest =
  */
 export interface OntologyRpcServerOptions<R = never> extends ErrorProjectionOptions {
     readonly attachmentTransfers?: AttachmentTransferPolicy<R>;
+    /** Server-controlled selected-delivery capacity, frame and acknowledgment bounds. */
+    readonly delivery?: import("@party-stack/ontology-backend/delivery").DeliveryPolicy;
     readonly source?: OntologySource;
     readonly ontology?: LiveOntology;
     readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
@@ -184,6 +218,12 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                             definitionHash,
                             sourceId: source.sourceId,
                             supportsIdempotency: source.supportsIdempotency,
+                            delivery: Boolean(
+                                options.backend?.subscribeSelection && options.backend.acknowledgeDelivery
+                            ),
+                            stateDelivery: Boolean(
+                                source.subscribe && source.acknowledgeDelivery && source.accept
+                            ),
                             changes: Boolean(options.backend?.changes),
                             watchChanges: Boolean(options.backend?.changes?.watch),
                             watchSubset: Boolean(
@@ -195,6 +235,73 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                         };
                     })
                 )
+            ),
+        SubscribeSelection: (selection, context) =>
+            Stream.unwrap(
+                Effect.gen(function* () {
+                    yield* authorize({ operation: "SubscribeSelection", selection }, context.headers);
+                    if (!options.backend?.subscribeSelection) return yield* unavailableSource();
+                    const delivery = yield* options.backend.subscribeSelection(selection, options.delivery);
+                    return delivery.frames.pipe(
+                        Stream.mapEffect((frame) =>
+                            Effect.gen(function* () {
+                                if (!frame.metadata) return frame;
+                                if (frame.metadata.sourceId !== options.backend!.sourceId)
+                                    return yield* new BackendError({
+                                        operation: "delivery",
+                                        kind: "SourceMismatch",
+                                        message: "The committed delivery source changed.",
+                                        retryable: false,
+                                    });
+                                // The endpoint binds one logical source/session lifetime. A replica
+                                // server's committed facet forwards upstream rows under that identity.
+                                return {
+                                    ...frame,
+                                    metadata: { ...frame.metadata, sourceId: source.sourceId },
+                                };
+                            })
+                        )
+                    );
+                })
+            ),
+        SubscribeState: (request, context) =>
+            Stream.unwrap(
+                Effect.gen(function* () {
+                    yield* authorize({ operation: "SubscribeState", ...request }, context.headers);
+                    if (!source.subscribe) return yield* unavailableSource();
+                    const delivery = yield* source.subscribe(request.session, request.view, options.delivery);
+                    return delivery.frames.pipe(
+                        Stream.map((frame) => ({
+                            ...frame,
+                            changes: frame.changes.map((change) =>
+                                change.kind === "put" &&
+                                (change.record.kind === "pending" || change.record.kind === "completed")
+                                    ? {
+                                          ...change,
+                                          record: {
+                                              ...change.record,
+                                              value: projectActionFailure(change.record.value, options),
+                                          },
+                                      }
+                                    : change
+                            ),
+                        }))
+                    );
+                })
+            ),
+        AckDelivery: (request, context) =>
+            authorize({ operation: "AckDelivery", ...request }, context.headers).pipe(
+                Effect.andThen(() => {
+                    const ack =
+                        request.kind === "committed"
+                            ? options.backend?.acknowledgeDelivery
+                            : source.acknowledgeDelivery;
+                    return ack ? ack(request.position) : unavailableSource();
+                })
+            ),
+        Accept: (request, context) =>
+            authorize({ operation: "Accept", submission: request }, context.headers).pipe(
+                Effect.andThen(() => (source.accept ? source.accept(request) : unavailableSource()))
             ),
         OpenClient: (request, context) =>
             authorize({ operation: "OpenClient", ...request }, context.headers).pipe(
@@ -273,7 +380,7 @@ export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(f
     if (!Number.isFinite(retryIntervalMs) || retryIntervalMs < 1)
         return yield* new BackendError({
             operation: "remote.protocol",
-            kind: "ValidationFailed",
+            kind: "InvalidConfiguration",
             message: "Protocol retry interval must be positive.",
             retryable: false,
         });
@@ -292,6 +399,23 @@ export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(f
         openClient: (resume) => client.OpenClient({ resume }).pipe(Effect.mapError(unavailable)),
         read: (session, view) => client.Read({ session, view }).pipe(Effect.mapError(unavailable)),
         submit: (request) => client.Submit(request).pipe(Effect.mapError(unavailable)),
+        accept: description.stateDelivery
+            ? (request) => client.Accept(request).pipe(Effect.mapError(unavailable))
+            : undefined,
+        subscribe: description.stateDelivery
+            ? (session, view) =>
+                  Effect.succeed({
+                      frames: client.SubscribeState({ session, view }).pipe(Stream.mapError(unavailable)),
+                      acknowledge: (position) =>
+                          client
+                              .AckDelivery({ kind: "speculative", position })
+                              .pipe(Effect.mapError(unavailable)),
+                  })
+            : undefined,
+        acknowledgeDelivery: description.stateDelivery
+            ? (position) =>
+                  client.AckDelivery({ kind: "speculative", position }).pipe(Effect.mapError(unavailable))
+            : undefined,
         acknowledge: (session, revision, through, viewGeneration) =>
             client
                 .Acknowledge({ session, revision, through, viewGeneration })

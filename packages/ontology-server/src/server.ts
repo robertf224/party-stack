@@ -579,7 +579,7 @@ function createPolicyReadBackendAdapter<Context, Ontology extends OntologyDefini
                         catch: (cause) =>
                             new BackendError({
                                 operation: "policy.read",
-                                kind: "ValidationFailed",
+                                kind: "Internal",
                                 message: "Policy-filtered read failed.",
                                 retryable: false,
                                 cause,

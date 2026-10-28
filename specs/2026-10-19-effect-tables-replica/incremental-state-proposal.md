@@ -1,10 +1,7 @@
-**Replication proposal · October 27, 2026.** Scoped composition and the runtime
-boundary cleanup, base/outbox simplification, protocol-child row GC and local blobs
-below are implemented. Incremental transfer and shared incoming-state installation
-remain proposals. This document proposes the next
-replication and browser-composition checkpoint. Existing selected snapshots,
-atomic parent handoff, streaming attachments, and adapter-backed GC remain the
-working baseline. This is not a promise that every item belongs in the initial v0.
+**Historical design proposal · October 27, 2026.** The implementation checkpoint is
+now recorded in [incremental-delivery.md](./incremental-delivery.md). This file
+retains the earlier proposal and tradeoffs; consult that implementation note and
+[migration-status.md](./migration-status.md) for current behavior.
 
 ## Goals and boundaries
 

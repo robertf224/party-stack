@@ -7,7 +7,7 @@ import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { Encrypted } from "@party-stack/ontology-spec/values";
 
-const rejected = (message: string, kind: BackendError["kind"] = "ValidationFailed") =>
+const rejected = (message: string, kind: BackendError["kind"] = "InvalidRequest") =>
     new BackendError({ operation: "ontology.decrypt", kind, message, retryable: false });
 // Do not retain decoder issues, provider exceptions or inputs: all can contain secrets.
 const safe = <A, E>(effect: Effect.Effect<A, E>) =>
@@ -84,7 +84,7 @@ export const makeLiveDecryption = Effect.fnUntraced(function* (options: {
         const result = yield* safe(backend.encrypted.decrypt(handle));
         const decoded = yield* Effect.try({
             try: () => codec.decode(result.value),
-            catch: () => rejected("Invalid decrypted plaintext."),
+            catch: () => rejected("Invalid decrypted plaintext.", "InvalidResponse"),
         });
         if (result.ciphertext !== undefined && result.ciphertext !== handle.ciphertext)
             return yield* rejected("The encrypted value changed; reload it before decrypting.", "Conflict");

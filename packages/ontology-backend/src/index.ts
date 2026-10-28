@@ -9,6 +9,7 @@ export {
     schemaValidationIssues,
     BackendError,
     BackendErrorKindSchema,
+    backendErrorStatus,
     ValidationIssueSchema,
     ValidationReportSchema,
     unauthenticated,
@@ -20,6 +21,8 @@ export {
 } from "./errors.js";
 export type {
     BackendErrorKind,
+    ReplicationErrorKind,
+    ReplicationError,
     ErrorProjection,
     ErrorProjectionContext,
     ValidationReport,
@@ -209,6 +212,18 @@ export interface OntologyBackendService {
     /** Indexed bounded local maintenance; an enclosing server scope schedules it. */
     readonly maintenance?: Effect.Effect<void, BackendError>;
     readonly loadSubset: (subset: BackendSubset) => Effect.Effect<BackendSnapshot, BackendError>;
+    /** Optional selected committed rows. Closing the Scope releases demand and delivery state. */
+    readonly subscribeSelection?: (
+        selection: import("./protocol.js").StateSelection,
+        policy?: import("./delivery.js").DeliveryPolicy
+    ) => Effect.Effect<
+        import("./delivery.js").DeliverySubscription,
+        BackendError,
+        import("effect").Scope.Scope
+    >;
+    readonly acknowledgeDelivery?: (
+        position: import("./delivery.js").DeliveryPosition
+    ) => Effect.Effect<void, BackendError>;
     /** Read-only defaults and edit prefills; never invokes the action. */
     readonly resolveActionParameters?: (
         name: string,

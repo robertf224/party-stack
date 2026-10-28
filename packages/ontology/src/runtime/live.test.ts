@@ -4,6 +4,7 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { MemoryBlobBytesStore } from "@party-stack/runtime";
 import { asProvider } from "@party-stack/runtime/testing";
 import { defineRuntimeFixture, runtimeFixtureContext } from "@party-stack/runtime/testing";
+import { queryOnce } from "@tanstack/db";
 import { Effect, Exit, Scope } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { createLiveOntology } from "../live/LiveOntology.js";
@@ -119,6 +120,7 @@ test("LiveOntology persists and restores offline projections, exposes local-only
     };
     const first = await createLiveOntology(settings);
     try {
+        await queryOnce((q) => q.from({ note: first.objects.Note! }));
         await vi.waitFor(async () =>
             expect((await Effect.runPromise(first.storage!.get("Note", "one")))?.title).toBe("Before")
         );
@@ -188,7 +190,7 @@ test("runtime cleanup closes the ontology's DbClient collections and sync scope"
     ).toBe(true);
     expect(ontology.outbox.collection.status).toBe("cleaned-up");
     await expect(Effect.runPromise(ontology.storage!.pending)).rejects.toMatchObject({
-        kind: "ValidationFailed",
+        kind: "InvalidRequest",
     });
     expect(cleanupBackend).toHaveBeenCalledOnce();
     await ontology.cleanup();
@@ -258,7 +260,7 @@ test("a scoped replica host runs without application collections and outlives in
         expect(released).toHaveBeenCalledOnce();
         await expect(host.blobManager.read("local")).rejects.toThrow("closed");
         await expect(Effect.runPromise(host.replica.pending)).rejects.toMatchObject({
-            kind: "ValidationFailed",
+            kind: "InvalidRequest",
         });
     } finally {
         await Effect.runPromise(Scope.close(firstSession, Exit.void));

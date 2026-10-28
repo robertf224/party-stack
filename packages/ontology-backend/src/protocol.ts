@@ -87,6 +87,16 @@ export interface OntologySource {
     readonly supportsIdempotency: boolean;
     readonly openClient: (resume?: ClientToken) => Effect.Effect<ClientLease, BackendError>;
     readonly read: (session: ClientSession, view?: ClientView) => Effect.Effect<ClientState, BackendError>;
+    readonly subscribe?: (
+        session: ClientSession,
+        view: ClientView,
+        policy?: import("./delivery.js").DeliveryPolicy
+    ) => Effect.Effect<import("./delivery.js").DeliverySubscription, BackendError, Scope.Scope>;
+    readonly acknowledgeDelivery?: (
+        position: import("./delivery.js").DeliveryPosition
+    ) => Effect.Effect<void, BackendError>;
+    /** Acceptance only; selected delivery carries the resulting state. */
+    readonly accept?: (request: ClientSubmission) => Effect.Effect<void, BackendError>;
     readonly demand: (subset: BackendSubset) => Effect.Effect<void, BackendError, Scope.Scope>;
     readonly subscribeChanges: Effect.Effect<Stream.Stream<void, BackendError>, BackendError, Scope.Scope>;
     readonly submit: (request: ClientSubmission) => Effect.Effect<ClientState, BackendError>;
@@ -156,13 +166,14 @@ export const BackendSubsetSchema = Schema.Struct({
     objectType: Schema.NonEmptyString,
     query: Schema.optional(QuerySchema),
 });
+export const StateSelectionSchema = Schema.Struct({
+    subsets: Schema.Array(BackendSubsetSchema),
+    actionIds: Schema.Array(Schema.NonEmptyString),
+    inspectActions: Schema.optional(Schema.Boolean),
+});
 export const ClientViewSchema = Schema.Struct({
     generation: PositiveCounter,
-    selection: Schema.Struct({
-        subsets: Schema.Array(BackendSubsetSchema),
-        actionIds: Schema.Array(Schema.NonEmptyString),
-        inspectActions: Schema.optional(Schema.Boolean),
-    }),
+    selection: StateSelectionSchema,
 });
 export const ReplicaStateSnapshotSchema = Schema.Struct({
     sourceId: Schema.NonEmptyString,
@@ -224,3 +235,5 @@ export const ClientStateCodec = protocolValueCodec(ClientStateSchema);
 export const ClientSubmissionCodec = protocolValueCodec(ClientSubmissionSchema);
 export const ClientViewCodec = protocolValueCodec(ClientViewSchema);
 export const BackendSubsetCodec = protocolValueCodec(BackendSubsetSchema);
+
+export const StateSelectionCodec = protocolValueCodec(StateSelectionSchema);

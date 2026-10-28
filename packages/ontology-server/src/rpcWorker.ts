@@ -42,7 +42,7 @@ export const connectOntologyWorker = Effect.fn("OntologyServer.connectWorker")(f
     if (!Number.isFinite(timeout) || timeout < 1)
         return yield* new BackendError({
             operation: "worker.connect",
-            kind: "ValidationFailed",
+            kind: "InvalidConfiguration",
             retryable: false,
             message: "Worker connection timeout must be positive.",
         });
@@ -117,6 +117,11 @@ export const serveOpenedOntologyWorker = Effect.fn("OntologyServer.openWorker")(
         openClient: (resume) => Effect.flatMap(current, (value) => value.openClient(resume)),
         read: (session, view) => Effect.flatMap(current, (value) => value.read(session, view)),
         submit: (request) => Effect.flatMap(current, (value) => value.submit(request)),
+        accept: (request) => Effect.flatMap(current, (value) => value.accept!(request)),
+        subscribe: (session, view, policy) =>
+            Effect.flatMap(current, (value) => value.subscribe!(session, view, policy)),
+        acknowledgeDelivery: (position) =>
+            Effect.flatMap(current, (value) => value.acknowledgeDelivery!(position)),
         acknowledge: (...args) => Effect.flatMap(current, (value) => value.acknowledge(...args)),
         demand: (subset) => Effect.flatMap(current, (value) => value.demand(subset)),
         subscribeChanges: Effect.flatMap(current, (value) => value.subscribeChanges),

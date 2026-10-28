@@ -20,7 +20,7 @@ const setup = Effect.fnUntraced(function* (
                     (cause) =>
                         new BackendError({
                             operation: "attachment.create",
-                            kind: "ValidationFailed",
+                            kind: "InvalidRequest",
                             message: "Incomplete attachment.",
                             retryable: false,
                             cause,
@@ -39,7 +39,7 @@ const setup = Effect.fnUntraced(function* (
             : Effect.fail(
                   new BackendError({
                       operation: "authorize",
-                      kind: "ValidationFailed",
+                      kind: "InvalidRequest",
                       message: "Denied",
                       retryable: false,
                   })
@@ -151,7 +151,7 @@ for (const invalid of ["sequence", "size"] as const) {
                                 end: true,
                             })
                         )
-                    ).toMatchObject({ _tag: "Failure", failure: { kind: "ValidationFailed" } });
+                    ).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidRequest" } });
                     expect(yield* Fiber.join(upload)).toMatchObject({ _tag: "Failure" });
                     expect(stored.size).toBe(0);
                 })
@@ -192,7 +192,7 @@ test("cancelling the owning stream releases an incomplete upload; later chunks c
                             end: true,
                         })
                     )
-                ).toMatchObject({ _tag: "Failure", failure: { kind: "ValidationFailed" } });
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidRequest" } });
                 expect(stored.size).toBe(0);
             })
         )
@@ -310,7 +310,7 @@ test("admission bounds release capacity on cancellation and enforce limits on un
                             end: true,
                         })
                     )
-                ).toMatchObject({ _tag: "Failure", failure: { kind: "ValidationFailed" } });
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidRequest" } });
                 expect(yield* Fiber.join(next)).toMatchObject({ _tag: "Failure" });
                 expect(stored.size).toBe(0);
             })

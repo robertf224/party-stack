@@ -252,7 +252,7 @@ export const ontologyAttachmentHandlers = <R>(options: OntologyOperationOptions<
                               catch: () =>
                                   new BackendError({
                                       operation: "attachment.stage",
-                                      kind: "ValidationFailed",
+                                      kind: "InvalidRequest",
                                       message: "Invalid attachment target.",
                                       retryable: false,
                                   }),
@@ -261,7 +261,7 @@ export const ontologyAttachmentHandlers = <R>(options: OntologyOperationOptions<
                 if (type && type.kind !== "attachment")
                     return yield* new BackendError({
                         operation: "attachment.stage",
-                        kind: "ValidationFailed",
+                        kind: "InvalidRequest",
                         message: "Target is not an attachment.",
                         retryable: false,
                     });
@@ -333,7 +333,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                     if (!watched && interval !== false && (!Number.isFinite(interval) || interval < 100))
                         return yield* new BackendError({
                             operation: "WatchSubset",
-                            kind: "ValidationFailed",
+                            kind: "InvalidConfiguration",
                             retryable: false,
                             message: "Invalid subset poll interval.",
                         });
@@ -385,7 +385,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                     catch: () =>
                         new BackendError({
                             operation: "decrypt",
-                            kind: "ValidationFailed",
+                            kind: "InvalidResponse",
                             message: "Invalid decrypted value.",
                             retryable: false,
                         }),

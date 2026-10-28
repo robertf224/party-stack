@@ -187,13 +187,13 @@ async function readObject(
     collection: Collection<Record<string, unknown>>,
     id: string
 ): Promise<Record<string, unknown> | undefined> {
-    await queryOnce((query) =>
+    const rows = await queryOnce((query) =>
         query
             .from({ object: collection })
             .where(({ object }) => eq(object.id, id))
             .select(({ object }) => object)
     );
-    return collection.get(id);
+    return rows[0];
 }
 
 const mutators = {

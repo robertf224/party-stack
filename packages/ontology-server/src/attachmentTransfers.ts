@@ -80,7 +80,7 @@ type Frame = Pick<Schema.Schema.Type<typeof Chunk>, "bytes" | "end">;
 const rejected = (message: string) =>
     new BackendError({
         operation: "attachment.transfer",
-        kind: "ValidationFailed",
+        kind: "InvalidRequest",
         message,
         retryable: false,
     });

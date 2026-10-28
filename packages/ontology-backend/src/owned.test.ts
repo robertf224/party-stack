@@ -1,4 +1,5 @@
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
+import { OntologyStorageError, SchemaMismatch } from "@party-stack/ontology-storage";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -308,6 +309,22 @@ test("trusted integrations share the action journal and preserve callback errors
                 )
             );
             expect(Result.isFailure(failed) && failed.failure).toBe(marker);
+            const mismatch = new OntologyStorageError({
+                operation: "read",
+                reason: new SchemaMismatch({
+                    message: "Definition changed.",
+                    table: "Counter",
+                    expected: 1,
+                    actual: 2,
+                }),
+            });
+            for (const operation of [backend.storage.read, backend.storage.transaction]) {
+                const result = yield* Effect.result(operation(() => Effect.fail(mismatch)));
+                expect(result).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "SchemaMismatch", retryable: false },
+                });
+            }
             expect(yield* backend.storage.read((tx) => tx.get("Counter", "one"))).toEqual({
                 id: "one",
                 count: 2,

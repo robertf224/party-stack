@@ -84,7 +84,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
             if (!definition)
                 return yield* new BackendError({
                     operation: "foundry.loadSubset",
-                    kind: "ValidationFailed",
+                    kind: "InvalidRequest",
                     message: "Unknown Foundry object type.",
                     retryable: false,
                 });

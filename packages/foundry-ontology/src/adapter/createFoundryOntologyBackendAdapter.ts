@@ -633,7 +633,7 @@ export function createFoundryOntologyBackendAdapter(
                             )
                                 return yield* new BackendError({
                                     operation: "attachment.read",
-                                    kind: "ValidationFailed",
+                                    kind: "InvalidRequest",
                                     message: "Invalid byte range.",
                                     retryable: false,
                                 });

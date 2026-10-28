@@ -21,7 +21,7 @@ export const makeCachedProxy = Effect.fn("OntologyProxy.make")(function* (option
     if (!Number.isFinite(idle) || idle < 0 || !Number.isSafeInteger(capacity) || capacity < 1)
         return yield* new BackendError({
             operation: "proxy.configure",
-            kind: "ValidationFailed",
+            kind: "InvalidConfiguration",
             message: "Invalid cache demand bounds.",
             retryable: false,
         });
@@ -78,6 +78,8 @@ export const makeCachedProxy = Effect.fn("OntologyProxy.make")(function* (option
     return {
         ...options.backend,
         name: `cached:${options.backend.name}`,
+        subscribeSelection: options.replica.subscribeSelection,
+        acknowledgeDelivery: (position) => options.replica.acknowledgeDelivery(position, false),
         loadSubset: Effect.fn("OntologyProxy.loadSubset")((subset) =>
             Effect.scoped(
                 Effect.gen(function* () {

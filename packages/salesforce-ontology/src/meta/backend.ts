@@ -43,7 +43,7 @@ export function makeSalesforceMetadataBackend(
             if (!type)
                 return yield* new BackendError({
                     operation: "loadSubset",
-                    kind: "ValidationFailed",
+                    kind: "InvalidRequest",
                     message: "Unknown metadata object type.",
                     retryable: false,
                 });

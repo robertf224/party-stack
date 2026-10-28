@@ -13,8 +13,15 @@ import { digestBytes, byteSource } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Clock, Effect, PubSub, Schema, Stream } from "effect";
 import { clientRegistry } from "./clients.js";
+import { acknowledgeDelivery, makeDelivery, scanSelectedRows } from "./delivery.js";
 import { actionReferenceIssues } from "./references.js";
-import { schemaValidationIssues, BackendError, ActionReceiptSchema, BackendCommitSchema } from "./index.js";
+import {
+    classifyBackendFailure,
+    schemaValidationIssues,
+    BackendError,
+    ActionReceiptSchema,
+    BackendCommitSchema,
+} from "./index.js";
 import type { ClientPolicy } from "./clients.js";
 import type {
     ActionRequest,
@@ -99,13 +106,7 @@ export interface OwnedBackendService extends OntologyBackendService {
 const fault = (operation: string, kind: BackendError["kind"], message: string, cause?: unknown) =>
     new BackendError({ operation, kind, message, retryable: false, cause });
 const boundary = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    effect.pipe(
-        Effect.mapError((error) =>
-            error instanceof BackendError
-                ? error
-                : fault("storage", "Unavailable", "Owned storage operation failed.", error)
-        )
-    );
+    effect.pipe(Effect.mapError((error) => classifyBackendFailure("storage", error)));
 const CursorSchema = Schema.Struct({ source: Schema.String, revision: Schema.Int });
 const ReceiptSchema = Schema.Struct({
     fingerprint: Schema.String,
@@ -134,7 +135,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
 ): Effect.fn.Return<OwnedBackendService, BackendError> {
     const schemas = yield* Effect.try({
         try: () => compileEffectSchemas(options.ir),
-        catch: (cause) => fault("definition", "ValidationFailed", "Invalid ontology definition.", cause),
+        catch: (cause) => fault("definition", "InvalidConfiguration", "Invalid ontology definition.", cause),
     });
     // Backend protocols carry portable ontology values; Effect-facing clients may decode them at their boundary.
     const objectSchemas = Object.fromEntries(
@@ -145,21 +146,31 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     );
     const storage = makeOntologyStorage(model, options.tables, { blobs: options.blobs });
     const tables = options.tables;
+    const schemaHash = yield* boundary(
+        digestBytes({
+            type: "application/json",
+            stream: Stream.make(new TextEncoder().encode(JSON.stringify(options.ir))),
+        })
+    );
     const maxCommits = options.history?.maxCommits ?? 10_000;
     if ((maxCommits !== Infinity && !Number.isSafeInteger(maxCommits)) || maxCommits < 1)
         return yield* fault(
             "history",
-            "ValidationFailed",
+            "InvalidConfiguration",
             "Journal retention requires a positive commit bound."
         );
     const resultRetentionMs = options.resultRetentionMs ?? 7 * 24 * 60 * 60 * 1000;
     if (resultRetentionMs <= 0 || Number.isNaN(resultRetentionMs))
-        return yield* fault("retention", "ValidationFailed", "Result retention must be positive.");
+        return yield* fault("retention", "InvalidConfiguration", "Result retention must be positive.");
     if (
         options.history?.maxAgeMs !== undefined &&
         (options.history.maxAgeMs < 0 || Number.isNaN(options.history.maxAgeMs))
     )
-        return yield* fault("retention", "ValidationFailed", "Journal retention age must be nonnegative.");
+        return yield* fault(
+            "retention",
+            "InvalidConfiguration",
+            "Journal retention age must be nonnegative."
+        );
     const receiptKey = (id: string) => JSON.stringify([options.actionScope ?? "system", id]);
     const metadata = Table.make<{ revision: number; source: string; journalFloor?: number }>({
         name: JSON.stringify(["backend", options.namespace, "metadata"]),
@@ -228,9 +239,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         const store = model.objects[name];
         return store
             ? Effect.succeed(store)
-            : Effect.fail(
-                  fault("object", "ValidationFailed", `Unknown object type ${JSON.stringify(name)}.`)
-              );
+            : Effect.fail(fault("object", "InvalidRequest", `Unknown object type ${JSON.stringify(name)}.`));
     };
     const read = (native: ReadStorageTransaction): OwnedReadTransaction => ({
         get: (name, key) => boundary(Effect.flatMap(object(name), (store) => native.get(store, key))),
@@ -303,7 +312,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 .pipe(
                     Effect.mapError((error) =>
                         error instanceof OntologyStorageError
-                            ? fault("storage", "Unavailable", "Owned storage operation failed.", error)
+                            ? classifyBackendFailure("storage", error)
                             : error
                     )
                 ),
@@ -321,7 +330,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                     .pipe(
                         Effect.mapError((error) =>
                             error instanceof OntologyStorageError
-                                ? fault("storage", "Unavailable", "Owned storage operation failed.", error)
+                                ? classifyBackendFailure("storage", error)
                                 : error
                         )
                     );
@@ -338,7 +347,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 `No action implementation for ${JSON.stringify(invocation.name)}.`
             );
         if (!invocation.id)
-            return yield* fault("applyAction", "ValidationFailed", "Actions require a stable invocation ID.");
+            return yield* fault("applyAction", "InvalidRequest", "Actions require a stable invocation ID.");
         const encodedParameters = yield* Schema.encodeEffect(
             Schema.toCodecJson(Schema.toEncoded(parameterSchema))
         )(invocation.parameters).pipe(
@@ -364,7 +373,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                     digest,
                 })),
                 Effect.mapError((cause) =>
-                    fault("upload", "ValidationFailed", "Cannot identify attachment bytes.", cause)
+                    fault("upload", "InvalidRequest", "Cannot identify attachment bytes.", cause)
                 )
             )
         );
@@ -391,7 +400,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 `No action implementation for ${JSON.stringify(invocation.name)}.`
             );
         if (!invocation.id)
-            return yield* fault("applyAction", "ValidationFailed", "Actions require a stable invocation ID.");
+            return yield* fault("applyAction", "InvalidRequest", "Actions require a stable invocation ID.");
         const parameters = yield* Schema.decodeUnknownEffect(
             Schema.toEncoded(schemas.actionParameterSchemas[invocation.name]!)
         )(invocation.parameters).pipe(
@@ -538,6 +547,38 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             })
         )
     );
+    const subscribeSelection: NonNullable<OntologyBackendService["subscribeSelection"]> = (
+        selection,
+        policy
+    ) =>
+        makeDelivery({
+            tables: { ...tables, transaction: (body) => storage.transaction(() => body(tables)) },
+            namespace: options.namespace,
+            policy,
+            changes: PubSub.subscribe(wakes).pipe(Effect.map(Stream.fromSubscription)),
+            capture: (_tx, emit) =>
+                boundary(
+                    Effect.gen(function* () {
+                        for (const subset of selection.subsets) {
+                            const store = yield* object(subset.objectType);
+                            yield* scanSelectedRows(
+                                (query) => boundary(storage.loadSubset(store, query)),
+                                subset.query,
+                                (row) => emit({ kind: "base", objectType: subset.objectType, ...row })
+                            );
+                        }
+                        const revision = yield* current;
+                        return {
+                            sourceId: source,
+                            schemaHash,
+                            generation: 1,
+                            revision: revision + 1,
+                            cursor: cursor(revision),
+                            coverage: selection.subsets.map((subset) => ({ subset, complete: true })),
+                        };
+                    })
+                ),
+        });
     const protocol: OntologySource = {
         sourceId: source,
         supportsIdempotency: true,
@@ -597,7 +638,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             if (!request.invocation.id || request.invocation.attachmentUploads?.length)
                 return yield* fault(
                     "protocol",
-                    "ValidationFailed",
+                    "InvalidRequest",
                     "Protocol submissions require an invocation ID and staged attachment handles."
                 );
             if (
@@ -607,7 +648,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             )
                 return yield* fault(
                     "protocol",
-                    "ValidationFailed",
+                    "InvalidRequest",
                     "The submission view must include its action outcome."
                 );
             const prepared = yield* prepare(request.invocation);
@@ -697,6 +738,8 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         collectClientGarbage,
         maintenance: collectGarbage,
         supportsIdempotency: true,
+        subscribeSelection,
+        acknowledgeDelivery: (position) => acknowledgeDelivery(tables, options.namespace, position),
         loadSubset: (subset) =>
             boundary(
                 Effect.gen(function* () {
@@ -816,11 +859,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                             Schema.toEncoded(schemas.queryReturnSchemas[name]!)
                         )(result).pipe(
                             Effect.mapError(() =>
-                                fault(
-                                    "query",
-                                    "ValidationFailed",
-                                    "Query result does not match its definition."
-                                )
+                                fault("query", "Internal", "Query result does not match its definition.")
                             )
                         );
                     })
@@ -844,7 +883,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                             if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000)
                                 return yield* fault(
                                     "changes",
-                                    "ValidationFailed",
+                                    "InvalidRequest",
                                     "Change page limit must be between 1 and 1000."
                                 );
                             const rows = yield* tables.loadSubset(journal, {

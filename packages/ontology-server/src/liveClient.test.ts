@@ -100,7 +100,9 @@ test("framework composition retains platform/transport after acquisition, confir
         await live.actions.increment!({});
         expect((await queryOnce((q) => q.from({ counter: live.objects.Counter! })))[0]?.count).toBe(2);
         expect(live.diagnostics?.parent).toBeUndefined();
-        expect(requests).toEqual(expect.arrayContaining(["LoadSubset", "ApplyAction", "PullChanges"]));
+        expect(requests).toEqual(
+            expect.arrayContaining(["SubscribeSelection", "AckDelivery", "ApplyAction"])
+        );
         expect(
             requests.some((operation) =>
                 ["OpenClient", "Read", "Submit", "Acknowledge", "Demand"].includes(operation)

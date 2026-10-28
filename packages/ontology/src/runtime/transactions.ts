@@ -16,7 +16,7 @@ const failure = (cause: unknown) =>
         ? cause
         : new BackendError({
               operation: "mutator",
-              kind: "ValidationFailed",
+              kind: "Internal",
               message: cause instanceof Error ? cause.message : "Transaction execution failed.",
               retryable: false,
               cause,

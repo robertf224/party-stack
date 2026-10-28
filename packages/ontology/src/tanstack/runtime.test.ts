@@ -57,6 +57,8 @@ test("persisted inspection queries never acquire remote demand", async () => {
     let demands = 0;
     const replica = {
         loadSubset: () => Effect.succeed([{ key: "one", value: { id: "one" } }]),
+        observeRows: () =>
+            Stream.make({ reset: true, rows: [{ key: "one", value: { id: "one" } }], removed: [] }),
         retainLocal: () => Effect.void,
         demand: () =>
             Effect.sync(() => {

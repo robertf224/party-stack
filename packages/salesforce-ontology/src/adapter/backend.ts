@@ -59,7 +59,7 @@ export function makeSalesforceBackend(options: {
             if (!definition)
                 return yield* new BackendError({
                     operation: "salesforce.loadSubset",
-                    kind: "ValidationFailed",
+                    kind: "InvalidRequest",
                     message: "Unknown Salesforce object type.",
                     retryable: false,
                 });

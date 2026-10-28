@@ -1,4 +1,4 @@
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, backendErrorStatus } from "@party-stack/ontology-backend";
 import { z } from "zod";
 
 export type RemoteOntologyErrorCode =
@@ -147,16 +147,7 @@ export function statusToCode(status: number): RemoteOntologyErrorCode {
 export function remoteOntologyErrorFromUnknown(error: unknown): RemoteOntologyError {
     if (error instanceof RemoteOntologyError) return error;
     if (error instanceof BackendError) {
-        const status =
-            error.kind === "NotFound"
-                ? 404
-                : error.kind === "ValidationFailed"
-                  ? 422
-                  : error.kind === "Conflict" || error.kind === "HistoryExpired"
-                    ? 409
-                    : error.kind === "NotImplemented"
-                      ? 400
-                      : 503;
+        const status = backendErrorStatus(error);
         return new RemoteOntologyError({
             name: error.kind,
             code: error.kind === "Unavailable" ? "BACKEND" : statusToCode(status),

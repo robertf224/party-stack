@@ -320,7 +320,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
                               catch: () =>
                                   new BackendError({
                                       operation: "ontology.decrypt",
-                                      kind: "ValidationFailed",
+                                      kind: "InvalidResponse",
                                       message: "Invalid decrypted value.",
                                       retryable: false,
                                   }),

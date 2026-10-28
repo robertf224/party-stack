@@ -1,6 +1,7 @@
 import {
     ActionReceiptSchema,
     BackendError,
+    backendErrorStatus,
     classifyBackendFailure,
     projectBackendError,
     type ActionRequest,
@@ -40,27 +41,14 @@ const Payload = Schema.Struct({
 const invalid = (message: string) =>
     new BackendError({
         operation: "attachment.http",
-        kind: "ValidationFailed",
+        kind: "InvalidRequest",
         message,
         retryable: false,
         actionOutcome: "not-committed",
     });
 const failure = (cause: unknown) =>
     cause instanceof BackendError ? cause : classifyBackendFailure("attachment.http", cause);
-const status = (kind: BackendError["kind"]) =>
-    kind === "Unauthenticated"
-        ? 401
-        : kind === "Forbidden"
-          ? 403
-          : kind === "NotFound"
-            ? 404
-            : kind === "RateLimited"
-              ? 429
-              : kind === "ValidationFailed"
-                ? 400
-                : kind === "NotImplemented"
-                  ? 501
-                  : 503;
+const status = (kind: BackendError["kind"]) => backendErrorStatus({ kind });
 export const isAttachmentHttpRequest = (request: Request) => {
     const url = new URL(request.url);
     return url.searchParams.has(uploadParameter) || url.searchParams.has(actionParameter);

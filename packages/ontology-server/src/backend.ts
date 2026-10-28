@@ -1,4 +1,9 @@
-import { BackendError, ActionReceiptSchema, DecryptedValueSchema } from "@party-stack/ontology-backend";
+import {
+    BackendError,
+    BackendErrorKindSchema,
+    ActionReceiptSchema,
+    DecryptedValueSchema,
+} from "@party-stack/ontology-backend";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect, Schema } from "effect";
 import { RemoteOntologyError } from "./errors.js";
@@ -6,28 +11,42 @@ import type { RemoteOntologyTransport } from "./protocol.js";
 import type { OntologyIR } from "@party-stack/ontology";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 
-const failure = (operation: string, cause: unknown) =>
-    cause instanceof BackendError
-        ? cause
-        : new BackendError({
-              operation,
-              kind:
-                  cause instanceof RemoteOntologyError && !cause.retryable
-                      ? cause.name === "HistoryExpired"
-                          ? "HistoryExpired"
-                          : cause.name === "Conflict"
-                            ? "Conflict"
-                            : cause.name === "NotImplemented"
-                              ? "NotImplemented"
-                              : cause.code === "NOT_FOUND"
-                                ? "NotFound"
-                                : "ValidationFailed"
-                      : "Unavailable",
-              message:
-                  cause instanceof RemoteOntologyError ? cause.message : "Remote ontology request failed.",
-              retryable: cause instanceof RemoteOntologyError ? cause.retryable : true,
-              cause,
-          });
+const failure = (operation: string, cause: unknown) => {
+    if (cause instanceof BackendError) return cause;
+    if (cause instanceof RemoteOntologyError) {
+        const decoded = Schema.decodeUnknownOption(BackendErrorKindSchema)(cause.name);
+        const kind =
+            decoded._tag === "Some"
+                ? decoded.value
+                : cause.code === "VALIDATION"
+                  ? "ValidationFailed"
+                  : cause.status === 401
+                    ? "Unauthenticated"
+                    : cause.status === 403
+                      ? "Forbidden"
+                      : cause.status === 404
+                        ? "NotFound"
+                        : cause.status === 429
+                          ? "RateLimited"
+                          : cause.status < 500
+                            ? "InvalidRequest"
+                            : "Unavailable";
+        return new BackendError({
+            operation,
+            kind,
+            message: cause.message,
+            retryable: cause.retryable,
+            cause,
+        });
+    }
+    return new BackendError({
+        operation,
+        kind: "Unavailable",
+        message: "Remote ontology request failed.",
+        retryable: true,
+        cause,
+    });
+};
 const request = <A>(operation: string, run: (signal: AbortSignal) => Promise<A>) =>
     Effect.tryPromise({ try: run, catch: (cause) => failure(operation, cause) }).pipe(
         Effect.withSpan(`RemoteOntology.${operation}`)
@@ -55,7 +74,7 @@ export function makeRemoteOntologyBackend(options: {
                         "loadSubset",
                         new BackendError({
                             operation: "loadSubset",
-                            kind: "ValidationFailed",
+                            kind: "InvalidRequest",
                             message: "Unknown object type.",
                             retryable: false,
                         })
@@ -176,7 +195,7 @@ export function makeRemoteOntologyBackend(options: {
                     )
                         throw new BackendError({
                             operation: "attachment.read",
-                            kind: "ValidationFailed",
+                            kind: "InvalidRequest",
                             message: "Invalid byte range.",
                             retryable: false,
                         });

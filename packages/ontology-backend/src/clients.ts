@@ -83,7 +83,11 @@ export const clientRegistry = (
             !Number.isSafeInteger(maxUnacknowledged) ||
             maxUnacknowledged < 1
         )
-            return yield* error("policy", "ValidationFailed", "Client retention bounds must be positive.");
+            return yield* error(
+                "policy",
+                "InvalidConfiguration",
+                "Client retention bounds must be positive."
+            );
     });
     const initialize = (tx: Transaction) =>
         Effect.gen(function* () {
@@ -179,7 +183,7 @@ export const clientRegistry = (
         if (!Number.isSafeInteger(sequence) || sequence < 1)
             return yield* error(
                 "sequence",
-                "ValidationFailed",
+                "InvalidRequest",
                 "Submission sequence must be a positive safe integer."
             );
         if (sequence <= record.acceptedThrough) {
@@ -226,7 +230,7 @@ export const clientRegistry = (
         if (!Number.isSafeInteger(generation) || generation < (view ? 1 : 0))
             return yield* error(
                 "view",
-                "ValidationFailed",
+                "InvalidRequest",
                 "A selected view requires a positive safe generation."
             );
         const identity = view ? Table.make({ name: "view-identity" }).encode(view.selection) : "all";
@@ -282,7 +286,7 @@ export const clientRegistry = (
         )
             return yield* error(
                 "acknowledgment",
-                "ValidationFailed",
+                "InvalidRequest",
                 "Cannot acknowledge state or submissions that were not delivered."
             );
         // A delayed acknowledgment of an older snapshot cannot prove which newer

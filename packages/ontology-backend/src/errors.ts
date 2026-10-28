@@ -1,4 +1,7 @@
+import { OntologyStorageError } from "@party-stack/ontology-storage";
 import { Predicate, Schema, SchemaIssue, Redacted } from "effect";
+import { HttpClientError } from "effect/http";
+import { RpcClientError } from "effect/rpc";
 import type { ValidationIssue } from "@party-stack/ontology-spec";
 
 export type { ValidationIssue };
@@ -27,6 +30,9 @@ export const BackendErrorKindSchema = Schema.Literals([
     "Forbidden",
     "NotFound",
     "ValidationFailed",
+    "InvalidRequest",
+    "InvalidResponse",
+    "InvalidConfiguration",
     "Conflict",
     "NotImplemented",
     "RateLimited",
@@ -60,11 +66,37 @@ export class BackendError<
         super(properties);
     }
 }
+/** HTTP bindings share these statuses; RPC still carries the typed error schema. */
+export const backendErrorStatus = (error: Pick<BackendError, "kind">): number =>
+    ({
+        Unauthenticated: 401,
+        Forbidden: 403,
+        NotFound: 404,
+        ValidationFailed: 422,
+        InvalidRequest: 400,
+        InvalidResponse: 502,
+        InvalidConfiguration: 500,
+        Conflict: 409,
+        NotImplemented: 501,
+        RateLimited: 429,
+        Unavailable: 503,
+        Internal: 500,
+        HistoryExpired: 409,
+        SessionExpired: 409,
+        SessionReplaced: 409,
+        ViewReplaced: 409,
+        ResultExpired: 409,
+        SourceMismatch: 409,
+        SchemaMismatch: 409,
+    })[error.kind];
 export type OperationErrorKind =
     | "Unauthenticated"
     | "Forbidden"
     | "NotFound"
     | "ValidationFailed"
+    | "InvalidRequest"
+    | "InvalidResponse"
+    | "InvalidConfiguration"
     | "Conflict"
     | "NotImplemented"
     | "RateLimited"
@@ -72,7 +104,18 @@ export type OperationErrorKind =
     | "Internal";
 export type ApplyActionError = BackendError<OperationErrorKind>;
 export type ValidateActionError = BackendError<OperationErrorKind>;
-export type LoadSubsetError = BackendError<OperationErrorKind | "HistoryExpired">;
+export type ReplicationErrorKind =
+    | "HistoryExpired"
+    | "SessionExpired"
+    | "SessionReplaced"
+    | "ViewReplaced"
+    | "ResultExpired"
+    | "SourceMismatch"
+    | "SchemaMismatch";
+export type ReplicationError = BackendError<ReplicationErrorKind>;
+export type LoadSubsetError = BackendError<
+    Exclude<OperationErrorKind, "ValidationFailed"> | "HistoryExpired"
+>;
 
 export const unauthenticated = (message = "Authentication is required.", options?: ErrorOptions) =>
     new BackendError({
@@ -89,7 +132,8 @@ export const isUnauthenticatedError = (error: unknown): error is BackendError<"U
 /** Unknown outcomes apply to dispatch/execution failures, never ordinary rejections. */
 export const isUnknownActionOutcome = (error: BackendError) =>
     error.actionOutcome === "unknown" ||
-    (error.actionOutcome === undefined && (error.kind === "Unavailable" || error.kind === "Internal"));
+    (error.actionOutcome === undefined &&
+        (error.kind === "Unavailable" || error.kind === "Internal" || error.kind === "InvalidResponse"));
 
 const ProviderFailure = Schema.Struct({
     reason: Schema.optional(Schema.Unknown),
@@ -111,6 +155,58 @@ const ProviderFailure = Schema.Struct({
 /** Normalize SDK failures. No provider message/body is made public by this classifier. */
 export function classifyBackendFailure(operation: string, cause: unknown): BackendError {
     if (cause instanceof BackendError) return cause;
+    if (
+        (cause instanceof RpcClientError.RpcClientError && cause.reason._tag === "RpcClientDefect") ||
+        (cause instanceof HttpClientError.HttpClientError && cause.reason._tag === "DecodeError")
+    )
+        return new BackendError({
+            operation,
+            kind: "InvalidResponse",
+            message: "The source returned an invalid response.",
+            retryable: false,
+            actionOutcome: "unknown",
+            cause: Redacted.make(cause),
+        });
+    if (
+        cause instanceof HttpClientError.HttpClientError &&
+        (cause.reason._tag === "EncodeError" || cause.reason._tag === "InvalidUrlError")
+    )
+        return new BackendError({
+            operation,
+            kind: cause.reason._tag === "EncodeError" ? "InvalidRequest" : "InvalidConfiguration",
+            message: "The request could not be constructed.",
+            retryable: false,
+            actionOutcome: "not-committed",
+            cause: Redacted.make(cause),
+        });
+    if (cause instanceof OntologyStorageError) {
+        const reason = cause.reason;
+        const kind: BackendErrorKind =
+            reason._tag === "QueryError"
+                ? "InvalidRequest"
+                : reason._tag === "ConfigurationError" || reason._tag === "IndexError"
+                  ? "InvalidConfiguration"
+                  : reason._tag === "DefinitionMismatch" || reason._tag === "SchemaMismatch"
+                    ? "SchemaMismatch"
+                    : reason._tag === "UniqueConstraint"
+                      ? "Conflict"
+                      : reason._tag === "StorageError" ||
+                          (reason._tag === "TransactionError" && reason.kind === "Backend")
+                        ? "Unavailable"
+                        : "Internal";
+        return new BackendError({
+            operation,
+            kind,
+            message:
+                kind === "InvalidRequest"
+                    ? "Invalid storage query."
+                    : kind === "SchemaMismatch"
+                      ? "Storage schema changed; migrate or reset explicitly."
+                      : "Storage operation failed.",
+            retryable: cause.isRetryable,
+            cause: Redacted.make(cause),
+        });
+    }
     let candidate = cause;
     let value: typeof ProviderFailure.Type | undefined;
     for (let depth = 0; depth < 5; depth++) {
@@ -146,14 +242,13 @@ export function classifyBackendFailure(operation: string, cause: unknown): Backe
                     : name === "FunctionEncounteredUserFacingError" ||
                         name === "QueryEncounteredUserFacingError"
                       ? "ValidationFailed"
-                      : status === 400 ||
-                          code === "INVALID_ARGUMENT" ||
-                          code === "FIELD_CUSTOM_VALIDATION_EXCEPTION" ||
-                          code === "REQUIRED_FIELD_MISSING"
+                      : code === "FIELD_CUSTOM_VALIDATION_EXCEPTION" || code === "REQUIRED_FIELD_MISSING"
                         ? "ValidationFailed"
-                        : status === 409
-                          ? "Conflict"
-                          : "Unavailable";
+                        : status === 400 || code === "INVALID_ARGUMENT"
+                          ? "InvalidRequest"
+                          : status === 409
+                            ? "Conflict"
+                            : "Unavailable";
     const authored =
         name === "FunctionEncounteredUserFacingError" || name === "QueryEncounteredUserFacingError";
     const issues: readonly ValidationIssue[] | undefined =
@@ -181,6 +276,9 @@ export function classifyBackendFailure(operation: string, cause: unknown): Backe
             Forbidden: "This operation is not permitted.",
             NotFound: "Resource not found.",
             ValidationFailed: "Submission failed validation.",
+            InvalidRequest: "The request is invalid.",
+            InvalidResponse: "The source returned an invalid response.",
+            InvalidConfiguration: "The service is configured incorrectly.",
             Conflict: "The operation conflicts with current state.",
             NotImplemented: "This operation is not implemented.",
             RateLimited: "Too many requests. Try again later.",
@@ -243,28 +341,34 @@ export function projectBackendError(
     const shown = typeof policy === "function" ? policy(error, context) : error;
     const kind = error.kind === "Unauthenticated" && context.upstream ? "Unavailable" : shown.kind;
     const issues =
-        policy === "projected"
-            ? error.issues?.flatMap((issue) => {
-                  const visible = projectValidationIssue(issue, context);
-                  return visible ? [visible] : [];
-              })
-            : shown.issues;
+        shown.kind !== "ValidationFailed"
+            ? undefined
+            : policy === "projected"
+              ? error.issues?.flatMap((issue) => {
+                    const visible = projectValidationIssue(issue, context);
+                    return visible ? [visible] : [];
+                })
+              : shown.issues;
     const message =
         policy !== "projected"
             ? shown.message
             : kind === "ValidationFailed"
               ? "Submission failed validation."
-              : kind === "Unauthenticated"
-                ? "Authentication is required."
-                : kind === "Forbidden"
-                  ? "This operation is not permitted."
-                  : kind === "NotFound"
-                    ? "Resource not found."
-                    : kind === "RateLimited"
-                      ? "Too many requests. Try again later."
-                      : kind === "NotImplemented"
-                        ? "This operation is not implemented."
-                        : "The operation could not be completed.";
+              : kind === "InvalidRequest"
+                ? "The request is invalid."
+                : kind === "InvalidResponse"
+                  ? "The source returned an invalid response."
+                  : kind === "Unauthenticated"
+                    ? "Authentication is required."
+                    : kind === "Forbidden"
+                      ? "This operation is not permitted."
+                      : kind === "NotFound"
+                        ? "Resource not found."
+                        : kind === "RateLimited"
+                          ? "Too many requests. Try again later."
+                          : kind === "NotImplemented"
+                            ? "This operation is not implemented."
+                            : "The operation could not be completed.";
     return new BackendError({
         operation: error.operation,
         kind,

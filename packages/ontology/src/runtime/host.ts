@@ -132,6 +132,47 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         (manager) => Effect.promise(() => manager.cleanup())
     );
     yield* attempt(() => blobManager.ready);
+    const withStagedAttachments =
+        <A>(
+            submit: (
+                request: import("@party-stack/ontology-backend/protocol").ClientSubmission
+            ) => Effect.Effect<A, BackendError>
+        ) =>
+        (request: import("@party-stack/ontology-backend/protocol").ClientSubmission) =>
+            Effect.gen(function* () {
+                const prepared = yield* prepareActionParameters({
+                    ir,
+                    actionTypeName: request.invocation.name,
+                    parameters: request.invocation.parameters,
+                    blobManager,
+                }).pipe(Effect.mapError(failure));
+                const submission = {
+                    ...request,
+                    stagedAttachments: prepared.attachmentUploads.map((upload) => upload.attachment.id),
+                };
+                const first = yield* Effect.result(submit(submission));
+                if (first._tag === "Success") return first.success;
+                if (
+                    first.failure.kind !== "NotFound" ||
+                    first.failure.operation !== "replica.submit.attachments"
+                )
+                    return yield* first.failure;
+                for (const upload of prepared.attachmentUploads) {
+                    if (!stageAttachment) return yield* unavailableAttachment();
+                    const staged = yield* attempt(() =>
+                        stageAttachment(upload.attachment, upload.blob, upload.target)
+                    );
+                    if (staged.id !== upload.attachment.id)
+                        return yield* new BackendError({
+                            operation: "attachment.handoff",
+                            kind: "Conflict",
+                            retryable: false,
+                            actionOutcome: "not-committed",
+                            message: "A speculative parent must preserve staged attachment IDs.",
+                        });
+                }
+                return yield* submit(submission);
+            });
     const connected = options.connection
         ? Stream.map(options.connection.changes, (state) => state.status === "active")
         : Stream.never;
@@ -176,44 +217,10 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
             : {
                   source: {
                       ...options.source,
-                      submit: (request) =>
-                          Effect.gen(function* () {
-                              const prepared = yield* prepareActionParameters({
-                                  ir,
-                                  actionTypeName: request.invocation.name,
-                                  parameters: request.invocation.parameters,
-                                  blobManager,
-                              }).pipe(Effect.mapError(failure));
-                              const submission = {
-                                  ...request,
-                                  stagedAttachments: prepared.attachmentUploads.map(
-                                      (upload) => upload.attachment.id
-                                  ),
-                              };
-                              const first = yield* Effect.result(options.source!.submit(submission));
-                              if (first._tag === "Success") return first.success;
-                              if (
-                                  first.failure.kind !== "NotFound" ||
-                                  first.failure.operation !== "replica.submit.attachments"
-                              )
-                                  return yield* first.failure;
-                              for (const upload of prepared.attachmentUploads) {
-                                  if (!stageAttachment) return yield* unavailableAttachment();
-                                  const staged = yield* attempt(() =>
-                                      stageAttachment(upload.attachment, upload.blob, upload.target)
-                                  );
-                                  if (staged.id !== upload.attachment.id)
-                                      return yield* new BackendError({
-                                          operation: "attachment.handoff",
-                                          kind: "Conflict",
-                                          retryable: false,
-                                          actionOutcome: "not-committed",
-                                          message:
-                                              "A speculative parent must preserve staged attachment IDs.",
-                                      });
-                              }
-                              return yield* options.source!.submit(submission);
-                          }),
+                      submit: withStagedAttachments(options.source!.submit),
+                      accept: options.source!.accept
+                          ? withStagedAttachments(options.source!.accept)
+                          : undefined,
                   },
               }),
         blobs: yield* attempt(() => blobManager.storage),

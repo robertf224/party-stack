@@ -589,7 +589,14 @@ describe("createSalesforceOntologyBackendAdapter", () => {
 
     it("distinguishes rejected writes from unknown transport outcomes without retrying submission", async () => {
         for (const [cause, kind] of [
-            [new SalesforceApiError("ValidationFailed", { statusCode: 400 }), "ValidationFailed"],
+            [new SalesforceApiError("Invalid request", { statusCode: 400 }), "InvalidRequest"],
+            [
+                new SalesforceApiError("Constraint failed", {
+                    statusCode: 400,
+                    errorCode: "FIELD_CUSTOM_VALIDATION_EXCEPTION",
+                }),
+                "ValidationFailed",
+            ],
             [new Error("Lost response"), "Unavailable"],
         ] as const) {
             createRecord.mockRejectedValue(cause);
@@ -603,7 +610,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
                 failure: { kind, retryable: kind === "Unavailable" },
             });
         }
-        expect(createRecord).toHaveBeenCalledTimes(2);
+        expect(createRecord).toHaveBeenCalledTimes(3);
         expect(query).not.toHaveBeenCalled();
     });
 

@@ -91,6 +91,26 @@ export function makeRpcBackend(
                       )
                   )
             : undefined,
+        subscribeSelection: description.delivery
+            ? (selection) =>
+                  Effect.succeed({
+                      frames: client
+                          .SubscribeSelection(selection)
+                          .pipe(Stream.mapError((cause) => classifyBackendFailure("remote.delivery", cause))),
+                      acknowledge: (position) =>
+                          client
+                              .AckDelivery({ kind: "committed", position })
+                              .pipe(
+                                  Effect.mapError((cause) => classifyBackendFailure("remote.delivery", cause))
+                              ),
+                  })
+            : undefined,
+        acknowledgeDelivery: description.delivery
+            ? (position) =>
+                  client
+                      .AckDelivery({ kind: "committed", position })
+                      .pipe(Effect.mapError((cause) => classifyBackendFailure("remote.delivery", cause)))
+            : undefined,
         loadSubset: (subset) =>
             client
                 .LoadSubset(subset)

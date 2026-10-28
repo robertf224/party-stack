@@ -95,7 +95,7 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                           catch: () =>
                               new BackendError({
                                   operation: "decrypt",
-                                  kind: "ValidationFailed",
+                                  kind: "InvalidRequest",
                                   message: "Invalid encrypted property handle.",
                                   retryable: false,
                               }),
@@ -141,7 +141,7 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                           catch: () =>
                               new BackendError({
                                   operation: "decrypt",
-                                  kind: "ValidationFailed",
+                                  kind: "Internal",
                                   message: "Invalid decrypted plaintext.",
                                   retryable: false,
                               }),
@@ -183,15 +183,17 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                     ),
             ])
         ),
-        prepareUploads: Effect.fn("StorageOntology.prepareUploads")(function* (invocation) {
-            return boundary(
-                Effect.forEach(
-                    invocation.attachmentUploads ?? [],
-                    (upload) => blobs.in(tables).bindRemoteId(upload.attachment.id, upload.attachment.id),
-                    { discard: true }
+        prepareUploads: Effect.fn("StorageOntology.prepareUploads")((invocation) =>
+            Effect.succeed(
+                boundary(
+                    Effect.forEach(
+                        invocation.attachmentUploads ?? [],
+                        (upload) => blobs.in(tables).bindRemoteId(upload.attachment.id, upload.attachment.id),
+                        { discard: true }
+                    )
                 )
-            );
-        }),
+            )
+        ),
         attachments: {
             stage,
             read: (attachment, range) =>
@@ -214,7 +216,7 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                         )
                             return yield* new BackendError({
                                 operation: "attachment.read",
-                                kind: "ValidationFailed",
+                                kind: "InvalidRequest",
                                 message: "Invalid attachment range.",
                                 retryable: false,
                             });
