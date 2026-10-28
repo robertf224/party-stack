@@ -1,5 +1,6 @@
 import { BackendError, encryptedPropertyCodec, EncryptedValueSchema } from "@party-stack/ontology-backend";
 import { makeOwnedBackend, type OwnedBackendService } from "@party-stack/ontology-backend/owned";
+import { CurrentExecutionContext } from "@party-stack/ontology-backend/policy";
 import {
     digestBytes as digest,
     byteSource,
@@ -156,29 +157,33 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                 .map((action) => [
                     action.name,
                     (tx, invocation) =>
-                        executeTransactionMutator({
-                            ir: options.ir,
-                            tx,
-                            name: invocation.name,
-                            parameters: invocation.parameters,
-                            operationId: invocation.id,
-                            replay: invocation.replay,
-                            context: options.context,
-                            mutators: options.mutators,
-                        }).pipe(Effect.asVoid),
+                        Effect.flatMap(CurrentExecutionContext, (context) =>
+                            executeTransactionMutator({
+                                ir: options.ir,
+                                tx,
+                                name: invocation.name,
+                                parameters: invocation.parameters,
+                                operationId: invocation.id,
+                                replay: invocation.replay,
+                                context: context ?? options.context,
+                                mutators: options.mutators,
+                            })
+                        ).pipe(Effect.asVoid),
                 ])
         ),
         queryFunctions: Object.fromEntries(
             Object.entries(options.queryFunctions ?? {}).map(([name, handler]) => [
                 name,
                 (tx, parameters) =>
-                    withTransactionCollections(options.ir, tx, (objects, ensureLoaded) =>
-                        promise(async () =>
-                            handler({
-                                tx: createReadTx(objects, ensureLoaded),
-                                args: parameters,
-                                context: options.context ?? {},
-                            })
+                    Effect.flatMap(CurrentExecutionContext, (context) =>
+                        withTransactionCollections(options.ir, tx, (objects, ensureLoaded) =>
+                            promise(async () =>
+                                handler({
+                                    tx: createReadTx(objects, ensureLoaded),
+                                    args: parameters,
+                                    context: context ?? options.context ?? {},
+                                })
+                            )
                         )
                     ),
             ])

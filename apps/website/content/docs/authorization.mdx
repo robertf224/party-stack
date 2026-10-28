@@ -1,0 +1,108 @@
+---
+title: Authorization
+description: Typed context, hierarchical read grants, and action policies.
+---
+
+Authenticate the caller in your HTTP/application boundary. Then construct a server
+with that caller's typed `context`. The ontology's `policy` determines which rows,
+properties, actions, and query functions they can use.
+
+## Context
+
+`ir.context.type` describes one shared contract. The server binds its values after
+authentication, and Describe returns the same definition and values to clients.
+Store credentials and private authentication state in server services.
+
+```ts
+const ir = {
+    ...domainIR,
+    context: {
+        type: o.struct({
+            fields: [
+                { name: "user", displayName: "User", type: o.string({}) },
+                { name: "tenant", displayName: "Tenant", type: o.string({}) },
+            ],
+        }),
+        partition: [["tenant"], ["user"]],
+    },
+    policy,
+};
+
+const server =
+    yield *
+    makeOntologyServer({
+        kind: "owned",
+        backend,
+        ir,
+        context: { user: session.user.id, tenant: session.tenantId },
+    });
+```
+
+Partition paths derive distinct local storage partitions from context values.
+There is no mandatory User object or separate `clientContext` setting in this API.
+The bound definition/context are copied when constructing the server; mutating an
+application-owned object later does not change the authenticated binding.
+
+## Read grants
+
+A policy's `read` is a hierarchical query document. Selecting an entity property
+grants that property on the matching rows. Multiple roots and correlated nested
+queries can grant related records. Clients can then query those records directly;
+they receive the same restrictions regardless of the root they start from.
+
+```ts
+import { context, eq, field, selectField, sub } from "@party-stack/ontology/query";
+
+const policy = {
+    read: {
+        select: [
+            sub("issues", {
+                from: { source: { objectType: "Issue" }, binding: "issue" },
+                where: eq(field("issue", "owner"), context("user")),
+                select: ["id", "title", "owner"].map((name) => selectField(name, field("issue", name))),
+            }),
+        ],
+    },
+    actions: [],
+};
+```
+
+Policy selections use real property names. UI queries can use aliases and computed
+values. Conditional selections can grant properties based on context or row values.
+Context-only conditions specialize the public schema; row-dependent properties
+remain optional and inaccessible cells are omitted from responses.
+
+Safe caller predicates are rewritten into policy queries to reduce source reads.
+Ordering and pagination apply after authorization. Unsupported rewrites preserve
+the original policy semantics. The full-policy evaluator remains a testing oracle.
+
+## Actions and providers
+
+Action rules use `check`, optional parameter `bind` entries, and optional additional
+`read` grants for their mutators. A binding removes its parameter from the public
+action schema and supplies it on the server, overriding spoofed input. An action
+without a successful rule is denied. Query functions require explicit rules too;
+arbitrary function output is not automatically made safe by a row policy.
+
+Owned execution performs bindings, checks, reference validation, and mutation in
+one storage transaction. A projected provider executes its own authoritative
+transaction after the server's checks. Its existing permissions still apply.
+
+A Gateway can replace an upstream ontology's context and policy with a token-specific
+contract, such as `{ approval }`. A cached proxy can share a trusted provider cache;
+policy enforcement wraps the final read path, including cache hits. Each caller gets
+its own bound server view.
+
+## Schema changes
+
+Invalid policy references, bindings, or public schemas stop server construction.
+When replacing an upstream context makes an optional client default or optimistic
+program incompatible, projection omits it and logs a warning with the action and
+validation paths. It omits the whole prediction to avoid displaying partial actions.
+Warnings do not contain bound context values. Server execution remains available
+when the resulting public contract is valid.
+
+Rebuild and validate a projection against current provider metadata when schemas
+change. Automatic schema migrations and metadata-driven rebinding are not provided.
+Projected endpoints expose stateless queries/actions and guarded attachment reads;
+raw journals and speculative replica-state access require a trusted deployment.

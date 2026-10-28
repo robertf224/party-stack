@@ -1,11 +1,13 @@
 import { IconNames } from "@party-stack/icons";
 import { o } from "./generated/builders.js";
+import { policyTypes } from "./policy-schema.js";
 import { queryExpressionVariants, queryTypes } from "./query-schema.js";
 import type { OntologyIR } from "./generated/types.js";
 
 export default {
     types: [
         ...queryTypes,
+        ...policyTypes,
         {
             name: "IconName",
             description: "A renderer-independent icon name from @party-stack/icons.",
@@ -1353,10 +1355,25 @@ export default {
                         description: "Query function type definitions.",
                     },
                     {
-                        name: "contextType",
-                        displayName: "Context type",
-                        type: o.optional({ type: o.ref({ name: "TypeDef" }) }),
-                        description: "Optional typed execution context available to ontology expressions.",
+                        name: "displayName",
+                        displayName: "Display name",
+                        type: o.optional({ type: o.string({}) }),
+                    },
+                    {
+                        name: "description",
+                        displayName: "Description",
+                        type: o.optional({ type: o.string({}) }),
+                    },
+                    {
+                        name: "policy",
+                        displayName: "Policy",
+                        type: o.optional({ type: o.ref({ name: "PolicyDef" }) }),
+                    },
+                    {
+                        name: "context",
+                        displayName: "Context",
+                        type: o.optional({ type: o.ref({ name: "ContextDef" }) }),
+                        description: "Trusted context definition and data partitioning.",
                     },
                 ],
             }),

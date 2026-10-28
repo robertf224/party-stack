@@ -1,5 +1,7 @@
 import { makeReplicaHost, makeReplicaOntologyView } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
+import { equalValues } from "@party-stack/ontology-spec/query";
+import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Runtime } from "@party-stack/runtime";
 import { Context, Effect, Exit, Layer, ManagedRuntime, Scope, Stream, Tracer } from "effect";
@@ -7,7 +9,8 @@ import type { OntologyConnection } from "./rpc.js";
 import type { LiveOntology, LiveOntologyWrites, OntologyIR } from "@party-stack/ontology";
 
 export interface ConnectLiveOntologyOptions<R = never> {
-    readonly ir: OntologyIR;
+    /** Defaults to the authenticated server definition returned by Describe. */
+    readonly ir?: OntologyIR;
     /** Acquired inside the client's scope so transport streams remain alive until cleanup. */
     readonly connection: Effect.Effect<OntologyConnection, BackendError, R | Scope.Scope>;
     readonly id?: string;
@@ -27,37 +30,64 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
     const scope = yield* Scope.fork(yield* Effect.scope);
     const open = Effect.gen(function* () {
         const connection = yield* options.connection;
-        const definitionHash = connection.definitionHash
-            ? yield* digestBytes({
-                  type: "application/json",
-                  stream: Stream.make(new TextEncoder().encode(JSON.stringify(options.ir))),
-              }).pipe(
-                  Effect.mapError(
-                      (cause) =>
-                          new BackendError({
-                              operation: "ontology.connect",
-                              kind: "Internal",
-                              retryable: false,
-                              message: "Could not identify the client definition.",
-                              cause,
-                          })
+        const ir = options.ir ?? connection.ir;
+        if (!ir)
+            return yield* new BackendError({
+                operation: "ontology.connect",
+                kind: "InvalidConfiguration",
+                message: "Supply an ontology definition when the server does not describe one.",
+                retryable: false,
+            });
+        const signature = yield* Effect.try({
+            try: () => ontologyDefinitionSignature(ir),
+            catch: (cause) =>
+                new BackendError({
+                    operation: "ontology.connect",
+                    kind: "InvalidConfiguration",
+                    message: "Invalid client ontology definition.",
+                    retryable: false,
+                    cause,
+                }),
+        });
+        const definitionHash =
+            connection.definitionHash && options.ir
+                ? yield* digestBytes({
+                      type: "application/json",
+                      stream: Stream.make(new TextEncoder().encode(signature)),
+                  }).pipe(
+                      Effect.mapError(
+                          (cause) =>
+                              new BackendError({
+                                  operation: "ontology.connect",
+                                  kind: "Internal",
+                                  retryable: false,
+                                  message: "Could not identify the client definition.",
+                                  cause,
+                              })
+                      )
                   )
-              )
-            : undefined;
-        if (connection.definitionHash && connection.definitionHash !== definitionHash)
+                : undefined;
+        if (options.ir && connection.definitionHash && connection.definitionHash !== definitionHash)
             return yield* new BackendError({
                 operation: "ontology.connect",
                 kind: "SchemaMismatch",
                 message: "Server definition differs from this client.",
                 retryable: false,
             });
-        const context = options.context ?? {};
+        if (connection.context && options.context && !equalValues(connection.context, options.context))
+            return yield* new BackendError({
+                operation: "ontology.connect",
+                kind: "InvalidConfiguration",
+                message: "Client context differs from the authenticated server context.",
+                retryable: false,
+            });
+        const context = connection.context ?? options.context ?? {};
         const speculative =
             connection.replication.kind === "speculative" ? connection.replication.source : undefined;
         const { replica, attachments } = yield* makeReplicaHost({
             runtime: runtime.adapter,
             id: options.id,
-            ir: options.ir,
+            ir,
             context,
             writes: options.writes,
             backend: connection.backend,
@@ -65,7 +95,7 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
         });
         const operations = connection.operations;
         const view = yield* makeReplicaOntologyView({
-            ir: options.ir,
+            ir,
             context,
             replica,
             writes: options.writes,

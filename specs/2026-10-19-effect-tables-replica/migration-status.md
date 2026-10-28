@@ -100,9 +100,10 @@ installation, child GC/local bytes, native committed delivery and the speculativ
 server extension are in place. Public website docs describe implemented setup and
 behavior; proposals remain in `specs/`.
 
-The remaining v0 gates are hierarchical Query IR/context binding and server
-authorization for Gateway parity, downstream form integration, legacy HTTP
-retirement, and final application acceptance. Server IVM/live full-query watching,
+Hierarchical Query IR/context binding and stateless server authorization are now
+implemented in this checkpoint. The remaining v0 gates are downstream Gateway/form
+integration in the Streamline repository, legacy HTTP retirement after that port,
+and final application acceptance. Server IVM/live full-query watching,
 durable delta history/resume, general untrusted replica-state projection and
 advertised/versioned idempotency windows remain future work. See
 [Gateway gates](./gateway-v0-parity.md).
@@ -118,9 +119,18 @@ auto (default), snapshot or incremental. Both committed and speculative clients
 follow the advertised strategy. Snapshot mode keeps invalidation/finite reads and
 does not silently use journal delivery. HTTP acceptance covers both strategies
 for owned, cached-proxy and replica servers; the server suite passes 85 tests.
-Result-maintenance/IVM strategy remains future work. Context-principal metadata,
-one-syntax entity-use validation and policy action-read rules remain design work
-in the Query IR proposal, not implemented schema/API claims.
+Result-maintenance/IVM strategy remains future work. Context type/partition metadata,
+entity-selection validation, policy read graphs and action check/bind/read rules are
+implemented. Native Describe returns the projected schema and shared context;
+clients can acquire those dynamically. Typed policy and public-schema failures stop
+construction. Incompatible optional client computations are omitted with warnings.
+
+The policy planner is checked against private eager and independent domain oracles.
+Native tests cover masked reads, cache-hit isolation between principals, shared-backend
+context isolation, server-bound token parameters, schema drift and transaction-scoped
+checks. Generated update execution uses explicit field patches so masked reads cannot
+erase hidden stored properties. Policies do not expose raw journals or speculative
+state to untrusted clients; scoped incremental authorization remains future work.
 
 1. **Protocol hardening.** Native delivery starts with a selected snapshot and then
    sends atomic incremental patches. Reconnect snapshots preserve local pending
@@ -147,9 +157,9 @@ in the Query IR proposal, not implemented schema/API claims.
    private-mode coverage and multi-client reset recovery. Continue focused subsystem
    review in chat.
 5. **Gateway transport parity.** The sample remote-notes uses native RPC. Streamline's
-   existing finite form workflow still needs dynamic schema/context discovery
-   and relationship-based authorization on the native
-   path. Keep the deprecated request/response helpers until these gates pass. See
+   existing finite form workflow still needs adoption of native schema/context discovery
+   and hierarchical authorization. Those capabilities are now available on the native
+   path; the downstream port remains separate. Keep the deprecated request/response helpers until these gates pass. See
    [gateway-v0-parity.md](./gateway-v0-parity.md) for the inspected workflow and
    deferred untrusted/persistent child replica work.
    Native action-parameter resolution is implemented through HTTP and LiveOntology,

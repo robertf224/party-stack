@@ -39,6 +39,7 @@
         "@party-stack/ontology": "workspace:*",
         "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-replica": "workspace:*",
+        "@party-stack/ontology-spec": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "@tanstack/query-core": "^5.102.8",

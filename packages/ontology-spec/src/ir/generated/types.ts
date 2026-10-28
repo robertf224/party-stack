@@ -121,6 +121,49 @@ export type QueryDocument = {
     select: Array<QuerySelection>;
 };
 
+/** Typed trusted execution context and optional stable data-partition paths. */
+export type ContextDef = {
+    type?: TypeDef;
+    partition?: Array<Array<string>>;
+};
+
+/** A server-bound action parameter, hidden from the public parameter contract. */
+export type ActionParameterBinding = {
+    parameter: string;
+    expression: Expression;
+};
+
+/** Authorizes one action through a check, with optional bindings and additional mutator reads. */
+export type ActionPolicy = {
+    actionType: string;
+    check: Expression;
+    bind?: Array<ActionParameterBinding>;
+    read?: QueryDocument;
+};
+
+/** Authorizes one query function and optional additional trusted implementation reads. */
+export type QueryFunctionPolicy = {
+    queryFunctionType: string;
+    check: Expression;
+    read?: QueryDocument;
+};
+
+/** One effective policy for an ontology view; grants are evaluated under its trusted context. */
+export type PolicyDef = {
+    read: QueryDocument;
+    actions?: Array<ActionPolicy>;
+    queryFunctions?: Array<QueryFunctionPolicy>;
+};
+
+/** Singleton descriptive and execution-contract metadata for one ontology view. */
+export type OntologyDescriptor = {
+    id: string;
+    displayName?: string;
+    description?: string;
+    context?: ContextDef;
+    policy?: PolicyDef;
+};
+
 /** A renderer-independent icon name from @party-stack/icons. */
 export type IconName =
     | "activity"
@@ -742,6 +785,9 @@ export type OntologyIR = {
     actionTypes: Array<ActionTypeDef>;
     /** Query function type definitions. */
     queryFunctionTypes: Array<QueryFunctionTypeDef>;
-    /** Optional typed execution context available to ontology expressions. */
-    contextType?: TypeDef;
+    displayName?: string;
+    description?: string;
+    policy?: PolicyDef;
+    /** Trusted context definition and data partitioning. */
+    context?: ContextDef;
 };

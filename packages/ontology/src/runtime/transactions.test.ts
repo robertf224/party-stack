@@ -216,6 +216,7 @@ test("transaction query preparation narrows repeated point queries and keyed mut
                 return evaluateQuery(rows, query);
             }),
         put: () => Effect.void,
+        patch: () => Effect.void,
         delete: () => Effect.void,
     };
     await Effect.runPromise(

@@ -1,5 +1,5 @@
+import { validatePolicy } from "../query/policy.js";
 import { isRelatedFromForeignKeySource, resolveRelatedLink } from "../utils/links.js";
-import { unwrapType } from "../utils/types.js";
 import { nestedEncryptedIssues } from "./encrypted.js";
 import { ImageMediaTypeOptions } from "./generated/constants.js";
 import type { ValidationIssue } from "../utils/validation.js";
@@ -1063,29 +1063,10 @@ export function validate(ontology: OntologyIR): ValidationResult {
     const valueTypes = new Map(ontology.types.map((type) => [type.name, type.type]));
     const objectTypes = new Map(ontology.objectTypes.map((objectType) => [objectType.name, objectType]));
 
-    if (ontology.contextType) {
+    if (ontology.context?.type) {
         errors.push(
-            ...validateTypeDef(ontology.contextType, ["contextType"], valueTypeNames, objectTypeNames)
+            ...validateTypeDef(ontology.context?.type, ["context", "type"], valueTypeNames, objectTypeNames)
         );
-        const resolvedContextType = resolveType(ontology.contextType, valueTypes);
-        if (resolvedContextType?.kind === "struct") {
-            const userField = resolvedContextType.value.fields.find((field) => field.name === "user");
-            const unwrappedUserType = userField ? unwrapType(userField.type).type : undefined;
-            const resolvedUserType = unwrappedUserType
-                ? resolveType(unwrappedUserType, valueTypes)
-                : undefined;
-            if (userField && resolvedUserType?.kind !== "objectReference") {
-                errors.push({
-                    message: 'Reserved context field "user" must be an object reference.',
-                    path: [
-                        "contextType",
-                        "fields",
-                        resolvedContextType.value.fields.indexOf(userField),
-                        "type",
-                    ],
-                });
-            }
-        }
     }
 
     // Validate value type definitions once both namespaces are known.
@@ -1191,7 +1172,7 @@ export function validate(ontology: OntologyIR): ValidationResult {
                 valueTypes,
                 objectTypes,
                 ontology.linkTypes,
-                ontology.contextType
+                ontology.context?.type
             )
         );
     }
@@ -1219,5 +1200,6 @@ export function validate(ontology: OntologyIR): ValidationResult {
         );
     }
 
+    errors.push(...validatePolicy(ontology));
     return errors.length === 0 ? { kind: "ok", value: undefined } : { kind: "err", value: errors };
 }

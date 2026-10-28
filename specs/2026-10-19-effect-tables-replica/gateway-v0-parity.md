@@ -55,8 +55,9 @@ appropriate initial composition. No Zero-style query watching is needed for pari
 
 Do not describe the new predicate wrapper as a drop-in replacement yet. Verify:
 
-- Dynamic Describe includes the projected ontology definition and projected context.
-  Native RPC currently describes source capabilities, while sample clients supply IR.
+- Dynamic Describe now includes the projected ontology definition and shared typed
+  context. Native live clients can discover both. Verify downstream generated-client
+  expectations and invalidation on form/revision changes during the Gateway port.
 - Native ResolveActionParameters now preserves the LiveOntology resolveParameters API.
   Storage bindings resolve through a read transaction; projected bindings evaluate
   permitted defaults through authorized row/property reads and hide fixed parameters.
@@ -73,8 +74,8 @@ Do not describe the new predicate wrapper as a drop-in replacement yet. Verify:
 - Structured validation paths reach the downstream form field renderer. Automatic
   retries belong to Replica; a form must not introduce another independent executor.
 
-Describe currently reports protocol version, sourceId, supportsIdempotency, changes,
-watchChanges and actionParameterResolution. These are transport/source capabilities,
+Describe reports protocol version, sourceId, projected IR/context, supportsIdempotency,
+changes, watchChanges, watchSubset, finite queries and actionParameterResolution. These are transport/source capabilities,
 not permission grants or a complete feature inventory. A Foundry subset watcher does
 not imply a resumable journal watch. sourceId identifies the upstream data/receipt
 domain; it is separate from schema and form revisions.

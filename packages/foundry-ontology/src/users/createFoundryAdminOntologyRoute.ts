@@ -20,17 +20,19 @@ export const foundryAdminOntology = defineOntology({
     linkTypes: [],
     actionTypes: [],
     queryFunctionTypes: [],
-    contextType: o.struct({
-        fields: [
-            {
-                name: "user",
-                displayName: "User",
-                type: o.objectReference({
-                    objectType: "FoundryUser",
-                }),
-            },
-        ],
-    }),
+    context: {
+        type: o.struct({
+            fields: [
+                {
+                    name: "user",
+                    displayName: "User",
+                    type: o.objectReference({
+                        objectType: "FoundryUser",
+                    }),
+                },
+            ],
+        }),
+    },
 });
 
 export function createFoundryAdminOntologyRoute(

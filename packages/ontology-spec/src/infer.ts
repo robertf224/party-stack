@@ -354,7 +354,7 @@ type InferQueryParameters<Parameters, Ontology> =
           >;
 
 export type InferOntology<Ontology> = {
-    context: Ontology extends { readonly contextType: infer ContextType }
+    context: Ontology extends { readonly context: { readonly type: infer ContextType } }
         ? InferType<ContextType, Ontology>
         : Record<string, unknown>;
     objectTypes: {

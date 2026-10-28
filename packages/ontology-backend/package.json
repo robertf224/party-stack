@@ -25,6 +25,14 @@
         "./owned": {
             "types": "./lib/owned.d.ts",
             "default": "./lib/owned.js"
+        },
+        "./query": {
+            "types": "./lib/query.d.ts",
+            "default": "./lib/query.js"
+        },
+        "./policy": {
+            "types": "./lib/policy.d.ts",
+            "default": "./lib/policy.js"
         }
     },
     "dependencies": {

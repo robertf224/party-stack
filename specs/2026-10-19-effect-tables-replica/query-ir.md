@@ -1,6 +1,7 @@
 # Query IR direction
 
-This is a design note, not an implemented ontology query API.
+This note separates the implemented query/policy primitives from server integration
+that is still underway. It is not yet an end-to-end public query/server API.
 
 The [October 28 initial proposal](./query-ir-proposal.md) develops this direction
 with Streamline project-admin and Post Approval token examples, authorized-view
@@ -42,7 +43,8 @@ link supplies the child source, correlation and directional cardinality; explici
 correlations remain possible when no named link exists. Nested shaping, filtering
 and per-parent windows belong to that related query. Planning lowers it into the
 general correlation machinery; a flat join is one possible execution strategy.
-There is no need to expose a separate `sub` name for the same operation. Explicit
+`sub` describes an explicit nested query; `related` supplies a named relationship
+correlation within that query machinery. Explicit
 source handles must also permit cross-ontology joins, such as joining an outbox
 entry to its action-type metadata. Possession of a source name does not authorize
 access to that source.
@@ -74,8 +76,30 @@ Expression operators are top-level variants with unary/binary/variadic payloads;
 case and selectCase have distinct tags and recursive multi-branch groups. Flat
 joins are deferred. Storage lowering still needs to consume the shared Subset;
 the existing driver query representation continues to execute current loads.
-Scope/type/provenance validation, query execution and policy enforcement remain
-unfinished; the structural codecs alone do not make a query safe to execute.
+Scope/type/provenance validation, finite execution, hierarchical policy evaluation,
+server definition projection and native same-transaction action checks are implemented.
+The stateless server binds the caller's typed context after authentication and wraps
+its final read path, including shared cache hits. Structural codecs alone do not
+authorize a request. Gateway's downstream adoption remains a separate repository change.
+
+The production policy evaluator rewrites safe caller predicates into grant paths,
+then applies caller ordering/pagination after authorized rows and cells are known.
+Policy windows and singular cardinality remain rewrite barriers. Separate paths
+preserve grants when a type appears both as an ancestor and a descendant. Unsupported
+rewrites retain the original evaluation rather than weakening the policy.
+
+The full-policy eager evaluator is private oracle infrastructure, not a server
+configuration option. Property tests compare both evaluators against a separately
+written domain model, including per-parent windows, multiple grants and conditional
+properties. An acquisition test verifies that a keyed rewritten request returns one
+candidate where full-policy evaluation acquires 1,000. These tests do not establish
+general join optimization or server IVM.
+
+Eager **sync** is a separate acquisition/retention choice: maintain complete coverage
+of a declared region and evaluate queries/policies against its local snapshot.
+Offline pinning can use the same query/demand machinery. A partial local cache alone
+does not prove an authorization check or an absence result. There is no public
+`authorizationStrategy` switch; the planner chooses its execution plan.
 
 The former `linkHop` expression is now `related`. Static validation recognizes
 to-one object results and to-many object lists, including typed map bindings and
@@ -99,3 +123,20 @@ query execution; the observed child source request does not include that limit.
 Forwarding actual demand does not establish that every relational operation or
 per-parent limit is executed by the storage database. The proposed query IR still
 provides portable query descriptions and the basis for additional pushdown.
+
+## Shared context and ontology drift
+
+The native server has one context contract: `ir.context.type` describes the values
+bound by `makeOntologyServer({ context })` and returned to clients. Private credentials
+and provider connections live in server services. A Gateway projection replaces the
+upstream context definition and policy; its new policy runs in addition to upstream
+permissions. Policy bindings remove public parameters and overwrite caller input.
+
+IR validation runs on the exposed definition. Invalid policy paths, missing bindings
+and incompatible parameter types fail construction with InvalidConfiguration. Replacing
+an upstream context can invalidate optional client defaults/predictions. Those computations
+are omitted with structured warnings naming actions and validation paths, without context
+values; the entire prediction is omitted rather than publishing part of an action.
+Underlying provider schema drift is not automatically harmless: rebuild/revalidate the
+projection against fresh metadata, and stop serving an incompatible policy. Runtime
+schema migration and automatic metadata-change rebinding remain separate work.

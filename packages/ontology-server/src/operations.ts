@@ -13,6 +13,7 @@ import {
     protocolValueCodec,
 } from "@party-stack/ontology-backend/protocol";
 import { ReplicaStatusSchema, makeReplicaMonitor } from "@party-stack/ontology-replica";
+import { QueryDocumentSchema } from "@party-stack/ontology-spec/effect";
 import {
     attachmentByteSource,
     byteChunks,
@@ -70,6 +71,13 @@ const Metadata = Schema.Struct({
 
 /** Explicit helper operations alongside replica transfer. These do not bypass row replication. */
 const HelperRpcs = RpcGroup.make(
+    Rpc.make("Query", {
+        payload: protocolValueCodec(
+            Schema.Struct({ document: QueryDocumentSchema, inputs: Schema.optional(Parameters) })
+        ),
+        success: protocolValueCodec(Parameters),
+        error: BackendError,
+    }),
     Rpc.make("LoadSubset", {
         payload: BackendSubsetCodec,
         success: protocolValueCodec(BackendSnapshotSchema),
@@ -153,6 +161,11 @@ const HelperRpcs = RpcGroup.make(
 );
 export const OntologyOperationRpcs = HelperRpcs.merge(AttachmentTransferRpcs);
 export type OntologyOperationRequest =
+    | {
+          readonly operation: "Query";
+          readonly document: import("@party-stack/ontology-spec").QueryDocument;
+          readonly inputs?: Record<string, unknown>;
+      }
     | { readonly operation: "WatchChanges" }
     | { readonly operation: "PullChanges"; readonly cursor?: string; readonly limit?: number }
     | {
@@ -222,6 +235,10 @@ const missing = (name: string) =>
     });
 
 export type OntologyOperationOptions<R = never> = ErrorProjectionOptions & {
+    readonly query?: (
+        document: import("@party-stack/ontology-spec").QueryDocument,
+        inputs?: Record<string, unknown>
+    ) => Effect.Effect<Record<string, unknown>, BackendError, R>;
     readonly attachmentTransfers?: AttachmentTransferPolicy<R>;
     readonly ontology?: LiveOntology;
     readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
@@ -303,6 +320,13 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
             )
         );
     return HelperRpcs.toLayer({
+        Query: (request, context) =>
+            Effect.gen(function* () {
+                yield* options.authorize({ operation: "Query", ...request }, context.headers);
+                yield* options.ready ?? Effect.void;
+                if (!options.query) return yield* missing("Query");
+                return yield* options.query(request.document, request.inputs);
+            }),
         LoadSubset: (subset, context) =>
             Effect.gen(function* () {
                 yield* options.authorize({ operation: "LoadSubset", subset }, context.headers);
@@ -578,6 +602,10 @@ type OperationsRpcClient = Effect.Success<
     ReturnType<typeof RpcClient.make<RpcGroup.Rpcs<typeof OntologyOperationRpcs>>>
 >;
 export interface OntologyOperationsClient {
+    readonly query: (
+        document: import("@party-stack/ontology-spec").QueryDocument,
+        inputs?: Record<string, unknown>
+    ) => Effect.Effect<Record<string, unknown>, BackendError>;
     /** Portable plaintext; the view decodes it against its ontology definition. Cache policy runs at the owner. */
     readonly decrypt: (
         value: import("@party-stack/ontology/values").Encrypted,
@@ -776,6 +804,7 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
             }) as Awaited<ReturnType<LiveOntology["attachments"]["metadata"]>>,
     };
     return {
+        query: (document, inputs) => client.Query({ document, inputs }).pipe(Effect.mapError(failure)),
         decrypt: (value, settings) =>
             client.Decrypt({ value, cache: settings?.cache }).pipe(Effect.mapError(decryptFailure)),
         deleteLocalData: client.DeleteLocalData().pipe(Effect.mapError(failure)),

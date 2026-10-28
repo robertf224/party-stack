@@ -13,7 +13,5 @@ export type {
 } from "./errors.js";
 export * from "./backend.js";
 
-export { projectOntologyBackend } from "./authorization.js";
-export type { BackendProjectionPolicy } from "./authorization.js";
 export { makeOntologyServer } from "./composition.js";
 export type { OntologyServerOptions } from "./composition.js";

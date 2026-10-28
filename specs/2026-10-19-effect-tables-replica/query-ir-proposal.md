@@ -1,11 +1,11 @@
 # Query IR and authorized ontology views — initial proposal
 
-October 28, 2026. Execution and policy APIs below remain design proposals. The
-structural Query IR and low-level construction helpers now exist in
-`ontology-spec/query`; they do not execute queries or enforce permissions yet.
-Builder examples below remain illustrative. This develops
-[query-ir.md](./query-ir.md) using Streamline's actual integration and the two
-referenced design conversations.
+October 28, 2026. Design record. The structural IR, finite execution, policy
+read planner, native server enforcement and context/definition projection now exist.
+Fluent builder examples below remain illustrative; the current construction helpers
+are structural functions. See [query-ir.md](./query-ir.md) and
+[migration-status.md](./migration-status.md) for implemented boundaries and remaining work.
+This develops the two referenced design conversations and Streamline integration.
 
 ## Recommendation
 
@@ -493,6 +493,13 @@ the resulting AST at infrastructure boundaries. Canonical hashes normalize bindi
 names while preserving source identity, cardinality, values, ordering and parameters.
 
 ## Planning and the eager oracle
+
+Current decision: keep the full-policy eager evaluator as a private test oracle;
+do not expose an authorization-evaluation strategy on the server. The production
+planner rewrites safely and falls back when needed. Configurable eager sync or
+offline demand controls acquisition and retention, not a second permission model.
+When a local snapshot has complete relevant coverage, the planner can execute
+there without needing a separate authorization switch.
 
 For a project admin, these are equivalent logical ways to find visible forms:
 

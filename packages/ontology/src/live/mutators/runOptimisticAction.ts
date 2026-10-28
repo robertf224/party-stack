@@ -17,11 +17,13 @@ export async function runOptimisticAction(options: {
     objects: Record<string, OntologyCollection<OntologyObject>>;
     mutators?: OntologyMutatorRegistry;
     ensureLoaded?: PrepareTransactionSources;
+    onMutation?: Parameters<typeof createMutatorTx>[0]["onMutation"];
 }): Promise<void> {
     const tx = createMutatorTx({
         transaction: options.transaction,
         objects: options.objects,
         ensureLoaded: options.ensureLoaded,
+        onMutation: options.onMutation,
         primaryKeys: Object.fromEntries(
             options.ir.objectTypes.map((objectType) => [objectType.name, objectType.primaryKey])
         ),

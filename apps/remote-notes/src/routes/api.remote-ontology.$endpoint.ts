@@ -1,8 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { makeStorageOntologyBackend } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
-import { makeOntologyServer, projectOntologyBackend } from "@party-stack/ontology-server";
-import { and, eq, field } from "@party-stack/ontology-storage";
+import { makeOntologyServer } from "@party-stack/ontology-server";
 import { byteSource } from "@party-stack/ontology-storage/blobs";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import { createFileRoute } from "@tanstack/react-router";
@@ -50,74 +49,13 @@ const makePrincipal = Effect.fnUntraced(function* (
         context,
         ...native,
     });
-    const canReadAttachment = (id: string) =>
-        owned.storage
-            .read((tx) =>
-                tx.loadSubset("NoteAttachment", {
-                    where: and(eq(field("ownerEmail"), context.user), eq(field("attachment", "id"), id)),
-                    limit: 1,
-                })
-            )
-            .pipe(Effect.map((rows) => rows.length > 0));
-    const attachments = owned.attachments && {
-        ...owned.attachments,
-        read: (value: Parameters<NonNullable<typeof owned.attachments>["read"]>[0]) =>
-            Effect.gen(function* () {
-                if (!(yield* canReadAttachment(value.id))) return yield* denied();
-                return yield* owned.attachments!.read(value);
-            }),
-        metadata: (value: Parameters<NonNullable<typeof owned.attachments>["metadata"]>[0]) =>
-            Effect.gen(function* () {
-                if (!(yield* canReadAttachment(value.id))) return yield* denied();
-                return yield* owned.attachments!.metadata(value);
-            }),
-    };
-    const view = projectOntologyBackend({
+    const server = yield* makeOntologyServer({
+        kind: "owned",
         backend: owned,
         ir: notesOntology,
         context,
-        policy: {
-            clientContext: "forward",
-            baseObjectTypeQueries: {
-                Note: eq(field("ownerEmail"), context.user),
-                NoteAttachment: eq(field("ownerEmail"), context.user),
-            },
-            allowedObjectTypeProperties: Object.fromEntries(
-                notesOntology.objectTypes.map((type) => [
-                    type.name,
-                    type.properties.map((property) => property.name),
-                ])
-            ),
-            canApplyAction: (name, parameters) =>
-                name === "createNote"
-                    ? Effect.succeed(true)
-                    : owned.storage
-                          .read((tx) => tx.get("Note", String(parameters.note)))
-                          .pipe(Effect.map((note) => note?.ownerEmail === context.user)),
-        },
     });
-    const { handleRequest: serve } = yield* makeOntologyServer({
-        kind: "proxy",
-        ir: view.ir,
-        backend: {
-            ...view.backend,
-            sourceId: `/api/remote-ontology/:${context.user}`,
-            attachments,
-        },
-        authorize: (operation) =>
-            [
-                "Describe",
-                "LoadSubset",
-                "ApplyAction",
-                "ValidateAction",
-                "CreateAttachment",
-                "ReadAttachment",
-                "AttachmentMetadata",
-            ].includes(operation.operation)
-                ? Effect.void
-                : Effect.fail(denied()),
-    });
-    return { serve, attachments };
+    return { serve: server.handleRequest, attachments: server.backend.attachments };
 });
 const acquire = Effect.gen(function* () {
     const native = yield* storage;
@@ -144,7 +82,16 @@ async function handleRequest(request: Request): Promise<Response> {
         Effect.gen(function* () {
             const input = yield* Schema.decodeUnknownEffect(
                 Schema.fromJsonString(
-                    Schema.Struct({ attachment: Schema.Struct({ id: Schema.NonEmptyString }) })
+                    Schema.Struct({
+                        attachment: Schema.Struct({
+                            id: Schema.NonEmptyString,
+                            source: Schema.Struct({
+                                objectType: Schema.NonEmptyString,
+                                primaryKey: Schema.Union([Schema.String, Schema.Finite]),
+                                property: Schema.NonEmptyString,
+                            }),
+                        }),
+                    })
                 )
             )(new URL(request.url).searchParams.get("attachment") ?? "").pipe(
                 Effect.mapError(() => denied())

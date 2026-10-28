@@ -1,4 +1,13 @@
 import { o, type OntologyIR } from "@party-stack/ontology";
+import {
+    context,
+    eq as expressionEq,
+    field as expressionField,
+    input,
+    literal,
+    selectField,
+    sub,
+} from "@party-stack/ontology-spec/query";
 import { eq, field, evaluateQuery } from "@party-stack/ontology-storage";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { Effect } from "effect";
@@ -64,15 +73,23 @@ test("attachment reads re-find the handle in an authorized source row and declar
                 ),
             }),
     };
-    const projected = projectOntologyBackend({
-        backend,
-        ir,
-        context: { user: "alice" },
-        policy: {
-            allowedObjectTypeProperties: { Item: ["id", "owner", "files", "title"] },
-            baseObjectTypeQueries: { Item: ({ ctx }) => eq(field("owner"), ctx.user) },
+    ir.context = { type: o.struct({ fields: [{ name: "user", displayName: "User", type: o.string({}) }] }) };
+    ir.policy = {
+        read: {
+            select: [
+                sub("items", {
+                    from: { source: { objectType: "Item" }, binding: "item" },
+                    where: expressionEq(expressionField("item", "owner"), context("user")),
+                    select: ["id", "owner", "files", "title"].map((name) =>
+                        selectField(name, expressionField("item", name))
+                    ),
+                }),
+            ],
         },
-    }).backend;
+    };
+    const projected = (
+        await Effect.runPromise(projectOntologyBackend({ backend, ir, context: { user: "alice" } }))
+    ).backend;
     const visible: attachment = {
         id: "visible-file",
         source: { objectType: "Item", primaryKey: "visible", property: "files" },
@@ -170,25 +187,32 @@ test("projection filters rows before limits, blocks hidden-field probes, and own
             }),
         queryFunction: () => Effect.succeed(undefined),
     };
-    const view = projectOntologyBackend({
-        backend,
-        ir,
-        context: { user: "alice", secret: "private" },
-        policy: {
-            allowedObjectTypeProperties: { Item: ["id", "owner"] },
-            baseObjectTypeQueries: {
-                Item: ({ ctx, objectType }) => {
-                    expect(objectType).toBe("Item");
-                    return eq(field("owner"), ctx.user);
-                },
-            },
-            clientContext: (context) => ({ user: context.user }),
-            fixedActionParameterValues: {
-                save: { owner: { kind: "contextReference", value: { name: "user" } } },
-            },
-            canApplyAction: (_name, values) => Effect.succeed(values.owner === "alice"),
+    ir.context = { type: o.struct({ fields: [{ name: "user", displayName: "User", type: o.string({}) }] }) };
+    ir.policy = {
+        read: {
+            select: [
+                sub("items", {
+                    from: { source: { objectType: "Item" }, binding: "item" },
+                    where: expressionEq(expressionField("item", "owner"), context("user")),
+                    select: ["id", "owner"].map((name) => selectField(name, expressionField("item", name))),
+                }),
+            ],
         },
-    });
+        actions: [
+            {
+                actionType: "save",
+                bind: [{ parameter: "owner", expression: context("user") }],
+                check: expressionEq(input("owner"), context("user")),
+            },
+        ],
+    };
+    const view = await Effect.runPromise(
+        projectOntologyBackend({
+            backend,
+            ir,
+            context: { user: "alice" },
+        })
+    );
     expect(view.context).toEqual({ user: "alice" });
     expect(view.ir.actionTypes[0]?.parameters.map((parameter) => parameter.name)).toEqual(["id"]);
     await Effect.runPromise(
@@ -299,16 +323,25 @@ test("parameter resolution uses projected defaults and authorized row/property r
             }),
         queryFunction: () => Effect.void,
     };
-    const view = projectOntologyBackend({
-        backend,
-        ir,
-        context: {},
-        policy: {
-            allowedObjectTypeProperties: { Item: ["id", "owner"] },
-            baseObjectTypeQueries: { Item: eq(field("owner"), "alice") },
-            fixedActionParameterValues: { edit: { owner: o.Expression.literal({ value: "fixed-owner" }) } },
+    ir.policy = {
+        read: {
+            select: [
+                sub("items", {
+                    from: { source: { objectType: "Item" }, binding: "item" },
+                    where: expressionEq(expressionField("item", "owner"), literal("alice")),
+                    select: ["id", "owner"].map((name) => selectField(name, expressionField("item", name))),
+                }),
+            ],
         },
-    });
+        actions: [
+            {
+                actionType: "edit",
+                bind: [{ parameter: "owner", expression: literal("fixed-owner") }],
+                check: literal(true),
+            },
+        ],
+    };
+    const view = await Effect.runPromise(projectOntologyBackend({ backend, ir, context: {} }));
     const result = await Effect.runPromise(
         view.backend.resolveActionParameters!("edit", { item: "visible", owner: "tampered" })
     );

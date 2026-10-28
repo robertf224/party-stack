@@ -55,8 +55,14 @@ test("framework composition retains platform/transport after acquisition, confir
                 released.push("transport");
             })
         );
+        const definition = {
+            ...ir,
+            context: {
+                type: o.struct({ fields: [{ name: "user", displayName: "User", type: o.string({}) }] }),
+            },
+        };
         const backend = yield* makeOwnedBackend({
-            ir,
+            ir: definition,
             namespace: "client-parent",
             tables: yield* Memory.make(),
             mutators: {
@@ -72,7 +78,8 @@ test("framework composition retains platform/transport after acquisition, confir
             Effect.provide(
                 ontologyRpcHandlers({
                     backend,
-                    ir,
+                    ir: definition,
+                    context: { user: "alice" },
                     authorize: (request) =>
                         Effect.sync(() => {
                             requests.push(request.operation);
@@ -84,7 +91,6 @@ test("framework composition retains platform/transport after acquisition, confir
         return parent;
     });
     const live = await createConnectedLiveOntology({
-        ir,
         runtime,
         connection,
         label: "Client",
@@ -93,6 +99,7 @@ test("framework composition retains platform/transport after acquisition, confir
     });
     try {
         expect(released).toEqual([]);
+        expect(live.context).toEqual({ user: "alice" });
         expect(live.attachments).not.toBe(parent!.operations.attachments);
         expect(parent!.replication.kind).toBe("committed");
         const rows = await queryOnce((q) => q.from({ counter: live.objects.Counter! }));

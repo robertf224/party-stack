@@ -85,3 +85,9 @@ export const sub = (name: string, query: Query, cardinality: "one" | "many" = "m
     o.QuerySelection.sub({ name, query, cardinality });
 export const selectCase = (options: SelectCaseSelection): QuerySelection =>
     o.QuerySelection.selectCase(options);
+
+export { validateQueryDocument, selectedProperty } from "./validate.js";
+export type { QueryValidationOptions } from "./validate.js";
+export { equalValues, compareValues, evaluateOperator, matchPattern, booleanValue } from "./operators.js";
+
+export { validatePolicy } from "./policy.js";

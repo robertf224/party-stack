@@ -1,4 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
+import { getAtPath } from "@party-stack/ontology-spec/utils";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { BasicIndex, whenSyncAccepted, DbClient, collectionOptions } from "@tanstack/db";
 import { Effect, Fiber } from "effect";
@@ -162,6 +163,7 @@ export const executeTransactionMutator = Effect.fn("Ontology.executeMutator")(fu
         Effect.gen(function* () {
             const services = yield* Effect.context<never>();
             const run = Effect.runPromiseWith(services);
+            const writes = new Map<string, Map<string, readonly string[]> | null>();
             const transaction = client.createTransaction<OntologyObject>({
                 autoCommit: false,
                 mutationFn: async ({ transaction }) => {
@@ -172,6 +174,24 @@ export const executeTransactionMutator = Effect.fn("Ontology.executeMutator")(fu
                         if (!objectType) throw failure("Mutation belongs to another transaction.");
                         if (mutation.type === "delete") {
                             await run(options.tx.delete(objectType, mutation.key));
+                        } else if (
+                            mutation.type === "update" &&
+                            writes.get(JSON.stringify([objectType, mutation.key])) !== null
+                        ) {
+                            const paths = writes.get(JSON.stringify([objectType, mutation.key]));
+                            const changed = paths
+                                ? [...paths.values()]
+                                : Object.keys(mutation.changes).map((name) => [name]);
+                            await run(
+                                options.tx.patch(
+                                    objectType,
+                                    mutation.key,
+                                    changed.map((path) => ({
+                                        path,
+                                        value: getAtPath(mutation.modified, path),
+                                    }))
+                                )
+                            );
                         } else {
                             await run(options.tx.put(objectType, mutation.modified));
                         }
@@ -205,6 +225,17 @@ export const executeTransactionMutator = Effect.fn("Ontology.executeMutator")(fu
                             idempotencyKey: options.operationId,
                             mutators: options.mutators,
                             ensureLoaded,
+                            onMutation: (type, key, paths) => {
+                                const id = JSON.stringify([type, key]);
+                                if (!paths) {
+                                    writes.set(id, null);
+                                    return;
+                                }
+                                if (writes.get(id) === null) return;
+                                const changed = writes.get(id) ?? new Map();
+                                for (const path of paths) changed.set(JSON.stringify(path), [...path]);
+                                writes.set(id, changed);
+                            },
                         });
                         await transaction.commit();
                         return parameters;

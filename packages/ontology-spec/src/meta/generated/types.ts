@@ -121,6 +121,40 @@ export type QueryDocument = {
     select: Array<QuerySelection>;
 };
 
+/** Typed trusted execution context and optional stable data-partition paths. */
+export type ContextDef = {
+    type?: TypeDef;
+    partition?: Array<Array<string>>;
+};
+
+/** A server-bound action parameter, hidden from the public parameter contract. */
+export type ActionParameterBinding = {
+    parameter: string;
+    expression: Expression;
+};
+
+/** Authorizes one action through a check, with optional bindings and additional mutator reads. */
+export type ActionPolicy = {
+    actionType: string;
+    check: Expression;
+    bind?: Array<ActionParameterBinding>;
+    read?: QueryDocument;
+};
+
+/** Authorizes one query function and optional additional trusted implementation reads. */
+export type QueryFunctionPolicy = {
+    queryFunctionType: string;
+    check: Expression;
+    read?: QueryDocument;
+};
+
+/** One effective policy for an ontology view; grants are evaluated under its trusted context. */
+export type PolicyDef = {
+    read: QueryDocument;
+    actions?: Array<ActionPolicy>;
+    queryFunctions?: Array<QueryFunctionPolicy>;
+};
+
 /** A renderer-independent icon name from @party-stack/icons. */
 export type IconName =
     | "activity"
@@ -652,6 +686,15 @@ export type Lens = {
     operations: Array<LensOp>;
 };
 
+/** Singleton descriptive and execution-contract metadata for one ontology view. */
+export type Ontology = {
+    id: string;
+    displayName?: string;
+    description?: string;
+    context?: ContextDef;
+    policy?: PolicyDef;
+};
+
 /** A named type definition that can be referenced by other types. */
 export type ValueType = {
     /** The type's name for use in code. */
@@ -740,6 +783,7 @@ export type MetaOntologyContext = Record<string, unknown>;
 export type MetaOntology = {
     context: MetaOntologyContext;
     objectTypes: {
+        Ontology: Ontology;
         ValueType: ValueType;
         ObjectType: ObjectType;
         LinkType: LinkType;

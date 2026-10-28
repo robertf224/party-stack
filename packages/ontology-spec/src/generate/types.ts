@@ -298,8 +298,8 @@ function addOntologyContextType(
     sourceFile.addTypeAlias({
         name: `${outputTypeName}Context`,
         isExported: true,
-        type: ir.contextType
-            ? `${generateForTypeDef(ir.contextType, {
+        type: ir.context?.type
+            ? `${generateForTypeDef(ir.context?.type, {
                   objectTypes,
               })} & Record<string, unknown>`
             : "Record<string, unknown>",

@@ -1,4 +1,5 @@
 import { isUnknownActionOutcome } from "@party-stack/ontology-backend";
+import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 export { makeCachedProxy } from "./proxy.js";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { clientRegistry } from "@party-stack/ontology-backend/clients";
@@ -18,6 +19,7 @@ import {
 import { stateIdentity } from "@party-stack/ontology-backend/protocol";
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import { resolveType } from "@party-stack/ontology-spec/utils";
+import { setAtPath } from "@party-stack/ontology-spec/utils";
 import {
     evaluateQuery,
     field,
@@ -552,7 +554,10 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     const rootCounts = new Map<string, number>();
     const rootGate = yield* Semaphore.make(1);
     const pins = Table.make<{ objectType: string; key: Key }>({ name: name("pins") });
-    const signature = JSON.stringify(options.ir);
+    const signature = yield* Effect.try({
+        try: () => ontologyDefinitionSignature(options.ir),
+        catch: (cause) => fault("InvalidConfiguration", "Invalid ontology definition.", cause),
+    });
     const schemaHash = yield* boundary(
         digestBytes({ type: "application/json", stream: Stream.make(new TextEncoder().encode(signature)) })
     );
@@ -757,6 +762,27 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             );
         const read = reader(tx, false);
         const local: OwnedTransaction = {
+            patch: (type, key, patches) =>
+                guard(
+                    Effect.gen(function* () {
+                        let value = yield* local.get(type, key);
+                        if (!value) return yield* fault("NotFound", "Object not found.");
+                        for (const patch of patches) {
+                            if (!patch.path.length)
+                                return yield* fault("InvalidRequest", "Patch paths cannot be empty.");
+                            value = yield* Effect.try({
+                                try: () => setAtPath(value!, patch.path, patch.value),
+                                catch: (cause) => fault("InvalidRequest", "Invalid patch path.", cause),
+                            });
+                        }
+                        if (value[definitions.get(type)!.primaryKey] !== key)
+                            return yield* fault(
+                                "InvalidRequest",
+                                "Patches cannot change an object's identity."
+                            );
+                        yield* local.put(type, value);
+                    })
+                ),
             get: (type, key) =>
                 guard(
                     Effect.suspend(() => {

@@ -104,25 +104,96 @@ report reconnect gaps/stream health. Neither currently exposes a resumable nativ
 
 ## Authorization and error disclosure
 
-Bind `projectOntologyBackend({ backend, ir, context, policy })` after authenticating
-the caller. Its policy supplies allowed object properties, optional row predicates,
-action/query visibility, fixed action parameters, context projection and operation
-authorization callbacks. Row predicates run before pagination; hidden properties
-cannot be probed in filters or sort keys. Query-function callbacks remain responsible
-for returned-value authorization. Base predicate values can also be functions of
-`{ctx, objectType}`; ctx is the authenticated server context bound to this projection.
-They still return flat predicates rather than relational queries.
+Authenticate the caller before constructing a server, then bind its typed `context`.
+`ir.policy` is the permission contract: hierarchical entity selections grant rows
+and properties; action rules provide `check`, server-bound parameters and optional
+additional mutator reads. Query functions have analogous checks/read grants.
+The old native property lists, base predicates and action callbacks are removed.
 
-Projected attachment metadata and reads require a source row/property, load that row
-through the projected subset path, and re-find the ID through its declared attachment
-type (including containers). Hidden properties, inaccessible rows, detached or invented
-handles are denied without calling the byte provider. This does not grant staging or
-eager-upload access. Decrypt capabilities require separate explicit authorization.
-Never reuse a principal-bound projection across users.
+```ts
+// The enclosing HTTP handler has already authenticated this context.
+const acquireServer = Effect.gen(function* () {
+    return yield* makeOntologyServer({
+        kind: "owned",
+        backend,
+        ir, // includes policy and context definitions
+        context: { user: session.user.id, tenant: session.tenantId },
+    });
+});
+```
 
-A projection without row predicates can filter a journal to visible object types and
-properties. Row-filtered projections omit journal access: tracking deletes and moves
-across predicate boundaries requires before/after visibility or query watching.
+The projection wraps the final read path, including cache hits. Its generated
+protocol gate permits ordinary projected operations and rejects private
+replica/admin methods; it does not authenticate a new caller. Never share a
+principal-bound view across callers. Low-level `authorize(request, headers)` remains
+available for trusted transport bindings; it does not set context or replace the IR
+policy. A pass-through endpoint may rely on its correctly authenticated upstream
+instead of applying a second local policy.
+
+Owned execution binds parameters and evaluates policy/reference checks in the same
+transaction as mutator reads/writes, receipt and journal publication. Shape validation,
+idempotency lookup and staging external bytes can precede that transaction. Adapted
+providers have their own authoritative transaction; the proxy enforces its policy
+before forwarding. Neither grants nor request snapshots are retained across calls.
+
+Caller filters are rewritten into policy grant paths where safe. Caller pagination
+runs after authorization; policy windows remain semantic barriers. The full-policy
+eager evaluator is private oracle infrastructure, not a configuration switch. A
+future eager sync/offline pin controls demand acquisition and retention instead.
+
+Context-only conditional selections specialize the public definition. Row-dependent
+properties remain potentially available and optional; returned rows omit denied
+cells. Filtering/ordering on conditionally available fields is conservatively denied.
+The context definition and bound values form one shared contract, returned by
+`Describe` together with the projected definition, capabilities, definition hash and
+source ID. Credentials and private authentication state belong in server services,
+not context. Partition paths in `ir.context.partition` derive the local storage
+partition from those same values.
+
+A gateway can replace the upstream context definition and policy with its own:
+
+```ts
+const tokenIR = {
+    ...upstreamIR,
+    context: {
+        type: o.struct({
+            fields: [
+                {
+                    name: "approval",
+                    displayName: "Approval",
+                    type: o.objectReference({ objectType: "PostApproval" }),
+                },
+            ],
+        }),
+        partition: [["approval"]],
+    },
+    policy: tokenPolicy,
+};
+const server =
+    yield *
+    makeOntologyServer({
+        kind: "cached-proxy",
+        backend: upstream,
+        cache: trustedServiceAccountCache,
+        ir: tokenIR,
+        context: { approval: verifiedToken.approvalId },
+    });
+```
+
+Each policy `bind` hides its parameter from the public action schema and replaces
+caller input on the server. Compatible defaults and predictions are rewritten to
+use the binding; predictions that cannot safely use the new context are omitted.
+This gateway policy is enforced in addition to the provider's own permissions.
+There is no separate `clientContext` option in the native constructor.
+
+Projected attachments and decryption require an accessible source row/property and
+re-find the exact attachment ID/ciphertext in that row. Checks happen before byte or
+decryption providers are called. Standalone staging/eager-upload access is not granted;
+action-associated HTTP uploads use the normal authorized action path.
+
+Projected views omit raw journals, selected delivery and speculative state. Correct
+visibility transitions for deletions/moves require a scoped delivery implementation.
+Ordinary subset invalidation hints remain available, without row payloads.
 
 The server defaults to `errors: "projected"`: safe normalized messages, exposed
 parameter paths and standard input constraints. Configured input messages become

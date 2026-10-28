@@ -1,7 +1,18 @@
 import { o } from "@party-stack/ontology";
+import {
+    and,
+    context,
+    eq,
+    exists,
+    field,
+    input,
+    literal,
+    selectField,
+    sub,
+} from "@party-stack/ontology/query";
 import type { OntologyIR } from "@party-stack/ontology";
 
-export const notesOntology = {
+const baseDefinition = {
     types: [],
     objectTypes: [
         {
@@ -169,4 +180,40 @@ export const notesOntology = {
     queryFunctionTypes: [],
 } satisfies OntologyIR;
 
+const ownNote = (binding: string, reference: import("@party-stack/ontology").Expression) => ({
+    from: { source: { objectType: "Note" }, binding },
+    where: and(eq(field(binding, "id"), reference), eq(field(binding, "ownerEmail"), context("user"))),
+    select: [selectField("id", field(binding, "id"))],
+});
+export const notesOntology: OntologyIR = {
+    ...baseDefinition,
+    context: {
+        type: o.struct({ fields: [{ name: "user", displayName: "User", type: o.string({}) }] }),
+        partition: [["user"]],
+    },
+    policy: {
+        read: {
+            select: baseDefinition.objectTypes.map((type) =>
+                sub(type.name, {
+                    from: { source: { objectType: type.name }, binding: type.name },
+                    where:
+                        type.name === "Note"
+                            ? eq(field(type.name, "ownerEmail"), context("user"))
+                            : and(
+                                  eq(field(type.name, "ownerEmail"), context("user")),
+                                  exists(ownNote("attachmentNote", field(type.name, "noteId")))
+                              ),
+                    select: type.properties.map((p) => selectField(p.name, field(type.name, p.name))),
+                })
+            ),
+        },
+        actions: baseDefinition.actionTypes.map((action) => ({
+            actionType: action.name,
+            check: action.name === "createNote" ? literal(true) : exists(ownNote("target", input("note"))),
+            bind: action.parameters.some((p) => p.name === "ownerEmail")
+                ? [{ parameter: "ownerEmail", expression: context("user") }]
+                : undefined,
+        })),
+    },
+};
 export default notesOntology;

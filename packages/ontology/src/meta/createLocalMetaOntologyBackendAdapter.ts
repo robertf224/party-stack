@@ -34,6 +34,15 @@ export function createLocalMetaOntologyBackendAdapter(ir: OntologyIR): OntologyB
                 loadSubset: (subset) =>
                     Effect.suspend(() => {
                         const rows: Record<string, readonly object[]> = {
+                            Ontology: [
+                                {
+                                    id: "ontology",
+                                    displayName: ir.displayName,
+                                    description: ir.description,
+                                    context: ir.context,
+                                    policy: ir.policy,
+                                },
+                            ],
                             ObjectType: objectTypes,
                             ValueType: ir.types,
                             LinkType: ir.linkTypes,

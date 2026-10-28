@@ -79,23 +79,26 @@ describe("generateOntology", () => {
             linkTypes: [],
             actionTypes: [],
             queryFunctionTypes: [],
-            contextType: o.struct({
-                fields: [
-                    {
-                        name: "user",
-                        displayName: "User",
-                        type: o.optional({
-                            type: o.objectReference({
-                                objectType: "Membership",
+            context: {
+                type: o.struct({
+                    fields: [
+                        {
+                            name: "user",
+                            displayName: "User",
+                            type: o.optional({
+                                type: o.objectReference({
+                                    objectType: "Membership",
+                                }),
                             }),
-                        }),
-                    },
-                ],
-            }),
+                        },
+                    ],
+                }),
+            },
         };
 
         const output = generateOntology(ontology);
-        expect(output).toContain("contextType: o.struct");
+        expect(output).toContain("context:");
+        expect(output).toContain("type: o.struct");
         expect(output).toContain('objectType: "Membership"');
     });
 

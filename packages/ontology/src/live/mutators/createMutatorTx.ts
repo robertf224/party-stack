@@ -34,6 +34,8 @@ export function createMutatorTx(options: {
     objects: OntologyMutatorObjects;
     primaryKeys?: Record<string, string>;
     ensureLoaded?: PrepareTransactionSources;
+    /** Transaction bridge records write intent independently of the readable row shape. */
+    onMutation?: (objectType: string, key: string | number, paths?: readonly (readonly string[])[]) => void;
 }): OntologyMutatorTx {
     return {
         ...createReadTx(options.objects, options.ensureLoaded),
@@ -59,6 +61,8 @@ export function createMutatorTx(options: {
                             options.transaction.mutate(() => {
                                 collection.insert(object);
                             });
+                            if (typeof key === "string" || typeof key === "number")
+                                options.onMutation?.(objectType, key);
                         },
                         update: async (
                             key: string | number,
@@ -71,6 +75,13 @@ export function createMutatorTx(options: {
                                     applyChanges(draft, changes);
                                 });
                             });
+                            options.onMutation?.(
+                                objectType,
+                                key,
+                                Array.isArray(changes)
+                                    ? changes.map((change) => change.path)
+                                    : Object.keys(changes).map((name) => [name])
+                            );
                         },
                         delete: async (key: string | number) => {
                             await options.ensureLoaded?.([objectType], { key });
@@ -78,6 +89,7 @@ export function createMutatorTx(options: {
                             options.transaction.mutate(() => {
                                 collection.delete(key);
                             });
+                            options.onMutation?.(objectType, key);
                         },
                     };
                 },

@@ -11,7 +11,10 @@ import {
     ClientSubmissionCodec,
     ClientViewCodec,
     StateSelectionCodec,
+    protocolValueCodec,
 } from "@party-stack/ontology-backend/protocol";
+import { OntologyIRSchema } from "@party-stack/ontology-spec/effect";
+import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Context, Deferred, Effect, Schema, Stream, Layer, Scope } from "effect";
 import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcSchema } from "effect/rpc";
@@ -45,6 +48,8 @@ const Description = Schema.Struct({
     replication: Schema.Literals(["committed", "speculative"]),
     definitionHash: Schema.optional(Schema.String),
     sourceId: Schema.NonEmptyString,
+    ir: Schema.optional(protocolValueCodec(OntologyIRSchema)),
+    context: Schema.optional(protocolValueCodec(Schema.Record(Schema.String, Schema.Unknown))),
     supportsIdempotency: Schema.Boolean,
     delivery: Schema.optional(Schema.Boolean),
     stateDelivery: Schema.optional(Schema.Boolean),
@@ -52,6 +57,7 @@ const Description = Schema.Struct({
     watchChanges: Schema.optional(Schema.Boolean),
     watchSubset: Schema.optional(Schema.Boolean),
     actionParameterResolution: Schema.optional(Schema.Boolean),
+    queries: Schema.optional(Schema.Boolean),
 });
 const ReplicaRpcs = RpcGroup.make(
     Rpc.make("Describe", { success: Description, error: BackendError }),
@@ -125,6 +131,8 @@ export type OntologyDescription = Schema.Schema.Type<typeof Description>;
 export interface OntologyConnection {
     readonly sourceId: string;
     readonly definitionHash?: string;
+    readonly ir?: import("@party-stack/ontology-spec").OntologyIR;
+    readonly context?: Record<string, unknown>;
     readonly operations: OntologyOperationsClient;
     /** Finite operations are available for all server roles. */
     readonly backend: import("@party-stack/ontology-backend").OntologyBackendService;
@@ -163,6 +171,9 @@ export type OntologyRpcRequest =
  * state inspection. Restricted sources must also project their returned state.
  */
 export interface OntologyRpcServerOptions<R = never> extends ErrorProjectionOptions {
+    readonly query?: import("./operations.js").OntologyOperationOptions<R>["query"];
+    /** Already projected client context. Never use request payloads as trusted context. */
+    readonly context?: Record<string, unknown>;
     readonly attachmentTransfers?: AttachmentTransferPolicy<R>;
     /** Outgoing replication only. Snapshot uses invalidations and finite reads;
      * incremental requires native selected delivery. Auto preserves capability selection.
@@ -270,10 +281,23 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                                 message: "This source does not support incremental selected delivery.",
                                 retryable: false,
                             });
+                        const signature = options.ir
+                            ? yield* Effect.try({
+                                  try: () => ontologyDefinitionSignature(options.ir!),
+                                  catch: (cause) =>
+                                      new BackendError({
+                                          operation: "describe",
+                                          kind: "InvalidConfiguration",
+                                          message: "Invalid ontology definition.",
+                                          retryable: false,
+                                          cause,
+                                      }),
+                              })
+                            : undefined;
                         const definitionHash = options.ir
                             ? yield* digestBytes({
                                   type: "application/json",
-                                  stream: Stream.make(new TextEncoder().encode(JSON.stringify(options.ir))),
+                                  stream: Stream.make(new TextEncoder().encode(signature!)),
                               }).pipe(Effect.mapError((cause) => classifyBackendFailure("describe", cause)))
                             : undefined;
                         return {
@@ -281,6 +305,8 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                             replication: options.source ? ("speculative" as const) : ("committed" as const),
                             definitionHash,
                             sourceId: source.sourceId,
+                            ir: options.ir,
+                            context: options.context,
                             supportsIdempotency: source.supportsIdempotency,
                             delivery: !snapshots && committedDelivery,
                             stateDelivery: !snapshots && speculativeDelivery,
@@ -293,6 +319,7 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                             actionParameterResolution: Boolean(
                                 options.backend?.resolveActionParameters || options.ontology
                             ),
+                            queries: Boolean(options.query),
                         };
                     })
                 )
@@ -456,6 +483,8 @@ export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(f
         operations,
         sourceId: description.sourceId,
         definitionHash: description.definitionHash,
+        ir: description.ir,
+        context: description.context,
         backend: makeRpcBackend(client, description, operations),
     };
     if (description.replication === "committed") return { ...common, replication: { kind: "committed" } };

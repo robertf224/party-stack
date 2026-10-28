@@ -1,4 +1,14 @@
 import { o, type OntologyIR, type TypeDef } from "@party-stack/ontology";
+import {
+    context,
+    eq,
+    exists,
+    field,
+    literal,
+    selectCase,
+    selectField,
+    sub,
+} from "@party-stack/ontology/query";
 import ontology from "../ontology/ontology";
 import type { AuthModelView } from "@party-stack/better-auth/storage";
 
@@ -18,6 +28,41 @@ const object = (name: string, fields: Record<string, TypeDef>, primaryKey = "id"
 // issue-tracker ontology view, excluding private auth types and properties.
 export const serverOntology: OntologyIR = {
     ...ontology,
+    policy: {
+        read: {
+            select: ontology.objectTypes.map((type) =>
+                sub(type.name, {
+                    from: { source: { objectType: type.name }, binding: type.name },
+                    select: type.properties.flatMap((p) =>
+                        type.name === "User" && p.name === "email"
+                            ? [
+                                  selectCase({
+                                      branches: [
+                                          {
+                                              condition: eq(field("User", "id"), context("user")),
+                                              select: [selectField(p.name, field(type.name, p.name))],
+                                          },
+                                      ],
+                                  }),
+                              ]
+                            : [selectField(p.name, field(type.name, p.name))]
+                    ),
+                })
+            ),
+        },
+        actions: ontology.actionTypes.map((action) => ({
+            actionType: action.name,
+            check: exists({
+                from: { source: { objectType: "User" }, binding: "principal" },
+                where: eq(field("principal", "id"), context("user")),
+                select: [selectField("id", field("principal", "id"))],
+            }),
+        })),
+        queryFunctions: (ontology as OntologyIR).queryFunctionTypes.map((query) => ({
+            queryFunctionType: query.name,
+            check: literal(true),
+        })),
+    },
     objectTypes: [
         ...ontology.objectTypes.filter((object) => object.name !== "User"),
         {

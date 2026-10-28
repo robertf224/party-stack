@@ -2,6 +2,7 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { makeCachedProxy, replicaStateSource } from "@party-stack/ontology-replica";
 import { sliceByteSource } from "@party-stack/ontology-storage/blobs";
 import { Effect } from "effect";
+import { projectOntologyBackend } from "./authorization.js";
 import { makeOntologyHttpHandler } from "./rpcHttp.js";
 import type { OntologyRpcServerOptions } from "./rpc.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
@@ -9,7 +10,11 @@ import type { OwnedBackendService } from "@party-stack/ontology-backend/owned";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 import type { ReplicaService } from "@party-stack/ontology-replica";
 
-type Common<R> = Omit<OntologyRpcServerOptions<R>, "source" | "backend">;
+type Common<R> = Omit<OntologyRpcServerOptions<R>, "source" | "backend" | "authorize" | "context"> &
+    (
+        | { readonly context: Record<string, unknown>; readonly authorize?: never }
+        | { readonly context?: undefined; readonly authorize: OntologyRpcServerOptions<R>["authorize"] }
+    );
 export type OntologyServerOptions<R = never> = Common<R> &
     (
         | { readonly kind: "owned"; readonly backend: OwnedBackendService }
@@ -27,6 +32,7 @@ export type OntologyServerOptions<R = never> = Common<R> &
               readonly kind: "replica";
               readonly backend: OntologyBackendService;
               readonly replica: ReplicaService;
+              readonly context?: never;
           }
     );
 
@@ -159,19 +165,54 @@ export const makeOntologyServer = Effect.fn("OntologyServer.make")(function* <R 
                 }),
         };
     }
+    let ir =
+        options.ir ??
+        (options.kind === "owned"
+            ? options.backend.storage.ir
+            : options.kind === "replica"
+              ? options.replica.ir
+              : options.kind === "cached-proxy"
+                ? options.cache.ir
+                : undefined);
+    let context = options.context;
+    let query = options.query;
+    let authorize = options.authorize;
+    if (options.context) {
+        if (source || !ir)
+            return yield* new BackendError({
+                operation: "server.project",
+                kind: "InvalidConfiguration",
+                message: "A projected server requires an ordinary backend and its ontology definition.",
+                retryable: false,
+            });
+        // Authorization wraps the role's final read path, including cache hits.
+        // Applying it to only the upstream adapter would leave cached rows unguarded.
+        const maintenance = backend.maintenance;
+        const view = yield* projectOntologyBackend(
+            { backend, ir, context: options.context, errors: options.errors },
+            options.kind === "owned" ? "owned" : "upstream"
+        );
+        backend = { ...view.backend, maintenance };
+        ir = view.ir;
+        context = view.context;
+        query = view.query;
+        authorize = view.authorize;
+    }
+    if (!authorize)
+        return yield* new BackendError({
+            operation: "server.authorize",
+            kind: "InvalidConfiguration",
+            message: "A trusted transport gate or authenticated policy binding is required.",
+            retryable: false,
+        });
     const handleRequest = yield* makeOntologyHttpHandler({
         ...options,
-        ir:
-            options.ir ??
-            (options.kind === "owned"
-                ? options.backend.storage.ir
-                : options.kind === "replica"
-                  ? options.replica.ir
-                  : options.kind === "cached-proxy"
-                    ? options.cache.ir
-                    : undefined),
+        ir,
+        context,
+        query,
+        authorize,
         backend,
         source,
     });
-    return { handleRequest };
+    return { handleRequest, backend };
 });

@@ -372,6 +372,57 @@ function projectExpression<Context>(opts: {
                 expression: fixedValue,
             });
         }
+        case "case": {
+            const branches = opts.expression.value.branches.map((branch) => ({
+                condition: projectExpression({ ...opts, expression: branch.condition }),
+                result: projectExpression({ ...opts, expression: branch.result }),
+            }));
+            const otherwise = projectExpression({ ...opts, expression: opts.expression.value.else });
+            return otherwise && branches.every((b) => b.condition && b.result)
+                ? {
+                      kind: "case",
+                      value: {
+                          branches: branches as { condition: Expression; result: Expression }[],
+                          else: otherwise,
+                      },
+                  }
+                : undefined;
+        }
+        case "not": {
+            const expression = projectExpression({ ...opts, expression: opts.expression.value.expression });
+            return expression ? { kind: "not", value: { expression } } : undefined;
+        }
+        case "and":
+        case "or":
+        case "concat":
+        case "coalesce": {
+            const expressions = opts.expression.value.expressions.map((expression) =>
+                projectExpression({ ...opts, expression })
+            );
+            return expressions.every((e) => e !== undefined)
+                ? { kind: opts.expression.kind, value: { expressions: expressions as Expression[] } }
+                : undefined;
+        }
+        case "eq":
+        case "ne":
+        case "lt":
+        case "lte":
+        case "gt":
+        case "gte":
+        case "in":
+        case "contains":
+        case "like":
+        case "ilike":
+        case "add":
+        case "subtract":
+        case "multiply":
+        case "divide": {
+            const left = projectExpression({ ...opts, expression: opts.expression.value.left });
+            const right = projectExpression({ ...opts, expression: opts.expression.value.right });
+            return left && right ? { kind: opts.expression.kind, value: { left, right } } : undefined;
+        }
+        case "exists":
+            return undefined;
     }
 }
 
@@ -561,9 +612,11 @@ function collectReferencedNamedTypes(
 function actionParametersReferenceHiddenObjectType(
     actionType: ActionTypeDef,
     ir: OntologyIR,
-    visibleObjectTypes: Set<string>
+    visibleObjectTypes: Set<string>,
+    visibleParameters?: Set<string>
 ): boolean {
     for (const parameter of actionType.parameters) {
+        if (visibleParameters && !visibleParameters.has(parameter.name)) continue;
         for (const objectType of typeReferencesObjectTypes(parameter.type, ir)) {
             if (!visibleObjectTypes.has(objectType)) return true;
         }
@@ -639,7 +692,16 @@ export function projectRemoteOntologyIR<
         .filter(
             (actionType) =>
                 !filterSchemaByAuthorization ||
-                !actionParametersReferenceHiddenObjectType(actionType, opts.ir, visibleObjectTypes)
+                !actionParametersReferenceHiddenObjectType(
+                    actionType,
+                    opts.ir,
+                    visibleObjectTypes,
+                    getVisibleActionParameterNames(
+                        actionType.name,
+                        actionType.parameters,
+                        opts.fixedActionParameterValues
+                    )
+                )
         )
         .map((actionType) => {
             const visibleParameters = getVisibleActionParameterNames(
@@ -712,6 +774,8 @@ export function projectRemoteOntologyIR<
               );
 
     const referencedNamedTypes = new Set<string>();
+    if (opts.ir.context?.type)
+        collectReferencedNamedTypes(opts.ir.context.type, opts.ir, referencedNamedTypes);
     for (const objectType of objectTypes) {
         for (const property of objectType.properties) {
             collectReferencedNamedTypes(property.type, opts.ir, referencedNamedTypes);

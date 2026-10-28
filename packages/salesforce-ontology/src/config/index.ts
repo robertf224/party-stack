@@ -123,7 +123,9 @@ function scopePulledOntology(ontology: OntologyIR): OntologyIR {
             })),
             returnType: scope(queryFunctionType.returnType),
         })),
-        contextType: ontology.contextType ? scope(ontology.contextType) : undefined,
+        context: ontology.context
+            ? { ...ontology.context, type: ontology.context.type ? scope(ontology.context.type) : undefined }
+            : undefined,
     };
 }
 

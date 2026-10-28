@@ -1050,15 +1050,17 @@ export default defineOntology({
         },
     ],
     queryFunctionTypes: [],
-    contextType: o.struct({
-        fields: [
-            {
-                name: "user",
-                displayName: "User",
-                type: o.objectReference({
-                    objectType: "User",
-                }),
-            },
-        ],
-    }),
+    context: {
+        type: o.struct({
+            fields: [
+                {
+                    name: "user",
+                    displayName: "User",
+                    type: o.objectReference({
+                        objectType: "User",
+                    }),
+                },
+            ],
+        }),
+    },
 });

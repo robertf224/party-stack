@@ -176,7 +176,7 @@ describe("createFoundryOntologyPullSource", () => {
         }).transformPulledOntology!(ir);
 
         expect(transformed.objectTypes.map((type) => type.name)).toContain("User");
-        expect(transformed.contextType).toEqual(
+        expect(transformed.context?.type).toEqual(
             o.struct({
                 fields: [
                     {

@@ -993,15 +993,17 @@ describe("Ontology Validation", () => {
         it("validates context.user references in action logic", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,
-                contextType: o.struct({
-                    fields: [
-                        {
-                            name: "user",
-                            displayName: "User",
-                            type: o.objectReference({ objectType: "User" }),
-                        },
-                    ],
-                }),
+                context: {
+                    type: o.struct({
+                        fields: [
+                            {
+                                name: "user",
+                                displayName: "User",
+                                type: o.objectReference({ objectType: "User" }),
+                            },
+                        ],
+                    }),
+                },
                 objectTypes: [
                     userObjectType,
                     {
@@ -1069,39 +1071,42 @@ describe("Ontology Validation", () => {
                             ],
                         },
                     ],
-                    contextType: o.struct({
-                        fields: [
-                            {
-                                name: "user",
-                                displayName: "User",
-                                type: o.optional({
-                                    type: o.objectReference({
-                                        objectType: "Membership",
+                    context: {
+                        type: o.struct({
+                            fields: [
+                                {
+                                    name: "user",
+                                    displayName: "User",
+                                    type: o.optional({
+                                        type: o.objectReference({
+                                            objectType: "Membership",
+                                        }),
                                     }),
-                                }),
-                            },
-                        ],
-                    }),
+                                },
+                            ],
+                        }),
+                    },
                 })
             );
         });
 
-        it("rejects a non-reference type for reserved context.user", () => {
+        it("allows an ordinary declared string context.user", () => {
             const result = validate({
                 ...emptyOntology,
-                contextType: o.struct({
-                    fields: [
-                        {
-                            name: "user",
-                            displayName: "User",
-                            type: o.string({}),
-                        },
-                    ],
-                }),
+                context: {
+                    type: o.struct({
+                        fields: [
+                            {
+                                name: "user",
+                                displayName: "User",
+                                type: o.string({}),
+                            },
+                        ],
+                    }),
+                },
             });
 
-            expectErr(result, 1);
-            expect(getErrors(result)).toContain('Reserved context field "user" must be an object reference.');
+            expectOk(result);
         });
     });
 

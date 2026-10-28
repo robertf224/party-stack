@@ -67,6 +67,12 @@ export default {
     ...lift(
         { types: metaTypes },
         {
+            OntologyDescriptor: {
+                name: "Ontology",
+                primaryKey: "id",
+                displayName: "Ontology",
+                pluralDisplayName: "Ontologies",
+            },
             ObjectTypeDef: {
                 name: "ObjectType",
                 primaryKey: "name",

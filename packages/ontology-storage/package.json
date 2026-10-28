@@ -45,6 +45,10 @@
         "./memory/tables": {
             "types": "./lib/memory/tables.d.ts",
             "default": "./lib/memory/tables.js"
+        },
+        "./query": {
+            "types": "./lib/query/index.d.ts",
+            "default": "./lib/query/index.js"
         }
     },
     "dependencies": {

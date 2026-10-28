@@ -5,3 +5,4 @@ export * from "./types.js";
 export * from "./uncertain.js";
 export type * from "./validation.js";
 export type * from "./values.js";
+export { contextPartition } from "./context.js";

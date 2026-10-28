@@ -2,6 +2,7 @@ import { o, type OntologyIR } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica } from "@party-stack/ontology-replica";
+import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { eq, field } from "@party-stack/ontology-storage";
 import { collectByteBlob, digestBytes, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -840,7 +841,9 @@ test("only replica servers advertise speculative state; owned and proxy roles ex
                         expect(connection.definitionHash).toBe(
                             yield* digestBytes({
                                 type: "application/json",
-                                stream: Stream.make(new TextEncoder().encode(JSON.stringify(ir))),
+                                stream: Stream.make(
+                                    new TextEncoder().encode(ontologyDefinitionSignature(ir))
+                                ),
                             })
                         );
                         expect(connection.backend.changes).toBeDefined();

@@ -1,3 +1,4 @@
+import { validate } from "@party-stack/ontology-spec";
 import { and, inArray, Query, queryOnce } from "@tanstack/db";
 import type { LiveOntology } from "../live/LiveOntology.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -17,10 +18,14 @@ function getValueTypes(type: TypeDef): string[] {
             return [...getValueTypes(type.value.keyType), ...getValueTypes(type.value.valueType)];
         case "optional":
             return getValueTypes(type.value.type);
+        case "encrypted":
+            return getValueTypes(type.value.type);
         case "result":
             return [...getValueTypes(type.value.okType), ...getValueTypes(type.value.errType)];
         case "struct":
             return type.value.fields.flatMap((field) => getValueTypes(field.type));
+        case "union":
+            return type.value.variants.flatMap((variant) => getValueTypes(variant.type));
         case "ref":
             return [type.value.name];
         default:
@@ -52,7 +57,7 @@ export interface PullOptions {
 }
 
 export async function pull(ontology: LiveOntology<MetaOntology>, options: PullOptions): Promise<OntologyIR> {
-    const { ValueType, ObjectType, LinkType, ActionType, QueryFunctionType } = ontology.objects;
+    const { ValueType, ObjectType, LinkType, ActionType, QueryFunctionType, Ontology } = ontology.objects;
     const { objectTypeNames, actionTypeNames, queryFunctionTypeNames } = options;
 
     const objectTypesQuery = new Query()
@@ -60,6 +65,15 @@ export async function pull(ontology: LiveOntology<MetaOntology>, options: PullOp
         .where(({ ObjectType }) => inArray(ObjectType.name, objectTypeNames));
 
     const objectTypes = await queryOnce(() => objectTypesQuery);
+    const descriptors = await queryOnce((q) =>
+        q
+            .from({ Ontology })
+            .orderBy(({ Ontology }) => Ontology.id, "asc")
+            .limit(2)
+    );
+    if (descriptors.length !== 1 || descriptors[0]?.id !== "ontology")
+        throw new Error("Metadata must expose exactly one Ontology descriptor with id ontology.");
+    const descriptor = descriptors[0];
 
     const [linkTypes, actionTypes, queryFunctionTypes] = await Promise.all([
         queryOnce((q) =>
@@ -87,18 +101,43 @@ export async function pull(ontology: LiveOntology<MetaOntology>, options: PullOp
             ...objectTypes.flatMap(getObjectTypeValueTypes),
             ...actionTypes.flatMap(getActionTypeValueTypes),
             ...queryFunctionTypes.flatMap(getQueryFunctionTypeValueTypes),
+            ...(descriptor?.context?.type ? getValueTypes(descriptor.context.type) : []),
         ])
     );
 
-    const types = await queryOnce((q) =>
-        q.from({ ValueType }).where(({ ValueType }) => inArray(ValueType.name, valueTypeNames))
-    );
+    const types: OntologyIR["types"] = [];
+    const loaded = new Set<string>();
+    let pending = valueTypeNames;
+    while (pending.length) {
+        const batch = await queryOnce((q) =>
+            q.from({ ValueType }).where(({ ValueType }) => inArray(ValueType.name, pending))
+        );
+        for (const type of batch) {
+            loaded.add(type.name);
+            types.push(type);
+        }
+        const missing = pending.filter((name) => !loaded.has(name));
+        if (missing.length) throw new Error(`Missing metadata value types: ${missing.join(", ")}.`);
+        pending = [...new Set(batch.flatMap((type) => getValueTypes(type.type)))].filter(
+            (name) => !loaded.has(name)
+        );
+    }
 
-    return {
+    const result: OntologyIR = {
         types,
         objectTypes,
         linkTypes,
         actionTypes,
         queryFunctionTypes,
+        ...(descriptor?.displayName === undefined ? {} : { displayName: descriptor.displayName }),
+        ...(descriptor?.description === undefined ? {} : { description: descriptor.description }),
+        ...(descriptor?.context === undefined ? {} : { context: descriptor.context }),
+        ...(descriptor?.policy === undefined ? {} : { policy: descriptor.policy }),
     };
+    const valid = validate(result);
+    if (valid.kind === "err")
+        throw new Error(
+            `Pulled ontology is incomplete or invalid: ${valid.value.map((issue) => issue.message).join(" ")}`
+        );
+    return result;
 }

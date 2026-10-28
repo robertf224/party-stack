@@ -1,5 +1,6 @@
 import { makeConnectionManager, createConnectionMonitor } from "@party-stack/connect";
 import { BackendError } from "@party-stack/ontology-backend";
+import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { eq, field } from "@party-stack/ontology-storage";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Runtime } from "@party-stack/runtime";
@@ -17,6 +18,7 @@ import type { Connection } from "@party-stack/connect";
 import type { MetaOntology } from "@party-stack/ontology-spec/meta";
 
 interface LocalOntologyPartition {
+    owner?: string;
     id: string;
     userId: string;
     ontologyId: string;
@@ -25,14 +27,6 @@ interface LocalOntologyPartition {
 
 function scope(value: string): string {
     return encodeURIComponent(value);
-}
-
-function ontologyKey(userId: string, ontologyId: string): string {
-    return `${scope(userId)}:${scope(ontologyId)}`;
-}
-
-function metaOntologyKey(userId: string, ontologyId: string): string {
-    return `${ontologyKey(userId, ontologyId)}:meta`;
 }
 
 function liveOntologyNamespace(installationId: string, ontologyId: string): string {
@@ -153,8 +147,18 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                         `Ontology route for "${ontologyId}" does not support ${meta ? "metadata" : "opening the application ontology"}.`
                     );
                 });
+                const boundContext = {
+                    ...options.createContext?.(userId, ontologyId),
+                    ...configured.context,
+                    user: userId,
+                };
+                const partitionOwner = yield* Effect.try({
+                    try: () => contextPartition(configured.ir, boundContext),
+                    catch: (cause) => failure("installation.partition", cause),
+                });
                 const partition = {
-                    id: meta ? metaOntologyKey(userId, ontologyId) : ontologyKey(userId, ontologyId),
+                    owner: partitionOwner,
+                    id: JSON.stringify([userId, ontologyId, meta, partitionOwner]),
                     userId,
                     ontologyId,
                     meta: meta ? (true as const) : undefined,
@@ -168,11 +172,7 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                     ir: configured.ir,
                     backend: configured.backend,
                     runtime: options.runtime,
-                    context: {
-                        ...options.createContext?.(userId, ontologyId),
-                        ...configured.context,
-                        user: userId,
-                    },
+                    context: boundContext,
                     persistObjects: configured.persistObjects,
                     writes: configured.writes,
                     connection: createConnectionMonitor(connectionManager, userId),
@@ -213,7 +213,7 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                     Effect.gen(function* () {
                         const platformScope = yield* Scope.fork(yield* Effect.scope);
                         const runtime = yield* Scope.provide(
-                            options.runtime(userId, namespace),
+                            options.runtime(partition.owner ?? userId, namespace),
                             platformScope
                         ).pipe(Effect.mapError((cause) => failure("installation.runtime", cause)));
                         yield* Scope.close(platformScope, Exit.void);

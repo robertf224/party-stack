@@ -44,3 +44,5 @@ export {
 } from "./errors.js";
 /** Pure evaluation of the portable query IR for composed/staged snapshots. */
 export { applyQuery as evaluateQuery } from "./query/evaluate.js";
+
+export { ontologyDefinitionSignature } from "./definition.js";

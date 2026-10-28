@@ -35,6 +35,10 @@
         "./tanstack": {
             "types": "./lib/tanstack/index.d.ts",
             "default": "./lib/tanstack/index.js"
+        },
+        "./query": {
+            "types": "./lib/query.d.ts",
+            "default": "./lib/query.js"
         }
     },
     "scripts": {

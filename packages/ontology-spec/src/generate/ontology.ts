@@ -466,6 +466,7 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
         },
     };
 
+    const renderedPolicy = ir.policy ? renderPlainValue(ir.policy, ctx) : undefined;
     const renderedActionTypes = ir.actionTypes.map((actionType) => renderActionType(actionType, ctx));
 
     sourceFile.addImportDeclaration({
@@ -524,14 +525,29 @@ export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}
                     )
                 ),
             },
-            ...(ir.contextType
-                ? [
-                      {
-                          name: "contextType",
-                          value: renderType(ir.contextType),
-                      },
-                  ]
-                : []),
+            {
+                name: "displayName",
+                value: ir.displayName === undefined ? undefined : renderPlainValue(ir.displayName),
+            },
+            {
+                name: "description",
+                value: ir.description === undefined ? undefined : renderPlainValue(ir.description),
+            },
+            {
+                name: "context",
+                value: ir.context
+                    ? renderObject([
+                          { name: "type", value: ir.context.type ? renderType(ir.context.type) : undefined },
+                          {
+                              name: "partition",
+                              value: ir.context.partition
+                                  ? renderPlainValue(ir.context.partition)
+                                  : undefined,
+                          },
+                      ])
+                    : undefined,
+            },
+            { name: "policy", value: renderedPolicy },
         ]);
         writer.write(");");
         writer.newLine();

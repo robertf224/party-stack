@@ -1739,6 +1739,9 @@ importers:
       '@party-stack/ontology-replica':
         specifier: workspace:*
         version: link:../ontology-replica
+      '@party-stack/ontology-spec':
+        specifier: workspace:*
+        version: link:../ontology-spec
       '@party-stack/ontology-storage':
         specifier: workspace:*
         version: link:../ontology-storage

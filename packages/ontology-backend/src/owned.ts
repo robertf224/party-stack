@@ -1,4 +1,6 @@
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
+import { setAtPath } from "@party-stack/ontology-spec/utils";
+import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import {
     makeOntologyStorage,
     OntologyStorageError,
@@ -14,6 +16,7 @@ import { Table } from "@party-stack/ontology-storage/tables";
 import { Clock, Effect, PubSub, Schema, Stream } from "effect";
 import { clientRegistry } from "./clients.js";
 import { acknowledgeDelivery, makeDelivery, scanSelectedRows } from "./delivery.js";
+import { CurrentActionAuthorization, CurrentQueryAuthorization } from "./policy.js";
 import { actionReferenceIssues } from "./references.js";
 import {
     classifyBackendFailure,
@@ -50,6 +53,12 @@ export interface OwnedReadTransaction {
 }
 export interface OwnedTransaction extends OwnedReadTransaction {
     put(objectType: string, value: Record<string, unknown>): Effect.Effect<void, BackendError>;
+    /** Update explicit paths without reading or replacing unrelated private fields. */
+    patch(
+        objectType: string,
+        key: Key,
+        changes: readonly { readonly path: readonly string[]; readonly value: unknown }[]
+    ): Effect.Effect<void, BackendError>;
     delete(objectType: string, key: Key): Effect.Effect<void, BackendError>;
 }
 /** Trusted persistence access, never exposed by the public backend/RPC contract. */
@@ -146,10 +155,14 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     );
     const storage = makeOntologyStorage(model, options.tables, { blobs: options.blobs });
     const tables = options.tables;
+    const definitionSignature = yield* Effect.try({
+        try: () => ontologyDefinitionSignature(options.ir),
+        catch: (cause) => fault("definition", "InvalidConfiguration", "Invalid ontology definition.", cause),
+    });
     const schemaHash = yield* boundary(
         digestBytes({
             type: "application/json",
-            stream: Stream.make(new TextEncoder().encode(JSON.stringify(options.ir))),
+            stream: Stream.make(new TextEncoder().encode(definitionSignature)),
         })
     );
     const maxCommits = options.history?.maxCommits ?? 10_000;
@@ -171,7 +184,8 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             "InvalidConfiguration",
             "Journal retention age must be nonnegative."
         );
-    const receiptKey = (id: string) => JSON.stringify([options.actionScope ?? "system", id]);
+    const receiptKey = (id: string, scope?: string) =>
+        JSON.stringify([options.actionScope ?? "system", ...(scope === undefined ? [] : [scope]), id]);
     const metadata = Table.make<{ revision: number; source: string; journalFloor?: number }>({
         name: JSON.stringify(["backend", options.namespace, "metadata"]),
     });
@@ -252,6 +266,34 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             ensureIndex: (name, index) =>
                 boundary(Effect.flatMap(object(name), (store) => native.ensureIndex(store, index))),
             ...read(native),
+            patch: (name, key, patches) =>
+                boundary(
+                    Effect.gen(function* () {
+                        const store = yield* object(name);
+                        let value = yield* native.get(store, key);
+                        if (!value) return yield* fault("patch", "NotFound", "Object not found.");
+                        for (const patch of patches) {
+                            if (!patch.path.length)
+                                return yield* fault(
+                                    "patch",
+                                    "InvalidRequest",
+                                    "Patch paths cannot be empty."
+                                );
+                            value = yield* Effect.try({
+                                try: () => setAtPath(value!, patch.path, patch.value),
+                                catch: (cause) =>
+                                    fault("patch", "InvalidRequest", "Invalid patch path.", cause),
+                            });
+                        }
+                        if (value[store.definition.primaryKey] !== key)
+                            return yield* fault(
+                                "patch",
+                                "InvalidRequest",
+                                "Patches cannot change an object's identity."
+                            );
+                        yield* tx.put(name, value);
+                    })
+                ),
             put: (name, value) =>
                 boundary(
                     Effect.gen(function* () {
@@ -339,7 +381,10 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             }),
     };
     const prepare = Effect.fn("OwnedBackend.prepare")(function* (invocation: ActionRequest) {
-        const parameterSchema = schemas.actionParameterSchemas[invocation.name];
+        const authorization = yield* CurrentActionAuthorization;
+        const parameterSchema = authorization
+            ? authorization.parameterSchemas[invocation.name]
+            : schemas.actionParameterSchemas[invocation.name];
         if (!parameterSchema || !options.mutators[invocation.name])
             return yield* fault(
                 "applyAction",
@@ -382,11 +427,11 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         const identity = JSON.stringify(
             stableValue([invocation.name, encodedParameters, attachmentIdentity, invocation.replay])
         );
-        return { invocation, identity };
+        return { invocation, identity, receiptKey: receiptKey(invocation.id, authorization?.scope) };
     });
     const invokeIn = Effect.fnUntraced(function* (
         native: StorageTransaction,
-        prepared: { invocation: ActionRequest; identity: string },
+        prepared: { invocation: ActionRequest; identity: string; receiptKey: string },
         commitUploads: Effect.Effect<void, BackendError>,
         retainReceipt: boolean
     ) {
@@ -401,9 +446,23 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             );
         if (!invocation.id)
             return yield* fault("applyAction", "InvalidRequest", "Actions require a stable invocation ID.");
+        const fingerprint = prepared.identity;
+        const previous = retainReceipt ? yield* tables.get(receipts, prepared.receiptKey) : undefined;
+        if (previous && previous.completedAt > (yield* Clock.currentTimeMillis) - resultRetentionMs) {
+            if (previous.fingerprint !== fingerprint)
+                return yield* fault(
+                    "applyAction",
+                    "Conflict",
+                    "An invocation ID was reused with different parameters."
+                );
+            return { receipt: previous.receipt, changed: false };
+        }
+        const authorize = yield* CurrentActionAuthorization;
+        const authorization = authorize ? yield* authorize.apply(read(native), invocation) : undefined;
+        const permittedRead = authorization?.read ?? read(native);
         const parameters = yield* Schema.decodeUnknownEffect(
             Schema.toEncoded(schemas.actionParameterSchemas[invocation.name]!)
-        )(invocation.parameters).pipe(
+        )(authorization?.parameters ?? invocation.parameters).pipe(
             Effect.mapError(
                 (error) =>
                     new BackendError({
@@ -416,18 +475,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                     })
             )
         );
-        const fingerprint = prepared.identity;
-        const previous = retainReceipt ? yield* tables.get(receipts, receiptKey(invocation.id)) : undefined;
-        if (previous && previous.completedAt > (yield* Clock.currentTimeMillis) - resultRetentionMs) {
-            if (previous.fingerprint !== fingerprint)
-                return yield* fault(
-                    "applyAction",
-                    "Conflict",
-                    "An invocation ID was reused with different parameters."
-                );
-            return { receipt: previous.receipt, changed: false };
-        }
-        const issues = yield* actionReferenceIssues(options.ir, action.parameters, parameters, read(native));
+        const issues = yield* actionReferenceIssues(options.ir, action.parameters, parameters, permittedRead);
         if (issues.length)
             return yield* new BackendError({
                 operation: "applyAction",
@@ -438,7 +486,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 issues,
             });
         const { tx, changes } = mutation(native);
-        yield* mutator(tx, { ...invocation, parameters });
+        yield* mutator({ ...tx, ...permittedRead }, { ...invocation, parameters });
         yield* commitUploads;
         const affected = new Map<string, Set<Key>>();
         for (const change of changes.values()) {
@@ -454,7 +502,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             cursor: yield* append(changes, invocation.id),
         };
         if (retainReceipt)
-            yield* tables.put(receipts, receiptKey(invocation.id), {
+            yield* tables.put(receipts, prepared.receiptKey, {
                 fingerprint,
                 receipt,
                 completedAt: yield* Clock.currentTimeMillis,
@@ -624,7 +672,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                         const state = {
                             sourceId: source,
                             revision,
-                            definition: JSON.stringify(options.ir),
+                            definition: definitionSignature,
                             ...(view ? { view: { generation: view.generation } } : {}),
                             objects,
                             pending: [],
@@ -760,7 +808,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             ),
         applyAction: Effect.fn("OwnedBackend.applyAction")(function* (invocation: ActionRequest) {
             const prepared = yield* prepare(invocation);
-            const prior = yield* boundary(tables.get(receipts, receiptKey(invocation.id)));
+            const prior = yield* boundary(tables.get(receipts, prepared.receiptKey));
             if (prior && prior.completedAt > (yield* Clock.currentTimeMillis) - resultRetentionMs) {
                 if (prior.fingerprint !== prepared.identity)
                     return yield* fault(
@@ -854,7 +902,11 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                                 )
                             )
                         );
-                        const result = yield* handler(read(native), parsed);
+                        const authorize = yield* CurrentQueryAuthorization;
+                        const permittedRead = authorize
+                            ? yield* authorize(read(native), name, parsed)
+                            : read(native);
+                        const result = yield* handler(permittedRead, parsed);
                         return yield* Schema.decodeUnknownEffect(
                             Schema.toEncoded(schemas.queryReturnSchemas[name]!)
                         )(result).pipe(

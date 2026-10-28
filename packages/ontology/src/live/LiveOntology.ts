@@ -1,5 +1,7 @@
 import type { OntologyDefinition } from "@party-stack/ontology-spec";
 export type { OntologyDefinition } from "@party-stack/ontology-spec";
+import { BackendError } from "@party-stack/ontology-backend";
+import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { createDefaultRuntime, type RuntimeAdapterProvider } from "@party-stack/runtime";
 import { Effect, Exit, Scope } from "effect";
 import { makeReplicaLiveOntology } from "../runtime/live.js";
@@ -132,10 +134,6 @@ export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> 
     connection?: ConnectionMonitor;
 }
 
-function getContextUserId(context: Record<string, unknown>): string | undefined {
-    return typeof context.user === "string" ? context.user : undefined;
-}
-
 /**
  * Waits for LiveOntology subsystems required before safe use.
  */
@@ -152,7 +150,17 @@ export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
     const opened = Effect.gen(function* () {
         const ontologyId = opts.id ?? "default";
         const context = (opts.context ?? {}) as Context;
-        const owner = getContextUserId(context) ?? "anonymous";
+        const owner = yield* Effect.try({
+            try: () => contextPartition(opts.ir, context),
+            catch: (cause) =>
+                new BackendError({
+                    operation: "runtime.partition",
+                    kind: "InvalidConfiguration",
+                    message: "Invalid context partition.",
+                    retryable: false,
+                    cause,
+                }),
+        });
         const runtime = yield* (opts.runtime ?? createDefaultRuntime)(owner, ontologyId);
         const platform = runtime.adapter;
         const resources = yield* Scope.fork(runtime.scope);

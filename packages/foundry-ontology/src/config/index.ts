@@ -55,15 +55,17 @@ function addConfiguredUser(
             ...ontology.objectTypes.filter((objectType) => objectType.name !== users.objectType),
             userObjectType,
         ],
-        contextType: o.struct({
-            fields: [
-                {
-                    name: "user",
-                    displayName: "User",
-                    type: o.objectReference({ objectType: users.objectType }),
-                },
-            ],
-        }),
+        context: {
+            type: o.struct({
+                fields: [
+                    {
+                        name: "user",
+                        displayName: "User",
+                        type: o.objectReference({ objectType: users.objectType }),
+                    },
+                ],
+            }),
+        },
     };
 }
 

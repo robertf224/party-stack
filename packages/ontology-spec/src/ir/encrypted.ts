@@ -48,7 +48,7 @@ export function nestedEncryptedIssues(ir: OntologyIR): ValidationIssue[] {
                 break;
         }
     }
-    if (ir.contextType) visit(ir.contextType, ["contextType"]);
+    if (ir.context?.type) visit(ir.context?.type, ["context", "type"]);
     ir.types.forEach((entry, index) => visit(entry.type, ["types", index, "type"]));
     ir.objectTypes.forEach((object, index) =>
         object.properties.forEach((property, propertyIndex) =>

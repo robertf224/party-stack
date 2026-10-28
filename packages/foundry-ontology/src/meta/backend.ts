@@ -115,6 +115,11 @@ export function makeFoundryMetadataBackend(options: {
                     message: "Unknown metadata object type.",
                     retryable: false,
                 });
+            if (subset.objectType === "Ontology")
+                return {
+                    complete: true,
+                    rows: evaluateQuery([{ key: "ontology", value: { id: "ontology" } }], subset.query ?? {}),
+                };
             const values = yield* Effect.tryPromise({
                 try: async (signal) => {
                     const client: OntologyClient = {
