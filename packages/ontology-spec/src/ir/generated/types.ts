@@ -109,7 +109,9 @@ export type QuerySelection = v.Union<{
 /** A finite query; nested reads may capture ancestor row bindings. */
 export type Query = {
     from: QueryFrom;
-    subset?: Subset;
+    where?: Expression;
+    orderBy?: Array<QueryOrder>;
+    page?: QueryPage;
     select: Array<QuerySelection>;
 };
 

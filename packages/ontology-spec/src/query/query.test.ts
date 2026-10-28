@@ -28,14 +28,14 @@ const decode = Schema.decodeUnknownSync(codec, { onExcessProperty: "error" });
 
 const approvals = (): Query => ({
     from: { source: { objectType: "PostApproval" }, binding: "approval" },
-    subset: { where: eq(field("approval", "id"), context("approvalId")) },
+    where: eq(field("approval", "id"), context("approvalId")),
     select: [
         selectField("id", field("approval", "id")),
         sub(
             "person",
             {
                 from: { source: { objectType: "Person" }, binding: "person" },
-                subset: { where: eq(field("person", "id"), field("approval", "personId")) },
+                where: eq(field("person", "id"), field("approval", "personId")),
                 select: [
                     selectField("id", field("person", "id")),
                     selectField("name", field("person", "name")),
@@ -70,7 +70,7 @@ describe("portable Query IR grammar", () => {
                 sub("approval", approvals(), "one"),
                 sub("locations", {
                     from: { source: { ontology: "reference", objectType: "Post" }, binding: "post" },
-                    subset,
+                    ...subset,
                     select: [
                         selectField("id", field("post", "id")),
                         selectField("name", field("post", "name")),
@@ -78,7 +78,11 @@ describe("portable Query IR grammar", () => {
                 }),
             ],
         };
-        expect(Schema.decodeUnknownSync(json)(Schema.encodeSync(json)(document))).toEqual(document);
+        const encoded = Schema.encodeSync(json)(document);
+        expect(Schema.decodeUnknownSync(json)(encoded)).toEqual(document);
+        const wireQuery = JSON.parse(encoded).select[1].value.query;
+        expect(wireQuery).toMatchObject(subset);
+        expect(wireQuery).not.toHaveProperty("subset");
         expect(Schema.decodeUnknownSync(codecs.namedSchemas.Subset!)(subset)).toEqual(subset);
     });
 
@@ -119,7 +123,7 @@ describe("portable Query IR grammar", () => {
                     else: [sub("publicApprovals", query)],
                 }),
                 sub("oneApproval", query, "one"),
-                sub("approvalList", { ...query, subset: { ...query.subset, page: { limit: 1 } } }),
+                sub("approvalList", { ...query, page: { limit: 1 } }),
             ],
         };
         expect(Schema.decodeUnknownSync(json)(Schema.encodeSync(json)(document))).toEqual(document);
@@ -190,6 +194,9 @@ describe("portable Query IR grammar", () => {
         ).toThrow(/from/);
         expect(() => decode({ select: [sub("flat", { ...approvals(), joins: [] } as never)] })).toThrow(
             /joins/
+        );
+        expect(() => decode({ select: [sub("wrapped", { ...approvals(), subset: {} } as never)] })).toThrow(
+            /subset/
         );
     });
 

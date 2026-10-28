@@ -725,8 +725,9 @@ untrusted children; that remains the separate deferred protocol project.
 
 The reviewed structural grammar now uses top-level unary/binary/variadic
 Expression variants, exists, scalar case, sub selections and recursively
-branching selectCase selections. Query is from/subset/select, and Subset is the
-named where/orderBy/page definition shared by query construction. Flat joins and
+branching selectCase selections. Query extends the named Subset's where/orderBy/page
+fields with from/select. Both schemas reuse one set of field definitions, so Query
+is flat without a subset wrapper or a new general inheritance feature. Flat joins and
 the earlier operation/queryTest/conditional variants have been removed. Generated
 builders/types and optional codecs reflect these names. The detailed examples
 earlier in this proposal are still conceptual and may use superseded spellings.

@@ -40,9 +40,10 @@ meaning; no new storage schema or migration API is introduced by the extraction.
 | `/generate`       | Build-time generators, formatting, and file generation                         |
 
 The query grammar describes multi-root selections, correlated subqueries,
-conditional fields, ordering and pagination. A `Query` combines `from`, an optional
-`subset`, and `select`. The named `Subset` definition owns `where`, `orderBy` and
-`page`. Expressions use top-level operator tags, including `case` and `exists`;
+conditional fields, ordering and pagination. A `Query` extends the named `Subset`
+definition's `where`, `orderBy` and `page` fields with `from` and `select`; there is
+no nested `subset` wrapper. Both schemas reuse the same field definitions.
+Expressions use top-level operator tags, including `case` and `exists`;
 selections use `field`, `sub` and recursively branching `selectCase`. Flat joins
 are deferred. Query execution, semantic validation and
 authorization are still being implemented; these constructors alone do not enforce

@@ -13,6 +13,13 @@ const struct = (name: string, description: string, fields: FieldDef[]): NamedTyp
     type: o.struct({ fields }),
 });
 
+/** Query extends the same subset fields without adding a wire-level wrapper. */
+const subsetFields: FieldDef[] = [
+    field("where", optional(ref("Expression"))),
+    field("orderBy", optional(list("QueryOrder"))),
+    field("page", optional(ref("QueryPage"))),
+];
+
 /** Expression tags own operator identity; these shared payloads own arity. */
 export const queryExpressionVariants = [
     ...[
@@ -83,11 +90,11 @@ export const queryTypes: NamedTypeDef[] = [
         field("offset", optional(o.integer({}))),
         field("after", optional(ref("QueryCursor"))),
     ]),
-    struct("Subset", "Filter, order and window over a supplied source; no arbitrary result projection.", [
-        field("where", optional(ref("Expression"))),
-        field("orderBy", optional(list("QueryOrder"))),
-        field("page", optional(ref("QueryPage"))),
-    ]),
+    struct(
+        "Subset",
+        "Filter, order and window over a supplied source; no arbitrary result projection.",
+        subsetFields
+    ),
     struct("QueryFieldSelection", "Selects a named value; entity uses require source-preserving identity.", [
         field("name", o.string({})),
         field("expression", ref("Expression")),
@@ -118,7 +125,7 @@ export const queryTypes: NamedTypeDef[] = [
     },
     struct("Query", "A finite query; nested reads may capture ancestor row bindings.", [
         field("from", ref("QueryFrom")),
-        field("subset", optional(ref("Subset"))),
+        ...subsetFields,
         field("select", list("QuerySelection")),
     ]),
     struct("QueryDocument", "A multi-root selection without a mandatory starting object type.", [

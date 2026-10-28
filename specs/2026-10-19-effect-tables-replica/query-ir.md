@@ -68,7 +68,8 @@ selecting a live related subset remain distinct operations.
 `ontology-spec/query` now supplies a structural query grammar and low-level pure
 constructors. It covers multiple roots, correlated subqueries, conditional fields,
 cardinality, ordering and windows, with generated types and optional Effect codecs.
-Query contains from/subset/select; the named Subset owns where/orderBy/page.
+Query extends Subset's where/orderBy/page fields with from/select, using shared
+schema field definitions without a nested subset wrapper.
 Expression operators are top-level variants with unary/binary/variadic payloads;
 case and selectCase have distinct tags and recursive multi-branch groups. Flat
 joins are deferred. Storage lowering still needs to consume the shared Subset;
