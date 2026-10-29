@@ -3,14 +3,12 @@ import { getRuntime } from "@party-stack/runtime";
 import { Effect, Exit, Fiber, Scope } from "effect";
 import { makeBlobManager, type BlobManagerService } from "./BlobManager.js";
 import type { BlobManager, BlobManagerOptions } from "./types.js";
+import type { BackendError } from "@party-stack/ontology-backend";
 
 /** Application SDK bridge. Native hosts acquire makeBlobManager directly. */
 export function blobManagerClient(
     service: BlobManagerService,
-    run: <A>(
-        effect: Effect.Effect<A, import("@party-stack/ontology-backend").BackendError>,
-        signal?: AbortSignal
-    ) => Promise<A>,
+    run: <A>(effect: Effect.Effect<A, BackendError>, signal?: AbortSignal) => Promise<A>,
     cleanup: () => Promise<void> = () => Promise.resolve()
 ): BlobManager {
     return {

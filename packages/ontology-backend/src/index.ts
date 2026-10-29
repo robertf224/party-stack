@@ -3,7 +3,7 @@ import type { AttachmentTypeDef } from "@party-stack/ontology-spec";
 import type { attachment, Encrypted } from "@party-stack/ontology-spec/values";
 import type { Key, Query, Row } from "@party-stack/ontology-storage";
 import type { ByteInput } from "@party-stack/ontology-storage/blobs";
-import type { Effect, Stream } from "effect";
+import type { Scope, Effect, Stream } from "effect";
 
 export {
     schemaValidationIssues,
@@ -216,11 +216,7 @@ export interface OntologyBackendService {
     readonly subscribeSelection?: (
         selection: import("./protocol.js").StateSelection,
         policy?: import("./delivery.js").DeliveryPolicy
-    ) => Effect.Effect<
-        import("./delivery.js").DeliverySubscription,
-        BackendError,
-        import("effect").Scope.Scope
-    >;
+    ) => Effect.Effect<import("./delivery.js").DeliverySubscription, BackendError, Scope.Scope>;
     readonly acknowledgeDelivery?: (
         position: import("./delivery.js").DeliveryPosition
     ) => Effect.Effect<void, BackendError>;

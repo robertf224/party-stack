@@ -46,11 +46,7 @@ export async function createPublicOAuthClient(
                     options.authorizationServer.issuer,
                     options.clientId,
                 ]);
-                const values = yield* runtimeCredentialValues(
-                    runtime,
-                    namespace,
-                    options.dangerouslyPersistSecrets
-                );
+                const values = yield* runtimeCredentialValues(runtime, namespace);
                 const store = yield* makeConnectStore({ tables: runtime.tables, namespace });
                 const installationId = options.authorizationServer.issuer;
                 const connectorId = options.clientId;

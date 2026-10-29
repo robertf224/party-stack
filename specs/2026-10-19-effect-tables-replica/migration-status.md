@@ -47,6 +47,9 @@ covered in [native-actions.md](./native-actions.md).
   join/include forwarding, and persisted-only inspection. No explicit preloads or
   TanStack persistence coordinator. Initial demand attempts sync before its view
   is ready; offline replay still makes no network queries.
+- **Open crash-cleanup gap:** persistent runtimes without owner-liveness hooks
+  can retain dead owners' demand roots after a crash, preventing cache eviction.
+  WebRuntime supplies Web Lock liveness; Node/Expo need an equivalent recovery path.
 - **Demand retention:** replica-level `demand.idleMs` and `maxSubsets` control shared
   active/idle leases, with idle LRU eviction at capacity. Cached proxies use the
   same policy. Row/blob GC runs independently; hard byte budgets remain future work.

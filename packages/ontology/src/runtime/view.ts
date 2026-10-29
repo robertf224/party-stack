@@ -10,10 +10,15 @@ import type { LiveOntologyAttachments } from "../live/attachments/createLiveOnto
 import type { LiveOntology, LiveOntologyWrites } from "../live/LiveOntology.js";
 import type { OntologyApplyActionResult } from "../live/OntologyBackendAdapter.js";
 import type { OntologyOutbox, OntologyOutboxEntry, OntologyActionRequest } from "../live/outbox/types.js";
-import type { OntologyBackendService } from "@party-stack/ontology-backend";
-import type { ActionRequest, ActionReceipt } from "@party-stack/ontology-backend";
+import type {
+    ValidationReport,
+    OntologyBackendService,
+    ActionRequest,
+    ActionReceipt,
+} from "@party-stack/ontology-backend";
 import type { PendingAction, ReplicaService } from "@party-stack/ontology-replica";
 import type { OntologyIR, OntologyObject } from "@party-stack/ontology-spec";
+import type { Encrypted } from "@party-stack/ontology-spec/values";
 import type { RuntimeTraceStore } from "@party-stack/runtime";
 import type { Collection } from "@tanstack/db";
 const toEntry = (entry: PendingAction, forwarding = false): OntologyOutboxEntry => ({
@@ -62,7 +67,7 @@ export interface ReplicaViewOptions {
     readonly sourceId?: string;
     /** A memory tab forwards cache policy to its persistent owner. */
     readonly decrypt?: (
-        value: import("@party-stack/ontology-spec/values").Encrypted,
+        value: Encrypted,
         options?: { cache?: boolean }
     ) => Effect.Effect<unknown, BackendError>;
     readonly traces?: RuntimeTraceStore;
@@ -75,13 +80,13 @@ export interface ReplicaViewOptions {
         name: string,
         parameters: Record<string, unknown>,
         objects: LiveOntology["objects"]
-    ) => Effect.Effect<import("@party-stack/ontology-backend").ValidationReport, BackendError>;
+    ) => Effect.Effect<ValidationReport, BackendError>;
     readonly validateDraft?: (
         name: string,
         parameters: Record<string, unknown>,
         knownParameters: readonly string[],
         objects: LiveOntology["objects"]
-    ) => Effect.Effect<import("@party-stack/ontology-backend").ValidationReport, BackendError>;
+    ) => Effect.Effect<ValidationReport, BackendError>;
 }
 
 /** Materialize a scoped UI view over an existing replica; engine ownership is independent. */

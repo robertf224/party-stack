@@ -1,4 +1,4 @@
-import { RuntimeError, type SecretStore } from "@party-stack/runtime";
+import { RuntimeError, type KeyMaterialStore } from "@party-stack/runtime";
 import { Effect } from "effect";
 import { deleteItemAsync, getItemAsync, setItemAsync } from "expo-secure-store";
 
@@ -8,7 +8,7 @@ function encodeKey(value: string): string {
     return `party-stack.${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-export function makeSecretStore(prefix: string): SecretStore {
+export function makeKeyMaterialStore(prefix: string): KeyMaterialStore {
     const key = (value: string) => encodeKey(JSON.stringify([prefix, value]));
     const operation = <A>(run: () => Promise<A>) =>
         Effect.tryPromise({

@@ -14,6 +14,7 @@ import {
     type BlobStorageError,
 } from "./model.js";
 import type { OntologyStorageError } from "../errors.js";
+import type { Scope } from "effect";
 
 export * from "./model.js";
 export * from "./bytes.js";
@@ -43,9 +44,7 @@ export interface BlobStorageService {
     readonly stage: (id: string, value: ByteInput) => Effect.Effect<void, Failure>;
     readonly cache: (id: string, value: ByteInput) => Effect.Effect<void, Failure>;
     /** File-backed content is valid within the caller's scope; consume streams before it closes. */
-    readonly readScoped: (
-        id: string
-    ) => Effect.Effect<ByteSource | undefined, Failure, import("effect").Scope.Scope>;
+    readonly readScoped: (id: string) => Effect.Effect<ByteSource | undefined, Failure, Scope.Scope>;
     /** Materialized local read; safe to consume after this call completes. The caller handles misses. */
     readonly read: (id: string) => Effect.Effect<Blob | undefined, Failure>;
     readonly updateMetadata: (id: string, value: BlobMetadata) => Effect.Effect<BlobRecord, Failure>;
@@ -84,14 +83,14 @@ export interface BlobStorageOptions {
     readonly bytes: BlobBytesService;
     /** Authoritative bytes are collectible only when their identity is unreferenced. */
     readonly mode?: "replica" | "authoritative";
-    readonly registerOwner?: (owner: string) => Effect.Effect<void, Failure, import("effect").Scope.Scope>;
+    readonly registerOwner?: (owner: string) => Effect.Effect<void, Failure, Scope.Scope>;
     readonly isOwnerAlive?: (owner: string) => Effect.Effect<boolean, Failure>;
 }
 
 /** Metadata and roots use Tables; external IO never holds a database transaction open. */
 export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
     options: BlobStorageOptions
-): Effect.fn.Return<BlobStorageService, Failure, import("effect").Scope.Scope> {
+): Effect.fn.Return<BlobStorageService, Failure, Scope.Scope> {
     const { tables, bytes } = options;
     const owner = crypto.randomUUID();
     if (Boolean(options.registerOwner) !== Boolean(options.isOwnerAlive))

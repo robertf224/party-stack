@@ -22,6 +22,7 @@ import { Attachment, AttachmentUploadSchema } from "./attachmentTransfers.js";
 import { errorContext } from "./errorProjection.js";
 import { ontologyAttachmentHandlers, type OntologyOperationOptions } from "./operations.js";
 import type { LiveOntology } from "@party-stack/ontology";
+import type { Scope } from "effect";
 
 const uploadParameter = "attachment-upload";
 const actionParameter = "action-upload";
@@ -123,7 +124,7 @@ export const makeAttachmentHttpHandler = Effect.fnUntraced(function* <R>(
                 message: "Multipart actions require a native backend and its ontology definition.",
                 retryable: false,
             });
-        const requestContext = yield* Effect.context<R | import("effect").Scope.Scope>();
+        const requestContext = yield* Effect.context<R | Scope.Scope>();
         const result = yield* Deferred.make<
             import("@party-stack/ontology-backend").ActionReceipt,
             BackendError
@@ -299,7 +300,7 @@ export const makeHttpAttachmentClient = Effect.fnUntraced(function* (url: string
         ) => Effect.Effect<import("@party-stack/ontology-backend").ActionReceipt, BackendError>;
     },
     never,
-    HttpClient.HttpClient | import("effect").Scope.Scope
+    HttpClient.HttpClient | Scope.Scope
 > {
     const http = yield* HttpClient.HttpClient;
     const captured = yield* Effect.context<never>();

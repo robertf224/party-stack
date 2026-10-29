@@ -134,7 +134,7 @@ const authority = Effect.gen(function* () {
 
 Provide the authority as a Layer or acquire it in the host's scope. `Connect.layer(options)` supplies the `Connect` service when its dependencies are already constructed. `maintainConnect` starts a scoped maintenance fiber; serverless hosts can instead call `collectExpired({ limit })` from a scheduled job/alarm. It uses indexed expiry predicates and bounded batches.
 
-The native store is backed by ontology-storage on the supplied Tables driver (IndexedDB, memory, SQLite or PostgreSQL). Token ciphertext and record changes share that transaction. A separately supplied platform SecretStore cannot provide the same cross-store atomicity; prefer the runtime's encryption key service for native persistence.
+The native store is backed by ontology-storage on the supplied Tables driver (IndexedDB, memory, SQLite or PostgreSQL). Token ciphertext and record changes share that transaction. The runtime keyring is the single credential-encryption path; native platform key storage holds only encryption key material. There is no direct-credential or plaintext fallback.
 
 ## Server-mediated authorization
 

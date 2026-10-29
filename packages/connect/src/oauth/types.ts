@@ -1,4 +1,5 @@
 import type { BrowserAuthenticationPresentation, RuntimeAdapter } from "@party-stack/runtime";
+import type { Scope } from "effect";
 
 export interface OAuthAuthorizationServer {
     issuer: string;
@@ -25,8 +26,7 @@ export interface CreatePublicOAuthClientOptions {
     scopes: readonly string[];
     authorizationServer: OAuthAuthorizationServer;
     runtime: RuntimeAdapter;
-    scope?: import("effect").Scope.Scope;
-    dangerouslyPersistSecrets?: boolean;
+    scope?: Scope.Scope;
     resolveUserId(accessToken: string): string | Promise<string>;
     fetch?: typeof globalThis.fetch;
 }

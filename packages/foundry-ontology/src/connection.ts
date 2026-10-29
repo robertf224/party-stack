@@ -20,13 +20,13 @@ import { createFoundryFetch, createFoundryWebSocket, getTokenDetails } from "@pa
 import { unauthenticated } from "@party-stack/ontology-backend";
 import { Effect } from "effect";
 import type { BrowserAuthenticationPresentation } from "@party-stack/runtime";
+import type { Scope } from "effect";
 
 export interface FoundryOAuthConnectionOptions {
     clientId: string;
     redirectUrl: string;
     scopes?: string[];
     fetch?: typeof globalThis.fetch;
-    dangerouslyPersistSecrets?: boolean;
 }
 
 export interface FoundryClientCredentialsConnectionOptions {
@@ -104,7 +104,7 @@ const createFoundryConnectionAdapterInstance = Effect.fn("Foundry.connections")(
 ): Effect.fn.Return<
     BackendConnectionAdapter<FoundryAuthenticationClient>,
     import("@party-stack/connect").ConnectionError,
-    import("effect").Scope.Scope
+    Scope.Scope
 > {
     const oauthOptions = options.oauth;
     const clientCredentialsOptions = options.clientCredentials;
@@ -137,7 +137,6 @@ const createFoundryConnectionAdapterInstance = Effect.fn("Foundry.connections")(
                       runtime: context.runtime,
                       scope: context.scope,
                       fetch: oauthOptions.fetch,
-                      dangerouslyPersistSecrets: oauthOptions.dangerouslyPersistSecrets,
                       resolveUserId: (token) => getTokenDetails(token).userId,
                   })
               ),

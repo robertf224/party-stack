@@ -6,7 +6,7 @@ import { storageError } from "@party-stack/ontology-storage/driver";
 import {
     Runtime,
     RuntimeError,
-    makeSecretStoreKeyring,
+    makeKeyMaterialStoreKeyring,
     type RuntimeAdapterProvider,
 } from "@party-stack/runtime";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
@@ -17,7 +17,7 @@ import * as Reactivity from "effect/reactivity/Reactivity";
 import * as SqlClient from "effect/sql/SqlClient";
 import { createNodeBrowserAuthentication } from "./createNodeBrowserAuthentication.js";
 import { NodeFileSystemBlobBytesStore } from "./NodeFileSystemBlobBytesStore.js";
-import { makeSecretStore } from "./NodeSecretStore.js";
+import { makeKeyMaterialStore } from "./NodeKeyMaterialStore.js";
 
 export interface CreateNodeRuntimeOptions {
     dataDirectory?: string;
@@ -74,15 +74,16 @@ export const make = Effect.fn("NodeRuntime.make")(function* (options: NodeRuntim
         directory: join(directory, "blobs"),
     });
 
-    const secrets = yield* makeSecretStore({ service: `party-stack:${runtimeId(owner, namespace)}:secrets` });
+    const secrets = yield* makeKeyMaterialStore({
+        service: `party-stack:${runtimeId(owner, namespace)}:secrets`,
+    });
     const ownedTables = yield* tables;
-    const encryptionKeyring = yield* makeSecretStoreKeyring(secrets);
+    const encryptionKeyring = yield* makeKeyMaterialStoreKeyring(secrets);
     return yield* Runtime.make({
         owner,
         namespace,
         blobBytes,
         browserAuthentication: createNodeBrowserAuthentication(),
-        secrets,
         encryptionKeyring: Effect.succeed(encryptionKeyring),
 
         tables: Effect.succeed(ownedTables),

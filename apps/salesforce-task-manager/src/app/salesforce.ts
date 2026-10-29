@@ -37,15 +37,12 @@ const useDevelopmentCredentials =
 const installation = await createSalesforceBackendInstallation({
     instanceUrl,
     apiVersion,
-    runtime: createWebRuntime,
+    runtime: (owner, namespace) => createWebRuntime(owner, namespace, { persistEncryptionKeys: true }),
     connections: {
         oauth: {
             clientId,
             redirectUrl,
             loginUrl,
-            // Demo-only: Web Runtime does not yet expose a secure
-            // browser SecretStore for OAuth refresh tokens.
-            dangerouslyPersistSecrets: true,
         },
     },
     routes: [

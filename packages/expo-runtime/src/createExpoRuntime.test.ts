@@ -33,7 +33,7 @@ vi.mock("./ExpoFileSystemBlobBytesStore.js", () => ({
         clear = state.clear;
     },
 }));
-vi.mock("./ExpoSecretStore.js", () => ({ makeSecretStore: () => ({}) }));
+vi.mock("./ExpoKeyMaterialStore.js", () => ({ makeKeyMaterialStore: () => ({}) }));
 vi.mock("./createExpoBrowserAuthentication.js", () => ({ createExpoBrowserAuthentication: () => ({}) }));
 
 describe("createExpoRuntime", () => {

@@ -1,7 +1,7 @@
 import * as IndexedDb from "@effect/platform-browser/IndexedDb";
 import { makeEncryptionKeyring } from "@party-stack/indexeddb-ontology-storage/encryption-keyring";
 import * as IndexedDbTables from "@party-stack/indexeddb-ontology-storage/tables";
-import { MemoryBlobBytesStore } from "@party-stack/runtime";
+import { makeMemoryEncryptionKeyring, MemoryBlobBytesStore } from "@party-stack/runtime";
 import { Runtime, RuntimeError } from "@party-stack/runtime";
 import { Effect, Layer } from "effect";
 import { createActorLiveness } from "./actorLiveness.js";
@@ -92,7 +92,9 @@ export const make = Effect.fn("WebRuntime.make")(function* (options: WebRuntimeO
         encryptionKeyring:
             persistent && options.persistEncryptionKeys
                 ? makeEncryptionKeyring(`${name}:keys`).pipe(Effect.provide(indexedDb))
-                : undefined,
+                : persistent
+                  ? undefined
+                  : makeMemoryEncryptionKeyring(),
         browserAuthentication: typeof window !== "undefined" ? createWebBrowserAuthentication() : undefined,
         actorLiveness: persistent && globalThis.navigator?.locks ? createActorLiveness(name) : undefined,
         storageNotifications: notifications

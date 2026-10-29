@@ -8,7 +8,6 @@ export type {
     BrowserAuthentication,
     BrowserAuthenticationPresentation,
     BrowserAuthenticationSession,
-    SecretStore,
     NetworkConnectivity,
     RuntimeAdapter,
     RuntimeAdapterProvider,
@@ -16,7 +15,12 @@ export type {
 } from "./types.js";
 export * from "./Runtime.js";
 
-export { makeSecretStoreKeyring, type KeyMaterialCodec } from "./encryptionKeys.js";
+export {
+    makeKeyMaterialStoreKeyring,
+    makeMemoryEncryptionKeyring,
+    type KeyMaterialCodec,
+    type KeyMaterialStore,
+} from "./encryptionKeys.js";
 export {
     byteSource,
     byteChunks,

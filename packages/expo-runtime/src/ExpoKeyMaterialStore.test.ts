@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { makeSecretStore } from "./ExpoSecretStore.js";
+import { makeKeyMaterialStore } from "./ExpoKeyMaterialStore.js";
 
 const secureStore = vi.hoisted(() => ({
     deleteItemAsync: vi.fn((key: string) => {
@@ -20,13 +20,13 @@ const secureStore = vi.hoisted(() => ({
 
 vi.mock("expo-secure-store", () => secureStore);
 
-describe("ExpoSecretStore", () => {
+describe("ExpoKeyMaterialStore", () => {
     beforeEach(() => {
         vi.clearAllMocks();
     });
 
     it("encodes namespaced keys using only SecureStore-safe characters", async () => {
-        const store = makeSecretStore("party-stack:user@example.com:oauth");
+        const store = makeKeyMaterialStore("party-stack:user@example.com:oauth");
 
         await Effect.runPromise(store.set("tokens/client:id", "secret"));
 
@@ -37,8 +37,8 @@ describe("ExpoSecretStore", () => {
     });
 
     it("separates prefix and key without collisions", async () => {
-        await Effect.runPromise(makeSecretStore("a").set("b:c", "one"));
-        await Effect.runPromise(makeSecretStore("a:b").set("c", "two"));
+        await Effect.runPromise(makeKeyMaterialStore("a").set("b:c", "one"));
+        await Effect.runPromise(makeKeyMaterialStore("a:b").set("c", "two"));
 
         expect(secureStore.setItemAsync.mock.calls[0]?.[0]).not.toBe(
             secureStore.setItemAsync.mock.calls[1]?.[0]
@@ -47,7 +47,7 @@ describe("ExpoSecretStore", () => {
 });
 
 it("uses SecureStore without an additional authentication requirement", async () => {
-    const store = makeSecretStore("background-credentials");
+    const store = makeKeyMaterialStore("background-credentials");
     await Effect.runPromise(store.set("token", "secret"));
     await Effect.runPromise(store.get("token"));
     await Effect.runPromise(store.delete("token"));

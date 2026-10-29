@@ -1,3 +1,4 @@
+import { makeKeyMaterialStoreKeyring } from "@party-stack/runtime";
 import { Runtime, type RuntimeAdapter } from "@party-stack/runtime";
 import { closeRuntimeFixture } from "@party-stack/runtime/testing";
 import { runtimeFixtureContext, memoryRuntimeFixture } from "@party-stack/runtime/testing";
@@ -144,7 +145,7 @@ describe("createSalesforceConnectionAdapter", () => {
         const values = new Map<string, string>();
         const runtime = {
             ...memoryRuntimeFixture("installation", `salesforce-oauth-${crypto.randomUUID()}`),
-            secrets: {
+            encryptionKeyring: makeKeyMaterialStoreKeyring({
                 get: (key: string) => Effect.sync(() => values.get(key)),
                 set: (key: string, value: string) =>
                     Effect.sync(() => {
@@ -154,7 +155,7 @@ describe("createSalesforceConnectionAdapter", () => {
                     Effect.sync(() => {
                         values.delete(key);
                     }),
-            },
+            }),
             browserAuthentication: {
                 start({ redirectUrl }: { redirectUrl: string }) {
                     return {
@@ -216,7 +217,8 @@ describe("createSalesforceConnectionAdapter", () => {
                 connection,
             })
         );
-        expect([...values.values()].some((value) => value.includes("refresh-token"))).toBe(true);
+        expect([...values.values()].some((value) => value.includes("refresh-token"))).toBe(false);
+        expect(values.size).toBe(2);
         if (!established?.session.egress) {
             throw new Error("Expected OAuth egress wrapper.");
         }

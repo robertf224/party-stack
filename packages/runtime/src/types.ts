@@ -1,4 +1,9 @@
+import type { RuntimeService, RuntimeError } from "./Runtime.js";
+import type { OntologyStorageError } from "@party-stack/ontology-storage";
 import type { ByteInput } from "@party-stack/ontology-storage/blobs";
+import type { EncryptionError, EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
+import type { TablesService } from "@party-stack/ontology-storage/tables";
+import type { Effect, Scope } from "effect";
 
 export interface BlobBytesStore {
     write(id: string, bytes: ByteInput, signal?: AbortSignal): Promise<void>;
@@ -10,15 +15,6 @@ export interface BlobBytesStore {
 export interface NetworkConnectivity {
     readonly isConnected: boolean;
     subscribe(callback: (isConnected: boolean) => void): () => void;
-}
-
-export interface SecretStore {
-    get(key: string): import("effect").Effect.Effect<string | undefined, import("./Runtime.js").RuntimeError>;
-    set(
-        key: string,
-        value: string
-    ): import("effect").Effect.Effect<void, import("./Runtime.js").RuntimeError>;
-    delete(key: string): import("effect").Effect.Effect<void, import("./Runtime.js").RuntimeError>;
 }
 
 export type BrowserAuthenticationPresentation = "popup" | "redirect";
@@ -35,48 +31,30 @@ export interface BrowserAuthentication {
     }): BrowserAuthenticationSession;
 }
 
+/** Platform construction hooks; Runtime.make acquires the scoped RuntimeService. */
 export interface RuntimeAdapter {
     readonly owner: string;
     readonly namespace: string;
     blobBytes: BlobBytesStore;
     connectivity?: NetworkConnectivity;
     browserAuthentication?: BrowserAuthentication;
-    secrets?: SecretStore;
-    encryptionKeyring?: import("effect").Effect.Effect<
-        import("@party-stack/ontology-storage/encrypted").EncryptionKeyringService,
-        import("@party-stack/ontology-storage/encrypted").EncryptionError,
-        import("effect").Scope.Scope
-    >;
+    encryptionKeyring?: Effect.Effect<EncryptionKeyringService, EncryptionError, Scope.Scope>;
     /** Owned storage acquired once in the runtime's Effect scope. */
-    tables?: import("effect").Effect.Effect<
-        import("@party-stack/ontology-storage/tables").TablesService,
-        import("@party-stack/ontology-storage").OntologyStorageError,
-        import("effect").Scope.Scope
-    >;
+    tables?: Effect.Effect<TablesService, OntologyStorageError, Scope.Scope>;
     storageNotifications?: { publish(): void; subscribe(listener: () => void): () => void };
     actorLiveness?: {
-        acquire(owner: string): import("effect").Effect.Effect<void, unknown, import("effect").Scope.Scope>;
-        isAlive(owner: string): import("effect").Effect.Effect<boolean, unknown>;
+        acquire(owner: string): Effect.Effect<void, unknown, Scope.Scope>;
+        isAlive(owner: string): Effect.Effect<boolean, unknown>;
     };
     destroy?: () => void | Promise<void>;
     /** Acquire the sole persistent replica host until the calling Scope closes. */
-    acquireHost?: import("effect").Effect.Effect<
-        void,
-        import("./Runtime.js").RuntimeError,
-        import("effect").Scope.Scope
-    >;
+    acquireHost?: Effect.Effect<void, RuntimeError, Scope.Scope>;
 }
 
+/** Scoped service factory. The historical name refers to its platform adapter. */
 export type RuntimeAdapterProvider = (
     owner: string,
     namespace: string
-) => import("effect").Effect.Effect<
-    import("./Runtime.js").RuntimeService,
-    RuntimeAcquisitionError,
-    import("effect").Scope.Scope
->;
+) => Effect.Effect<RuntimeService, RuntimeAcquisitionError, Scope.Scope>;
 
-export type RuntimeAcquisitionError =
-    | import("./Runtime.js").RuntimeError
-    | import("@party-stack/ontology-storage").OntologyStorageError
-    | import("@party-stack/ontology-storage/encrypted").EncryptionError;
+export type RuntimeAcquisitionError = RuntimeError | OntologyStorageError | EncryptionError;

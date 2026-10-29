@@ -101,10 +101,7 @@ operation, never ordinary replica state. The policy HTTP transport additionally
 requires a separate `canDecrypt` grant plus readable row/property and a matching
 ciphertext. Reading encrypted data alone grants no decrypt permission.
 
-Node's current OS SecretStore and Expo SecureStore remain separate platform
-credential facilities. Connect's platform-SecretStore fallback still uses opaque
-references into that OS store; this is distinct from native table encryption.
-Converting those platform stores into keyring providers is separate work.
+Node's OS keychain and Expo SecureStore hold key material underneath the runtime keyring. Connect stores embedded token ciphertext in Tables, transactionally with connection records; there is no separate credential-store fallback.
 
 ## Writes and deferred work
 

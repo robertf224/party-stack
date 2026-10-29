@@ -8,12 +8,15 @@ import { makeBlobManager } from "./blobs/BlobManager.js";
 import { blobManagerClient } from "./blobs/createBlobManager.js";
 import { observeReplicaRows } from "./hostQuery.js";
 import { executeTransactionMutator } from "./transactions.js";
-import type { LiveOntologyWrites } from "../live/LiveOntology.js";
+import type { LiveOntology, LiveOntologyWrites } from "../live/LiveOntology.js";
 import type { OntologyBackendAdapter } from "../live/OntologyBackendAdapter.js";
 import type { BlobManagerService } from "./blobs/BlobManager.js";
 import type { ConnectionMonitor } from "@party-stack/connect";
-import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { BackendSubset } from "@party-stack/ontology-backend";
+import type { ClientSubmission, OntologySource } from "@party-stack/ontology-backend/protocol";
+import type { AttachmentTypeDef, OntologyIR } from "@party-stack/ontology-spec";
 import type { attachment } from "@party-stack/ontology-spec/values";
+import type { Row } from "@party-stack/ontology-storage";
 import type { ByteInput } from "@party-stack/ontology-storage/blobs";
 import type { RuntimeAdapter } from "@party-stack/runtime";
 
@@ -50,7 +53,7 @@ export type ReplicaHostOptions = ReplicaHostCommonOptions &
           }
         | {
               readonly backend: OntologyBackendService;
-              readonly source?: import("@party-stack/ontology-backend/protocol").OntologySource;
+              readonly source?: OntologySource;
               readonly backendAdapter?: never;
           }
     );
@@ -58,19 +61,16 @@ export interface ReplicaHostService {
     readonly replica: ReplicaService;
     readonly backend: OntologyBackendService;
     readonly blobManager: BlobManagerService;
-    readonly attachments: import("../live/LiveOntology.js").LiveOntology["attachments"];
+    readonly attachments: LiveOntology["attachments"];
     readonly stageAttachment?: (
         value: attachment,
         bytes: ByteInput,
-        target?: import("@party-stack/ontology-spec").AttachmentTypeDef
+        target?: AttachmentTypeDef
     ) => Promise<attachment>;
     readonly observe: (
-        subset: import("@party-stack/ontology-backend").BackendSubset,
+        subset: BackendSubset,
         options?: { readonly persistedOnly?: boolean }
-    ) => Stream.Stream<
-        readonly import("@party-stack/ontology-storage").Row<Record<string, unknown>>[],
-        BackendError
-    >;
+    ) => Stream.Stream<readonly Row<Record<string, unknown>>[], BackendError>;
 }
 
 /** Owned service composition, independent of the application's collection materialization. */
@@ -97,11 +97,8 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
             retryable: false,
         });
     const stageAttachment = backend.attachments?.stage
-        ? (
-              value: attachment,
-              bytes: ByteInput,
-              target?: import("@party-stack/ontology-spec").AttachmentTypeDef
-          ) => run(backend.attachments!.stage!(value, bytes, { target }))
+        ? (value: attachment, bytes: ByteInput, target?: AttachmentTypeDef) =>
+              run(backend.attachments!.stage!(value, bytes, { target }))
         : undefined;
     const blobManager = yield* makeBlobManager({
         gcTime: 5 * 60_000,
@@ -121,12 +118,8 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         },
     });
     const withStagedAttachments =
-        <A>(
-            submit: (
-                request: import("@party-stack/ontology-backend/protocol").ClientSubmission
-            ) => Effect.Effect<A, BackendError>
-        ) =>
-        (request: import("@party-stack/ontology-backend/protocol").ClientSubmission) =>
+        <A>(submit: (request: ClientSubmission) => Effect.Effect<A, BackendError>) =>
+        (request: ClientSubmission) =>
             Effect.gen(function* () {
                 const prepared = yield* prepareActionParameters({
                     ir,

@@ -1,5 +1,6 @@
 import { isUnknownActionOutcome } from "@party-stack/ontology-backend";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
+import type { Scope } from "effect";
 export { makeCachedProxy } from "./proxy.js";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { clientRegistry } from "@party-stack/ontology-backend/clients";
@@ -170,7 +171,7 @@ export interface ReplicaService extends OwnedReadTransaction {
         query?: Query
     ) => Stream.Stream<ReplicaRowsBatch, BackendError>;
     /** Acquires the subscription before reading an initial snapshot. */
-    readonly subscribeChanges: Effect.Effect<Stream.Stream<void>, BackendError, import("effect").Scope.Scope>;
+    readonly subscribeChanges: Effect.Effect<Stream.Stream<void>, BackendError, Scope.Scope>;
     readonly pending: Effect.Effect<readonly PendingAction[], BackendError>;
     /** Observed parent actions plus the local tail, with forwarding stage captured in the same read.
      * Parent visibility follows retainActions leases. Forwarding is not upstream execution. */
@@ -182,12 +183,12 @@ export interface ReplicaService extends OwnedReadTransaction {
     readonly subscribeSelection: (
         selection: import("@party-stack/ontology-backend/protocol").StateSelection,
         policy?: DeliveryPolicy
-    ) => Effect.Effect<DeliverySubscription, BackendError, import("effect").Scope.Scope>;
+    ) => Effect.Effect<DeliverySubscription, BackendError, Scope.Scope>;
     readonly subscribeClient: (
         session: ClientSession,
         view: ClientView,
         policy?: DeliveryPolicy
-    ) => Effect.Effect<DeliverySubscription, BackendError, import("effect").Scope.Scope>;
+    ) => Effect.Effect<DeliverySubscription, BackendError, Scope.Scope>;
     readonly receiveDelivery: (frame: DeliveryFrame) => Effect.Effect<
         | {
               position: import("@party-stack/ontology-backend/delivery").DeliveryPosition;
@@ -199,11 +200,7 @@ export interface ReplicaService extends OwnedReadTransaction {
     >;
     readonly openParentDelivery: (
         source?: OntologySource
-    ) => Effect.Effect<
-        { subscription: DeliverySubscription; generation: number },
-        BackendError,
-        import("effect").Scope.Scope
-    >;
+    ) => Effect.Effect<{ subscription: DeliverySubscription; generation: number }, BackendError, Scope.Scope>;
     readonly parentDeliveryGeneration: Effect.Effect<number, BackendError>;
     readonly openClient: (resume?: ClientToken) => Effect.Effect<ClientLease, BackendError>;
     readonly readClient: (
@@ -267,17 +264,13 @@ export interface ReplicaService extends OwnedReadTransaction {
         id: string,
         options?: { allowUnknownOutcome?: boolean }
     ) => Effect.Effect<void, BackendError>;
-    readonly demand: (
-        subset: BackendSubset
-    ) => Effect.Effect<void, BackendError, import("effect").Scope.Scope>;
+    readonly demand: (subset: BackendSubset) => Effect.Effect<void, BackendError, Scope.Scope>;
     readonly retainLocal: (
         objectType: string,
         query?: Query
-    ) => Effect.Effect<void, BackendError, import("effect").Scope.Scope>;
+    ) => Effect.Effect<void, BackendError, Scope.Scope>;
     /** Explicit privileged action inspection; omitted IDs request the retained action view. */
-    readonly retainActions: (
-        ids?: readonly string[]
-    ) => Effect.Effect<void, BackendError, import("effect").Scope.Scope>;
+    readonly retainActions: (ids?: readonly string[]) => Effect.Effect<void, BackendError, Scope.Scope>;
     readonly pin: (objectType: string, key: Key, pinned: boolean) => Effect.Effect<void, BackendError>;
     /** Explicit full checkpoint: refresh state and process pending actions. Not a read-readiness API. */
     readonly syncOnce: Effect.Effect<void, BackendError>;
@@ -322,9 +315,7 @@ interface ReplicaCommonOptions {
         | { readonly intervalMs?: number; readonly olderThanMs?: number; readonly limit?: number };
     readonly publish?: Effect.Effect<void>;
     readonly externalChanges?: Stream.Stream<void>;
-    readonly registerOwner?: (
-        owner: string
-    ) => Effect.Effect<void, BackendError, import("effect").Scope.Scope>;
+    readonly registerOwner?: (owner: string) => Effect.Effect<void, BackendError, Scope.Scope>;
     readonly isOwnerAlive?: (owner: string) => Effect.Effect<boolean, BackendError>;
 }
 /** Use a provider/owned backend binding or a protocol source, never both.

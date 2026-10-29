@@ -1,60 +1,24 @@
 import { makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
-import { Table } from "@party-stack/ontology-storage/tables";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 import { connectError } from "../core/errors.js";
+import type { ConnectCredentialValues } from "../core/Connect.js";
+import type { ConnectError } from "../core/errors.js";
 import type { RuntimeService } from "@party-stack/runtime";
 
-/** Native runtimes encrypt and update handles in the same Tables transaction.
- * A supplied platform SecretStore is a separate, platform-owned security boundary.
- */
+/** Credentials use embedded ciphertext in Tables; only the keyring owns encryption keys. */
 export function runtimeCredentialValues(
     runtime: RuntimeService,
-    namespace: string,
-    allowPlaintext = false
-): Effect.Effect<
-    import("../core/Connect.js").ConnectCredentialValues,
-    import("../core/errors.js").ConnectError
-> {
-    if (runtime.encryptionKeyring)
-        return Effect.succeed({
-            ...makeEncryptedValues(namespace, runtime.encryptionKeyring),
-            evict: () => Effect.void,
-        });
-    const platform = runtime.adapter.secrets;
-    if (!platform && !allowPlaintext)
+    namespace: string
+): Effect.Effect<ConnectCredentialValues, ConnectError> {
+    if (!runtime.encryptionKeyring)
         return Effect.fail(
             connectError(
                 "Configuration",
-                "OAuth requires RuntimeAdapter.secrets or an encryption key service. Set dangerouslyPersistSecrets to explicitly allow ordinary credential persistence."
+                "OAuth requires an encryption keyring. Configure platform key storage; persistent browser runtimes must explicitly opt into persistEncryptionKeys."
             )
         );
-    const plain = Table.make<{ value: string }>({
-        name: JSON.stringify(["connect", namespace, "explicit-plaintext-secrets"]),
-    });
-    const get = (id: string) =>
-        platform ? platform.get(id) : runtime.tables.get(plain, id).pipe(Effect.map((row) => row?.value));
-    const set = (id: string, value: string) =>
-        platform ? platform.set(id, value) : runtime.tables.put(plain, id, { value });
-    const drop = (id: string) => (platform ? platform.delete(id) : runtime.tables.delete(plain, id));
     return Effect.succeed({
-        encrypt: Effect.fnUntraced(function* <A, AI>(schema: Schema.Codec<A, AI>, value: A) {
-            const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.toCodecJson(schema)))(
-                value
-            ).pipe(Effect.mapError(() => connectError("Storage", "Invalid credential value.")));
-            const id = `${namespace}:${crypto.randomUUID()}`;
-            yield* set(id, encoded);
-            return { ciphertext: id };
-        }),
-        decrypt: Effect.fnUntraced(function* <A, AI>(
-            schema: Schema.Codec<A, AI>,
-            value: import("@party-stack/ontology-spec/values").Encrypted<A>
-        ) {
-            const encoded = yield* get(value.ciphertext);
-            if (encoded === undefined) return yield* connectError("Storage", "Credential is unavailable.");
-            return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(schema)))(
-                encoded
-            ).pipe(Effect.mapError(() => connectError("Storage", "Invalid stored credential.")));
-        }),
-        evict: (value) => drop(value.ciphertext),
+        ...makeEncryptedValues(namespace, runtime.encryptionKeyring),
+        evict: () => Effect.void,
     });
 }

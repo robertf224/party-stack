@@ -7,6 +7,7 @@ import { resolveActionParameters } from "../live/expression.js";
 import { createReadTx } from "../live/mutators/createMutatorTx.js";
 import { runOptimisticAction } from "../live/mutators/runOptimisticAction.js";
 import { storageSubset } from "../tanstack/index.js";
+import type { ExpressionReplay } from "../live/expression.js";
 import type { OntologyMutatorRegistry, PrepareTransactionSources } from "../live/mutators/types.js";
 import type { OwnedReadTransaction, OwnedTransaction } from "@party-stack/ontology-backend/owned";
 import type { OntologyIR, OntologyObject } from "@party-stack/ontology-spec";
@@ -153,7 +154,7 @@ export const executeTransactionMutator = Effect.fn("Ontology.executeMutator")(fu
     readonly name: string;
     readonly parameters: Record<string, unknown>;
     readonly operationId: string;
-    readonly replay?: import("../live/expression.js").ExpressionReplay;
+    readonly replay?: ExpressionReplay;
     /** Resolve portable inputs without constructing a local optimistic result. Authoritative execution omits this flag. */
     readonly resolveOnly?: boolean;
     readonly context?: Record<string, unknown>;

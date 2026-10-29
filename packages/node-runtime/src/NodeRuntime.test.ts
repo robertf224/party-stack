@@ -5,6 +5,7 @@ import { Runtime, getRuntime } from "@party-stack/runtime";
 import { Deferred, Effect, Fiber } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { layer } from "./createNodeRuntime.js";
+import type { RuntimeAdapter } from "@party-stack/runtime";
 
 const native = vi.hoisted(() => ({ opened: vi.fn(), closed: vi.fn() }));
 vi.mock("better-sqlite3", () => ({
@@ -27,7 +28,7 @@ test("Node layers acquire lazily and interruption closes SQLite without a runtim
     try {
         const runtimeLayer = layer({ owner: "user", namespace: "node", dataDirectory: directory });
         expect(native.opened).not.toHaveBeenCalled();
-        let adapter: import("@party-stack/runtime").RuntimeAdapter | undefined;
+        let adapter: RuntimeAdapter | undefined;
         await Effect.runPromise(
             Effect.gen(function* () {
                 const ready = yield* Deferred.make<void>();

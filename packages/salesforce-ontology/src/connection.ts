@@ -19,6 +19,7 @@ import {
 import { unauthenticated } from "@party-stack/ontology-backend";
 import { Effect } from "effect";
 import type { BrowserAuthenticationPresentation } from "@party-stack/runtime";
+import type { Scope } from "effect";
 
 export interface SalesforceOAuthConnectionOptions {
     clientId: string;
@@ -26,7 +27,6 @@ export interface SalesforceOAuthConnectionOptions {
     loginUrl?: string;
     scopes?: string[];
     fetch?: typeof globalThis.fetch;
-    dangerouslyPersistSecrets?: boolean;
 }
 
 export interface SalesforceClientCredentialsConnectionOptions {
@@ -150,7 +150,7 @@ const createSalesforceConnectionAdapterInstance = Effect.fn("Salesforce.connecti
 ): Effect.fn.Return<
     BackendConnectionAdapter<SalesforceAuthenticationClient>,
     import("@party-stack/connect").ConnectionError,
-    import("effect").Scope.Scope
+    Scope.Scope
 > {
     const oauthOptions = options.oauth;
     const clientCredentialsOptions = options.clientCredentials;
@@ -179,7 +179,6 @@ const createSalesforceConnectionAdapterInstance = Effect.fn("Salesforce.connecti
                       runtime: context.runtime,
                       scope: context.scope,
                       fetch: oauthOptions.fetch,
-                      dangerouslyPersistSecrets: oauthOptions.dangerouslyPersistSecrets,
                       resolveUserId: (token) =>
                           resolveSalesforceUserId({
                               loginUrl,

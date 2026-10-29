@@ -5,9 +5,10 @@ import { BlobBytesNotFoundError } from "./BlobBytesNotFoundError.js";
 import { createRuntimeTraces } from "./tracing.js";
 import type { RuntimeTraces } from "./tracing.js";
 import type { RuntimeAdapter } from "./types.js";
+import type { EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
+import type { Scope } from "effect";
 
-export { createEncryptedSecretStore } from "./encryptedSecrets.js";
 export { createRuntimeTraces } from "./tracing.js";
 export type { RuntimeTrace, RuntimeTraces, RuntimeTraceStore } from "./tracing.js";
 export class RuntimeError extends Schema.TaggedError<RuntimeError>()("RuntimeError", {
@@ -17,17 +18,18 @@ export class RuntimeError extends Schema.TaggedError<RuntimeError>()("RuntimeErr
 const attempt = <A>(operation: string, run: () => Promise<A>) =>
     Effect.tryPromise({ try: run, catch: (cause) => new RuntimeError({ operation, cause }) });
 
+/** Acquired platform capabilities and application-boundary bridges, owned by an Effect Scope. */
 export interface RuntimeService {
     readonly context: Context.Context<Runtime>;
     readonly traces: RuntimeTraces;
     readonly adapter: RuntimeAdapter;
-    readonly scope: import("effect").Scope.Scope;
+    readonly scope: Scope.Scope;
     readonly tables: TablesService;
-    readonly encryptionKeyring?: import("@party-stack/ontology-storage/encrypted").EncryptionKeyringService;
+    readonly encryptionKeyring?: EncryptionKeyringService;
     readonly connectivity: Stream.Stream<boolean>;
     readonly online: Effect.Effect<boolean>;
     readonly changes: Stream.Stream<void>;
-    readonly subscribeChanges: Effect.Effect<Stream.Stream<void>, never, import("effect").Scope.Scope>;
+    readonly subscribeChanges: Effect.Effect<Stream.Stream<void>, never, Scope.Scope>;
     readonly externalChanges: Stream.Stream<void>;
     readonly notify: Effect.Effect<void>;
     readonly bytes: {

@@ -5,7 +5,14 @@ import {
 } from "@party-stack/ontology-storage/encrypted";
 import { Effect, Exit, Result } from "effect";
 import * as Base64 from "effect/encoding/Base64";
-import type { SecretStore } from "./types.js";
+import type { RuntimeError } from "./Runtime.js";
+
+/** Platform key-material persistence used underneath the encryption keyring. */
+export interface KeyMaterialStore {
+    readonly get: (id: string) => Effect.Effect<string | undefined, RuntimeError>;
+    readonly set: (id: string, value: string) => Effect.Effect<void, RuntimeError>;
+    readonly delete: (id: string) => Effect.Effect<void, RuntimeError>;
+}
 
 export interface KeyMaterialCodec {
     readonly generate: () => Promise<string>;
@@ -27,8 +34,8 @@ const webCryptoKeys: KeyMaterialCodec = {
  * both creators retain their keys, whichever active ID is published last wins.
  * Never hold a database transaction open while waiting for the OS keychain.
  */
-export const makeSecretStoreKeyring = Effect.fnUntraced(function* (
-    secrets: SecretStore,
+export const makeKeyMaterialStoreKeyring = Effect.fnUntraced(function* (
+    secrets: KeyMaterialStore,
     codec: KeyMaterialCodec = webCryptoKeys
 ) {
     const failure = () =>
@@ -66,4 +73,25 @@ export const makeSecretStoreKeyring = Effect.fnUntraced(function* (
         (exit) => (Exit.isSuccess(exit) ? Infinity : 0)
     );
     return { active, get } satisfies EncryptionKeyringService;
+});
+
+/** Ephemeral keys for isolated memory runtimes; no key material is persisted. */
+export const makeMemoryEncryptionKeyring = Effect.fnUntraced(function* () {
+    const id = crypto.randomUUID();
+    const key = yield* Effect.cached(
+        Effect.tryPromise({
+            try: () =>
+                crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]),
+            catch: () =>
+                new EncryptionError({
+                    operation: "key",
+                    kind: "Crypto",
+                    message: "Could not create an ephemeral encryption key.",
+                }),
+        })
+    );
+    return {
+        active: Effect.map(key, (key) => ({ id, key })),
+        get: (requested: string) => (requested === id ? key : Effect.succeed(undefined)),
+    } satisfies EncryptionKeyringService;
 });

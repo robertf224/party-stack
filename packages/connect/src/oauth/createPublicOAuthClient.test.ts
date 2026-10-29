@@ -1,5 +1,6 @@
 import { isUnauthenticatedError } from "@party-stack/ontology-backend";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
+import { makeKeyMaterialStoreKeyring } from "@party-stack/runtime";
 import {
     memoryRuntimeFixture,
     defineRuntimeFixture,
@@ -18,7 +19,7 @@ describe("createPublicOAuthClient", () => {
             const runtime = defineRuntimeFixture(() => ({
                 ...memoryRuntimeFixture("installation", `oauth-${crypto.randomUUID()}`),
                 tables: ownedTables ? Memory.make() : undefined,
-                secrets: {
+                encryptionKeyring: makeKeyMaterialStoreKeyring({
                     get: (key: string) => Effect.sync(() => values.get(key)),
                     set: (key: string, value: string) =>
                         Effect.sync(() => {
@@ -28,7 +29,7 @@ describe("createPublicOAuthClient", () => {
                         Effect.sync(() => {
                             values.delete(key);
                         }),
-                },
+                }),
                 browserAuthentication: {
                     start() {
                         return {
@@ -89,7 +90,8 @@ describe("createPublicOAuthClient", () => {
 
             expect(session?.userId).toBe("user-1");
             await expect(client.getAccessToken("user-1")).resolves.toBe("access-initial");
-            expect([...values.values()].some((value) => value.includes("refresh-initial"))).toBe(true);
+            expect([...values.values()].some((value) => value.includes("refresh-initial"))).toBe(false);
+            expect(values.size).toBe(2);
 
             await client.refresh("user-1");
             await expect(client.getAccessToken("user-1")).resolves.toBe("access-refreshed");
@@ -102,7 +104,7 @@ describe("createPublicOAuthClient", () => {
         }
     );
 
-    it("requires explicit consent for ordinary persisted secret storage", async () => {
+    it("requires an encryption keyring instead of falling back to ordinary credential storage", async () => {
         const runtime = memoryRuntimeFixture("installation", `oauth-${crypto.randomUUID()}`);
 
         await expect(
@@ -118,7 +120,7 @@ describe("createPublicOAuthClient", () => {
                 runtime,
                 resolveUserId: () => "user-1",
             })
-        ).rejects.toThrow(/RuntimeAdapter\.secrets/);
+        ).rejects.toThrow(/requires an encryption keyring/);
 
         await runtime.cleanup?.();
     });
@@ -127,7 +129,7 @@ describe("createPublicOAuthClient", () => {
         const values = new Map<string, string>();
         const runtime = {
             ...memoryRuntimeFixture("installation", `oauth-${crypto.randomUUID()}`),
-            secrets: {
+            encryptionKeyring: makeKeyMaterialStoreKeyring({
                 get: (key: string) => Effect.sync(() => values.get(key)),
                 set: (key: string, value: string) =>
                     Effect.sync(() => {
@@ -137,7 +139,7 @@ describe("createPublicOAuthClient", () => {
                     Effect.sync(() => {
                         values.delete(key);
                     }),
-            },
+            }),
             browserAuthentication: {
                 start({ redirectUrl }: { redirectUrl: string }) {
                     return {

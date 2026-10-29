@@ -77,6 +77,12 @@ ontologies or its installation scope. It has no practical automatic capacity or
 idle eviction. We must not silently evict a live ontology another component uses.
 It is not suitable as an arbitrary-key request cache without that ownership work.
 
+Crash cleanup is a separate requirement: persistent WebRuntime uses Web Locks to
+identify dead retention-root owners. Node/Expo and custom persistent replicas
+without owner-liveness hooks can keep roots from crashed processes indefinitely,
+preventing eviction of their retained rows. This remains an open cleanup gap;
+normal scope finalizers only cover graceful shutdown.
+
 Memory and disk budgets are not implemented by the new demand count cap. One
 active broad subset can still contain many rows. Incremental delivery comparison
 state is persisted in Tables and scanned in batches; that does not eliminate

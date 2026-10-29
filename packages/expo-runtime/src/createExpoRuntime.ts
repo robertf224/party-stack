@@ -1,5 +1,5 @@
 import { storageError } from "@party-stack/ontology-storage/driver";
-import { Runtime, RuntimeError, makeSecretStoreKeyring } from "@party-stack/runtime";
+import { Runtime, RuntimeError, makeKeyMaterialStoreKeyring } from "@party-stack/runtime";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import * as SqlTables from "@party-stack/sql-ontology-storage/tables";
 import { Effect, Layer, Schema } from "effect";
@@ -9,8 +9,8 @@ import { deleteDatabaseAsync, openDatabaseAsync } from "expo-sqlite";
 import { createExpoBrowserAuthentication } from "./createExpoBrowserAuthentication.js";
 import { nativeKeyCodec } from "./encryptionKeys.js";
 import { ExpoFileSystemBlobBytesStore } from "./ExpoFileSystemBlobBytesStore.js";
+import { makeKeyMaterialStore } from "./ExpoKeyMaterialStore.js";
 import { ExpoNetworkConnectivity } from "./ExpoNetworkConnectivity.js";
-import { makeSecretStore } from "./ExpoSecretStore.js";
 import { hashStorageName } from "./hashStorageName.js";
 import type { SQLiteBindValue } from "expo-sqlite";
 
@@ -66,15 +66,14 @@ export const make = Effect.fn("ExpoRuntime.make")(function* ({ owner, namespace 
         );
         return yield* SqlTables.make().pipe(Effect.provideService(SqlClient.SqlClient, sql));
     });
-    const secrets = makeSecretStore(`${name}:secrets`);
+    const secrets = makeKeyMaterialStore(`${name}:secrets`);
     const ownedTables = yield* tables;
-    const encryptionKeyring = yield* makeSecretStoreKeyring(secrets, nativeKeyCodec);
+    const encryptionKeyring = yield* makeKeyMaterialStoreKeyring(secrets, nativeKeyCodec);
     return yield* Runtime.make({
         owner,
         namespace,
         blobBytes,
         browserAuthentication: createExpoBrowserAuthentication(),
-        secrets,
         encryptionKeyring: Effect.succeed(encryptionKeyring),
         connectivity,
 

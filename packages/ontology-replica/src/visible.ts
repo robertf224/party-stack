@@ -6,6 +6,7 @@ import type { BackendError } from "@party-stack/ontology-backend";
 import type { Key, Query, Row } from "@party-stack/ontology-storage";
 import type { Overlay } from "@party-stack/ontology-storage/overlay";
 import type { ReadTransaction, Transaction } from "@party-stack/ontology-storage/tables";
+import type { Scope } from "effect";
 
 type Value = Record<string, unknown>;
 export interface VisibleCommit {
@@ -91,7 +92,7 @@ export function trackVisible(tx: Transaction, views: ReadonlyMap<string, Overlay
 export function observeRows(options: {
     objectType: string;
     query?: Query;
-    changes: Effect.Effect<Stream.Stream<VisibleCommit>, BackendError, import("effect").Scope.Scope>;
+    changes: Effect.Effect<Stream.Stream<VisibleCommit>, BackendError, Scope.Scope>;
     read: (
         body: (
             tx: ReadTransaction

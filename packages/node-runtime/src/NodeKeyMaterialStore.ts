@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { make as makeNodeKeyring } from "@party-stack/effect-node-keyring";
-import { RuntimeError, type SecretStore } from "@party-stack/runtime";
+import { RuntimeError, type KeyMaterialStore } from "@party-stack/runtime";
 import { Effect, Redacted } from "effect";
 
-export interface NodeSecretStoreOptions {
+export interface NodeKeyMaterialStoreOptions {
     service: string;
 }
 function encodeIdentifier(value: string): string {
@@ -11,7 +11,7 @@ function encodeIdentifier(value: string): string {
 }
 
 /** The native service is loaded on first use, once per scoped runtime. */
-export const makeSecretStore = Effect.fnUntraced(function* (options: NodeSecretStoreOptions) {
+export const makeKeyMaterialStore = Effect.fnUntraced(function* (options: NodeKeyMaterialStoreOptions) {
     const service = encodeIdentifier(options.service);
     const keyring = yield* Effect.cached(
         makeNodeKeyring.pipe(
@@ -49,5 +49,5 @@ export const makeSecretStore = Effect.fnUntraced(function* (options: NodeSecretS
             operation(
                 Effect.flatMap(keyring, (native) => native.deleteCredential(service, encodeIdentifier(key)))
             ).pipe(Effect.asVoid),
-    } satisfies SecretStore;
+    } satisfies KeyMaterialStore;
 });

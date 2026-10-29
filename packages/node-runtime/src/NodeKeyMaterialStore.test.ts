@@ -1,6 +1,6 @@
 import { Effect, Redacted } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { makeSecretStore } from "./NodeSecretStore.js";
+import { makeKeyMaterialStore } from "./NodeKeyMaterialStore.js";
 
 const native = vi.hoisted(() => ({
     calls: 0,
@@ -36,7 +36,7 @@ vi.mock("@party-stack/effect-node-keyring", async () => {
     };
 });
 
-describe("NodeSecretStore", () => {
+describe("NodeKeyMaterialStore", () => {
     beforeEach(() => {
         native.calls = 0;
         native.unavailable = false;
@@ -44,7 +44,7 @@ describe("NodeSecretStore", () => {
         vi.clearAllMocks();
     });
     it("hashes service/accounts, passes redacted passwords and deletes missing entries safely", async () => {
-        const store = await Effect.runPromise(makeSecretStore({ service: "party-stack:test:secrets" }));
+        const store = await Effect.runPromise(makeKeyMaterialStore({ service: "party-stack:test:secrets" }));
         await Effect.runPromise(store.set("tokens/client:id", "secret"));
         expect(native.set).toHaveBeenCalledWith(
             expect.stringMatching(/^party-stack\.[a-f0-9]{64}$/),
@@ -59,7 +59,7 @@ describe("NodeSecretStore", () => {
         expect(native.remove).toHaveBeenCalledTimes(2);
     });
     it("loads the native service lazily once", async () => {
-        const store = await Effect.runPromise(makeSecretStore({ service: "test" }));
+        const store = await Effect.runPromise(makeKeyMaterialStore({ service: "test" }));
         expect(native.calls).toBe(0);
         await Effect.runPromise(store.get("one"));
         await Effect.runPromise(store.get("two"));
@@ -67,7 +67,7 @@ describe("NodeSecretStore", () => {
     });
     it("fails explicitly when the native binding is unavailable", async () => {
         native.unavailable = true;
-        const store = await Effect.runPromise(makeSecretStore({ service: "test" }));
+        const store = await Effect.runPromise(makeKeyMaterialStore({ service: "test" }));
         await expect(Effect.runPromise(store.get("token"))).rejects.toMatchObject({
             _tag: "RuntimeError",
             operation: "secrets",

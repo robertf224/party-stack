@@ -83,6 +83,77 @@ changed keys directly; sorted/limited windows query local storage for their new
 membership. Unchanged rows are not rewritten into the collection. Both upstream
 paths use the same Replica, local BlobStorage and retention machinery.
 
+## Optimistic actions and confirmation
+
+The replica composes upstream state with an overlay produced by replaying its
+pending local actions. Incoming changes update upstream state, settle confirmed
+actions and rebuild the remaining overlay in one local transaction. An outbox
+need not be empty before incoming state can be incorporated.
+
+A snapshot can already contain an action while that action is still pending
+locally. For example, a base count of 5 plus a pending increment displays 6. If a
+snapshot containing that increment installs 6 while the increment remains pending,
+replay would incorrectly display 7.
+
+Adapter-backed replicas conservatively coordinate source publication with action
+submission and confirmation. This follows the action lifecycle, not inspection of
+snapshot values or automatic detection of independent rows:
+
+- With a receipt cursor and change journal, catch up to the matching commit and
+  settle the action alongside its confirmed changes.
+- Otherwise, read back the affected objects after saving the committed receipt.
+  Install those rows, remove the pending action and replay remaining actions
+  atomically. Failed read-back retries confirmation without resubmitting the action.
+- Ordinary state refresh defers while an action is sending or a committed receipt
+  still awaits reconciliation. The coordination gate currently covers a whole
+  outbox drain pass, including network IO, so sustained writes can delay refresh.
+
+Read-back must observe the committed write. A successful receipt alone does not
+make a stale provider read safe; adapters without a cursor rely on the provider's
+read-after-write behavior. Lost submission replies follow unknown-outcome recovery
+rather than being treated as rejection.
+
+Speculative-parent delivery carries explicit action acceptance/state information;
+children settle their duplicate predictions as part of installing parent batches.
+State refresh and outbox processing have independent scoped lifetimes. Canceling
+UI demand never owns or cancels the background action worker.
+
+## Platform Runtime
+
+`RuntimeAdapter` is the platform construction record supplied to `Runtime.make`:
+byte IO, optional table/keyring acquisition, connectivity, browser authentication
+and private platform hooks. `RuntimeService` is the acquired result: open Tables,
+Effect-based byte IO, encryption keys, connectivity and change streams, and tracing.
+Platform constructors return a scoped Effect yielding that service. `Runtime` is
+the Effect service identifier used to provide or retrieve it.
+
+The current service also exposes its adapter, owning Scope and captured Effect
+Context for application/Promise bridges. This Context is dependency injection,
+not the ontology's principal/context data. Some SDK boundaries still accept an
+adapter and recover its acquired service through `getRuntime(adapter)`; native
+Effect code uses the provided `Runtime` service directly.
+
+Storage notifications are invalidation hints for shared private/local tables,
+including connection records. They do not replace the ontology replication protocol.
+`acquireHost` currently provides an exclusive persistent-replica lease, while
+`actorLiveness` provides storage-owner crash detection, as described below. These
+hooks are platform support for storage ownership, not a distributed actor system.
+
+## Persistent web ownership
+
+The host is the scoped service owning a persistent replica, its storage and its
+background state/outbox workers. Tabs use RPC to that service inside a SharedWorker.
+The browser already reuses the same SharedWorker identity across tabs; Web Locks
+are not needed to elect a worker. A namespace-level lock additionally protects
+against a different worker identity or an in-process fallback opening the same
+persistent namespace. It is held for the host's scope, not acquired for each query.
+
+Separate owner locks provide crash detection for persisted row/blob retention
+roots. Browser termination releases the locks automatically, allowing GC to remove
+roots whose owners have died. This is not lock/broadcast leader election between
+tabs. A custom persistent runtime without owner-liveness support conservatively
+retains roots from crashed owners; ordinary scope cleanup cannot run after a crash.
+
 ## Demand retention
 
 A replica can keep unused subsets warm for reuse across requests or navigation:
