@@ -33,7 +33,12 @@ async function handleRequest(request: Request): Promise<Response> {
                 const server = yield* makeOntologyServer({ kind: "owned", backend, context });
                 const response = yield* Effect.promise(() => server.handleRequest(request));
                 return HttpServerResponse.fromWeb(response);
-            }).pipe(Effect.interruptible)
+            }).pipe(
+                Effect.interruptible,
+                Effect.tapError((error) =>
+                    Effect.logError("Ontology request failed", { kind: error.kind, issues: error.issues })
+                )
+            )
         )(request);
     }
 

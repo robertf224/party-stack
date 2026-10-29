@@ -5,8 +5,8 @@ import { validate } from "@party-stack/ontology-spec";
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Schema } from "effect";
-import { projectRemoteOntologyIR } from "./securedOntology.js";
-import type { FixedActionParameterValues } from "./securedOntology.js";
+import { projectOntologyDefinition } from "./definitionProjection.js";
+import type { FixedActionParameterValues } from "./definitionProjection.js";
 import type { QueryReader } from "@party-stack/ontology-backend/query";
 import type { Expression, OntologyIR, QuerySelection } from "@party-stack/ontology-spec";
 
@@ -150,11 +150,11 @@ export const projectPolicyDefinition = Effect.fnUntraced(function* (options: {
         ])
     );
     const exposed = yield* validateContext(ir, context);
-    const visible = projectRemoteOntologyIR({
+    const visible = projectOntologyDefinition({
         ir: { ...ir, policy: undefined },
-        serverContext: context,
-        clientContext: exposed,
-        clientContextMode: "forward",
+
+        context: exposed,
+
         allowedObjectTypeProperties: Object.fromEntries(
             [...properties.allowed].map(([type, names]) => [type, [...names]])
         ),

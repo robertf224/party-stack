@@ -1748,21 +1748,9 @@ importers:
       '@party-stack/runtime':
         specifier: workspace:*
         version: link:../runtime
-      '@tanstack/query-core':
-        specifier: ^5.102.8
-        version: 5.102.8
-      '@tanstack/query-db-collection':
-        specifier: 1.4.4
-        version: 1.4.4(@tanstack/query-core@5.102.8)(typescript@7.0.2)
       effect:
         specifier: ^4.0.5
         version: 4.0.5
-      temporal-polyfill:
-        specifier: ^0.3.0
-        version: 0.3.0
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
     devDependencies:
       '@effect/platform-browser':
         specifier: ^4.0.5
@@ -1776,6 +1764,9 @@ importers:
       '@types/node':
         specifier: ^24.10.1
         version: 24.10.1
+      temporal-polyfill:
+        specifier: ^0.3.0
+        version: 0.3.0
       typescript:
         specifier: ~7.0.2
         version: 7.0.2

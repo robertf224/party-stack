@@ -1,5 +1,4 @@
 import { isRelatedFromForeignKeySource, resolveRelatedLink } from "@party-stack/ontology/utils";
-import { Temporal } from "temporal-polyfill";
 import type {
     ActionLogicStep,
     ActionTypeDef,
@@ -25,17 +24,6 @@ type RuntimeFixedActionParameterValues = Record<
     string,
     Record<string, FixedActionParameterValue> | undefined
 >;
-
-export type ClientContextProjectionMode = "none" | "forward" | "projected";
-
-function getPath(value: unknown, path: string[]): unknown {
-    let current = value;
-    for (const segment of path) {
-        if (typeof current !== "object" || current === null) return undefined;
-        current = (current as Record<string, unknown>)[segment];
-    }
-    return current;
-}
 
 function hasPath(value: unknown, path: string[]): boolean {
     let current = value;
@@ -79,76 +67,6 @@ function getObjectReferenceObjectType(
     return type.value.objectType;
 }
 
-function evaluateExpression<Context>(opts: {
-    expression: Expression;
-    ctx: Context;
-    parameters: Record<string, unknown>;
-    resolveFixedParameter: (parameterName: string) => unknown;
-    locals?: ReadonlyMap<string, unknown>;
-}): unknown {
-    switch (opts.expression.kind) {
-        case "contextReference":
-            return getPath(opts.ctx, [opts.expression.value.name]);
-        case "literal":
-            return opts.expression.value.value;
-        case "localReference": {
-            return opts.locals?.get(opts.expression.value.name);
-        }
-        case "getAt": {
-            const source = evaluateExpression({
-                ...opts,
-                expression: opts.expression.value.source,
-            });
-            return getPath(source, opts.expression.value.path);
-        }
-        case "struct":
-            return Object.fromEntries(
-                opts.expression.value.fields.map((field) => [
-                    field.name,
-                    evaluateExpression({
-                        ...opts,
-                        expression: field.value,
-                    }),
-                ])
-            );
-        case "map": {
-            const { source: sourceExpression, binding, body } = opts.expression.value;
-            const source = evaluateExpression({
-                ...opts,
-                expression: sourceExpression,
-            });
-            if (source === undefined) return undefined;
-            if (!Array.isArray(source)) {
-                throw new Error("Map expression source must resolve to a list.");
-            }
-            return source.map((item) => {
-                const locals = new Map(opts.locals);
-                locals.set(binding, item);
-                return evaluateExpression({
-                    ...opts,
-                    expression: body,
-                    locals,
-                });
-            });
-        }
-        case "uuid":
-            return globalThis.crypto.randomUUID();
-        case "now":
-            return Temporal.Now.instant();
-        case "inputReference": {
-            const parameterName = opts.expression.value.name;
-            const value =
-                opts.parameters[parameterName] !== undefined
-                    ? opts.parameters[parameterName]
-                    : opts.resolveFixedParameter(parameterName);
-            return value;
-        }
-        case "objectLookup":
-        case "related":
-            throw new Error(`Cannot evaluate ${opts.expression.kind} without ontology object collections.`);
-    }
-}
-
 function getFixedActionParameterValues(
     fixedActionParameterValues: FixedActionParameterValues | undefined,
     actionName: string
@@ -166,7 +84,7 @@ function isActionParameterFixed(
     );
 }
 
-export function getVisibleActionParameterNames(
+function getVisibleActionParameterNames(
     actionTypeName: string,
     parameters: ReadonlyArray<{ name: string }>,
     fixedActionParameterValues?: FixedActionParameterValues
@@ -178,22 +96,6 @@ export function getVisibleActionParameterNames(
                     !isActionParameterFixed(fixedActionParameterValues, actionTypeName, parameter.name)
             )
             .map((parameter) => parameter.name)
-    );
-}
-
-export function pickVisibleActionParameters(
-    actionTypeName: string,
-    allParameters: Record<string, unknown>,
-    fixedActionParameterValues?: FixedActionParameterValues,
-    parameters?: ReadonlyArray<{ name: string }>
-): Record<string, unknown> {
-    const visibleParameterNames = getVisibleActionParameterNames(
-        actionTypeName,
-        parameters ?? Object.keys(allParameters).map((name) => ({ name })),
-        fixedActionParameterValues
-    );
-    return Object.fromEntries(
-        Object.entries(allParameters).filter(([name]) => visibleParameterNames.has(name))
     );
 }
 
@@ -235,11 +137,11 @@ function getExpressionObjectType(
     return undefined;
 }
 
-function projectExpression<Context>(opts: {
+function projectExpression(opts: {
     expression: Expression;
-    serverContext: Context;
-    clientContext: Record<string, unknown> | undefined;
-    clientContextMode: ClientContextProjectionMode;
+
+    context: Record<string, unknown> | undefined;
+
     ir: OntologyIR;
     actionName: string;
     visibleParameters: Set<string>;
@@ -249,10 +151,7 @@ function projectExpression<Context>(opts: {
 }): Expression | undefined {
     switch (opts.expression.kind) {
         case "contextReference":
-            return opts.clientContextMode === "forward" &&
-                hasPath(opts.clientContext, [opts.expression.value.name])
-                ? opts.expression
-                : undefined;
+            return hasPath(opts.context, [opts.expression.value.name]) ? opts.expression : undefined;
         case "literal":
         case "uuid":
         case "now":
@@ -426,11 +325,11 @@ function projectExpression<Context>(opts: {
     }
 }
 
-function projectAssignments<Context>(opts: {
+function projectAssignments(opts: {
     assignments: PropertyAssignment[];
-    serverContext: Context;
-    clientContext: Record<string, unknown> | undefined;
-    clientContextMode: ClientContextProjectionMode;
+
+    context: Record<string, unknown> | undefined;
+
     ir: OntologyIR;
     actionName: string;
     objectTypeName: string;
@@ -444,9 +343,9 @@ function projectAssignments<Context>(opts: {
         if (!propertyName || !allowedProperties.includes(propertyName)) return [];
         const projectedValue = projectExpression({
             expression: assignment.value,
-            serverContext: opts.serverContext,
-            clientContext: opts.clientContext,
-            clientContextMode: opts.clientContextMode,
+
+            context: opts.context,
+
             ir: opts.ir,
             actionName: opts.actionName,
             visibleParameters: opts.visibleParameters,
@@ -458,11 +357,11 @@ function projectAssignments<Context>(opts: {
     });
 }
 
-function projectLogicStep<Context>(opts: {
+function projectLogicStep(opts: {
     step: ActionLogicStep;
-    serverContext: Context;
-    clientContext: Record<string, unknown> | undefined;
-    clientContextMode: ClientContextProjectionMode;
+
+    context: Record<string, unknown> | undefined;
+
     ir: OntologyIR;
     actionType: ActionTypeDef;
     visibleParameters: Set<string>;
@@ -473,9 +372,9 @@ function projectLogicStep<Context>(opts: {
         case "createObject": {
             const values = projectAssignments({
                 assignments: opts.step.value.values,
-                serverContext: opts.serverContext,
-                clientContext: opts.clientContext,
-                clientContextMode: opts.clientContextMode,
+
+                context: opts.context,
+
                 ir: opts.ir,
                 actionName: opts.actionType.name,
                 objectTypeName: opts.step.value.objectType,
@@ -499,9 +398,9 @@ function projectLogicStep<Context>(opts: {
             );
             const values = projectAssignments({
                 assignments: opts.step.value.values,
-                serverContext: opts.serverContext,
-                clientContext: opts.clientContext,
-                clientContextMode: opts.clientContextMode,
+
+                context: opts.context,
+
                 ir: opts.ir,
                 actionName: opts.actionType.name,
                 objectTypeName,
@@ -624,14 +523,11 @@ function actionParametersReferenceHiddenObjectType(
     return false;
 }
 
-export function projectRemoteOntologyIR<
-    Context,
-    Ontology extends OntologyDefinition = OntologyDefinition,
->(opts: {
+export function projectOntologyDefinition<Ontology extends OntologyDefinition = OntologyDefinition>(opts: {
     ir: OntologyIR;
-    serverContext: Context;
-    clientContext?: Record<string, unknown>;
-    clientContextMode?: ClientContextProjectionMode;
+
+    context?: Record<string, unknown>;
+
     fixedActionParameterValues?: FixedActionParameterValues<Ontology>;
     projectFixedActionParameterValuesInDefaults?: boolean;
     allowedObjectTypeProperties: Record<string, readonly string[]>;
@@ -718,9 +614,9 @@ export function projectRemoteOntologyIR<
                         defaultValue: parameter.defaultValue
                             ? projectExpression({
                                   expression: parameter.defaultValue,
-                                  serverContext: opts.serverContext,
-                                  clientContext: opts.clientContext,
-                                  clientContextMode: opts.clientContextMode ?? "none",
+
+                                  context: opts.context,
+
                                   ir: opts.ir,
                                   actionName: actionType.name,
                                   visibleParameters,
@@ -741,9 +637,9 @@ export function projectRemoteOntologyIR<
                     }
                     const projectedStep = projectLogicStep({
                         step,
-                        serverContext: opts.serverContext,
-                        clientContext: opts.clientContext,
-                        clientContextMode: opts.clientContextMode ?? "none",
+
+                        context: opts.context,
+
                         ir: opts.ir,
                         actionType,
                         visibleParameters,
@@ -803,46 +699,4 @@ export function projectRemoteOntologyIR<
         actionTypes,
         queryFunctionTypes,
     };
-}
-
-export function applyFixedActionParameterValues<
-    Context,
-    Ontology extends OntologyDefinition = OntologyDefinition,
->(opts: {
-    ctx: Context;
-    actionType: string;
-    parameters: Record<string, unknown>;
-    fixedActionParameterValues?: FixedActionParameterValues<Ontology>;
-}): Record<string, unknown> {
-    const fixedValues = getFixedActionParameterValues(opts.fixedActionParameterValues, opts.actionType);
-    if (!fixedValues) return opts.parameters;
-
-    const parameters = { ...opts.parameters };
-    const resolving = new Set<string>();
-    const resolved = new Map<string, unknown>();
-
-    const resolveFixedParameter = (parameterName: string): unknown => {
-        if (resolved.has(parameterName)) return resolved.get(parameterName);
-        const fixedValue = fixedValues[parameterName];
-        if (!fixedValue) return undefined;
-        if (resolving.has(parameterName)) {
-            throw new Error(`Circular fixed action parameter value for "${parameterName}".`);
-        }
-        resolving.add(parameterName);
-        const value = evaluateExpression({
-            expression: fixedValue,
-            ctx: opts.ctx,
-            parameters,
-            resolveFixedParameter,
-        });
-        resolving.delete(parameterName);
-        resolved.set(parameterName, value);
-        return value;
-    };
-
-    for (const parameterName of Object.keys(fixedValues)) {
-        parameters[parameterName] = resolveFixedParameter(parameterName);
-    }
-
-    return parameters;
 }

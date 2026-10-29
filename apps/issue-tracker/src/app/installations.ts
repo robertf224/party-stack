@@ -13,7 +13,6 @@ import { FetchHttpClient } from "effect/http";
 import ontology from "../ontology/ontology";
 import { foundryUserToUser } from "../ontology/user";
 import { authClient } from "./auth";
-import { migrateLinkMetadata } from "./migrateLinkMetadata";
 
 const writes = {
     defaultMode: "outbox" as const,
@@ -37,11 +36,14 @@ const FOUNDRY_CLIENT_ID = requiredEnv("VITE_FOUNDRY_CLIENT_ID", import.meta.env.
 const FOUNDRY_REDIRECT_URL =
     import.meta.env.VITE_FOUNDRY_REDIRECT_URL ?? new URL("/auth/callback", globalThis.location.origin).href;
 
+export const TRACKER_CACHE_EPOCH = "query-ir-v0";
+
 // This example deliberately opts into persistent browser credentials.
 const trackerRuntime = Effect.fn("Tracker.runtime")(function* (owner: string, namespace: string) {
-    const runtime = yield* createWebRuntime(owner, namespace, { persistEncryptionKeys: true });
-    yield* migrateLinkMetadata(runtime.tables, namespace);
-    return runtime;
+    // Explicit alpha cache epoch for the new IR/context contract. Installation
+    // credentials keep their existing namespace; prior replica caches are retained.
+    const storageNamespace = owner === "installation" ? namespace : `${TRACKER_CACHE_EPOCH}:${namespace}`;
+    return yield* createWebRuntime(owner, storageNamespace, { persistEncryptionKeys: true });
 });
 
 type OpenOntology = CreateOntologyBackendInstallationOptions["openOntology"];

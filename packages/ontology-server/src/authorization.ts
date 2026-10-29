@@ -16,9 +16,9 @@ import { contextPartition, resolveType } from "@party-stack/ontology-spec/utils"
 import { collectAttachments } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Schema, Stream } from "effect";
+import { projectOntologyDefinition } from "./definitionProjection.js";
 import { errorContext, projectValidationReport } from "./errorProjection.js";
 import { projectPolicyDefinition, validateContext } from "./policyDefinition.js";
-import { projectRemoteOntologyIR } from "./securedOntology.js";
 import type {
     ActionRequest,
     ErrorProjection,
@@ -337,11 +337,11 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
                 withRead(
                     Effect.fnUntraced(function* (source) {
                         const result = yield* authorized(source, name, values, new Set(Object.keys(values)));
-                        const resolutionIr = projectRemoteOntologyIR({
+                        const resolutionIr = projectOntologyDefinition({
                             ir: { ...options.ir, policy: undefined },
-                            serverContext: context,
-                            clientContext: definition.context,
-                            clientContextMode: "forward",
+
+                            context: definition.context,
+
                             allowedObjectTypeProperties: Object.fromEntries(
                                 ir.objectTypes.map((t) => [t.name, t.properties.map((p) => p.name)])
                             ),

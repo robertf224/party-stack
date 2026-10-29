@@ -1,6 +1,7 @@
 import { makeBetterAuthStorage } from "@party-stack/better-auth/storage";
 import { o, type OntologyIR } from "@party-stack/ontology";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { makeOntologyServer } from "@party-stack/ontology-server";
 import { field, ilike } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { betterAuth } from "better-auth";
@@ -140,6 +141,26 @@ it("publishes real Better Auth sign-up as a public User change while hiding acco
                 expect(JSON.stringify(page)).not.toMatch(
                     /passwordHash|LoginMethod|Session|emailVerified|displayName/
                 );
+            })
+        )
+    );
+});
+
+it("constructs the real authenticated policy server and exposes its projected definition", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* makeOwnedBackend({
+                    ir: serverOntology,
+                    namespace: "policy-startup",
+                    tables: yield* Memory.make(),
+                    mutators: {},
+                });
+                const result = yield* Effect.result(
+                    makeOntologyServer({ kind: "owned", backend: owned, context: { user: "ada" } })
+                );
+                expect(result._tag === "Failure" ? result.failure.issues : []).toEqual([]);
+                expect(result._tag).toBe("Success");
             })
         )
     );

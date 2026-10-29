@@ -734,12 +734,33 @@ function unwrapOptionalType(type: TypeDef, valueTypes: ReadonlyMap<string, TypeD
 function areDefaultTypesCompatible(
     target: TypeDef,
     source: TypeDef,
-    valueTypes: ReadonlyMap<string, TypeDef>
+    valueTypes: ReadonlyMap<string, TypeDef>,
+    objectTypes: ReadonlyMap<string, ObjectTypeDef>,
+    references = new Set<string>()
 ): boolean {
     const targetType = unwrapOptionalType(target, valueTypes);
     const sourceType = unwrapOptionalType(source, valueTypes);
     if (!targetType || !sourceType) return false;
     if (targetType.kind === "unknown" || sourceType.kind === "unknown") return true;
+    // Portable object references are primary-key values. A stored foreign-key
+    // field can supply a default without coercion; two named references still
+    // have to identify the same object type.
+    if (targetType.kind === "objectReference" && sourceType.kind !== "objectReference") {
+        const name = targetType.value.objectType;
+        if (references.has(name)) return false;
+        const object = objectTypes.get(name);
+        const key = object?.properties.find((property) => property.name === object.primaryKey);
+        return (
+            !!key &&
+            areDefaultTypesCompatible(
+                key.type,
+                sourceType,
+                valueTypes,
+                objectTypes,
+                new Set([...references, name])
+            )
+        );
+    }
     if (targetType.kind !== sourceType.kind) return false;
     if (targetType.kind === "objectReference" && sourceType.kind === "objectReference") {
         return targetType.value.objectType === sourceType.value.objectType;
@@ -748,7 +769,9 @@ function areDefaultTypesCompatible(
         return areDefaultTypesCompatible(
             targetType.value.elementType,
             sourceType.value.elementType,
-            valueTypes
+            valueTypes,
+            objectTypes,
+            references
         );
     }
     return true;
@@ -908,7 +931,8 @@ function validateAction(
                 !areDefaultTypesCompatible(
                     parameter.type,
                     expressionValueType(sourceType, objectTypes),
-                    valueTypes
+                    valueTypes,
+                    objectTypes
                 )
             ) {
                 errors.push({

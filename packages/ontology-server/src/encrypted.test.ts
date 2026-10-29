@@ -2,14 +2,13 @@ import { o, type OntologyIR, type LiveOntology } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
+import { eq, field, literal, selectField, sub } from "@party-stack/ontology/query";
 import { Deferred, Effect, Fiber } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { Temporal } from "temporal-polyfill";
 import { expect, test, vi } from "vite-plus/test";
-import { makeRemoteOntologyBackend } from "./backend.js";
-import { createInProcessHttpRemoteOntologyTransport } from "./http.js";
+import { makeOntologyServer } from "./composition.js";
 import { connectOntologyHttp, makeOntologyHttpHandler } from "./rpcHttp.js";
-import { createRemoteOntologyServer } from "./server.js";
 
 const ir: OntologyIR = {
     types: [],
@@ -115,44 +114,54 @@ test("memory clients forward cache policy to their persistent ontology owner", a
     );
 });
 
-test("policy HTTP requires a distinct decryption grant plus readable row/property and a matching handle", async () => {
+test("native policy HTTP requires a readable source row/property and matching ciphertext on every decrypt", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const { owned, decrypt } = yield* setup();
-                let allowed = false;
-                let readable = true;
-                const server = createRemoteOntologyServer<
-                    Record<string, unknown>,
-                    {
-                        objectTypes: { Person: { id: string; secret: unknown } };
-                        actionTypes: {};
-                        queryFunctionTypes: {};
-                    }
-                >({
-                    ir,
-                    backendAdapter: { name: "test", open: () => Effect.succeed(owned) },
+                const definition: OntologyIR = {
+                    ...ir,
                     policy: {
-                        canDecrypt: () => allowed,
-                        baseObjectTypeQueries: {
-                            Person: ({ q, collection }) => q.from({ object: collection }),
+                        read: {
+                            select: [
+                                sub("people", {
+                                    from: { source: { objectType: "Person" }, binding: "person" },
+                                    where: eq(field("person", "id"), literal("1")),
+                                    select: ["id", "secret"].map((name) =>
+                                        selectField(name, field("person", name))
+                                    ),
+                                }),
+                            ],
                         },
-                        allowedObjectTypeProperties: { Person: () => (readable ? ["id", "secret"] : ["id"]) },
                     },
+                };
+                const server = yield* makeOntologyServer({
+                    kind: "owned",
+                    backend: owned,
+                    ir: definition,
+                    context: {},
                 });
-                const transport = createInProcessHttpRemoteOntologyTransport(server, { ir });
-                const backend = yield* makeRemoteOntologyBackend({ ir, transport });
-                const request = backend.encrypted!.decrypt(value);
-                expect(yield* request.pipe(Effect.flip)).toMatchObject({ kind: "Forbidden" });
-                allowed = true;
-                readable = false;
-                expect(yield* request.pipe(Effect.flip)).toMatchObject({ kind: "Forbidden" });
+                const client = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" }).pipe(
+                    Effect.provide(FetchHttpClient.layer),
+                    Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                        server.handleRequest(new Request(input, init))
+                    )
+                );
+                for (const forged of [
+                    { ...value, ciphertext: "other" },
+                    { ...value, source: { ...value.source, primaryKey: "other" } },
+                    { ...value, source: { ...value.source, property: "id" } },
+                ]) {
+                    expect(yield* client.operations.decrypt(forged).pipe(Effect.flip)).toMatchObject({
+                        kind: "NotFound",
+                    });
+                }
                 expect(decrypt).not.toHaveBeenCalled();
-                readable = true;
-                expect(yield* request).toEqual({ value: plaintext, ciphertext: value.ciphertext });
-                expect(
-                    yield* backend.encrypted!.decrypt({ ...value, ciphertext: "other" }).pipe(Effect.flip)
-                ).toMatchObject({ kind: "Forbidden" });
+                expect(yield* client.operations.decrypt(value)).toBe(plaintext);
+                yield* owned.storage.transaction((tx) => tx.delete("Person", "1"));
+                expect(yield* client.operations.decrypt(value).pipe(Effect.flip)).toMatchObject({
+                    kind: "NotFound",
+                });
                 expect(decrypt).toHaveBeenCalledTimes(1);
             })
         )

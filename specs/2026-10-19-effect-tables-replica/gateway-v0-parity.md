@@ -21,7 +21,8 @@ authorized prefill and query functions; source-row/property attachment reads;
 principal/form/revision-bound uploads and request limits; and real form submission,
 structured validation, unknown-outcome and context-change isolation flows.
 
-Retire the deprecated HTTP transport after those workflows run on native operations.
+The deprecated HTTP transport is removed before the downstream port, per the
+October 28 alpha-release decision. Publish this native version, then migrate Gateway.
 Its remaining presence does not justify retaining legacy adapter validation,
 attachment or cleanup hooks. General untrusted replica-state access and live
 hierarchical query subscriptions remain separate future work.
@@ -89,9 +90,9 @@ eager upload endpoint. Future reads of an unreferenced staged upload require exp
 uploader authority; knowledge of an attachment ID alone is never sufficient. This is
 authorization, separate from orphan GC grace and ordinary write intents.
 
-The old HTTP APIs are deprecated but remain available until these gates pass. The
-remote-notes example now uses native RPC and ordinary row predicates, and is not
-proof that all gateway policies have been ported.
+The old HTTP APIs and wrappers are removed. The remote-notes example uses native
+RPC and IR policy grants; it is not proof that downstream Gateway workflows have
+been ported. The separate Streamline change must target the new native APIs.
 
 ## Deferred changes and untrusted child replicas
 

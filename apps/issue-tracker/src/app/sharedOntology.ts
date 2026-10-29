@@ -5,6 +5,7 @@ import { createConnectedLiveOntology } from "@party-stack/ontology-server/client
 import { connectOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
 import * as WebRuntime from "@party-stack/web-runtime";
 import { Effect } from "effect";
+import { TRACKER_CACHE_EPOCH } from "./installations";
 import type { CreateOntologyBackendInstallationOptions, LiveOntology } from "@party-stack/ontology";
 
 type OpenOptions = Parameters<NonNullable<CreateOntologyBackendInstallationOptions["openOntology"]>>[0];
@@ -13,6 +14,7 @@ type OpenOptions = Parameters<NonNullable<CreateOntologyBackendInstallationOptio
 export async function openSharedOntology(options: OpenOptions): Promise<LiveOntology> {
     if (typeof SharedWorker === "undefined") return createLiveOntology(options);
     const partition = {
+        cacheEpoch: TRACKER_CACHE_EPOCH,
         installationId: options.installationId,
         userId: options.userId,
         ontologyId: options.ontologyId,

@@ -14,14 +14,6 @@
             "types": "./lib/client.d.ts",
             "default": "./lib/client.js"
         },
-        "./http": {
-            "types": "./lib/http.d.ts",
-            "default": "./lib/http.js"
-        },
-        "./server": {
-            "types": "./lib/server.d.ts",
-            "default": "./lib/server.js"
-        },
         "./rpc": {
             "types": "./lib/rpc.d.ts",
             "default": "./lib/rpc.js"
@@ -42,17 +34,14 @@
         "@party-stack/ontology-spec": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "@tanstack/query-core": "^5.102.8",
-        "@tanstack/query-db-collection": "1.4.4",
-        "effect": "^4.0.5",
-        "temporal-polyfill": "^0.3.0",
-        "zod": "^4.4.3"
+        "effect": "^4.0.5"
     },
     "devDependencies": {
         "@effect/platform-browser": "^4.0.5",
         "@party-stack/build-config": "workspace:*",
         "@tanstack/db": "0.14.0",
         "@types/node": "^24.10.1",
+        "temporal-polyfill": "^0.3.0",
         "typescript": "~7.0.2",
         "vite": "catalog:",
         "vite-plus": "catalog:"

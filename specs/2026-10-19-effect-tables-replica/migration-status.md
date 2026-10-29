@@ -102,8 +102,9 @@ behavior; proposals remain in `specs/`.
 
 Hierarchical Query IR/context binding and stateless server authorization are now
 implemented in this checkpoint. The remaining v0 gates are downstream Gateway/form
-integration in the Streamline repository, legacy HTTP retirement after that port,
-and final application acceptance. Server IVM/live full-query watching,
+integration in the Streamline repository and final application acceptance. The
+legacy HTTP endpoints/clients/error envelopes are removed now, before downstream
+adoption, as agreed for this alpha release. Server IVM/live full-query watching,
 durable delta history/resume, general untrusted replica-state projection and
 advertised/versioned idempotency windows remain future work. See
 [Gateway gates](./gateway-v0-parity.md).
@@ -118,7 +119,7 @@ Native server delivery is now explicitly selectable with deliveryStrategy:
 auto (default), snapshot or incremental. Both committed and speculative clients
 follow the advertised strategy. Snapshot mode keeps invalidation/finite reads and
 does not silently use journal delivery. HTTP acceptance covers both strategies
-for owned, cached-proxy and replica servers; the server suite passes 85 tests.
+for owned, cached-proxy and replica servers; native server behavior has HTTP acceptance coverage.
 Result-maintenance/IVM strategy remains future work. Context type/partition metadata,
 entity-selection validation, policy read graphs and action check/bind/read rules are
 implemented. Native Describe returns the projected schema and shared context;
@@ -159,7 +160,8 @@ state to untrusted clients; scoped incremental authorization remains future work
 5. **Gateway transport parity.** The sample remote-notes uses native RPC. Streamline's
    existing finite form workflow still needs adoption of native schema/context discovery
    and hierarchical authorization. Those capabilities are now available on the native
-   path; the downstream port remains separate. Keep the deprecated request/response helpers until these gates pass. See
+   path; the downstream port remains separate. Deprecated request/response helpers
+   are removed in this alpha checkpoint. See
    [gateway-v0-parity.md](./gateway-v0-parity.md) for the inspected workflow and
    deferred untrusted/persistent child replica work.
    Native action-parameter resolution is implemented through HTTP and LiveOntology,
@@ -552,8 +554,8 @@ Finish byte-stream uploads/storage IO, bounded transfer authorization/limits and
 acceptance before the last v0 phase: Gateway parity including hierarchical Query IR,
 context binding, relational read/reference policy execution, dynamic projected
 schema/context Describe, and actual form/prefill/attachment/action flows. Do not add
-an exists-first public policy language. Delete the deprecated HTTP transport once
-those workflows run on native operations. See gateway-v0-parity.md for the checklist.
+an exists-first public policy language. The deprecated HTTP transport is removed
+before the downstream port for this alpha release. See gateway-v0-parity.md for the checklist.
 
 subscribeSubset is deferred. Keep cursor as the continuation term; own snapshots and
 journal positions provide the future feed's foundation, but query membership,
@@ -667,3 +669,8 @@ acceptance includes offline cross-tab actions, initiating-tab closure, reload,
 native attachment caching, rejected-action toasts and devtools query/tracing views.
 The deferred TanStack cleanup warning and missing cold-offline app shell remain
 as recorded above. No dependency patch or automatic schema reset is added.
+
+The issue-tracker example uses an explicit `query-ir-v0` replica-cache epoch after
+the IR/context contract change. Installation credentials retain their namespace; old
+replica stores are left untouched. The one-off link-metadata migration is removed.
+General schema mismatches still require a deliberate migration or namespace reset.

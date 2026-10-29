@@ -253,15 +253,12 @@ leases. Cancelling a demand releases it; reconnecting a change stream invalidate
 the view so missed hints are repaired. Rich storage values retain their representation
 through the shared codec.
 
-This path is still being integrated. Authorization is mandatory per operation;
-sources must belong to the authenticated principal's partition. Restricted sources
-also need returned-state projection, including action parameters and confirmed base.
-The existing row/property policies below are not automatically applied to this new
-protocol. Selected snapshots currently replace membership in full. Retained replica-state
-deltas remain follow-up work. Protocol-child row/blob GC uses the same local
-storage machinery as adapter replicas. Metadata-only requests retain selected-field
-provider pushdown; cold byte reads stream through while filling local caches.
-Issue-tracker now uses the SharedWorker/memory-tab placement described below.
+Authorization is mandatory per operation. Sources must belong to the authenticated
+principal's partition. Ordinary owned/cached-proxy delivery sends selected committed
+snapshots followed by atomic patches; the replica role also transfers speculative
+state and action handoff. Returned-state projection for untrusted speculative clients
+and resumable delivery history remain future work. Protocol children use normal local
+row/blob retention, metadata pushdown and streaming cold-cache byte reads.
 
 ## Worker transport
 
@@ -294,19 +291,22 @@ The client handshake has a configurable timeout; startup failure can select an
 explicit fallback before constructing the tab Replica. An active Replica must not
 silently switch to a new source after submitting work.
 
-## Describe projection
+## Public API and migration
 
-Describe retains the full object and link schema when no object-visibility
-policy is configured. When `allowedObjectTypeProperties` or
-`baseObjectTypeQueries` is configured, it automatically projects authorized
-object types and properties, prunes broken links, hides actions and queries
-that reference hidden types, and drops unreachable named types.
+The deprecated per-operation HTTP endpoints and their Promise transport/client
+wrappers have been removed. The package root exports `makeOntologyServer` and its
+options. `./client` exports the native scoped LiveOntology client composition;
+`./rpc`, `./rpc/http` and `./rpc/worker` expose Effect RPC bindings. The old `./http`
+and `./server` exports no longer exist.
 
-## Errors
+Use `makeOntologyServer` for owned/proxy/cached-proxy/replica roles, and
+`connectOntologyHttp` or `connectOntologyBackendHttp` from `./rpc/http` for HTTP
+clients. Native HTTP supports NDJSON subscriptions and streaming multipart action
+uploads. Worker clients use `connectOntologyWorker` with their platform Layer.
+Describe provides the projected IR and shared context for dynamic clients.
 
-Effect RPC preserves the shared `BackendError` schema from ontology-backend. The
-older policy HTTP endpoints retain versioned envelopes (`v: 1`) and legacy body
-parsing while applications move to the common RPC server.
+Effect RPC preserves the common `BackendError` schema from ontology-backend.
+There is no separate RemoteOntologyError envelope or legacy JSON parser.
 
 ## Live view helpers
 

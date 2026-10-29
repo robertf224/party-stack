@@ -2,9 +2,10 @@ import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunn
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { serveOpenedOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
 import { Effect, Schema } from "effect";
-import { createTrackerInstallation } from "./installations";
+import { createTrackerInstallation, TRACKER_CACHE_EPOCH } from "./installations";
 
 const Partition = Schema.Struct({
+    cacheEpoch: Schema.Literal(TRACKER_CACHE_EPOCH),
     installationId: Schema.NonEmptyString,
     userId: Schema.NonEmptyString,
     ontologyId: Schema.NonEmptyString,
@@ -21,7 +22,7 @@ Effect.runFork(
                         () =>
                             new BackendError({
                                 operation: "owner.partition",
-                                kind: "ValidationFailed",
+                                kind: "InvalidConfiguration",
                                 retryable: false,
                                 message: "Invalid worker ontology partition.",
                             })

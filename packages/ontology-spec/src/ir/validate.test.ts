@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { o } from "./generated/builders.js";
 import { validate, ValidationResult } from "./validate.js";
-import type { OntologyIR } from "./generated/types.js";
+import type { OntologyIR, TypeDef } from "./generated/types.js";
 
 function expectOk(result: ValidationResult): void {
     expect(result.kind).toBe("ok");
@@ -1143,4 +1143,38 @@ describe("Ontology Validation", () => {
             expect(targetNames).toContain("target");
         });
     });
+});
+
+it("accepts primary-key defaults for object references without coercing keys or interchanging named references", () => {
+    const key = { name: "id", displayName: "ID", type: o.string({}) };
+    const objects = ["Project", "Person"].map((name) => ({
+        name,
+        displayName: name,
+        pluralDisplayName: name,
+        primaryKey: "id",
+        properties: [key],
+    }));
+    const definition = (source: TypeDef): OntologyIR => ({
+        ...emptyOntology,
+        objectTypes: objects,
+        actionTypes: [
+            {
+                name: "edit",
+                displayName: "Edit",
+                logic: [],
+                parameters: [
+                    { name: "stored", displayName: "Stored key", type: source },
+                    {
+                        name: "project",
+                        displayName: "Project",
+                        type: o.optional({ type: o.objectReference({ objectType: "Project" }) }),
+                        defaultValue: o.Expression.inputReference({ name: "stored" }),
+                    },
+                ],
+            },
+        ],
+    });
+    expectOk(validate(definition(o.string({}))));
+    expectErr(validate(definition(o.integer({}))));
+    expectErr(validate(definition(o.objectReference({ objectType: "Person" }))));
 });

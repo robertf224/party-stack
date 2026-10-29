@@ -1,11 +1,6 @@
 import { o, type OntologyIR } from "@party-stack/ontology";
 import { describe, expect, it } from "vite-plus/test";
-import {
-    applyFixedActionParameterValues,
-    getVisibleActionParameterNames,
-    pickVisibleActionParameters,
-    projectRemoteOntologyIR,
-} from "./securedOntology.js";
+import { projectOntologyDefinition } from "./definitionProjection.js";
 
 function contextEmail() {
     return o.Expression.getAt({
@@ -94,9 +89,9 @@ const ir: OntologyIR = {
 
 describe("secured ontology projection", () => {
     it("hides fixed parameters and strips hidden context assignments", () => {
-        const projected = projectRemoteOntologyIR({
+        const projected = projectOntologyDefinition({
             ir,
-            serverContext: { user: { email: "alice@example.com" } },
+
             allowedObjectTypeProperties: {
                 Note: ["id", "title", "ownerEmail", "updatedAt", "directContext"],
             },
@@ -156,7 +151,7 @@ describe("secured ontology projection", () => {
         if (step.kind !== "createObject") {
             throw new Error("Expected create-object logic.");
         }
-        const projected = projectRemoteOntologyIR({
+        const projected = projectOntologyDefinition({
             ir: {
                 ...ir,
                 objectTypes: ir.objectTypes.map((objectType) => ({
@@ -203,7 +198,7 @@ describe("secured ontology projection", () => {
                     },
                 ],
             },
-            serverContext: {},
+
             allowedObjectTypeProperties: {
                 Note: ["id", "title", "ownerEmail", "updatedAt", "directContext", "entries"],
             },
@@ -221,7 +216,7 @@ describe("secured ontology projection", () => {
     });
 
     it("projects action defaults through object and property authorization", () => {
-        const projected = projectRemoteOntologyIR({
+        const projected = projectOntologyDefinition({
             ir: {
                 ...ir,
                 objectTypes: [
@@ -273,7 +268,7 @@ describe("secured ontology projection", () => {
                     },
                 ],
             },
-            serverContext: {},
+
             allowedObjectTypeProperties: {
                 Employee: ["id"],
             },
@@ -288,7 +283,7 @@ describe("secured ontology projection", () => {
     });
 
     it("projects authorized object/property/link visibility and prunes unreachable types", () => {
-        const projected = projectRemoteOntologyIR({
+        const projected = projectOntologyDefinition({
             ir: {
                 ...ir,
                 types: [
@@ -336,7 +331,7 @@ describe("secured ontology projection", () => {
                     },
                 ],
             },
-            serverContext: {},
+
             filterSchemaByAuthorization: true,
             allowedObjectTypeProperties: {
                 Note: ["id", "title", "ownerEmail"],
@@ -356,9 +351,9 @@ describe("secured ontology projection", () => {
     });
 
     it("retains explicitly visible write-only actions without leaking hidden logic targets", () => {
-        const projected = projectRemoteOntologyIR({
+        const projected = projectOntologyDefinition({
             ir,
-            serverContext: {},
+
             filterSchemaByAuthorization: true,
             allowedObjectTypeProperties: {},
             visibleActionTypes: ["createNote"],
@@ -371,11 +366,11 @@ describe("secured ontology projection", () => {
     });
 
     it("preserves context references exposed in client context", () => {
-        const projected = projectRemoteOntologyIR({
+        const projected = projectOntologyDefinition({
             ir,
-            serverContext: { user: { email: "alice@example.com" }, serviceUser: "hidden" },
-            clientContext: { user: { email: "alice@example.com" } },
-            clientContextMode: "forward",
+
+            context: { user: { email: "alice@example.com" } },
+
             allowedObjectTypeProperties: {
                 Note: ["id", "title", "ownerEmail", "updatedAt", "directContext"],
             },
@@ -399,102 +394,6 @@ describe("secured ontology projection", () => {
         expect(step.value.values).toContainEqual({
             property: ["directContext"],
             value: contextEmail(),
-        });
-    });
-
-    it("strips context references when context is projected but not forwarded", () => {
-        const projected = projectRemoteOntologyIR({
-            ir,
-            serverContext: {
-                user: { email: "alice@example.com" },
-                serviceUser: { token: "secret" },
-            },
-            clientContext: { user: { email: "alice@example.com" } },
-            clientContextMode: "projected",
-            allowedObjectTypeProperties: {
-                Note: ["id", "title", "ownerEmail", "updatedAt", "directContext"],
-            },
-            fixedActionParameterValues: {
-                createNote: {
-                    ownerEmail: contextEmail(),
-                },
-            },
-        });
-
-        const step = projected.actionTypes[0]!.logic[0]!;
-        expect(step.kind).toBe("createObject");
-        if (step.kind !== "createObject") return;
-
-        expect(step.value.values).not.toContainEqual({
-            property: ["ownerEmail"],
-            value: contextEmail(),
-        });
-        expect(step.value.values).not.toContainEqual({
-            property: ["directContext"],
-            value: contextEmail(),
-        });
-    });
-});
-
-describe("visible action parameter helpers", () => {
-    it("derives visible parameter names from fixed parameter policy", () => {
-        const action = ir.actionTypes[0]!;
-        expect([
-            ...getVisibleActionParameterNames("createNote", action.parameters, {
-                createNote: {
-                    ownerEmail: contextEmail(),
-                },
-            }),
-        ]).toEqual(["id", "title", "updatedAt"]);
-    });
-
-    it("filters resolved parameters to visible names only", () => {
-        const action = ir.actionTypes[0]!;
-        expect(
-            pickVisibleActionParameters(
-                "createNote",
-                {
-                    id: "note-1",
-                    title: "Hello",
-                    ownerEmail: "alice@example.com",
-                    updatedAt: "2026-05-28T22:11:00.000Z",
-                },
-                {
-                    createNote: {
-                        ownerEmail: contextEmail(),
-                    },
-                },
-                action.parameters
-            )
-        ).toEqual({
-            id: "note-1",
-            title: "Hello",
-            updatedAt: "2026-05-28T22:11:00.000Z",
-        });
-    });
-});
-
-describe("fixed action parameter values", () => {
-    it("evaluates fixed values after client parameters so clients cannot override them", () => {
-        const parameters = applyFixedActionParameterValues({
-            ctx: { user: { email: "alice@example.com" } },
-            actionType: "createNote",
-            parameters: {
-                title: "Hello",
-                ownerEmail: "mallory@example.com",
-            },
-            fixedActionParameterValues: {
-                createNote: {
-                    ownerEmail: contextEmail(),
-                    createdAt: o.Expression.literal({ value: "2026-05-28T22:11:00.000Z" }),
-                },
-            },
-        });
-
-        expect(parameters).toEqual({
-            title: "Hello",
-            ownerEmail: "alice@example.com",
-            createdAt: "2026-05-28T22:11:00.000Z",
         });
     });
 });
