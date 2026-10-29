@@ -1,9 +1,10 @@
 import type { OntologyDefinition } from "@party-stack/ontology-spec";
+import type { TraceStore, TraceRecordingMode } from "@party-stack/runtime/tracing";
 export type { OntologyDefinition } from "@party-stack/ontology-spec";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { Runtime, MemoryRuntime, Runtimes, type RuntimeLayer } from "@party-stack/runtime";
-import { Effect, Exit, Scope, Layer, Tracer } from "effect";
+import { Effect, Exit, Scope, Layer } from "effect";
 import { makeReplicaLiveOntology } from "../runtime/live.js";
 import { provide } from "../utils/provide.js";
 import type { LiveOntologyAction } from "./actions/createLiveOntologyAction.js";
@@ -75,7 +76,7 @@ export interface OntologyDiagnostics {
     readonly role?: "host" | "replica";
     readonly location?: string;
     readonly replica: import("@party-stack/ontology-replica").ReplicaMonitor;
-    readonly traces?: import("@party-stack/runtime").RuntimeTraceStore;
+    readonly traces?: TraceStore;
     readonly parent?: OntologyDiagnostics;
 }
 
@@ -107,7 +108,7 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
     objects: LiveOntologyObjects<Ontology["objectTypes"]>;
     /** Local inspection/query source. Loading it never acquires remote demand. */
     persistedObjects?: LiveOntologyObjects<Ontology["objectTypes"]>;
-    traces?: import("@party-stack/runtime").RuntimeTraceStore;
+    traces?: TraceStore;
     diagnostics?: OntologyDiagnostics;
     storage?: import("@party-stack/ontology-replica").ReplicaService;
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
@@ -128,6 +129,8 @@ export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> 
     ir: OntologyIR;
     backend: OntologyBackendAdapterProvider<NoInfer<Context>>;
     runtime?: RuntimeLayer;
+    /** Opt-in devtools trace history or a live-only diagnostic feed. */
+    traceRecording?: TraceRecordingMode;
     demand?: import("@party-stack/ontology-replica").DemandPolicy;
     gc?: import("@party-stack/ontology-replica").ReplicaOptions["gc"];
     writes?: LiveOntologyWrites;
@@ -175,16 +178,14 @@ export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
                 });
                 const live = yield* makeReplicaLiveOntology({
                     ir: opts.ir,
+                    traceRecording: opts.traceRecording,
                     context,
                     backendAdapter,
                     writes: opts.writes,
                     demand: opts.demand,
                     gc: opts.gc,
                     connection: opts.connection,
-                }).pipe(
-                    Effect.provideService(Runtime, runtime),
-                    Effect.provideService(Tracer.Tracer, runtime.traces.tracer)
-                );
+                }).pipe(Effect.provideService(Runtime, runtime));
                 let closing: Promise<void> | undefined;
                 const cleanup = () => (closing ??= Effect.runPromise(Scope.close(scope, Exit.void)));
                 return {

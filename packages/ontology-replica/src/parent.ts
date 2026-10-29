@@ -47,6 +47,7 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
                         Effect.gen(function* () {
                             const opened = yield* child.openParentDelivery(source);
                             span.event("replica.subscribed", yield* Clock.currentTimeNanos, {
+                                diagnostic: true,
                                 generation: opened.generation,
                             });
                             let changes = 0;
@@ -57,6 +58,7 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
                                     const installed = yield* child.receiveDelivery(frame);
                                     if (!installed) return;
                                     span.event("replica.applied", yield* Clock.currentTimeNanos, {
+                                        diagnostic: true,
                                         sequence: installed.position.sequence,
                                         changes,
                                         kind: frame.kind,
@@ -93,6 +95,7 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
                 if (result._tag === "Failure") {
                     const recovery = deliveryRecovery(result.failure);
                     span.event("replica.disconnected", yield* Clock.currentTimeNanos, {
+                        diagnostic: true,
                         kind: result.failure.kind,
                         recovery,
                     });
@@ -213,19 +216,23 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
                     Effect.scoped(
                         Effect.gen(function* () {
                             const changes = existing ?? (yield* source.subscribeChanges);
-                            span.event("replica.subscribed", yield* Clock.currentTimeNanos);
+                            span.event("replica.subscribed", yield* Clock.currentTimeNanos, {
+                                diagnostic: true,
+                            });
                             // Refresh after every acquisition: events during a gap are not replayable hints.
                             yield* wake;
                             yield* Stream.runForEach(changes, () =>
                                 Effect.gen(function* () {
-                                    span.event("replica.invalidation", yield* Clock.currentTimeNanos);
+                                    span.event("replica.invalidation", yield* Clock.currentTimeNanos, {
+                                        diagnostic: true,
+                                    });
                                     yield* wake;
                                 })
                             );
                         })
                     )
                 );
-                span.event("replica.disconnected", yield* Clock.currentTimeNanos);
+                span.event("replica.disconnected", yield* Clock.currentTimeNanos, { diagnostic: true });
                 if (result._tag === "Failure") {
                     yield* Ref.set(error, result.failure);
                     if (!result.failure.retryable) return;

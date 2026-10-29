@@ -1,3 +1,4 @@
+import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Exit, Layer, Scope } from "effect";
 import { expect, test } from "vite-plus/test";
@@ -20,7 +21,10 @@ test("partition Layers isolate resources, share active acquisitions, and release
                         closed.push(partition.namespace);
                     })
             );
-            return yield* Runtime.make({ blobBytes: new MemoryBlobBytesStore() }).pipe(
+            return yield* Runtime.make({
+                tables: yield* Memory.make(),
+                blobBytes: new MemoryBlobBytesStore(),
+            }).pipe(
                 Effect.provideService(RuntimePartition, {
                     ...partition,
                     namespace: `version:${partition.namespace}`,

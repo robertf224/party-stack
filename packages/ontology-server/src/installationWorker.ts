@@ -2,6 +2,7 @@ import { createConnectionMonitor, ConnectionError, type Connection } from "@part
 import { BackendError, classifyBackendFailure, unauthenticated } from "@party-stack/ontology-backend";
 import { protocolValueCodec } from "@party-stack/ontology-backend/protocol";
 import { replicaStateSource } from "@party-stack/ontology-replica";
+import { TraceRecording } from "@party-stack/runtime/tracing";
 import {
     Cause,
     Redacted,
@@ -95,7 +96,7 @@ export const serveInstallationWorker = Effect.fn("OntologyInstallation.serveWork
     A extends object,
     R = never,
 >(
-    options: { readonly idleTimeToLive?: number } & (
+    options: { readonly idleTimeToLive?: number; readonly traceRecording?: boolean } & (
         | { readonly installation: OntologyBackendInstallationService<A>; readonly open?: never }
         | {
               readonly open: Effect.Effect<
@@ -115,6 +116,7 @@ export const serveInstallationWorker = Effect.fn("OntologyInstallation.serveWork
     const current = Deferred.await(ready);
     const startupScope = yield* Scope.fork(yield* Effect.scope);
     yield* Scope.provide(options.open ?? Effect.succeed(options.installation!), startupScope).pipe(
+        Effect.provideService(TraceRecording, options.traceRecording === false ? false : "live"),
         Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(startupScope, exit) : Effect.void)),
         Effect.flatMap((installation) => Deferred.succeed(ready, installation)),
         Effect.catchCause((cause) =>
@@ -329,6 +331,8 @@ export const connectInstallationWorker = Effect.fn("OntologyInstallation.connect
     readonly browserAuthentication?: BrowserAuthentication;
     readonly writes?: LiveOntologyWrites;
     readonly connectionTimeoutMs?: number;
+    /** SharedWorker devtools recording is enabled by default; no platform Runtime dependency. */
+    readonly traceRecording?: boolean;
 }): Effect.fn.Return<
     OntologyBackendInstallation<A>,
     BackendError,
@@ -342,7 +346,13 @@ export const connectInstallationWorker = Effect.fn("OntologyInstallation.connect
         const rpc = yield* makeTracedRpcClient(InstallationRpcs).pipe(Effect.provideContext(transport));
         const runWith = Effect.runPromiseWith(yield* Effect.context<never>());
         const run = <B, E>(effect: Effect.Effect<B, E>) =>
-            runWith(Effect.acquireUseRelease(Effect.forkIn(effect, owner), Fiber.join, Fiber.interrupt));
+            runWith(
+                Effect.acquireUseRelease(
+                    Effect.forkIn(effect, owner, { startImmediately: true }),
+                    Fiber.join,
+                    Fiber.interrupt
+                )
+            );
         const description = yield* rpc
             .InstallationDescribe()
             .pipe(Effect.mapError((cause) => classifyBackendFailure("installation.describe", cause)));
@@ -390,27 +400,34 @@ export const connectInstallationWorker = Effect.fn("OntologyInstallation.connect
                 completeOAuthRedirect?: (url: string) => Promise<unknown>;
             };
             // Browser-only presentation. PKCE, token exchange and credential persistence stay in the owner.
-            const oauth = async (settings?: { browserPresentation?: "popup" | "redirect" }) => {
-                const presentation = browser.start({
-                    redirectUrl: description.oauthRedirectUrl!,
-                    presentation: settings?.browserPresentation,
-                });
-                try {
-                    const started = await remote.beginOAuth!();
-                    if (started.redirectUrl !== description.oauthRedirectUrl)
-                        throw new BackendError({
-                            operation: "installation.authentication",
-                            kind: "InvalidResponse",
-                            retryable: false,
-                            message: "OAuth redirect configuration changed.",
-                        });
-                    return await remote.completeOAuthRedirect!(
-                        (await presentation.open(started.authorizationUrl)).callbackUrl
-                    );
-                } finally {
-                    await presentation.close();
-                }
-            };
+            const oauth = (settings?: { browserPresentation?: "popup" | "redirect" }) =>
+                run(
+                    Effect.scoped(
+                        Effect.gen(function* () {
+                            // Reservation happens in this click task, before the first RPC await.
+                            const presentation = yield* browser.start({
+                                redirectUrl: description.oauthRedirectUrl!,
+                                presentation: settings?.browserPresentation,
+                            });
+                            const started = yield* Effect.tryPromise({
+                                try: () => remote.beginOAuth!(),
+                                catch: (cause) => classifyBackendFailure("authentication.begin", cause),
+                            });
+                            if (started.redirectUrl !== description.oauthRedirectUrl)
+                                return yield* new BackendError({
+                                    operation: "installation.authentication",
+                                    kind: "InvalidResponse",
+                                    retryable: false,
+                                    message: "OAuth redirect configuration changed.",
+                                });
+                            const completed = yield* presentation.open(started.authorizationUrl);
+                            return yield* Effect.tryPromise({
+                                try: () => remote.completeOAuthRedirect!(completed.callbackUrl),
+                                catch: (cause) => classifyBackendFailure("authentication.complete", cause),
+                            });
+                        })
+                    )
+                );
             // Only the interactive leaf is local. Every other authentication method is RPC.
             const original = authentication as { signIn: object };
             const signIn = new Proxy(original.signIn, {
@@ -449,6 +466,7 @@ export const connectInstallationWorker = Effect.fn("OntologyInstallation.connect
                             runtime: options.runtime,
                             writes: options.writes,
                             label: "This tab",
+                            traceRecording: options.traceRecording === false ? false : "buffer",
                             parent: { label: "Host", location: "Shared worker" },
                         });
                         views.set(key, view);

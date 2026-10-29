@@ -57,7 +57,15 @@ test("one installation worker owns credentials and multiple ontologies for memor
             expect(await run(page, "rows", "first-ontology")).toEqual([]);
             expect(await run(page, "rows", "second-ontology")).toEqual([]);
         }
+        for (const page of [first, second]) await run(page, "startTracing", "first-ontology");
         await run(first, "increment", "first-ontology");
+        for (const page of [first, second]) {
+            await expect
+                .poll(async () => ((await run(page, "traces", "first-ontology")) as unknown[]).length)
+                .toBeGreaterThan(0);
+        }
+        expect(await run(first, "clearTraces", "first-ontology")).toEqual([]);
+        expect(((await run(second, "traces", "first-ontology")) as unknown[]).length).toBeGreaterThan(0);
         for (const page of [first, second]) {
             await expect
                 .poll(() => run(page, "rows", "first-ontology"))

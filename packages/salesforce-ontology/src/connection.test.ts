@@ -157,17 +157,15 @@ describe("createSalesforceConnectionAdapter", () => {
                     }),
             }),
             browserAuthentication: {
-                start({ redirectUrl }: { redirectUrl: string }) {
-                    return {
+                start: ({ redirectUrl }: { redirectUrl: string }) =>
+                    Effect.succeed({
                         open(authorizationUrl: string) {
                             const state = new URL(authorizationUrl).searchParams.get("state");
-                            return Promise.resolve({
+                            return Effect.succeed({
                                 callbackUrl: `${redirectUrl}?code=code&state=${state}`,
                             });
                         },
-                        close() {},
-                    };
-                },
+                    }),
             },
         };
         const fetch = vi.fn<typeof globalThis.fetch>((input) => {

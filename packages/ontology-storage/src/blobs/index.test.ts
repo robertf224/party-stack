@@ -4,6 +4,7 @@ import { Effect, Deferred, Fiber, Exit, Result, Scope, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import * as Memory from "../memory/tables.js";
 import { Table } from "../model.js";
+import { byteSource } from "./bytes.js";
 import {
     makeBlobStorage,
     collectActionAttachments,
@@ -15,7 +16,11 @@ import {
 function memoryBytes() {
     const values = new Map<string, Blob>();
     const bytes: BlobBytesService = {
-        read: (key) => Effect.sync(() => values.get(key)),
+        read: (key) =>
+            Effect.sync(() => {
+                const value = values.get(key);
+                return value === undefined ? undefined : byteSource(value);
+            }),
         write: (key, value) =>
             collectByteBlob(value).pipe(
                 Effect.map((blob) => {

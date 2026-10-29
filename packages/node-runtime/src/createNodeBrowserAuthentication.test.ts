@@ -1,7 +1,16 @@
 import { createServer } from "node:net";
-import { BrowserAuthenticationCancelledError } from "@party-stack/runtime";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { BrowserAuthenticationError } from "@party-stack/runtime";
+import { Effect, Exit, Fiber, Scope } from "effect";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { createNodeBrowserAuthentication } from "./createNodeBrowserAuthentication.js";
+
+let scope: Scope.Closeable;
+beforeEach(() => {
+    scope = Effect.runSync(Scope.make());
+});
+afterEach(async () => {
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+});
 
 async function availablePort(): Promise<number> {
     const server = createServer();
@@ -33,11 +42,16 @@ describe("createNodeBrowserAuthentication", () => {
         const authentication = createNodeBrowserAuthentication({
             openUrl,
         });
-        const session = authentication.start({
-            redirectUrl,
-        });
+        const session = Effect.runSync(
+            Scope.provide(
+                authentication.start({
+                    redirectUrl,
+                }),
+                scope
+            )
+        );
 
-        await expect(session.open("https://auth.example/authorize")).resolves.toEqual({
+        await expect(Effect.runPromise(session.open("https://auth.example/authorize"))).resolves.toEqual({
             callbackUrl: `${redirectUrl}?code=code&state=state`,
         });
         await vi.waitFor(() => {
@@ -58,24 +72,59 @@ describe("createNodeBrowserAuthentication", () => {
                 return Promise.resolve();
             },
         });
-        const session = authentication.start({
-            redirectUrl: `http://127.0.0.1:${port}/callback`,
-        });
-        const result = session.open("https://auth.example/authorize");
+        const session = Effect.runSync(
+            Scope.provide(
+                authentication.start({
+                    redirectUrl: `http://127.0.0.1:${port}/callback`,
+                }),
+                scope
+            )
+        );
+        const result = Effect.runPromise(session.open("https://auth.example/authorize"));
         await didOpen;
 
-        await session.close();
+        await Effect.runPromise(Scope.close(scope, Exit.void));
 
-        await expect(result).rejects.toBeInstanceOf(BrowserAuthenticationCancelledError);
+        await expect(result).rejects.toBeInstanceOf(BrowserAuthenticationError);
     });
 
     it("rejects non-loopback redirects", () => {
         const authentication = createNodeBrowserAuthentication();
 
         expect(() =>
-            authentication.start({
-                redirectUrl: "https://app.example/callback",
-            })
+            Effect.runSync(
+                Scope.provide(
+                    authentication.start({
+                        redirectUrl: "https://app.example/callback",
+                    }),
+                    scope
+                )
+            )
         ).toThrow("requires an http:// loopback redirect URL");
+    });
+
+    it("interrupting before the loopback listener starts leaves the port available", async () => {
+        const port = await availablePort();
+        const openUrl = vi.fn(async () => {});
+        const session = Effect.runSync(
+            Scope.provide(
+                createNodeBrowserAuthentication({ openUrl }).start({
+                    redirectUrl: `http://127.0.0.1:${port}/callback`,
+                }),
+                scope
+            )
+        );
+        const pending = Effect.runFork(session.open("https://auth.example/authorize"));
+        await Effect.runPromise(Fiber.interrupt(pending));
+        expect(openUrl).not.toHaveBeenCalled();
+        const probe = createServer();
+        try {
+            await new Promise<void>((resolve, reject) => {
+                probe.once("error", reject);
+                probe.listen(port, "127.0.0.1", resolve);
+            });
+        } finally {
+            await new Promise<void>((resolve) => probe.close(() => resolve()));
+        }
     });
 });

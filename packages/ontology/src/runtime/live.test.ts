@@ -179,6 +179,7 @@ test("LiveOntology persists and restores offline projections, exposes local-only
         ir,
         backend: adapter,
         runtime: asRuntimeLayer(runtime),
+        traceRecording: "buffer" as const,
         writes: { defaultMode: "outbox" as const, defaultVisibility: "optimistic" as const },
     };
     const first = await createLiveOntology(settings);

@@ -32,7 +32,7 @@ test("the platform runtime is acquired lazily and scope closure releases its res
     await Effect.runPromise(
         Effect.gen(function* () {
             const runtime = yield* Runtime;
-            expect(yield* runtime.online).toBe(true);
+            expect(yield* runtime.connectivity.online).toBe(true);
             yield* runtime.tables.put(Table.make<number>({ name: "rows" }), "one", 1);
             yield* runtime.bytes.write("bytes", new Blob(["data"]));
             const bytes = yield* runtime.bytes.read("bytes");

@@ -1,5 +1,5 @@
 import { Context, Effect, Schema } from "effect";
-import type { ByteInput } from "./bytes.js";
+import type { ByteInput, ByteSource } from "./bytes.js";
 
 export class BlobStorageError extends Schema.TaggedError<BlobStorageError>()("BlobStorageError", {
     kind: Schema.Literals(["NotFound", "Busy", "Conflict", "Bytes", "InvalidValue"]),
@@ -9,7 +9,7 @@ export class BlobStorageError extends Schema.TaggedError<BlobStorageError>()("Bl
 
 /** External byte stores need idempotent deletion and immutable keys supplied by storage. */
 export interface BlobBytesService {
-    readonly read: (key: string) => Effect.Effect<ByteInput | undefined, unknown>;
+    readonly read: (key: string) => Effect.Effect<ByteSource | undefined, unknown>;
     /** Must consume through EOF, and settle/cancel platform IO before returning or interrupting. */
     readonly write: (key: string, value: ByteInput) => Effect.Effect<void, unknown>;
     readonly delete: (key: string) => Effect.Effect<void, unknown>;

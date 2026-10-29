@@ -19,7 +19,7 @@ import type {
 import type { PendingAction, ReplicaService } from "@party-stack/ontology-replica";
 import type { OntologyIR, OntologyObject } from "@party-stack/ontology-spec";
 import type { Encrypted } from "@party-stack/ontology-spec/values";
-import type { RuntimeTraceStore } from "@party-stack/runtime";
+import type { TraceStore } from "@party-stack/runtime/tracing";
 import type { Collection } from "@tanstack/db";
 const toEntry = (entry: PendingAction, forwarding = false): OntologyOutboxEntry => ({
     id: entry.invocation.id,
@@ -70,7 +70,7 @@ export interface ReplicaViewOptions {
         value: Encrypted,
         options?: { cache?: boolean }
     ) => Effect.Effect<unknown, BackendError>;
-    readonly traces?: RuntimeTraceStore;
+    readonly traces?: TraceStore;
     readonly parentDiagnostics?: LiveOntology["diagnostics"];
     readonly diagnosticLabel?: string;
     /** Memory children resolve enqueue only after their durable owner accepts the action. */
@@ -271,7 +271,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
                     const visibility =
                         settings?.visibility ?? options.writes?.defaultVisibility ?? "confirmed";
                     const mode = settings?.mode ?? options.writes?.defaultMode ?? "direct";
-                    if (mode === "direct" && !(await run(services.online)))
+                    if (mode === "direct" && !(await run(services.connectivity.online)))
                         throw new BackendError({
                             operation: "applyAction",
                             kind: "Unavailable",

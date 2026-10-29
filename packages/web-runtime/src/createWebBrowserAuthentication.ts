@@ -1,9 +1,9 @@
 import {
-    BrowserAuthenticationCancelledError,
+    BrowserAuthenticationError,
     type BrowserAuthentication,
     type BrowserAuthenticationSession,
 } from "@party-stack/runtime";
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 const callbackMessage = Schema.Struct({
     type: Schema.Literal("party-stack:browser-authentication:callback"),
@@ -62,114 +62,165 @@ function matchesRedirectUrl(candidate: string, redirectUrl: string): boolean {
     return actual.origin === expected.origin && actual.pathname === expected.pathname;
 }
 
-function createRedirectSession(): BrowserAuthenticationSession {
-    return {
-        open(authorizationUrl) {
-            location.assign(authorizationUrl);
-            return new Promise(() => undefined);
-        },
-        close() {
-            window.stop();
-        },
-    };
-}
-
+/** The acquisition runs synchronously on web: reserve before any OAuth/RPC await. */
 export function createWebBrowserAuthentication(
-    options: {
-        popupTarget?: string;
-        popupFeatures?: string;
-    } = {}
+    options: { popupTarget?: string; popupFeatures?: string } = {}
 ): BrowserAuthentication {
     return {
-        start({ redirectUrl, presentation }) {
-            if (presentation !== "popup") {
-                return createRedirectSession();
-            }
-            const popup = window.open(
-                "about:blank",
-                options.popupTarget ?? "party-stack-authentication",
-                options.popupFeatures ?? "popup=yes,width=500,height=700"
-            );
-            if (!popup) return createRedirectSession();
-
-            let stopWaiting: (() => void) | undefined;
+        start: Effect.fnUntraced(function* ({ redirectUrl, presentation }) {
+            const popup = yield* Effect.try({
+                try: () => {
+                    new URL(redirectUrl);
+                    return presentation === "popup"
+                        ? window.open(
+                              "about:blank",
+                              options.popupTarget ?? "party-stack-authentication",
+                              options.popupFeatures ?? "popup=yes,width=500,height=700"
+                          )
+                        : null;
+                },
+                catch: (cause) =>
+                    new BrowserAuthenticationError({
+                        reason: "Configuration",
+                        message: "Could not reserve browser authentication.",
+                        cause,
+                    }),
+            });
+            let closed = false;
+            let used = false;
             let cancel: (() => void) | undefined;
-            return {
-                open(authorizationUrl) {
-                    const expected = new URL(redirectUrl);
-                    const state = new URL(authorizationUrl).searchParams.get("state");
-                    return new Promise<{
-                        callbackUrl: string;
-                    }>((resolve, reject) => {
-                        cancel = () => {
-                            stopWaiting?.();
-                            cancel = undefined;
-                            reject(new BrowserAuthenticationCancelledError());
-                        };
-                        const accept = (candidate: string) => {
-                            try {
-                                if (
-                                    !matchesRedirectUrl(candidate, redirectUrl) ||
-                                    new URL(candidate).searchParams.get("state") !== state
-                                )
-                                    return;
-                                try {
-                                    popup.postMessage?.(
-                                        { type: "party-stack:browser-authentication:accepted", state },
-                                        expected.origin
-                                    );
-                                } catch {
-                                    /* The opener can still complete if the popup cannot acknowledge. */
-                                }
-                                stopWaiting?.();
-                                cancel = undefined;
-                                resolve({ callbackUrl: candidate });
-                                popup.close();
-                            } catch {
-                                /* Ignore unrelated or malformed messages. */
-                            }
-                        };
-                        const message = (event: MessageEvent<unknown>) => {
-                            if (
-                                event.origin !== expected.origin ||
-                                event.source !== popup ||
-                                !isCallbackMessage(event.data)
-                            )
-                                return;
-                            accept(event.data.callbackUrl);
-                        };
-                        window.addEventListener("message", message);
-                        const timer = window.setInterval(() => {
-                            if (popup.closed) {
-                                cancel?.();
-                                return;
-                            }
-                            try {
-                                accept(popup.location.href);
-                            } catch {
-                                /* Cross-origin reads can remain blocked in embedded browsers. */
-                            }
-                        }, 250);
-                        stopWaiting = () => {
-                            window.clearInterval(timer);
-                            window.removeEventListener("message", message);
-                            stopWaiting = undefined;
-                        };
-                        try {
-                            popup.location.assign(authorizationUrl);
-                        } catch (cause) {
-                            stopWaiting?.();
-                            cancel = undefined;
-                            reject(cause);
-                        }
-                    });
-                },
-                close() {
-                    stopWaiting?.();
-                    popup.close();
-                    cancel?.();
-                },
+            const close = () => {
+                if (closed) return;
+                closed = true;
+                cancel?.();
+                if (popup) popup.close();
+                else if (used) window.stop();
             };
-        },
+            yield* Effect.addFinalizer(() => Effect.sync(close));
+            return {
+                open: (authorizationUrl: string) =>
+                    Effect.suspend(() => {
+                        if (used || closed)
+                            return Effect.fail(
+                                new BrowserAuthenticationError({
+                                    reason: "Configuration",
+                                    message: "This authentication session has already been used or closed.",
+                                })
+                            );
+                        used = true;
+                        if (!popup)
+                            return Effect.try({
+                                try: () => location.assign(authorizationUrl),
+                                catch: (cause) =>
+                                    new BrowserAuthenticationError({
+                                        reason: "Platform",
+                                        message: "Could not open browser authorization.",
+                                        cause,
+                                    }),
+                            }).pipe(Effect.andThen(Effect.never));
+                        return Effect.callback<{ callbackUrl: string }, BrowserAuthenticationError>(
+                            (resume) => {
+                                const expected = new URL(redirectUrl);
+                                let state: string | null;
+                                try {
+                                    state = new URL(authorizationUrl).searchParams.get("state");
+                                } catch (cause) {
+                                    resume(
+                                        Effect.fail(
+                                            new BrowserAuthenticationError({
+                                                reason: "Configuration",
+                                                message: "Invalid authorization URL.",
+                                                cause,
+                                            })
+                                        )
+                                    );
+                                    return;
+                                }
+                                let done = false;
+                                const finish = (
+                                    result: Effect.Effect<{ callbackUrl: string }, BrowserAuthenticationError>
+                                ) => {
+                                    if (done) return;
+                                    done = true;
+                                    cleanup();
+                                    resume(result);
+                                };
+                                const accept = (candidate: string) => {
+                                    try {
+                                        if (
+                                            !matchesRedirectUrl(candidate, redirectUrl) ||
+                                            new URL(candidate).searchParams.get("state") !== state
+                                        )
+                                            return;
+                                        try {
+                                            popup.postMessage?.(
+                                                {
+                                                    type: "party-stack:browser-authentication:accepted",
+                                                    state,
+                                                },
+                                                expected.origin
+                                            );
+                                        } catch {
+                                            /* The callback is already verified. */
+                                        }
+                                        finish(Effect.succeed({ callbackUrl: candidate }));
+                                        close();
+                                    } catch {
+                                        /* Ignore unrelated or malformed callback messages. */
+                                    }
+                                };
+                                const message = (event: MessageEvent<unknown>) => {
+                                    if (
+                                        event.origin === expected.origin &&
+                                        event.source === popup &&
+                                        isCallbackMessage(event.data)
+                                    )
+                                        accept(event.data.callbackUrl);
+                                };
+                                const cleanup = () => {
+                                    window.clearInterval(timer);
+                                    window.removeEventListener("message", message);
+                                    cancel = undefined;
+                                };
+                                cancel = () =>
+                                    finish(
+                                        Effect.fail(
+                                            new BrowserAuthenticationError({
+                                                reason: "Cancelled",
+                                                message: "Browser authentication was cancelled.",
+                                            })
+                                        )
+                                    );
+                                window.addEventListener("message", message);
+                                const timer = window.setInterval(() => {
+                                    if (popup.closed) {
+                                        cancel?.();
+                                        return;
+                                    }
+                                    try {
+                                        accept(popup.location.href);
+                                    } catch {
+                                        /* A cross-origin popup is expected. */
+                                    }
+                                }, 250);
+                                try {
+                                    popup.location.assign(authorizationUrl);
+                                } catch (cause) {
+                                    finish(
+                                        Effect.fail(
+                                            new BrowserAuthenticationError({
+                                                reason: "Platform",
+                                                message: "Could not open browser authorization.",
+                                                cause,
+                                            })
+                                        )
+                                    );
+                                }
+                                return Effect.sync(cleanup);
+                            }
+                        ).pipe(Effect.onInterrupt(() => Effect.sync(close)));
+                    }),
+            } satisfies BrowserAuthenticationSession;
+        }),
     };
 }

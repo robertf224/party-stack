@@ -1,5 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { byteIO, type ByteInput } from "@party-stack/ontology-storage/blobs";
+import { byteIO, byteSource, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import { Effect } from "effect";
 import { makeStorageOntologyBackend, type StorageOntologyBackendOptions } from "../live/storageBackend.js";
@@ -29,7 +29,10 @@ export const makeSQLiteTestBackend = Effect.fnUntraced(
             mode: "authoritative",
             bytes: external
                 ? {
-                      read: (key) => Effect.tryPromise(() => external.bytes.read(key)),
+                      read: (key) =>
+                          Effect.tryPromise(() => external.bytes.read(key)).pipe(
+                              Effect.map((value) => (value === undefined ? undefined : byteSource(value)))
+                          ),
                       write: (key, blob) => byteIO((signal) => external.bytes.write(key, blob, signal)),
                       delete: (key) => Effect.tryPromise(() => external.bytes.delete(key)),
                   }

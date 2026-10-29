@@ -1,11 +1,24 @@
+import * as Memory from "@party-stack/ontology-storage/memory/tables";
 /** Test boundaries for driving scoped services from Promise-based assertions. */
-import { Context, Effect, Exit, Layer, Scope, Tracer } from "effect";
+import { Context, Effect, Exit, Layer, Scope } from "effect";
 import { MemoryBlobBytesStore } from "./memory/MemoryBlobBytesStore.js";
+import { makeNetworkConnectivity } from "./NetworkConnectivity.js";
 import { Runtime, RuntimeError } from "./Runtime.js";
 import { RuntimePartition } from "./RuntimePartition.js";
-import type { RuntimeOptions, RuntimeService } from "./index.js";
+import type { RuntimeOptions, RuntimeService, NetworkConnectivity } from "./index.js";
+import type { OntologyStorageError } from "@party-stack/ontology-storage";
+import type { EncryptionError, EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
+import type { TablesService } from "@party-stack/ontology-storage/tables";
 
-export type RuntimeFixtureOptions = Omit<RuntimeOptions, "destroy"> & {
+export type RuntimeFixtureOptions = Omit<
+    RuntimeOptions,
+    "destroy" | "tables" | "encryptionKeyring" | "connectivity"
+> & {
+    readonly tables?: Effect.Effect<TablesService, OntologyStorageError, Scope.Scope>;
+    readonly encryptionKeyring?: Effect.Effect<EncryptionKeyringService, EncryptionError, Scope.Scope>;
+    readonly connectivity?:
+        | NetworkConnectivity
+        | { isConnected: boolean; subscribe(callback: (online: boolean) => void): () => void };
     readonly owner: string;
     readonly namespace: string;
     readonly destroy?: RuntimeOptions["destroy"] | (() => void | Promise<void>);
@@ -25,27 +38,41 @@ const bridges = new WeakMap<
         service: RuntimeService;
         scope: Scope.Closeable;
         runtime: { runPromise: ReturnType<typeof Effect.runPromiseWith<Runtime>> };
-        traces: RuntimeService["traces"];
     }
 >();
-const optionsFor = (value: RuntimeFixtureOptions): RuntimeOptions => {
+const destroyFor = (value: RuntimeFixtureOptions) => {
+    const destroy = (optionsByFixture.get(value) ?? value).destroy;
+    return typeof destroy === "function"
+        ? Effect.tryPromise({
+              try: async () => {
+                  await destroy();
+              },
+              catch: (cause) => new RuntimeError({ operation: "destroy", cause }),
+          })
+        : (destroy ?? Effect.void);
+};
+const optionsFor = Effect.fnUntraced(function* (value: RuntimeFixtureOptions) {
     const original = optionsByFixture.get(value) ?? value;
-    const destroy = original.destroy;
+    const monitor = original.connectivity;
+    let connectivity: NetworkConnectivity | undefined;
+    if (monitor && "isConnected" in monitor) {
+        const state = yield* makeNetworkConnectivity(monitor.isConnected);
+        yield* Effect.acquireRelease(
+            Effect.sync(() => monitor.subscribe((online) => Effect.runSync(state.set(online)))),
+            (unsubscribe) => Effect.sync(unsubscribe)
+        );
+        connectivity = { online: Effect.sync(() => monitor.isConnected), changes: state.changes };
+    } else connectivity = monitor;
     return {
         ...original,
-        destroy:
-            typeof destroy === "function"
-                ? Effect.tryPromise({
-                      try: async () => {
-                          await destroy();
-                      },
-                      catch: (cause) => new RuntimeError({ operation: "destroy", cause }),
-                  })
-                : destroy,
-    };
-};
+        tables: yield* original.tables ?? Memory.make(),
+        encryptionKeyring: original.encryptionKeyring ? yield* original.encryptionKeyring : undefined,
+        connectivity,
+        destroy: destroyFor(value),
+    } satisfies RuntimeOptions;
+});
 export const makeTestRuntime = (options: RuntimeFixtureOptions) =>
-    Runtime.make(optionsFor(options)).pipe(
+    Effect.flatMap(optionsFor(options), Runtime.make).pipe(
         Effect.provideService(RuntimePartition, { owner: options.owner, namespace: options.namespace })
     );
 function fixture(options: RuntimeFixtureOptions): RuntimeFixture {
@@ -54,9 +81,7 @@ function fixture(options: RuntimeFixtureOptions): RuntimeFixture {
         ...options,
         cleanup: () => closeRuntimeFixture(value),
         destroy: () =>
-            (destroying ??= closeRuntimeFixture(value).then(() =>
-                Effect.runPromise(optionsFor(value).destroy ?? Effect.void)
-            )),
+            (destroying ??= closeRuntimeFixture(value).then(() => Effect.runPromise(destroyFor(value)))),
     };
     optionsByFixture.set(value, options);
     return value;
@@ -83,6 +108,7 @@ export async function acquireRuntime<E>(
                 ? Effect.succeed(service.encryptionKeyring)
                 : undefined,
             browserAuthentication: service.browserAuthentication,
+            connectivity: service.connectivity,
             blobBytes: service.bytes,
             destroy: service.destroy,
         });
@@ -100,7 +126,7 @@ export function runtimeFixtureContext(value: RuntimeFixtureOptions) {
         const scope = Effect.runSync(Scope.make());
         const service = Effect.runSync(
             Scope.provide(
-                Runtime.make(optionsFor(value)).pipe(
+                Effect.flatMap(optionsFor(value), Runtime.make).pipe(
                     Effect.provideService(RuntimePartition, {
                         owner: value.owner,
                         namespace: value.namespace,
@@ -118,13 +144,8 @@ export function runtimeFixtureContext(value: RuntimeFixtureOptions) {
             service: state.service,
             scope: state.scope,
             runtime: {
-                runPromise: Effect.runPromiseWith(
-                    Context.make(Runtime, state.service).pipe(
-                        Context.add(Tracer.Tracer, state.service.traces.tracer)
-                    )
-                ),
+                runPromise: Effect.runPromiseWith(Context.make(Runtime, state.service)),
             },
-            traces: state.service.traces,
         };
         bridges.set(value, bridge);
     }
@@ -157,6 +178,6 @@ export const asRuntimeLayer = (
             );
             const existing = states.get(value);
             if (existing && !existing.closed) return existing.service;
-            return yield* Runtime.make(optionsFor(value));
+            return yield* Effect.flatMap(optionsFor(value), Runtime.make);
         })
     );

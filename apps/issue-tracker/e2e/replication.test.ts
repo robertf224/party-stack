@@ -220,6 +220,17 @@ test.skipIf(!url)(
             if (await devtoolsOpener.isVisible()) await devtoolsOpener.click();
             await second.getByRole("tab", { name: "Tracing", exact: true }).click();
             await visible(second, "table", "Tracing timeline");
+            // Parent tracing is live-only: capture work after the inspector subscribes.
+            for (const [previous, next] of [
+                ["Waiting", "In Progress"],
+                ["In Progress", "Waiting"],
+            ]) {
+                await second
+                    .getByRole("combobox", { name: `Change status from ${previous}`, exact: true })
+                    .click();
+                await second.getByRole("listbox").getByRole("option", { name: next, exact: true }).click();
+                await visible(second, "combobox", `Change status from ${next}`);
+            }
             const source = second.getByLabel("Trace source", { exact: true });
             expect(await source.inputValue()).toBe("1");
             expect(await source.locator("option:checked").innerText()).toBe("Shared worker");
@@ -257,7 +268,7 @@ test.skipIf(!url)(
             ).toBe("ascending");
             const roots = await table.getByRole("row").count();
             await second.getByRole("checkbox", { name: "Child spans", exact: true }).check();
-            expect(await table.getByRole("row").count()).toBeGreaterThan(roots);
+            await expect.poll(() => table.getByRole("row").count()).toBeGreaterThan(roots);
             await second.getByRole("checkbox", { name: "Child spans", exact: true }).uncheck();
             await second.getByRole("button", { name: "Pause", exact: true }).click();
             await visible(second, "button", "Resume live");

@@ -258,7 +258,7 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
                     );
                 continue;
             }
-            if (expiresAt > now + REFRESH_WINDOW_MS || !(yield* runtime.online)) continue;
+            if (expiresAt > now + REFRESH_WINDOW_MS || !(yield* runtime.connectivity.online)) continue;
             if (!previous?.refresh) {
                 yield* locked(
                     connection.userId,
@@ -486,7 +486,7 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
             )
         )
     ).pipe(Effect.forkScoped);
-    yield* Stream.runForEach(runtime.connectivity, () => Effect.sync(notify)).pipe(Effect.forkScoped);
+    yield* Stream.runForEach(runtime.connectivity.changes, () => Effect.sync(notify)).pipe(Effect.forkScoped);
     // Close the door before interrupting work and releasing sessions.
     yield* Effect.addFinalizer(() =>
         Effect.sync(() => {

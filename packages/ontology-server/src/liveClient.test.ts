@@ -95,6 +95,7 @@ test("framework composition retains platform/transport after acquisition, confir
         runtime,
         connection,
         label: "Client",
+        traceRecording: "buffer",
         parent: { label: "Authority" },
         writes: { defaultMode: "outbox", defaultVisibility: "optimistic" },
     });

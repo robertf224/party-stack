@@ -407,9 +407,18 @@ test("RPC authorization runs before source operations, including demand and chan
 });
 
 test("helper RPCs authorize independently, preserve values and bytes, and stream owner traces", async () => {
-    const { createRuntimeTraces } = await import("@party-stack/runtime");
+    const { createTraceCapture } = await import("@party-stack/runtime/tracing");
     const { Tracer } = await import("effect");
-    const traces = createRuntimeTraces();
+    const capture = createTraceCapture(500, undefined, false);
+    const subscribed = Effect.runSync(Deferred.make<void>());
+    const traces = {
+        ...capture,
+        subscribe: (listener: Parameters<typeof capture.subscribe>[0]) => {
+            const unsubscribe = capture.subscribe(listener);
+            Effect.runSync(Deferred.succeed(subscribed, undefined));
+            return unsubscribe;
+        },
+    };
     const bytes = new Map<string, Blob>();
     const draft = vi.fn(async () => ({ certain: false as const }));
     const operations: string[] = [];
@@ -540,9 +549,14 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                 expect((yield* ontology.storage.status).loadCount).toBe(0);
                 const unsubscribe = client.operations.traces.subscribe(() => undefined);
                 yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+                yield* Deferred.await(subscribed);
                 yield* Effect.gen(function* () {
                     const span = yield* Effect.currentSpan;
-                    span.event("replica.invalidation", 1_000_000n, { count: 3, token: "secret" });
+                    span.event("replica.invalidation", 1_000_000n, {
+                        diagnostic: true,
+                        count: 3,
+                        token: "secret",
+                    });
                 }).pipe(
                     Effect.withSpan("Replica.owner", { attributes: { activity: "subscription" } }),
                     Effect.provideService(Tracer.Tracer, traces.tracer)
@@ -589,6 +603,7 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                     })
                 );
                 client.operations.traces.clear();
+                expect(traces.getSnapshot()).toEqual([]);
                 yield* Effect.promise(() =>
                     vi.waitFor(() => expect(client.operations.traces.getSnapshot()).toEqual([]))
                 );
@@ -600,7 +615,6 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                         "ReadAttachment",
                         "AttachmentMetadata",
                         "Traces",
-                        "ClearTraces",
                         "ReplicaStatus",
                     ])
                 );

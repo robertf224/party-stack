@@ -1,11 +1,12 @@
 import * as IndexedDb from "@effect/platform-browser/IndexedDb";
 import { makeEncryptionKeyring } from "@party-stack/indexeddb-ontology-storage/encryption-keyring";
 import * as IndexedDbTables from "@party-stack/indexeddb-ontology-storage/tables";
+import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { makeMemoryEncryptionKeyring, MemoryBlobBytesStore } from "@party-stack/runtime";
 import { Runtime, RuntimeError, RuntimePartition } from "@party-stack/runtime";
 import { Effect, Layer } from "effect";
 import { createWebBrowserAuthentication } from "./createWebBrowserAuthentication.js";
-import { NavigatorNetworkConnectivity } from "./NavigatorNetworkConnectivity.js";
+import { makeNavigatorNetworkConnectivity } from "./NavigatorNetworkConnectivity.js";
 import { OPFSBlobBytesStore } from "./OPFSBlobBytesStore.js";
 import type { RuntimeOptions } from "@party-stack/runtime";
 
@@ -35,13 +36,7 @@ export const make = Effect.fn("WebRuntime.make")(function* (options: WebRuntimeO
             ),
         });
     const name = `party-stack:${JSON.stringify([owner, namespace])}`;
-    const connectivity = yield* Effect.acquireRelease(
-        Effect.try({
-            try: () => NavigatorNetworkConnectivity.create(),
-            catch: (cause) => new RuntimeError({ operation: "webRuntime.connectivity", cause }),
-        }),
-        (value) => Effect.promise(() => value.close())
-    );
+    const connectivity = yield* makeNavigatorNetworkConnectivity();
     // Effect's layerWindow reads window; supplying the factory explicitly also works in workers.
     const indexedDb = Layer.sync(IndexedDb.IndexedDb)(() =>
         IndexedDb.make({ indexedDB: globalThis.indexedDB, IDBKeyRange: globalThis.IDBKeyRange })
@@ -53,8 +48,8 @@ export const make = Effect.fn("WebRuntime.make")(function* (options: WebRuntimeO
         connectivity,
         blobBytes,
         tables: persistent
-            ? IndexedDbTables.make({ databaseName: `${name}:storage` }).pipe(Effect.provide(indexedDb))
-            : undefined,
+            ? yield* IndexedDbTables.make({ databaseName: `${name}:storage` }).pipe(Effect.provide(indexedDb))
+            : yield* Memory.make(),
         destroy: persistent
             ? Effect.tryPromise({
                   try: async () => {
@@ -72,10 +67,10 @@ export const make = Effect.fn("WebRuntime.make")(function* (options: WebRuntimeO
             : undefined,
         encryptionKeyring:
             persistent && options.persistEncryptionKeys
-                ? makeEncryptionKeyring(`${name}:keys`).pipe(Effect.provide(indexedDb))
+                ? yield* makeEncryptionKeyring(`${name}:keys`).pipe(Effect.provide(indexedDb))
                 : persistent
                   ? undefined
-                  : makeMemoryEncryptionKeyring(),
+                  : yield* makeMemoryEncryptionKeyring(),
         browserAuthentication: typeof window !== "undefined" ? createWebBrowserAuthentication() : undefined,
     };
     return yield* Runtime.make(adapter);

@@ -688,3 +688,25 @@ channels/recovery, abort propagation, pre-TanStack handle sources, DbClient/SSR
 readiness, state bounds, and remaining Effect/maintenance gaps. It distinguishes
 verified behavior and fixes from follow-up work; SSR and hard cache byte budgets
 are not claimed complete.
+
+## October 29: native platform capabilities and independent diagnostics
+
+Runtime now receives acquired, required table services and exposes the platform's
+Effect byte service directly. NetworkConnectivity has an Effect current-state read
+and a bounded latest-state Stream. BrowserAuthentication acquires scoped sessions;
+platform finalizers close browser/native/loopback resources. The UI boundary
+preserves synchronous popup reservation before asynchronous OAuth/RPC work.
+
+Tracing is removed from RuntimeService. Devtools capture is independently opt-in
+through the normal Effect Tracer, alongside any configured exporter. Standard
+installation SharedWorker setup enables a live-only trace feed, and tab clients
+keep bounded histories. Parent trace updates use the authorized Traces RPC; Clear
+is local to the inspecting tab and the remote ClearTraces operation is removed.
+The live worker feed retains no completed history before a subscriber connects.
+
+Full workspace CI passes all 133 tasks. Web platform browser acceptance passes
+5/5 tests, including two independent parent-trace histories. Issue-tracker browser
+acceptance passes eight functional tests plus the existing expected TanStack
+cleanup-warning failure. Known workerd disconnect/body warnings remain tracked
+in the audit. The [review agenda](./subsystem-audit.md#follow-up-review-order)
+starts with storage/transactions, then replica/outbox state and demand/GC.

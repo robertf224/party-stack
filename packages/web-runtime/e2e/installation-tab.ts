@@ -32,6 +32,7 @@ const installation = await Effect.runPromise(
     Reflect.set(window, "installationFailure", error);
     return undefined;
 });
+const traceSubscriptions: (() => void)[] = [];
 if (installation)
     Reflect.set(window, "installationTest", {
         signIn: (userId: string) => installation.authentication.signIn(userId),
@@ -44,6 +45,24 @@ if (installation)
             const live = await installation.openOntology({ userId: "alice", ontologyId });
             await live.actions.increment!({});
         },
+        startTracing: async (ontologyId: string) => {
+            const live = await installation.openOntology({ userId: "alice", ontologyId });
+            if (!live.traces || !live.diagnostics?.parent?.traces)
+                throw new Error("Missing default worker diagnostics.");
+            const traces = live.diagnostics.parent.traces;
+            await new Promise<void>((resolve) => {
+                traceSubscriptions.push(traces.subscribe(() => resolve()));
+            });
+        },
+        traces: async (ontologyId: string) => {
+            const live = await installation.openOntology({ userId: "alice", ontologyId });
+            return live.diagnostics?.parent?.traces?.getSnapshot();
+        },
+        clearTraces: async (ontologyId: string) => {
+            const live = await installation.openOntology({ userId: "alice", ontologyId });
+            live.diagnostics?.parent?.traces?.clear();
+            return live.diagnostics?.parent?.traces?.getSnapshot();
+        },
         rejectedPrototypeCall: async () => {
             try {
                 await (
@@ -55,5 +74,8 @@ if (installation)
             }
         },
         disconnect: () => installation.disconnect("alice"),
-        cleanup: () => Effect.runPromise(Scope.close(scope, Exit.void)),
+        cleanup: () => {
+            for (const unsubscribe of traceSubscriptions) unsubscribe();
+            return Effect.runPromise(Scope.close(scope, Exit.void));
+        },
     });

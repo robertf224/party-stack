@@ -1,9 +1,18 @@
-import { BrowserAuthenticationCancelledError } from "@party-stack/runtime";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { BrowserAuthenticationError } from "@party-stack/runtime";
+import { Effect, Exit, Scope, Deferred, Fiber } from "effect";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
     createWebBrowserAuthentication,
     relayWebBrowserAuthenticationCallback,
 } from "./createWebBrowserAuthentication.js";
+
+let scope: Scope.Closeable;
+beforeEach(() => {
+    scope = Effect.runSync(Scope.make());
+});
+afterEach(async () => {
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+});
 
 afterEach(() => {
     vi.useRealTimers();
@@ -35,11 +44,16 @@ describe("createWebBrowserAuthentication", () => {
         });
         const authentication = createWebBrowserAuthentication();
 
-        const session = authentication.start({
-            redirectUrl: "https://app.example/auth/callback",
-            presentation: "popup",
-        });
-        const result = session.open("https://auth.example/authorize");
+        const session = Effect.runSync(
+            Scope.provide(
+                authentication.start({
+                    redirectUrl: "https://app.example/auth/callback",
+                    presentation: "popup",
+                }),
+                scope
+            )
+        );
+        const result = Effect.runPromise(session.open("https://auth.example/authorize"));
         popup.location.href = "https://app.example/auth/callback?code=code";
         await vi.advanceTimersByTimeAsync(250);
 
@@ -72,15 +86,20 @@ describe("createWebBrowserAuthentication", () => {
             clearInterval,
         });
         const authentication = createWebBrowserAuthentication();
-        const session = authentication.start({
-            redirectUrl: "https://app.example/auth/callback",
-            presentation: "popup",
-        });
-        const result = session.open("https://auth.example/authorize");
+        const session = Effect.runSync(
+            Scope.provide(
+                authentication.start({
+                    redirectUrl: "https://app.example/auth/callback",
+                    presentation: "popup",
+                }),
+                scope
+            )
+        );
+        const result = Effect.runPromise(session.open("https://auth.example/authorize"));
 
-        await session.close();
+        await Effect.runPromise(Scope.close(scope, Exit.void));
 
-        await expect(result).rejects.toBeInstanceOf(BrowserAuthenticationCancelledError);
+        await expect(result).rejects.toBeInstanceOf(BrowserAuthenticationError);
     });
 });
 
@@ -104,11 +123,16 @@ it("accepts a callback message when popup location reads stay blocked, and rejec
         addEventListener: messages.addEventListener.bind(messages),
         removeEventListener: messages.removeEventListener.bind(messages),
     });
-    const session = createWebBrowserAuthentication().start({
-        redirectUrl: "https://app.example/auth/callback",
-        presentation: "popup",
-    });
-    const result = session.open("https://auth.example/authorize?state=expected");
+    const session = Effect.runSync(
+        Scope.provide(
+            createWebBrowserAuthentication().start({
+                redirectUrl: "https://app.example/auth/callback",
+                presentation: "popup",
+            }),
+            scope
+        )
+    );
+    const result = Effect.runPromise(session.open("https://auth.example/authorize?state=expected"));
     const send = (origin: string, source: unknown, callbackUrl: string) =>
         messages.dispatchEvent(
             Object.assign(new Event("message"), {
@@ -168,4 +192,38 @@ it("relays a localhost callback to the explicitly configured worktree and valida
     send(opener, origin, "expected");
     expect(accepted).toHaveBeenCalledOnce();
     stop?.();
+});
+
+it("reserves the popup in the click task before asynchronous authorization and releases it on interruption", async () => {
+    const popup = { close: vi.fn(), location: { assign: vi.fn() } };
+    const open = vi.fn(() => popup);
+    vi.stubGlobal("window", { open });
+    const gate = Effect.runSync(Deferred.make<void>());
+    const authentication = createWebBrowserAuthentication();
+    const applying = Effect.runPromise(
+        Effect.acquireUseRelease(
+            Effect.forkIn(
+                Effect.scoped(
+                    Effect.gen(function* () {
+                        const session = yield* authentication.start({
+                            redirectUrl: "https://app.example/callback",
+                            presentation: "popup",
+                        });
+                        yield* Deferred.await(gate);
+                        return yield* session.open("https://auth.example/authorize");
+                    })
+                ),
+                scope,
+                { startImmediately: true }
+            ),
+            Fiber.join,
+            Fiber.interrupt
+        )
+    );
+    void applying.catch(() => undefined);
+    expect(open).toHaveBeenCalledOnce();
+    expect(popup.location.assign).not.toHaveBeenCalled();
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+    await expect(applying).rejects.toBeDefined();
+    expect(popup.close).toHaveBeenCalledOnce();
 });

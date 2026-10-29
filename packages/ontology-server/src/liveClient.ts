@@ -5,6 +5,7 @@ import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Runtime, RuntimePartition } from "@party-stack/runtime";
+import { makeTraceCapture, type TraceRecordingMode } from "@party-stack/runtime/tracing";
 import { Context, Effect, Exit, Layer, ManagedRuntime, Scope, Stream, Tracer } from "effect";
 import type { OntologyConnection } from "./rpc.js";
 import type { LiveOntology, LiveOntologyWrites, OntologyIR } from "@party-stack/ontology";
@@ -18,6 +19,7 @@ export interface ConnectLiveOntologyOptions<R = never> {
     readonly context?: Record<string, unknown>;
     readonly writes?: LiveOntologyWrites;
     readonly label?: string;
+    readonly traceRecording?: TraceRecordingMode;
     readonly parent?: { readonly label?: string; readonly location?: string };
 }
 
@@ -27,7 +29,7 @@ export interface ConnectLiveOntologyOptions<R = never> {
 export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function* <R>(
     options: ConnectLiveOntologyOptions<R>
 ): Effect.fn.Return<LiveOntology, BackendError, R | Runtime | Scope.Scope> {
-    const runtime = yield* Runtime;
+    const traces = yield* makeTraceCapture(options.traceRecording);
     const scope = yield* Scope.fork(yield* Effect.scope);
     const open = Effect.gen(function* () {
         const connection = yield* options.connection;
@@ -103,7 +105,7 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
             queryFunction: operations.queryFunction,
             resolveActionParameters: operations.resolveActionParameters,
             decrypt: operations.decrypt,
-            traces: runtime.traces,
+            traces,
             diagnosticLabel: options.label,
             parentDiagnostics: speculative
                 ? {
@@ -140,7 +142,7 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
         };
     });
     return yield* Scope.provide(open, scope).pipe(
-        Effect.provideService(Tracer.Tracer, runtime.traces.tracer),
+        (work) => (traces ? work.pipe(Effect.provideService(Tracer.Tracer, traces.tracer)) : work),
         Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void))
     );
 });

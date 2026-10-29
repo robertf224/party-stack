@@ -16,7 +16,7 @@ const platform = WebRuntime.layer({ persistEncryptionKeys: true });
 const inspect = Effect.scoped(
     Effect.gen(function* () {
         const runtime = yield* Runtime;
-        return yield* runtime.online;
+        return yield* runtime.connectivity.online;
     })
 ).pipe(
     Effect.provide(platform),
@@ -31,6 +31,23 @@ isolated tables, byte storage and ephemeral encryption keys. Scope closure relea
 platform resources. Partition identity comes from `RuntimePartition`, rather than
 being mixed into static platform configuration. Installations use `Runtimes.layer(platform)`
 to acquire multiple partitions through LayerMap.
+
+Platform Layers acquire tables explicitly, including memory tables; `Runtime.make`
+does not choose storage implicitly. `runtime.bytes` is the platform's Effect-native
+byte service: reads return a `ByteSource` with metadata and a byte stream. Blob
+storage classifies driver failures at its storage boundary.
+
+`runtime.connectivity.online` reads the current connectivity hint, while
+`runtime.connectivity.changes` streams the initial state and subsequent changes.
+The stream keeps only the latest state for a slow consumer. Platform listeners
+and browser reconnection stabilization belong to the Layer's Scope. Connectivity
+is a hint; individual requests can still fail while the device reports online.
+
+Browser authentication is also scoped. `browserAuthentication.start(...)` acquires
+a session, and `session.open(url)` waits for its callback. Closing or interrupting
+the session's Scope closes its popup, native session or loopback callback listener.
+There is no separate session `close()` API. On web, acquisition reserves the popup
+synchronously; the UI bridge starts that Effect before awaiting OAuth/RPC work.
 
 `persistEncryptionKeys: true` permits a non-extractable AES key to persist in
 IndexedDB. Same-origin JavaScript can use it to decrypt; this is not a vault lock
@@ -58,6 +75,37 @@ For a server that already owns its authentication/installation lifecycle,
 `connectLiveOntology` / `createConnectedLiveOntology` and `serveOntologyWorker`
 remain the lower-level ontology composers. They accept platform/transport Layers;
 Runtime itself has no ontology or TanStack dependency.
+
+## Trace recording
+
+Tracing is not a platform Runtime capability. Replica, storage and adapter Effects
+produce spans through Effect's standard `Tracer`. Devtools capture is opt-in and
+also forwards spans to any configured Effect tracer, including an OTel exporter.
+No OTLP collector is required to use the panel. Ordinary ontology constructors
+default to no devtools capture; `traceRecording: "buffer"` enables local history,
+and `traceRecording: "live"` emits updates without retaining completed traces.
+Native Effect compositions can supply the `TraceRecording` configuration instead.
+
+The capture implementation is a separate `@party-stack/runtime/tracing` export.
+Buffered history retains up to 500 spans; both modes limit diagnostic events to
+100 per span and filter attributes. Action parameters are not trace payloads.
+Producers mark displayable events explicitly.
+
+`serveInstallationWorker` enables live capture by default when acquiring its
+`open` Effect; `connectInstallationWorker` enables local tab history. Either helper
+accepts `traceRecording: false`. An already acquired installation must have capture
+configured when it was acquired. No ontology configuration leaks into WebRuntime.
+
+To inspect its parent's work, devtools uses our authorized ontology-server `Traces`
+streaming RPC. The worker publishes span updates; the tab merges them into a
+bounded 500-span history. The worker retains no completed history in live mode,
+so work finished before subscription is unavailable. Transport queues are bounded,
+and diagnostics are best effort under overload. Closing the final subscriber
+stops its RPC stream. Effect RPC supplies transport and cancellation.
+
+Clear removes the selected source's history in the inspecting tab. It does not
+clear another tab's view, cancel work, or change replica data. Subsequent span
+updates can appear normally, including updates from an ongoing operation.
 
 See [installation and setup](/docs/getting-started) for examples. Worker failure
 does not silently start a second persistent owner. Choose memory-only or another

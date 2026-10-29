@@ -1,9 +1,63 @@
 import { Cause, Effect, Tracer } from "effect";
 import { expect, test } from "vite-plus/test";
-import { createRuntimeTraces } from "./tracing.js";
+import { createTraceCapture, makeTraceCapture } from "./tracing.js";
+
+test("recording is opt-in and a live feed retains no completed history", async () => {
+    expect(await Effect.runPromise(makeTraceCapture())).toBeUndefined();
+    const capture = (await Effect.runPromise(makeTraceCapture("live")))!;
+    const first: string[] = [];
+    const stop = capture.subscribe((record) => {
+        if (record) first.push(record.outcome);
+    });
+    await Effect.runPromise(
+        Effect.void.pipe(Effect.withSpan("one"), Effect.provideService(Tracer.Tracer, capture.tracer))
+    );
+    expect(first).toEqual(["running", "success"]);
+    expect(capture.getSnapshot()).toEqual([]);
+    stop();
+    const second: string[] = [];
+    const stopSecond = capture.subscribe((record) => {
+        if (record) second.push(record.name);
+    });
+    expect(second).toEqual([]);
+    await Effect.runPromise(
+        Effect.void.pipe(Effect.withSpan("two"), Effect.provideService(Tracer.Tracer, capture.tracer))
+    );
+    expect(first).toEqual(["running", "success"]);
+    expect(second).toEqual(["two", "two"]);
+    expect(capture.getSnapshot()).toEqual([]);
+    stopSecond();
+});
+
+test("devtools capture preserves the configured tracer and its unfiltered events", async () => {
+    const exported: Tracer.NativeSpan[] = [];
+    const exporter = Tracer.make({
+        span(options) {
+            const span = new Tracer.NativeSpan(options);
+            exported.push(span);
+            return span;
+        },
+    });
+    const capture = await Effect.runPromise(
+        Effect.gen(function* () {
+            const capture = (yield* makeTraceCapture("buffer"))!;
+            yield* Effect.gen(function* () {
+                const span = yield* Effect.currentSpan;
+                span.event("exporter.event", 0n, { private: "exporter-only" });
+                span.event("visible.event", 1n, { diagnostic: true, count: 1 });
+            }).pipe(Effect.withSpan("sync"), Effect.provideService(Tracer.Tracer, capture.tracer));
+            return capture;
+        }).pipe(Effect.provideService(Tracer.Tracer, exporter))
+    );
+    expect(exported).toHaveLength(1);
+    expect(exported[0]?.status._tag).toBe("Ended");
+    expect(exported[0]?.events.map(([name]) => name)).toEqual(["exporter.event", "visible.event"]);
+    expect(capture.getSnapshot()[0]?.events?.map((event) => event.name)).toEqual(["visible.event"]);
+    expect(JSON.stringify(capture.getSnapshot())).not.toContain("exporter-only");
+});
 
 test("trace outcomes distinguish normal interruption from errors, defects, and mixed causes", async () => {
-    const traces = createRuntimeTraces();
+    const traces = createTraceCapture();
     const run = (name: string, work: Effect.Effect<unknown, unknown>) =>
         Effect.runPromiseExit(
             work.pipe(
@@ -29,7 +83,7 @@ test("trace outcomes distinguish normal interruption from errors, defects, and m
 });
 
 test("trace failures retain a bounded message without copying stacks, payloads, or cause objects", async () => {
-    const traces = createRuntimeTraces();
+    const traces = createTraceCapture();
     const record = (name: string, error: unknown) =>
         Effect.runPromiseExit(
             Effect.fail(error).pipe(
@@ -46,7 +100,7 @@ test("trace failures retain a bounded message without copying stacks, payloads, 
 });
 
 test("Effect trace buffer is bounded and omits parameters and secret attributes", async () => {
-    const traces = createRuntimeTraces(2);
+    const traces = createTraceCapture(2);
     for (const index of [1, 2, 3])
         await Effect.runPromise(
             Effect.void.pipe(
@@ -59,7 +113,7 @@ test("Effect trace buffer is bounded and omits parameters and secret attributes"
     expect(traces.getSnapshot().map((entry) => entry.name)).toEqual(["Replica.test2", "Replica.test3"]);
     expect(traces.getSnapshot()[0]?.attributes).toEqual({ count: 2 });
     expect(JSON.stringify(traces.getSnapshot())).not.toContain("secret-token");
-    const single = createRuntimeTraces(1);
+    const single = createTraceCapture(1);
     for (const _ of [1, 2]) {
         void _;
         await Effect.runPromise(
@@ -71,7 +125,7 @@ test("Effect trace buffer is bounded and omits parameters and secret attributes"
 
 test("running spans retain their parent and clearing does not resurrect in-flight work", async () => {
     const { Deferred, Fiber } = await import("effect");
-    const traces = createRuntimeTraces();
+    const traces = createTraceCapture();
     const gate = Effect.runSync(Deferred.make<void>());
     const fiber = Effect.runFork(
         Deferred.await(gate).pipe(
@@ -93,20 +147,24 @@ test("running spans retain their parent and clearing does not resurrect in-fligh
 });
 
 test("subscription messages update live, remain bounded, and exclude arbitrary events and attributes", async () => {
-    const traces = createRuntimeTraces();
+    const traces = createTraceCapture();
     await Effect.runPromise(
         Effect.gen(function* () {
             const span = yield* Effect.currentSpan;
             expect(traces.getSnapshot()[0]?.attributes).toEqual({ activity: "subscription" });
             for (let count = 0; count < 150; count++)
-                span.event("replica.invalidation", 1_000_000n * BigInt(count), { count, token: "secret" });
+                span.event("transfer.progress", 1_000_000n * BigInt(count), {
+                    diagnostic: true,
+                    count,
+                    token: "secret",
+                });
             span.event("secret-event", 0n, { token: "secret" });
             const record = traces.getSnapshot()[0]!;
             expect(record.outcome).toBe("running");
             expect(record.eventCount).toBe(150);
             expect(record.events).toHaveLength(100);
             expect(record.events?.[0]).toEqual({
-                name: "replica.invalidation",
+                name: "transfer.progress",
                 at: 50,
                 attributes: { count: 50 },
             });

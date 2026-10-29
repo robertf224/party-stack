@@ -34,6 +34,7 @@ import {
 import { projectValidationReport, type ErrorProjectionOptions } from "./errorProjection.js";
 import type { AttachmentTransferPolicy } from "./attachmentTransfers.js";
 import type { LiveOntology } from "@party-stack/ontology";
+import type { TraceStore, TraceRecord } from "@party-stack/runtime/tracing";
 import type { Headers } from "effect/http/Headers";
 const Validation = ValidationReportSchema;
 const Trace = Schema.Struct({
@@ -156,7 +157,6 @@ const HelperRpcs = RpcGroup.make(
         stream: true,
     }),
     Rpc.make("Traces", { success: Schema.Array(Trace), error: BackendError, stream: true }),
-    Rpc.make("ClearTraces", { error: BackendError }),
     Rpc.make("DeleteLocalData", { error: BackendError }),
     Rpc.make("ReleaseOwner", { error: BackendError })
 );
@@ -206,7 +206,7 @@ export type OntologyOperationRequest =
           readonly command: "remove" | "retry" | "edit" | "reconcile";
           readonly invocation?: Schema.Schema.Type<typeof ActionRequestSchema>;
       }
-    | { readonly operation: "ReplicaStatus" | "Traces" | "ClearTraces" | "DeleteLocalData" | "ReleaseOwner" };
+    | { readonly operation: "ReplicaStatus" | "Traces" | "DeleteLocalData" | "ReleaseOwner" };
 
 const failure = (cause: unknown) =>
     cause instanceof BackendError
@@ -564,14 +564,15 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                         (queue) =>
                             Effect.acquireRelease(
                                 Effect.sync(() => {
-                                    const send = () => Queue.offerUnsafe(queue, traces.getSnapshot());
+                                    const send = (record?: TraceRecord) =>
+                                        Queue.offerUnsafe(queue, record ? [record] : traces.getSnapshot());
                                     const unsubscribe = traces.subscribe(send);
                                     send();
                                     return unsubscribe;
                                 }),
                                 (unsubscribe) => Effect.sync(unsubscribe)
                             ),
-                        { bufferSize: 1, strategy: "sliding" }
+                        { bufferSize: 500, strategy: "sliding" }
                     );
                 })
             ),
@@ -583,12 +584,6 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
             options
                 .authorize({ operation: "ReleaseOwner" }, context.headers)
                 .pipe(Effect.andThen(options.releaseOwner ?? Effect.fail(missing("ReleaseOwner")))),
-        ClearTraces: (_, context) =>
-            Effect.gen(function* () {
-                yield* options.authorize({ operation: "ClearTraces" }, context.headers);
-                const ontology = yield* live();
-                ontology.traces?.clear();
-            }),
     }).pipe(
         Layer.merge(
             attachmentTransferHandlers({
@@ -641,7 +636,7 @@ export interface OntologyOperationsClient {
         import("@party-stack/ontology-replica").ReplicaService,
         "remove" | "retry" | "edit" | "reconcile"
     >;
-    readonly traces: import("@party-stack/runtime").RuntimeTraceStore;
+    readonly traces: TraceStore;
     readonly replicaMonitor: import("@party-stack/ontology-replica").ReplicaMonitor;
     readonly deleteLocalData: Effect.Effect<void, BackendError>;
     readonly releaseOwner: Effect.Effect<void, BackendError>;
@@ -659,7 +654,7 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
             { signal }
         );
     const listeners = new Set<() => void>();
-    let spans: readonly import("@party-stack/runtime").RuntimeTrace[] = [];
+    let spans: readonly TraceRecord[] = [];
     let watcher: Fiber.Fiber<void> | undefined;
     const notify = () => {
         for (const listener of listeners) {
@@ -672,7 +667,15 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
     };
     const watch = Stream.runForEach(client.Traces(), (snapshot) =>
         Effect.sync(() => {
-            spans = snapshot;
+            for (const record of snapshot) {
+                const index = spans.findIndex(
+                    (previous) => previous.id === record.id && previous.traceId === record.traceId
+                );
+                spans =
+                    index < 0
+                        ? [...spans.slice(-499), record]
+                        : spans.map((previous, at) => (at === index ? record : previous));
+            }
             notify();
         })
     ).pipe(Effect.catch(() => Effect.void));
@@ -690,7 +693,8 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
             };
         },
         clear: () => {
-            void run(client.ClearTraces()).catch(() => undefined);
+            spans = [];
+            notify();
         },
     };
     yield* Effect.addFinalizer(() => (watcher ? Fiber.interrupt(watcher).pipe(Effect.asVoid) : Effect.void));

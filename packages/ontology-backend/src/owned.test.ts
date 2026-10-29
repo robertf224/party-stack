@@ -1,5 +1,6 @@
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { OntologyStorageError, SchemaMismatch } from "@party-stack/ontology-storage";
+import { byteSource } from "@party-stack/ontology-storage/blobs";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -175,7 +176,11 @@ test("owned action transactions reject uploads collected before commit and retai
                     tables,
                     mode: "authoritative",
                     bytes: {
-                        read: (key) => Effect.sync(() => values.get(key)),
+                        read: (key) =>
+                            Effect.sync(() => {
+                                const value = values.get(key);
+                                return value === undefined ? undefined : byteSource(value);
+                            }),
                         write: (key, value) =>
                             collectByteBlob(value).pipe(
                                 Effect.map((blob) => {

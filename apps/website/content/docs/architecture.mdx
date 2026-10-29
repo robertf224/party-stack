@@ -121,11 +121,13 @@ UI demand never owns or cancels the background action worker.
 ## Platform Runtime
 
 `Runtime` is the Effect service identifier. `RuntimeService` is its acquired
-implementation: Tables, Effect byte IO, encryption keys, connectivity and tracing.
+implementation: Tables, Effect byte IO, encryption keys, connectivity and browser authentication.
 Platform packages provide configured Layers. `RuntimePartition` supplies the
 storage owner/namespace as an Effect requirement; `Runtimes` uses LayerMap to
 share active acquisitions of the same partition and release the final lease.
 `RuntimeOptions` is only construction input for platform implementations.
+Trace recording is composed by each ontology replica through the normal Effect
+Tracer, independently of platform storage and Runtime partition acquisition.
 
 Runtime does not expose an adapter lookup, captured Context, owning Scope,
 storage broadcasts, actor liveness or host-election hooks. Consumers request

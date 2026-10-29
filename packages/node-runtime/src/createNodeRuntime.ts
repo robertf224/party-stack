@@ -68,9 +68,9 @@ export const make = Effect.fn("NodeRuntime.make")(function* (options: CreateNode
     return yield* Runtime.make({
         blobBytes,
         browserAuthentication: createNodeBrowserAuthentication(),
-        encryptionKeyring: Effect.succeed(encryptionKeyring),
+        encryptionKeyring,
 
-        tables: Effect.succeed(ownedTables),
+        tables: ownedTables,
         destroy: Effect.tryPromise({
             try: () => rm(directory, { recursive: true, force: true }),
             catch: (cause) => new RuntimeError({ operation: "destroy", cause }),

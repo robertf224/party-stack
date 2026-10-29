@@ -236,14 +236,10 @@ scope. Similarly, a TTL is not a total space budget. These are separate concerns
 
 ### Remaining resource work
 
-- Persistent retention roots require dead-owner recovery after a process crash.
-  Normal scope cleanup releases roots, and persistent WebRuntime supplies Web Lock
-  owner-liveness checks. Node/Expo and custom persistent compositions without those
-  hooks conservatively keep unknown owners' roots. Repeated crashes can accumulate
-  stale roots and prevent cache row eviction. This is an open cleanup gap, distinct
-  from intentionally persistent data or missing hard byte budgets. A future fix
-  must establish exclusive namespace ownership or reliable owner liveness before
-  removing old roots; clearing every root on arbitrary replica startup is unsafe.
+- Persistent replica namespaces require one designated owner. Exclusive-owner
+  startup now discards abandoned query/read roots after a crash; pins, outbox
+  dependencies and stored references survive. There is no longer a Web Lock
+  liveness hook or support for independently writing the same namespace from tabs.
 - No general memory/disk byte budget exists for replica rows, blob caches,
   authorization working sets or TanStack collection materialization. A broad
   active query can retain a large dataset. Full-query authorization can also
@@ -302,7 +298,22 @@ partition identity is the RuntimePartition requirement. Runtimes uses LayerMap t
 share active keyed acquisitions. No RuntimeAdapterProvider, hidden getRuntime
 binding, captured Context, owning Scope, storageNotifications, actorLiveness or
 acquireHost remains on the public Runtime service. Byte drivers implement the
-Effect BlobBytesService; normalized Runtime reads return ByteSource.
+Effect BlobBytesService directly; the common byte-service read contract returns
+ByteSource. Platform Layers acquire tables/keyrings before constructing Runtime;
+tables are required and there is no implicit memory fallback in Runtime.make.
+
+NetworkConnectivity exposes an Effect current-state read and bounded latest-state
+Stream. BrowserAuthentication.start acquires a scoped session; open awaits the
+callback and Scope closes platform resources, without a public close method.
+Web UI execution preserves synchronous popup reservation before asynchronous IO.
+
+Runtime no longer constructs or exposes tracing. Devtools capture is opt-in from
+the separate runtime/tracing export, provided through the normal Effect Tracer.
+A configured exporter receives spans/events too. Standard SharedWorker setup
+enables a live-only feed; tabs keep bounded histories of their own and parent
+spans. The worker stores no completed history. Parent diagnostics use our
+authorized Traces RPC over Effect RPC, with bounded best-effort delivery queues.
+Clear is local to the inspecting tab; there is no remote ClearTraces operation.
 
 Issue-tracker uses one installation SharedWorker owning Connect, token refresh,
 sessions and persistent ontology partitions. Pages use installation RPC controls,
@@ -320,6 +331,39 @@ The direct SecretStore credential fallback is removed. Node/Expo keep internal
 KeyMaterialStore implementations beneath the keyring. Memory keys are ephemeral;
 persistent browser keys require persistEncryptionKeys consent. Credential rows
 contain encrypted values, never a plaintext SecretStore fallback.
+
+### Follow-up review order
+
+This is the review agenda after Runtime. For each subsystem, inspect its public
+API, state and transactions, ownership/lifetime, errors/recovery, bounded state,
+and opportunities to remove duplicate or unused machinery.
+
+1. **Storage and transactions:** table services, SQL/IndexedDB/memory parity,
+   codecs, indexes/planning, transaction isolation, journal commits.
+2. **Replica state and actions:** base/inherited predictions/local overlay,
+   outbox transitions, receipts, acceptance versus confirmation, rebasing and
+   lost-response recovery.
+3. **Demand and GC:** shared demand, idle retention, coverage, row roots/pins,
+   mark-and-sweep, persistent restart recovery and cache budgets.
+4. **Backend contracts and adapters:** hook capabilities and error semantics,
+   Foundry/Salesforce pushdown, watch supervision, polling and retries.
+5. **Server and protocol:** owned/direct/cached/replica compositions, transport
+   lifetimes, incremental delivery, ACKs/reset recovery, sessions and retention.
+6. **Query IR and authorization:** expression/query boundaries, context and
+   partitioning, schema projection, action bindings/checks, rewrite rules and
+   eager/property-test oracles.
+7. **Attachments and encrypted values:** byte streams and cold caches,
+   transactional metadata/mappings, reference retention and GC, decryption,
+   device caches/keyrings and platform persistence consent.
+8. **Connect and installations:** connection ontology, credentials/refresh,
+   browser versus authority workflows, installation/ontology acquisition and
+   server authentication integrations.
+9. **LiveOntology and TanStack:** thin application facade, collection/query
+   lifetimes, abort propagation, action promises, optimistic UI and future
+   fragments/SSR boundaries.
+10. **Diagnostics and application setup:** span capture/export, authorized
+    parent diagnostics, trace buffer bounds, devtools subscriptions, platform
+    recipes and issue-tracker/remote-notes acceptance coverage.
 
 ### Independent state and outbox lifetimes
 

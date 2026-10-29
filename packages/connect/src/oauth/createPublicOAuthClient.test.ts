@@ -31,15 +31,13 @@ describe("createPublicOAuthClient", () => {
                         }),
                 }),
                 browserAuthentication: {
-                    start() {
-                        return {
+                    start: () =>
+                        Effect.succeed({
                             open(candidateAuthorizationUrl: string) {
                                 authorizationUrl = candidateAuthorizationUrl;
-                                return new Promise<never>(() => undefined);
+                                return Effect.never;
                             },
-                            close() {},
-                        };
-                    },
+                        }),
                 },
             }))("installation", "oauth");
             const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
@@ -143,17 +141,15 @@ describe("createPublicOAuthClient", () => {
                     }),
             }),
             browserAuthentication: {
-                start({ redirectUrl }: { redirectUrl: string }) {
-                    return {
+                start: ({ redirectUrl }: { redirectUrl: string }) =>
+                    Effect.succeed({
                         open(authorizationUrl: string) {
                             const state = new URL(authorizationUrl).searchParams.get("state");
-                            return Promise.resolve({
+                            return Effect.succeed({
                                 callbackUrl: `${redirectUrl}?code=code&state=${state}`,
                             });
                         },
-                        close() {},
-                    };
-                },
+                    }),
             },
         };
         runtimeFixtureContext(runtime);
@@ -224,12 +220,13 @@ it("runtime shutdown aborts token refresh and closes the OAuth owner without dis
             get: () => Effect.succeed(key),
         }),
         browserAuthentication: {
-            start: ({ redirectUrl }: { redirectUrl: string }) => ({
-                open: async (authorizationUrl: string) => ({
-                    callbackUrl: `${redirectUrl}?code=fixture&state=${new URL(authorizationUrl).searchParams.get("state")}`,
+            start: ({ redirectUrl }: { redirectUrl: string }) =>
+                Effect.succeed({
+                    open: (authorizationUrl: string) =>
+                        Effect.succeed({
+                            callbackUrl: `${redirectUrl}?code=fixture&state=${new URL(authorizationUrl).searchParams.get("state")}`,
+                        }),
                 }),
-                close: () => {},
-            }),
         },
     }));
     const runtime = provider("installation", namespace);

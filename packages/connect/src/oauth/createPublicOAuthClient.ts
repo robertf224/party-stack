@@ -86,7 +86,7 @@ export const makePublicOAuthClient = Effect.fn("PublicOAuthClient.make")(functio
             });
             const run = <A>(effect: Effect.Effect<A, ConnectError>) =>
                 managed.runPromise(
-                    Effect.flatMap(Effect.forkIn(effect, owner), Fiber.join).pipe(
+                    Effect.flatMap(Effect.forkIn(effect, owner, { startImmediately: true }), Fiber.join).pipe(
                         Effect.catchTag("ConnectError", (error) =>
                             Effect.fail(
                                 error.kind === "NeedsAuthentication" ? unauthenticated(error.message) : error
@@ -141,36 +141,36 @@ export const makePublicOAuthClient = Effect.fn("PublicOAuthClient.make")(functio
                                     "Interactive OAuth requires a browser authentication capability."
                                 );
                             // Open the popup synchronously in the initiating UI task where possible.
-                            const presentation = yield* Effect.acquireRelease(
-                                Effect.sync(() =>
-                                    browser.start({
-                                        redirectUrl: options.redirectUrl,
-                                        presentation: signInOptions?.browserPresentation,
-                                    })
-                                ),
-                                (opened) => Effect.promise(() => Promise.resolve(opened.close()))
-                            );
+                            const presentation = yield* browser
+                                .start({
+                                    redirectUrl: options.redirectUrl,
+                                    presentation: signInOptions?.browserPresentation,
+                                })
+                                .pipe(
+                                    Effect.mapError((error) =>
+                                        connectError(
+                                            error.reason === "Configuration"
+                                                ? "Configuration"
+                                                : "InvalidAttempt",
+                                            error.message
+                                        )
+                                    )
+                                );
                             const started = yield* connect.begin({
                                 connectorId,
                                 principalId: runtime.owner,
                                 redirectUrl: options.redirectUrl,
                             });
-                            const { callbackUrl } = yield* Effect.tryPromise({
-                                try: (signal) => {
-                                    const abort = () => {
-                                        void presentation.close();
-                                    };
-                                    signal.addEventListener("abort", abort, { once: true });
-                                    return presentation
-                                        .open(started.authorizationUrl)
-                                        .finally(() => signal.removeEventListener("abort", abort));
-                                },
-                                catch: () =>
-                                    connectError(
-                                        "InvalidAttempt",
-                                        "Browser authorization was cancelled or failed."
-                                    ),
-                            });
+                            const { callbackUrl } = yield* presentation
+                                .open(started.authorizationUrl)
+                                .pipe(
+                                    Effect.mapError(() =>
+                                        connectError(
+                                            "InvalidAttempt",
+                                            "Browser authorization was cancelled or failed."
+                                        )
+                                    )
+                                );
                             const established = yield* complete(callbackUrl);
                             if (!established)
                                 return yield* connectError(

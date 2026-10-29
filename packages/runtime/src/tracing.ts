@@ -1,11 +1,11 @@
-import { Cause, Exit, Option, Predicate, Tracer } from "effect";
+import { Cause, Context, Effect, Exit, Option, Predicate, Tracer } from "effect";
 
-export interface RuntimeTraceEvent {
+export interface TraceEvent {
     readonly name: string;
     readonly at: number;
     readonly attributes: Readonly<Record<string, string | number | boolean>>;
 }
-export interface RuntimeTrace {
+export interface TraceRecord {
     readonly id: string;
     readonly traceId: string;
     readonly parentId?: string;
@@ -15,18 +15,19 @@ export interface RuntimeTrace {
     readonly outcome: "running" | "success" | "failure" | "interrupted";
     readonly error?: { readonly kind: "Error" | "Defect"; readonly message: string };
     readonly attributes: Readonly<Record<string, string | number | boolean>>;
-    readonly events?: readonly RuntimeTraceEvent[];
+    readonly events?: readonly TraceEvent[];
     readonly eventCount?: number;
 }
-export interface RuntimeTraceStore {
-    readonly getSnapshot: () => readonly RuntimeTrace[];
-    readonly subscribe: (listener: () => void) => () => void;
+export interface TraceStore {
+    readonly getSnapshot: () => readonly TraceRecord[];
+    readonly subscribe: (listener: (record?: TraceRecord) => void) => () => void;
     readonly clear: () => void;
 }
 /** Bounded Effect spans and error messages; no stacks, error payloads, or arbitrary attributes. */
-export function createRuntimeTraces(capacity = 500) {
+export function createTraceCapture(capacity = 500, upstream?: Tracer.Tracer, history = true) {
     if (!Number.isSafeInteger(capacity) || capacity < 1)
         throw new RangeError("Trace capacity must be positive.");
+    const exporter = upstream === Tracer.nativeTracer ? undefined : upstream;
     const allowed = new Set([
         "objectType",
         "operation",
@@ -36,24 +37,25 @@ export function createRuntimeTraces(capacity = 500) {
         "db.system.name",
         "activity",
     ]);
-    let records: readonly RuntimeTrace[] = [];
+    let records: readonly TraceRecord[] = [];
     let generation = 0;
-    const listeners = new Set<() => void>();
-    const changed = () => {
+    const listeners = new Set<(record?: TraceRecord) => void>();
+    const changed = (record?: TraceRecord) => {
         for (const listener of listeners) {
             try {
-                listener();
+                listener(record);
             } catch {
                 /* Observers cannot fail an operation. */
             }
         }
     };
     const tracer = Tracer.make({
+        context: exporter?.context?.bind(exporter),
         span(options) {
-            const span = new Tracer.NativeSpan(options);
+            const span = exporter ? exporter.span(options) : new Tracer.NativeSpan(options);
             if (!options.sampled) return span;
             const spanGeneration = generation;
-            const initial: RuntimeTrace = {
+            const initial: TraceRecord = {
                 id: span.spanId,
                 traceId: span.traceId,
                 parentId: Option.getOrUndefined(span.parent)?.spanId,
@@ -70,11 +72,12 @@ export function createRuntimeTraces(capacity = 500) {
                 const index = records.findIndex(
                     (record) => record.id === span.spanId && record.traceId === span.traceId
                 );
-                records =
-                    index < 0
-                        ? [...records.slice(Math.max(0, records.length - capacity + 1)), current]
-                        : records.map((record, at) => (at === index ? current : record));
-                changed();
+                if (history)
+                    records =
+                        index < 0
+                            ? [...records.slice(Math.max(0, records.length - capacity + 1)), current]
+                            : records.map((record, at) => (at === index ? current : record));
+                changed(current);
             };
             const safeAttributes = (entries: Iterable<readonly [string, unknown]>) => {
                 const result: Record<string, string | number | boolean> = {};
@@ -95,13 +98,11 @@ export function createRuntimeTraces(capacity = 500) {
                     publish();
                 }
             };
-            // Only explicitly instrumented lifecycle messages, never arbitrary log/error payloads.
+            // Producers explicitly opt diagnostic events in; platform code knows no domain event names.
+            const event = exporter ? span.event.bind(span) : undefined;
             span.event = (name, time, attributes = {}) => {
-                if (
-                    ended ||
-                    !["replica.subscribed", "replica.invalidation", "replica.disconnected"].includes(name)
-                )
-                    return;
+                event?.(name, time, attributes);
+                if (ended || attributes.diagnostic !== true) return;
                 current = {
                     ...current,
                     events: [
@@ -122,7 +123,7 @@ export function createRuntimeTraces(capacity = 500) {
                 if (ended) return;
                 ended = true;
                 const interrupted = Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause);
-                let error: RuntimeTrace["error"];
+                let error: TraceRecord["error"];
                 if (Exit.isFailure(exit) && !interrupted) {
                     const reason =
                         exit.cause.reasons.find(Cause.isFailReason) ??
@@ -155,7 +156,7 @@ export function createRuntimeTraces(capacity = 500) {
     return {
         tracer,
         getSnapshot: () => records,
-        subscribe: (listener: () => void) => {
+        subscribe: (listener: (record?: TraceRecord) => void) => {
             listeners.add(listener);
             return () => {
                 listeners.delete(listener);
@@ -168,4 +169,18 @@ export function createRuntimeTraces(capacity = 500) {
         },
     };
 }
-export type RuntimeTraces = ReturnType<typeof createRuntimeTraces>;
+export type TraceCapture = ReturnType<typeof createTraceCapture>;
+
+/** Diagnostics configuration is independent of platform Runtime acquisition. */
+export type TraceRecordingMode = false | "buffer" | "live";
+export const TraceRecording = Context.Reference<TraceRecordingMode>(
+    "@party-stack/runtime/tracing/TraceRecording",
+    { defaultValue: () => false }
+);
+
+/** Capture alongside the configured Effect tracer; production recording is opt-in. */
+export const makeTraceCapture = Effect.fnUntraced(function* (mode?: TraceRecordingMode) {
+    const recording = mode ?? (yield* TraceRecording);
+    if (!recording) return undefined;
+    return createTraceCapture(500, yield* Tracer.Tracer, recording === "buffer");
+});

@@ -57,15 +57,19 @@ export function makeServerConnectClient(options: {
         }) {
             return yield* Effect.scoped(
                 Effect.gen(function* () {
-                    const browser = yield* Effect.acquireRelease(
-                        Effect.sync(() =>
-                            options.browser.start({
-                                redirectUrl: options.returnUrl,
-                                presentation: input.browserPresentation,
-                            })
-                        ),
-                        (session) => Effect.promise(() => Promise.resolve(session.close()))
-                    );
+                    const browser = yield* options.browser
+                        .start({
+                            redirectUrl: options.returnUrl,
+                            presentation: input.browserPresentation,
+                        })
+                        .pipe(
+                            Effect.mapError((error) =>
+                                connectError(
+                                    error.reason === "Configuration" ? "Configuration" : "InvalidAttempt",
+                                    error.message
+                                )
+                            )
+                        );
                     const started = yield* request("begin", Started, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -76,19 +80,16 @@ export function makeServerConnectClient(options: {
                             returnUrl: options.returnUrl,
                         }),
                     });
-                    const completed = yield* Effect.tryPromise({
-                        try: (signal) => {
-                            const abort = () => {
-                                void browser.close();
-                            };
-                            signal.addEventListener("abort", abort, { once: true });
-                            return browser
-                                .open(started.authorizationUrl)
-                                .finally(() => signal.removeEventListener("abort", abort));
-                        },
-                        catch: () =>
-                            connectError("InvalidAttempt", "Browser authorization was cancelled or failed."),
-                    });
+                    const completed = yield* browser
+                        .open(started.authorizationUrl)
+                        .pipe(
+                            Effect.mapError(() =>
+                                connectError(
+                                    "InvalidAttempt",
+                                    "Browser authorization was cancelled or failed."
+                                )
+                            )
+                        );
                     const actual = new URL(completed.callbackUrl);
                     const expected = new URL(options.returnUrl);
                     if (

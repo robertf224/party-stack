@@ -10,7 +10,7 @@ import { createExpoBrowserAuthentication } from "./createExpoBrowserAuthenticati
 import { nativeKeyCodec } from "./encryptionKeys.js";
 import { ExpoFileSystemBlobBytesStore } from "./ExpoFileSystemBlobBytesStore.js";
 import { makeKeyMaterialStore } from "./ExpoKeyMaterialStore.js";
-import { ExpoNetworkConnectivity } from "./ExpoNetworkConnectivity.js";
+import { makeExpoNetworkConnectivity } from "./ExpoNetworkConnectivity.js";
 import { hashStorageName } from "./hashStorageName.js";
 import type { SQLiteBindValue } from "expo-sqlite";
 
@@ -18,13 +18,7 @@ export const make = Effect.fn("ExpoRuntime.make")(function* () {
     const { owner, namespace } = yield* RuntimePartition;
     const name = `party-stack:${owner}:${namespace}`;
     const storageName = `party-stack-${yield* Effect.tryPromise({ try: () => hashStorageName(JSON.stringify([owner, namespace])), catch: (cause) => new RuntimeError({ operation: "expoRuntime.name", cause }) })}`;
-    const connectivity = yield* Effect.acquireRelease(
-        Effect.tryPromise({
-            try: () => ExpoNetworkConnectivity.create(),
-            catch: (cause) => new RuntimeError({ operation: "expoRuntime.connectivity", cause }),
-        }),
-        (value) => Effect.sync(() => value.close())
-    );
+    const connectivity = yield* makeExpoNetworkConnectivity();
     const blobBytes = new ExpoFileSystemBlobBytesStore({
         directoryName: `${storageName}-blobs`,
     });
@@ -68,10 +62,10 @@ export const make = Effect.fn("ExpoRuntime.make")(function* () {
     return yield* Runtime.make({
         blobBytes,
         browserAuthentication: createExpoBrowserAuthentication(),
-        encryptionKeyring: Effect.succeed(encryptionKeyring),
+        encryptionKeyring,
         connectivity,
 
-        tables: Effect.succeed(ownedTables),
+        tables: ownedTables,
         destroy: Effect.tryPromise({
             try: async () => {
                 await Promise.all([

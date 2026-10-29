@@ -1,5 +1,6 @@
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { Effect, Result } from "effect";
+import { byteSource } from "../blobs/bytes.js";
 import { makeBlobStorage, collectByteBlob, type BlobBytesService } from "../blobs/index.js";
 import { makeStorageModel } from "../ontology/model.js";
 import { makeOntologyStorage } from "../ontology/storage.js";
@@ -11,7 +12,11 @@ export const runBlobContract = Effect.fnUntraced(function* (tables: TablesServic
         Effect.gen(function* () {
             const values = new Map<string, Blob>();
             const bytes: BlobBytesService = {
-                read: (key) => Effect.promise(() => Promise.resolve(values.get(key))),
+                read: (key) =>
+                    Effect.sync(() => {
+                        const value = values.get(key);
+                        return value === undefined ? undefined : byteSource(value);
+                    }),
                 write: (key, value) =>
                     collectByteBlob(value).pipe(
                         Effect.map((blob) => {

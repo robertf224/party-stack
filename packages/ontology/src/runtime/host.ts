@@ -218,11 +218,11 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
             }),
         online: Effect.gen(function* () {
             return (
-                (yield* services.online) &&
+                (yield* services.connectivity.online) &&
                 (!options.connection || options.connection.state.status === "active")
             );
         }),
-        connectivity: Stream.merge(services.connectivity, connected),
+        connectivity: Stream.merge(services.connectivity.changes, connected),
         gc: options.gc,
         demand: options.demand,
         outbox: options.writes?.outbox,

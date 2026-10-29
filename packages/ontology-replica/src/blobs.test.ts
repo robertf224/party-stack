@@ -1,5 +1,6 @@
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
+import { byteSource } from "@party-stack/ontology-storage/blobs";
 import { makeBlobStorage, collectByteBlob, BlobStorageError } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
@@ -32,7 +33,11 @@ test("staged outbox bytes survive upload, lost receipts and reopen until reconci
                     namespace: "attachments",
                     tables,
                     bytes: {
-                        read: (key) => Effect.succeed(values.get(key)),
+                        read: (key) =>
+                            Effect.sync(() => {
+                                const value = values.get(key);
+                                return value === undefined ? undefined : byteSource(value);
+                            }),
                         write: (key, value) =>
                             collectByteBlob(value).pipe(
                                 Effect.map((blob) => {
@@ -107,7 +112,11 @@ test("editing and removing pending actions atomically replace and release attach
                     namespace: "edit-attachments",
                     tables,
                     bytes: {
-                        read: (key) => Effect.succeed(values.get(key)),
+                        read: (key) =>
+                            Effect.sync(() => {
+                                const value = values.get(key);
+                                return value === undefined ? undefined : byteSource(value);
+                            }),
                         write: (key, value) =>
                             collectByteBlob(value).pipe(
                                 Effect.map((blob) => {
@@ -173,7 +182,8 @@ test("a mapping race preserves the receipt and recovers without another remote i
                         read: (key) =>
                             Deferred.succeed(reading, undefined).pipe(
                                 Effect.andThen(Deferred.await(finish)),
-                                Effect.as(values.get(key))
+                                Effect.as(values.get(key)),
+                                Effect.map((value) => (value === undefined ? undefined : byteSource(value)))
                             ),
                         write: (key, value) =>
                             collectByteBlob(value).pipe(
@@ -252,7 +262,11 @@ test("replica snapshots and optimistic rows retain attachment identities and rel
                     namespace: "row-retention",
                     tables,
                     bytes: {
-                        read: (key) => Effect.succeed(values.get(key)),
+                        read: (key) =>
+                            Effect.sync(() => {
+                                const value = values.get(key);
+                                return value === undefined ? undefined : byteSource(value);
+                            }),
                         write: (key, value) =>
                             collectByteBlob(value).pipe(
                                 Effect.map((blob) => {
@@ -338,7 +352,11 @@ test("a speculative child owns byte retention and saves a terminal receipt befor
                         namespace,
                         tables,
                         bytes: {
-                            read: (key) => Effect.succeed(values.get(key)),
+                            read: (key) =>
+                                Effect.sync(() => {
+                                    const value = values.get(key);
+                                    return value === undefined ? undefined : byteSource(value);
+                                }),
                             write: (key, bytes) =>
                                 collectByteBlob(bytes).pipe(
                                     Effect.tap((value) => Effect.sync(() => values.set(key, value))),
@@ -458,7 +476,11 @@ test("staged-copy validation and parent acceptance are atomic, while duplicate s
                     namespace: "required",
                     tables,
                     bytes: {
-                        read: (key) => Effect.succeed(values.get(key)),
+                        read: (key) =>
+                            Effect.sync(() => {
+                                const value = values.get(key);
+                                return value === undefined ? undefined : byteSource(value);
+                            }),
                         write: (key, input) =>
                             collectByteBlob(input).pipe(
                                 Effect.tap((blob) => Effect.sync(() => values.set(key, blob))),

@@ -1,5 +1,6 @@
 export { MemoryBlobBytesStore } from "./memory/MemoryBlobBytesStore.js";
-export { BrowserAuthenticationCancelledError } from "./utils/BrowserAuthenticationCancelledError.js";
+export { BrowserAuthenticationError } from "./BrowserAuthenticationError.js";
+export { alwaysOnlineConnectivity, makeNetworkConnectivity } from "./NetworkConnectivity.js";
 export type {
     BrowserAuthentication,
     BrowserAuthenticationPresentation,

@@ -1,59 +1,81 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { NavigatorNetworkConnectivity } from "./NavigatorNetworkConnectivity.js";
+import { Effect, Exit, Scope, Stream } from "effect";
+import { TestClock } from "effect/testing";
+import { afterEach, expect, test, vi } from "vite-plus/test";
+import { makeNavigatorNetworkConnectivity } from "./NavigatorNetworkConnectivity.js";
 
-afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-});
-
-function setup(initiallyOnline = false) {
+afterEach(() => vi.unstubAllGlobals());
+const setup = Effect.fnUntraced(function* (initiallyOnline = false) {
     let online = initiallyOnline;
-    const windowTarget = new EventTarget();
-    vi.stubGlobal("window", windowTarget);
+    const target = new EventTarget();
+    const remove = vi.spyOn(target, "removeEventListener");
+    vi.stubGlobal("window", target);
     vi.stubGlobal("navigator", {
         get onLine() {
             return online;
         },
     });
+    const connectivity = yield* makeNavigatorNetworkConnectivity();
+    const values: boolean[] = [];
+    yield* Stream.runForEach(connectivity.changes, (value) =>
+        Effect.sync(() => {
+            values.push(value);
+        })
+    ).pipe(Effect.forkScoped({ startImmediately: true }));
+    yield* TestClock.adjust(0);
     return {
-        connectivity: NavigatorNetworkConnectivity.create(),
+        connectivity,
+        values,
+        remove,
         setOnline: (value: boolean) => {
             online = value;
-            windowTarget.dispatchEvent(new Event(value ? "online" : "offline"));
+            target.dispatchEvent(new Event(value ? "online" : "offline"));
         },
     };
-}
-
-describe("NavigatorNetworkConnectivity", () => {
-    it("waits for an online connection to stabilize", async () => {
-        vi.useFakeTimers();
-        const { connectivity, setOnline } = setup();
-        const listener = vi.fn();
-        connectivity.subscribe(listener);
-
-        setOnline(true);
-        expect(connectivity.isConnected).toBe(false);
-        expect(listener).not.toHaveBeenCalled();
-
-        vi.advanceTimersByTime(999);
-        expect(connectivity.isConnected).toBe(false);
-
-        vi.advanceTimersByTime(1);
-        expect(connectivity.isConnected).toBe(true);
-        expect(listener).toHaveBeenCalledWith(true);
-        await connectivity.close();
-    });
-
-    it("cancels stabilization when the browser goes offline again", async () => {
-        vi.useFakeTimers();
-        const { connectivity, setOnline } = setup();
-
-        setOnline(true);
-        vi.advanceTimersByTime(500);
-        setOnline(false);
-        vi.advanceTimersByTime(1_000);
-
-        expect(connectivity.isConnected).toBe(false);
-        await connectivity.close();
-    });
+});
+test("connectivity emits its initial state and waits for an online connection to stabilize", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { connectivity, setOnline, values } = yield* setup();
+                expect(values).toEqual([false]);
+                setOnline(true);
+                yield* TestClock.adjust(999);
+                expect(yield* connectivity.online).toBe(false);
+                yield* TestClock.adjust(1);
+                expect(yield* connectivity.online).toBe(true);
+                expect(values).toEqual([false, true]);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
+});
+test("going offline cancels pending stabilization", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { connectivity, setOnline, values } = yield* setup();
+                setOnline(true);
+                yield* TestClock.adjust(500);
+                setOnline(false);
+                yield* TestClock.adjust(1000);
+                expect(yield* connectivity.online).toBe(false);
+                expect(values).toEqual([false]);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
+});
+test("closing the platform scope removes listeners and cancels stabilization", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const scope = yield* Scope.fork(yield* Effect.scope);
+                const { setOnline, remove, values } = yield* Scope.provide(setup(), scope);
+                setOnline(true);
+                yield* TestClock.adjust(100);
+                yield* Scope.close(scope, Exit.void);
+                yield* TestClock.adjust(1000);
+                expect(remove.mock.calls.map(([event]) => event).sort()).toEqual(["offline", "online"]);
+                expect(values).toEqual([false]);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
 });

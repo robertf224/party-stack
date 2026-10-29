@@ -2,10 +2,11 @@ import { createLiveOntology, o, type OntologyIR } from "@party-stack/ontology";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { OntologyDevtoolsPanel } from "@party-stack/ontology-devtools";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { MemoryRuntime, Runtime, type RuntimeService } from "@party-stack/runtime";
+import { MemoryRuntime } from "@party-stack/runtime";
+import { createTraceCapture } from "@party-stack/runtime/tracing";
 import { createLiveQueryCollection, eq } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
-import { Effect, Layer, Tracer } from "effect";
+import { Effect, Tracer } from "effect";
 import { StrictMode, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -44,20 +45,11 @@ const backend = await Effect.runPromise(
 );
 await Effect.runPromise(backend.applyAction({ id: "seed", name: "seed", parameters: {} }));
 let loads = 0;
-let fixtureRuntime: RuntimeService;
+const fixtureTraces = createTraceCapture();
 const ontology = await createLiveOntology<Definition>({
     id: "attribution-fixture",
     ir,
-    runtime: Layer.effect(
-        Runtime,
-        MemoryRuntime.make().pipe(
-            Effect.tap((runtime) =>
-                Effect.sync(() => {
-                    fixtureRuntime = runtime;
-                })
-            )
-        )
-    ),
+    runtime: MemoryRuntime.layer,
     backend: () => ({
         name: "fixture",
         open: () =>
@@ -101,6 +93,8 @@ const previewSvg =
     '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#5a67d8"/></svg>';
 const inspectedOntology = {
     ...ontology,
+    traces: fixtureTraces,
+    diagnostics: { ...ontology.diagnostics!, traces: fixtureTraces },
     attachments: {
         ...ontology.attachments,
         metadata: (async (attachment: { id: string }) => {
@@ -113,13 +107,13 @@ const inspectedOntology = {
 
 async function recordTraceFixtures() {
     const run = <A, E>(effect: Effect.Effect<A, E>) =>
-        Effect.runPromise(effect.pipe(Effect.provideService(Tracer.Tracer, fixtureRuntime.traces.tracer)));
+        Effect.runPromise(effect.pipe(Effect.provideService(Tracer.Tracer, fixtureTraces.tracer)));
     for (const name of ["Demand", "Traces"])
         await run(
             Effect.exit(
                 Effect.gen(function* () {
                     const span = yield* Effect.currentSpan;
-                    span.event("replica.subscribed", BigInt(Date.now()) * 1_000_000n);
+                    span.event("replica.subscribed", BigInt(Date.now()) * 1_000_000n, { diagnostic: true });
                     yield* Effect.interrupt;
                 }).pipe(Effect.withSpan(name, { attributes: { activity: "subscription" } }))
             )

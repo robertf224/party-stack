@@ -187,7 +187,7 @@ export function createBetterAuthConnectionAdapter<Client extends BetterAuthConne
             return (yield* cached).filter((row) => row.expiresAt > now).map(createEstablishedConnection);
         });
         const restore = Effect.fn("BetterAuth.restore")(function* () {
-            if (!(yield* service.online)) return yield* localSessions;
+            if (!(yield* service.connectivity.online)) return yield* localSessions;
             return yield* listSessions().pipe(
                 Effect.map((sessions) =>
                     sessions.map((selected) => createEstablishedConnection(sessionHandle(selected)))

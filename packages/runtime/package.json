@@ -13,6 +13,10 @@
         "./testing": {
             "types": "./lib/testing.d.ts",
             "default": "./lib/testing.js"
+        },
+        "./tracing": {
+            "types": "./lib/tracing.d.ts",
+            "default": "./lib/tracing.js"
         }
     },
     "dependencies": {

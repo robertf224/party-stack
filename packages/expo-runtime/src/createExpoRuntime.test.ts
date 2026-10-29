@@ -3,7 +3,7 @@ import { Runtime } from "@party-stack/runtime";
 import { RuntimePartition } from "@party-stack/runtime";
 import { acquireRuntime } from "@party-stack/runtime/testing";
 import { runtimeFixtureContext } from "@party-stack/runtime/testing";
-import { Deferred, Effect, Fiber, Layer } from "effect";
+import { Deferred, Effect, Fiber, Layer, Stream } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { make, layer as platformLayer } from "./createExpoRuntime.js";
 const createExpoRuntime = (owner: string, namespace: string) =>
@@ -27,7 +27,11 @@ vi.mock("expo-crypto", () => ({
 }));
 vi.mock("expo-sqlite", () => ({ openDatabaseAsync: state.open, deleteDatabaseAsync: state.delete }));
 vi.mock("./ExpoNetworkConnectivity.js", () => ({
-    ExpoNetworkConnectivity: { create: () => Promise.resolve({ close: state.disconnect }) },
+    makeExpoNetworkConnectivity: () =>
+        Effect.acquireRelease(
+            Effect.succeed({ online: Effect.succeed(true), changes: Stream.make(true) }),
+            () => Effect.sync(state.disconnect)
+        ),
 }));
 vi.mock("./ExpoFileSystemBlobBytesStore.js", () => ({
     ExpoFileSystemBlobBytesStore: class {

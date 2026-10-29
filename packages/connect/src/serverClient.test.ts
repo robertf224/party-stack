@@ -5,9 +5,11 @@ import { makeServerConnectClient } from "./serverClient.js";
 describe("server-owned browser authorization", () => {
     it("opens a browser presentation and returns only the server's completion metadata", async () => {
         const close = vi.fn();
-        const open = vi.fn(async () => ({
-            callbackUrl: "https://app.example/done?connectAttempt=attempt&state=attempt",
-        }));
+        const open = vi.fn(() =>
+            Effect.succeed({
+                callbackUrl: "https://app.example/done?connectAttempt=attempt&state=attempt",
+            })
+        );
         const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
             expect(init?.credentials).toBe("include");
             return new URL(input instanceof Request ? input.url : String(input)).pathname.endsWith("/begin")
@@ -21,7 +23,9 @@ describe("server-owned browser authorization", () => {
             baseUrl: "https://app.example/connect/",
             returnUrl: "https://app.example/done",
             fetch,
-            browser: { start: () => ({ open, close }) },
+            browser: {
+                start: () => Effect.acquireRelease(Effect.succeed({ open }), () => Effect.sync(close)),
+            },
         });
         const result = await Effect.runPromise(
             client.authorize({ connectorId: "connector", browserPresentation: "popup" })
@@ -42,10 +46,16 @@ describe("server-owned browser authorization", () => {
                     authorizationUrl: "https://provider.example/authorize?state=expected",
                 }),
             browser: {
-                start: () => ({
-                    open: async () => ({ callbackUrl: "https://app.example/done?connectAttempt=other" }),
-                    close,
-                }),
+                start: () =>
+                    Effect.acquireRelease(
+                        Effect.succeed({
+                            open: () =>
+                                Effect.succeed({
+                                    callbackUrl: "https://app.example/done?connectAttempt=other",
+                                }),
+                        }),
+                        () => Effect.sync(close)
+                    ),
             },
         });
         await expect(Effect.runPromise(client.authorize({ connectorId: "connector" }))).rejects.toThrow(
