@@ -29,7 +29,6 @@ describe("Salesforce QueryFunctionType metadata queries", () => {
                         describeStandardAction,
                     } as never,
                 }),
-            persistObjects: false,
         });
 
         try {

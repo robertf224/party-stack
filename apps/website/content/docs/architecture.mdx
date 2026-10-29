@@ -120,39 +120,38 @@ UI demand never owns or cancels the background action worker.
 
 ## Platform Runtime
 
-`RuntimeAdapter` is the platform construction record supplied to `Runtime.make`:
-byte IO, optional table/keyring acquisition, connectivity, browser authentication
-and private platform hooks. `RuntimeService` is the acquired result: open Tables,
-Effect-based byte IO, encryption keys, connectivity and change streams, and tracing.
-Platform constructors return a scoped Effect yielding that service. `Runtime` is
-the Effect service identifier used to provide or retrieve it.
+`Runtime` is the Effect service identifier. `RuntimeService` is its acquired
+implementation: Tables, Effect byte IO, encryption keys, connectivity and tracing.
+Platform packages provide configured Layers. `RuntimePartition` supplies the
+storage owner/namespace as an Effect requirement; `Runtimes` uses LayerMap to
+share active acquisitions of the same partition and release the final lease.
+`RuntimeOptions` is only construction input for platform implementations.
 
-The current service also exposes its adapter, owning Scope and captured Effect
-Context for application/Promise bridges. This Context is dependency injection,
-not the ontology's principal/context data. Some SDK boundaries still accept an
-adapter and recover its acquired service through `getRuntime(adapter)`; native
-Effect code uses the provided `Runtime` service directly.
-
-Storage notifications are invalidation hints for shared private/local tables,
-including connection records. They do not replace the ontology replication protocol.
-`acquireHost` currently provides an exclusive persistent-replica lease, while
-`actorLiveness` provides storage-owner crash detection, as described below. These
-hooks are platform support for storage ownership, not a distributed actor system.
+Runtime does not expose an adapter lookup, captured Context, owning Scope,
+storage broadcasts, actor liveness or host-election hooks. Consumers request
+services and Scope through Effect. Normal Scope cleanup closes platform resources;
+`Runtime.destroy` is a separate Effect for explicit local-data deletion after closure.
 
 ## Persistent web ownership
 
-The host is the scoped service owning a persistent replica, its storage and its
-background state/outbox workers. Tabs use RPC to that service inside a SharedWorker.
-The browser already reuses the same SharedWorker identity across tabs; Web Locks
-are not needed to elect a worker. A namespace-level lock additionally protects
-against a different worker identity or an in-process fallback opening the same
-persistent namespace. It is held for the host's scope, not acquired for each query.
+One designated process owns each persistent replica namespace. Issue-tracker uses
+one SharedWorker per installation: it owns Connect records, token refresh, backend
+sessions, persistent row/blob storage and its ontology hosts. Pages do not open
+those tables. Installation controls, connection snapshots and ontology operations
+use Effect RPC over the worker connection. Browser popup/callback presentation
+stays in the page; PKCE state and credential exchange stay in the owner.
 
-Separate owner locks provide crash detection for persisted row/blob retention
-roots. Browser termination releases the locks automatically, allowing GC to remove
-roots whose owners have died. This is not lock/broadcast leader election between
-tabs. A custom persistent runtime without owner-liveness support conservatively
-retains roots from crashed owners; ordinary scope cleanup cannot run after a crash.
+Tabs use ordinary memory replicas with local byte caches. The worker retains
+scoped ontology endpoints through LayerMap while requests/subscriptions use them;
+idle endpoints close after the configured idle period. Browser SharedWorker identity
+provides process placement. There is no additional runtime Web Lock election or
+silent persistent fallback after a failed worker connection.
+
+On exclusive-owner startup, the replica removes abandoned query/read leases.
+Pins, object references and pending action dependencies survive. Blob storage
+tracks active local IO internally and recovers durable intents after a restart;
+it needs no public Runtime actor-liveness capability. Ordinary row/blob GC then
+uses the same retention rules in web, Node and Expo.
 
 ## Demand retention
 

@@ -115,17 +115,20 @@ class SubscriptionTracing extends RpcMiddleware.Service<SubscriptionTracing>()(
     "@party-stack/ontology-server/SubscriptionTracing",
     { requiredForClient: true }
 ) {}
-export const makeOntologyRpcClient = RpcClient.make(OntologyRpcs.middleware(SubscriptionTracing)).pipe(
-    Effect.provide(
-        RpcMiddleware.layerClient(SubscriptionTracing, ({ rpc, request, next }) =>
-            RpcSchema.isStreamSchema(rpc.successSchema)
-                ? Effect.annotateCurrentSpan("activity", Context.get(rpc.annotations, RpcActivity)).pipe(
-                      Effect.andThen(next(request))
-                  )
-                : next(request)
+export const makeTracedRpcClient = <Rpcs extends Rpc.Any>(group: RpcGroup.RpcGroup<Rpcs>) =>
+    RpcClient.make(group.middleware(SubscriptionTracing)).pipe(
+        Effect.provide(
+            RpcMiddleware.layerClient(SubscriptionTracing, ({ rpc, request, next }) =>
+                RpcSchema.isStreamSchema(rpc.successSchema)
+                    ? Effect.annotateCurrentSpan("activity", Context.get(rpc.annotations, RpcActivity)).pipe(
+                          Effect.andThen(next(request))
+                      )
+                    : next(request)
+            )
         )
-    )
-);
+    );
+
+export const makeOntologyRpcClient = makeTracedRpcClient(OntologyRpcs);
 
 export type OntologyDescription = Schema.Schema.Type<typeof Description>;
 export interface OntologyConnection {

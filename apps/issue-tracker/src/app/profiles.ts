@@ -1,7 +1,9 @@
 import { type ConnectionState } from "@party-stack/connect";
-import { createTrackerInstallations, FOUNDRY_ONTOLOGY_RID } from "./installations";
-import { openSharedOntology } from "./sharedOntology";
+import { authClient } from "./auth";
+import { openSharedInstallation } from "./sharedOntology";
+import { FOUNDRY_INSTALLATION_ID, FOUNDRY_ONTOLOGY_RID } from "./trackerConfig";
 import type { IssueTrackerOntology } from "../ontology/generated/types";
+import type { FoundryAuthenticationClient } from "@party-stack/foundry-ontology";
 import type { LiveOntology, OntologyBackendInstallation } from "@party-stack/ontology";
 export type ProfileKind = "foundry" | "sqlite";
 export type TrackerOntology = LiveOntology<IssueTrackerOntology>;
@@ -21,9 +23,11 @@ interface ProfileHandle {
 
 const handles = new Map<string, ProfileHandle>();
 const foundryOAuthCompletions = new Map<string, Promise<ConnectedProfile | undefined>>();
-const { foundry: foundryInstallation, sqlite: sqliteInstallation } = await createTrackerInstallations({
-    openOntology: openSharedOntology,
-});
+const foundryInstallation = await openSharedInstallation<FoundryAuthenticationClient>(
+    FOUNDRY_INSTALLATION_ID,
+    true
+);
+const sqliteInstallation = await openSharedInstallation<typeof authClient>("issue-tracker-sqlite");
 
 async function openProfile(options: {
     installation: OntologyBackendInstallation;
@@ -85,12 +89,13 @@ export async function connectSqliteProfile(credentials: {
 }
 
 export async function connectGoogleProfile(): Promise<ConnectedProfile> {
-    const result = await sqliteInstallation.authentication.signIn.popup({
+    const result = await authClient.signIn.popup({
         provider: "google",
     });
     if (result.error) {
         throw new Error(result.error.message ?? "Google sign-in failed.");
     }
+    await sqliteInstallation.refreshConnections();
     const listed = await sqliteInstallation.authentication.multiSession.listDeviceSessions();
     if (listed.error || !listed.data) {
         throw new Error(listed.error?.message ?? "Could not load the Google session.");

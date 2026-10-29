@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
 import { Runtime } from "@party-stack/runtime";
+import { RuntimePartition } from "@party-stack/runtime";
 import { acquireRuntime } from "@party-stack/runtime/testing";
 import { runtimeFixtureContext } from "@party-stack/runtime/testing";
-import { Deferred, Effect, Fiber } from "effect";
+import { Deferred, Effect, Fiber, Layer } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { make, layer } from "./createExpoRuntime.js";
-import { createExpoRuntime } from "./createExpoRuntime.js";
+import { make, layer as platformLayer } from "./createExpoRuntime.js";
+const createExpoRuntime = (owner: string, namespace: string) =>
+    make().pipe(Effect.provideService(RuntimePartition, { owner, namespace }));
+const layer = (partition: { owner: string; namespace: string }) =>
+    platformLayer().pipe(Layer.provide(Layer.succeed(RuntimePartition)(partition)));
 
 const state = vi.hoisted(() => ({
     events: [] as string[],
@@ -30,7 +34,7 @@ vi.mock("./ExpoFileSystemBlobBytesStore.js", () => ({
         constructor(options: unknown) {
             state.directory(options);
         }
-        clear = state.clear;
+        clear = () => Effect.sync(state.clear);
     },
 }));
 vi.mock("./ExpoKeyMaterialStore.js", () => ({ makeKeyMaterialStore: () => ({}) }));
@@ -100,7 +104,9 @@ describe("createExpoRuntime", () => {
     });
 
     it("is lazy and releases the database and native listener on fiber interruption", async () => {
-        const acquire = make({ owner: "test", namespace: "scope" });
+        const acquire = make().pipe(
+            Effect.provideService(RuntimePartition, { owner: "test", namespace: "scope" })
+        );
         const opens = state.open.mock.calls.length;
         expect(state.open.mock.calls.length).toBe(opens);
         await Effect.runPromise(
@@ -125,7 +131,15 @@ describe("createExpoRuntime", () => {
 
     it("releases the connectivity subscription if database acquisition fails", async () => {
         state.open.mockRejectedValueOnce(new Error("storage denied"));
-        await Effect.runPromise(Effect.result(Effect.scoped(make({ owner: "test", namespace: "denied" }))));
+        await Effect.runPromise(
+            Effect.result(
+                Effect.scoped(
+                    make().pipe(
+                        Effect.provideService(RuntimePartition, { owner: "test", namespace: "denied" })
+                    )
+                )
+            )
+        );
         expect(state.disconnect).toHaveBeenCalledOnce();
         expect(state.close).not.toHaveBeenCalled();
     });

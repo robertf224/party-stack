@@ -10,7 +10,6 @@ import { createConnectionMonitor } from "./createConnectionMonitor.js";
 import type {
     BackendConnectionAdapter,
     ConnectionController,
-    ConnectionManager,
     ConnectionEgressHandlers,
     EstablishedConnection,
 } from "./types.js";
@@ -48,7 +47,8 @@ describe("createConnectionManager", () => {
         const runtime = memoryRuntimeFixture("installation", "connections-test");
         const manager = await createConnectionManager({
             installationId: "test-installation",
-            runtime,
+            runtime: runtimeFixtureContext(runtime).service,
+            scope: runtimeFixtureContext(runtime).scope,
             adapter: () => Effect.succeed(adapter),
         });
 
@@ -122,7 +122,8 @@ describe("createConnectionManager", () => {
         runtimeFixtureContext(overriddenRuntime);
         const manager = await createConnectionManager({
             installationId: "test-installation",
-            runtime: overriddenRuntime,
+            runtime: runtimeFixtureContext(overriddenRuntime).service,
+            scope: runtimeFixtureContext(overriddenRuntime).scope,
             adapter: () =>
                 Effect.succeed({
                     name: "test",
@@ -171,7 +172,8 @@ describe("createConnectionManager", () => {
         const runtime = memoryRuntimeFixture("installation", `connections-expiry-${crypto.randomUUID()}`);
         const manager = await createConnectionManager({
             installationId: "test-installation",
-            runtime,
+            runtime: runtimeFixtureContext(runtime).service,
+            scope: runtimeFixtureContext(runtime).scope,
             adapter: () => Effect.succeed(adapter),
         });
 
@@ -228,7 +230,8 @@ describe("createConnectionManager", () => {
         const runtime = memoryRuntimeFixture("installation", `connections-refresh-${crypto.randomUUID()}`);
         const manager = await createConnectionManager({
             installationId: "test-installation",
-            runtime,
+            runtime: runtimeFixtureContext(runtime).service,
+            scope: runtimeFixtureContext(runtime).scope,
             adapter: () => Effect.succeed(adapter),
         });
 
@@ -254,7 +257,8 @@ it("scope closure interrupts refresh, disposes sessions once and rejects late SD
     const refresh = vi.fn(() => Effect.never.pipe(Effect.onInterrupt(() => Effect.sync(interrupted))));
     const manager = await createConnectionManager({
         installationId: "refresh-close",
-        runtime,
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
         adapter: () =>
             Effect.succeed({
                 name: "test",
@@ -305,7 +309,8 @@ it("a late refresh cannot replace a newer login or resurrect a disconnected conn
     const releaseNew = vi.fn();
     const manager = await createConnectionManager({
         installationId: "refresh-generation",
-        runtime,
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
         adapter: () =>
             Effect.succeed({
                 name: "test",
@@ -361,7 +366,8 @@ it("failed restoration releases resources acquired by the adapter", async () => 
     const release = vi.fn();
     const creating = createConnectionManager({
         installationId: "restore-failed",
-        runtime,
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
         adapter: () =>
             Effect.gen(function* () {
                 yield* Effect.acquireRelease(Effect.void, () => Effect.sync(release));
@@ -391,7 +397,8 @@ it("closing the runtime interrupts restoration before the manager has been retur
     const entered = vi.fn();
     const creating = createConnectionManager({
         installationId: "restore-interrupted",
-        runtime,
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
         adapter: () =>
             Effect.gen(function* () {
                 yield* Effect.acquireRelease(Effect.void, () => Effect.sync(release));
@@ -421,7 +428,8 @@ it("a failed request from an old session cannot invalidate a newer login", async
     const releaseNew = vi.fn();
     const manager = await createConnectionManager({
         installationId: "egress-generation",
-        runtime,
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
         adapter: () =>
             Effect.succeed({
                 name: "test",
@@ -467,7 +475,8 @@ it("interrupting a queued connection disposes its unadopted session", async () =
     const releaseNew = vi.fn();
     const manager = await createConnectionManager({
         installationId: "queued-connect",
-        runtime,
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
         adapter: () =>
             Effect.succeed({
                 name: "test",
@@ -507,7 +516,8 @@ it("attempts every session and adapter finalizer even when one session cleanup f
     const releaseAdapter = vi.fn();
     const manager = await createConnectionManager({
         installationId: "cleanup-failure",
-        runtime,
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
         adapter: () =>
             Effect.succeed({
                 name: "test",
@@ -546,7 +556,8 @@ it("logout can await an SDK session-change callback without deadlocking", async 
     const revoke = vi.fn(() => controller.disconnect("user"));
     const manager = await createConnectionManager({
         installationId: "logout-callback",
-        runtime,
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
         adapter: () =>
             Effect.succeed({
                 name: "test",
@@ -577,108 +588,15 @@ it("logout can await an SDK session-change callback without deadlocking", async 
     expect(release).toHaveBeenCalledOnce();
 });
 
-it("restores and releases context-local sessions after another context signs in and logs out", async () => {
-    const { defineRuntimeFixture } = await import("@party-stack/runtime/testing");
-    const tables = await Effect.runPromise(Memory.make());
-    const listeners = [new Set<() => void>(), new Set<() => void>()];
-    const runtimes = listeners.map((own, index) =>
-        defineRuntimeFixture((owner, namespace) => ({
-            ...memoryRuntimeFixture(owner, namespace),
-            tables: Effect.succeed(tables),
-            storageNotifications: {
-                publish: () => {
-                    for (const listener of listeners[1 - index]!) listener();
-                },
-                subscribe: (listener: () => void) => {
-                    own.add(listener);
-                    return () => {
-                        own.delete(listener);
-                    };
-                },
-            },
-        }))("installation", "shared-sessions")
-    );
-    let connected = false;
-    let delayRestore = false;
-    const restoring = Effect.runSync(Deferred.make<void>());
-    const resume = Effect.runSync(Deferred.make<void>());
-    const released = [vi.fn(), vi.fn()];
-    const entry = (index: number): EstablishedConnection => ({
-        connection: { userId: "user", state: { status: "active" } },
-        session: {
-            disconnect: () =>
-                Effect.sync(() => {
-                    connected = false;
-                }),
-            cleanup: () => Effect.sync(released[index]!),
-        },
-    });
-    const managers: ConnectionManager<{ signIn(): Promise<void> }>[] = [];
-    try {
-        for (const [index, runtime] of runtimes.entries())
-            managers.push(
-                await createConnectionManager({
-                    installationId: "shared",
-                    runtime,
-                    adapter: () =>
-                        Effect.succeed({
-                            name: "shared",
-                            createAuthenticationClient: (controller: ConnectionController) => ({
-                                signIn: () =>
-                                    Effect.runPromise(
-                                        Effect.andThen(
-                                            Effect.sync(() => {
-                                                connected = true;
-                                            }),
-                                            controller.connect(entry(index))
-                                        )
-                                    ),
-                            }),
-                            restoreConnections: () =>
-                                Effect.gen(function* () {
-                                    if (!connected) return [];
-                                    const restored = entry(index);
-                                    if (index === 1 && delayRestore) {
-                                        delayRestore = false;
-                                        yield* Deferred.succeed(restoring, undefined);
-                                        yield* Deferred.await(resume);
-                                    }
-                                    return [restored];
-                                }),
-                        }),
-                })
-            );
-        await managers[0]!.authentication.signIn();
-        await vi.waitFor(() => expect(managers[1]!.egress("user")).toBeDefined());
-        await managers[0]!.disconnect("user");
-        await vi.waitFor(() => expect(managers[1]!.egress("user")).toBeUndefined());
-        await vi.waitFor(() => expect(released[1]).toHaveBeenCalledOnce());
-        delayRestore = true;
-        await managers[0]!.authentication.signIn();
-        await Effect.runPromise(Deferred.await(restoring));
-        await managers[0]!.disconnect("user");
-        await Effect.runPromise(Deferred.succeed(resume, undefined));
-        await vi.waitFor(() => expect(released[1]).toHaveBeenCalledTimes(2));
-        expect(managers[0]!.connections.get("user")?.state.status).toBe("inactive");
-        expect(managers[1]!.egress("user")).toBeUndefined();
-        await managers[0]!.authentication.signIn();
-        await vi.waitFor(() => expect(managers[1]!.egress("user")).toBeDefined());
-    } finally {
-        for (const manager of managers) await manager.cleanup();
-        for (const runtime of runtimes) await runtime.cleanup();
-    }
-    expect(listeners.map((value) => value.size)).toEqual([0, 0]);
-});
-
-it("an additional caller scope cannot extend a connection beyond the runtime's lifetime", async () => {
+it("a nested caller scope cannot extend a connection beyond its platform scope", async () => {
     const { Scope, Exit } = await import("effect");
-    const caller = Effect.runSync(Scope.make());
     const runtime = memoryRuntimeFixture("installation", "bounded-parent");
+    const caller = Effect.runSync(Scope.fork(runtimeFixtureContext(runtime).scope));
     const release = vi.fn();
     let controller!: ConnectionController;
     const manager = await createConnectionManager({
         installationId: "bounded",
-        runtime,
+        runtime: runtimeFixtureContext(runtime).service,
         scope: caller,
         adapter: () =>
             Effect.succeed({
@@ -702,6 +620,66 @@ it("an additional caller scope cannot extend a connection beyond the runtime's l
         expect(manager.connections.size).toBe(0);
     } finally {
         await Effect.runPromise(Scope.close(caller, Exit.void));
+        await manager.cleanup();
+        await runtime.cleanup();
+    }
+});
+
+it("publishes owner-local connection snapshots and fences a restore racing with logout", async () => {
+    const { Stream, Fiber, Scope } = await import("effect");
+    const runtime = memoryRuntimeFixture("installation", "restore-fence");
+    const fixture = runtimeFixtureContext(runtime);
+    const started = Effect.runSync(Deferred.make<void>());
+    const resume = Effect.runSync(Deferred.make<void>());
+    const release = vi.fn();
+    let deferRestore = false;
+    const entry = (): EstablishedConnection => ({
+        connection: { userId: "alice", state: { status: "active" } },
+        session: { disconnect: () => Effect.void, cleanup: () => Effect.sync(release) },
+    });
+    const manager = await createConnectionManager({
+        installationId: "restore-fence",
+        runtime: fixture.service,
+        scope: fixture.scope,
+        adapter: () =>
+            Effect.succeed({
+                name: "test",
+                createAuthenticationClient: () => ({}),
+                restoreConnections: () =>
+                    Effect.gen(function* () {
+                        if (deferRestore) {
+                            yield* Deferred.succeed(started, undefined);
+                            yield* Deferred.await(resume);
+                        }
+                        return [entry()];
+                    }),
+            }),
+    });
+    const states: string[] = [];
+    const fiber = await Effect.runPromise(
+        Scope.provide(
+            Stream.runForEach(manager.connectionChanges, (rows) =>
+                Effect.sync(() => {
+                    states.push(rows[0]?.state.status ?? "absent");
+                })
+            ).pipe(Effect.forkScoped),
+            fixture.scope
+        )
+    );
+    try {
+        await vi.waitFor(() => expect(states).toEqual(["active"]));
+        deferRestore = true;
+        const restoring = manager.refreshConnections();
+        await Effect.runPromise(Deferred.await(started));
+        await manager.disconnect("alice");
+        await Effect.runPromise(Deferred.succeed(resume, undefined));
+        await restoring;
+        expect(manager.connections.get("alice")?.state.status).toBe("inactive");
+        expect(manager.egress("alice")).toBeUndefined();
+        await vi.waitFor(() => expect(states).toEqual(["active", "inactive"]));
+        expect(release).toHaveBeenCalledTimes(2);
+    } finally {
+        await Effect.runPromise(Fiber.interrupt(fiber));
         await manager.cleanup();
         await runtime.cleanup();
     }

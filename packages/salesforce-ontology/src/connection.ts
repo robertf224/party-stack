@@ -1,5 +1,6 @@
 import {
     connectionOperation,
+    ConnectionError,
     type BackendConnectionAdapter,
     type BackendConnectionAdapterContext,
     type BackendConnectionAdapterProvider,
@@ -10,14 +11,15 @@ import {
     withHttpAuthenticationErrorHandling,
 } from "@party-stack/connect";
 import {
-    createClientCredentialsOAuthClient,
-    createPublicOAuthClient,
+    makeClientCredentialsOAuthClient,
+    makePublicOAuthClient,
     type ClientCredentialsOAuthClient,
     type OAuthSession,
     type PublicOAuthClient,
 } from "@party-stack/connect";
 import { unauthenticated } from "@party-stack/ontology-backend";
 import { Effect } from "effect";
+import type { Runtime } from "@party-stack/runtime";
 import type { BrowserAuthenticationPresentation } from "@party-stack/runtime";
 import type { Scope } from "effect";
 
@@ -46,6 +48,8 @@ export interface CreateSalesforceConnectionAdapterOptions {
 }
 
 export interface SalesforceAuthenticationClient {
+    readonly oauthRedirectUrl?: string;
+    beginOAuth(): Promise<{ authorizationUrl: string; redirectUrl: string }>;
     completeOAuthRedirect(url: string): Promise<Connection<"active"> | undefined>;
     signIn: {
         oauth(options?: {
@@ -146,11 +150,11 @@ function createSalesforceEgressWrapper(options: {
 
 const createSalesforceConnectionAdapterInstance = Effect.fn("Salesforce.connections")(function* (
     options: CreateSalesforceConnectionAdapterOptions,
-    context: BackendConnectionAdapterContext
+    _context: BackendConnectionAdapterContext
 ): Effect.fn.Return<
     BackendConnectionAdapter<SalesforceAuthenticationClient>,
     import("@party-stack/connect").ConnectionError,
-    Scope.Scope
+    Scope.Scope | Runtime
 > {
     const oauthOptions = options.oauth;
     const clientCredentialsOptions = options.clientCredentials;
@@ -164,52 +168,39 @@ const createSalesforceConnectionAdapterInstance = Effect.fn("Salesforce.connecti
     const tokenProviders = new Map<string, () => Promise<string>>();
     yield* Effect.addFinalizer(() => Effect.sync(() => tokenProviders.clear()));
     const publicOauth: PublicOAuthClient | undefined = oauthOptions
-        ? yield* Effect.acquireRelease(
-              connectionOperation("oauth.open", async () =>
-                  createPublicOAuthClient({
-                      clientId: oauthOptions.clientId,
-                      redirectUrl: oauthOptions.redirectUrl,
-                      scopes: [...new Set(oauthOptions.scopes ?? DEFAULT_SCOPES)],
-                      authorizationServer: {
-                          issuer: loginUrl,
-                          authorizationEndpoint: `${loginUrl}/services/oauth2/authorize`,
-                          tokenEndpoint: `${loginUrl}/services/oauth2/token`,
-                          revocationEndpoint: `${loginUrl}/services/oauth2/revoke`,
-                      },
-                      runtime: context.runtime,
-                      scope: context.scope,
-                      fetch: oauthOptions.fetch,
-                      resolveUserId: (token) =>
-                          resolveSalesforceUserId({
-                              loginUrl,
-                              token,
-                              fetch: fetchImpl,
-                          }),
-                  })
-              ),
-              (client) => Effect.promise(() => client.cleanup())
-          )
+        ? yield* makePublicOAuthClient({
+              clientId: oauthOptions.clientId,
+              redirectUrl: oauthOptions.redirectUrl,
+              scopes: [...new Set(oauthOptions.scopes ?? DEFAULT_SCOPES)],
+              authorizationServer: {
+                  issuer: loginUrl,
+                  authorizationEndpoint: `${loginUrl}/services/oauth2/authorize`,
+                  tokenEndpoint: `${loginUrl}/services/oauth2/token`,
+                  revocationEndpoint: `${loginUrl}/services/oauth2/revoke`,
+              },
+              fetch: oauthOptions.fetch,
+              resolveUserId: (token) =>
+                  resolveSalesforceUserId({
+                      loginUrl,
+                      token,
+                      fetch: fetchImpl,
+                  }),
+          }).pipe(Effect.mapError((cause) => ConnectionError.from("oauth.open", cause)))
         : undefined;
     const clientCredentialsOauth: ClientCredentialsOAuthClient | undefined = clientCredentialsOptions
-        ? yield* Effect.acquireRelease(
-              connectionOperation("oauth.open", async () =>
-                  createClientCredentialsOAuthClient({
-                      scope: context.scope,
-                      clientId: clientCredentialsOptions.clientId,
-                      clientSecret: clientCredentialsOptions.clientSecret,
-                      tokenEndpoint: `${loginUrl}/services/oauth2/token`,
-                      scopes: clientCredentialsOptions.scopes,
-                      fetch: clientCredentialsOptions.fetch,
-                      resolveUserId: (token) =>
-                          resolveSalesforceUserId({
-                              loginUrl,
-                              token,
-                              fetch: fetchImpl,
-                          }),
-                  })
-              ),
-              (client) => Effect.promise(() => client.cleanup())
-          )
+        ? yield* makeClientCredentialsOAuthClient({
+              clientId: clientCredentialsOptions.clientId,
+              clientSecret: clientCredentialsOptions.clientSecret,
+              tokenEndpoint: `${loginUrl}/services/oauth2/token`,
+              scopes: clientCredentialsOptions.scopes,
+              fetch: clientCredentialsOptions.fetch,
+              resolveUserId: (token) =>
+                  resolveSalesforceUserId({
+                      loginUrl,
+                      token,
+                      fetch: fetchImpl,
+                  }),
+          }).pipe(Effect.mapError((cause) => ConnectionError.from("oauth.open", cause)))
         : undefined;
 
     const createTokenSession = async (
@@ -330,6 +321,11 @@ const createSalesforceConnectionAdapterInstance = Effect.fn("Salesforce.connecti
         name: "salesforce",
         createAuthenticationClient(controller) {
             return {
+                oauthRedirectUrl: oauthOptions?.redirectUrl,
+                async beginOAuth() {
+                    if (!publicOauth) throw unauthenticated("Public OAuth is not configured.");
+                    return publicOauth.beginAuthorization();
+                },
                 async completeOAuthRedirect(url) {
                     if (!publicOauth) return;
                     const session = await publicOauth.completeRedirect(url);

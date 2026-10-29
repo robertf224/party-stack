@@ -1,10 +1,18 @@
 import { Table } from "@party-stack/ontology-storage/tables";
 import { collectByteBlob } from "@party-stack/runtime";
-import { Runtime } from "@party-stack/runtime";
-import { acquireRuntime } from "@party-stack/runtime/testing";
-import { Deferred, Effect, Fiber } from "effect";
+import { Runtime, RuntimePartition } from "@party-stack/runtime";
+import { Deferred, Effect, Fiber, Layer } from "effect";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { layer } from "./WebRuntime.js";
+import { layer as platformLayer } from "./WebRuntime.js";
+const layer = ({
+    owner,
+    namespace,
+    ...options
+}: {
+    owner: string;
+    namespace: string;
+    storage?: "indexeddb" | "memory";
+}) => platformLayer(options).pipe(Layer.provide(Layer.succeed(RuntimePartition)({ owner, namespace })));
 
 afterEach(() => vi.unstubAllGlobals());
 const platform = () => {
@@ -58,14 +66,7 @@ test("interrupting a program closes the whole runtime without an explicit cleanu
 
 test("failed storage acquisition releases earlier platform resources", async () => {
     const p = platform();
-    const close = vi.fn();
-    vi.stubGlobal(
-        "BroadcastChannel",
-        class extends EventTarget {
-            close = close;
-        }
-    );
-    vi.stubGlobal("navigator", { onLine: true, storage: { getDirectory: vi.fn() }, locks: {} });
+    vi.stubGlobal("navigator", { onLine: true, storage: { getDirectory: vi.fn() } });
     vi.stubGlobal("indexedDB", {
         open: () => {
             throw new Error("Storage denied");
@@ -76,35 +77,19 @@ test("failed storage acquisition releases earlier platform resources", async () 
         Effect.result(Runtime.pipe(Effect.provide(layer({ owner: "test", namespace: "denied" }))))
     );
     expect(result._tag).toBe("Failure");
-    expect(close).toHaveBeenCalledOnce();
     expect(p.remove).toHaveBeenCalledTimes(2);
 });
 
-test("unavailable shared APIs require an explicit isolated-memory choice", async () => {
+test("unavailable persistent storage requires an explicit isolated-memory choice", async () => {
     const p = platform();
-    vi.stubGlobal("BroadcastChannel", undefined);
     vi.stubGlobal("indexedDB", undefined);
     const result = await Effect.runPromise(
         Effect.result(Runtime.pipe(Effect.provide(layer({ owner: "test", namespace: "unsupported" }))))
     );
-    expect(result).toMatchObject({ _tag: "Failure", failure: { operation: "webRuntime.ownership" } });
+    expect(result).toMatchObject({ _tag: "Failure", failure: { operation: "webRuntime.storage" } });
     expect(p.add).not.toHaveBeenCalled();
     await Effect.runPromise(
         Runtime.pipe(Effect.provide(layer({ owner: "test", namespace: "isolated", storage: "memory" })))
     );
     expect(p.remove).toHaveBeenCalledTimes(2);
-});
-
-test("the installation factory shares one acquired Layer and disposes it exactly once", async () => {
-    const p = platform();
-    const { createWebRuntime } = await import("./createWebRuntime.js");
-    const { runtimeFixtureContext } = await import("@party-stack/runtime/testing");
-    const adapter = await acquireRuntime(createWebRuntime("test", "factory", { storage: "memory" }));
-    const managed = runtimeFixtureContext(adapter).runtime;
-    const service = await managed.runPromise(Runtime);
-    expect(runtimeFixtureContext(service.adapter).runtime).toBe(managed);
-    expect(p.add).toHaveBeenCalledTimes(2);
-    await Promise.all([adapter.cleanup?.(), adapter.cleanup?.()]);
-    expect(p.remove).toHaveBeenCalledTimes(2);
-    expect(() => runtimeFixtureContext(service.adapter)).toThrow("Runtime is closed");
 });

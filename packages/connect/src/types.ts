@@ -1,6 +1,6 @@
 import type { ConnectionError } from "./ConnectionError.js";
 import type { UnauthenticatedError } from "@party-stack/ontology-backend";
-import type { Runtime, RuntimeAdapter } from "@party-stack/runtime";
+import type { Runtime } from "@party-stack/runtime";
 import type { Effect, Scope, Stream } from "effect";
 
 export type ConnectionState =
@@ -60,8 +60,6 @@ export interface ConnectionController {
 
 export interface BackendConnectionAdapterContext {
     installationId: string;
-    runtime: RuntimeAdapter;
-    scope: Scope.Scope;
 }
 
 export interface BackendConnectionAdapter<AuthenticationClient extends object = object> {
@@ -79,8 +77,10 @@ export interface ConnectionManager<AuthenticationClient extends object = object>
     readonly installationId: string;
     readonly authentication: AuthenticationClient;
     readonly connections: ReadonlyMap<string, Connection>;
-    /** Process-local observer; the service owns shared-table reconciliation. */
+    readonly connectionChanges: Stream.Stream<readonly Connection[]>;
+    /** Observer of the connection records owned by this service. */
     subscribeConnection(userId: string, listener: (state: ConnectionState) => void): () => void;
+    refreshConnections(): Promise<void>;
     disconnect(userId: string): Promise<void>;
     forget(userId: string): Promise<void>;
     reportUnauthenticated(userId: string, error: UnauthenticatedError): Promise<void>;
@@ -93,8 +93,10 @@ export interface ConnectionManagerService<AuthenticationClient extends object = 
     readonly installationId: string;
     readonly authentication: AuthenticationClient;
     readonly connections: ReadonlyMap<string, Connection>;
-    /** Process-local observer; the service owns shared-table reconciliation. */
+    readonly connectionChanges: Stream.Stream<readonly Connection[]>;
+    /** Observer of the connection records owned by this service. */
     subscribeConnection(userId: string, listener: (state: ConnectionState) => void): () => void;
+    refreshConnections(): Effect.Effect<void, ConnectionError>;
     disconnect(userId: string): Effect.Effect<void, ConnectionError>;
     forget(userId: string): Effect.Effect<void, ConnectionError>;
     reportUnauthenticated(userId: string, error: UnauthenticatedError): Effect.Effect<void, ConnectionError>;

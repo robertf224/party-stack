@@ -57,22 +57,19 @@ covered in [native-actions.md](./native-actions.md).
   using mark-and-sweep. Blob metadata, aliases, generation intents and reader/outbox
   roots compose transactionally through ontology-storage. Byte IO uses recovery
   and generation fencing rather than pretending external IO shares a SQL transaction.
-- **Effect lifetimes/platform ownership:** removed Effection and the coordination
-  package. Web, Node and Expo runtime constructors are scoped Effects and Layers;
-  there are no runtime Promise factories or manual runtime cleanup facades.
-  Native installation opens acquire the same runtime service directly. Scope closure
-  interrupts work and releases SQLite/IndexedDB, connectivity subscriptions and channels.
-  Persistent replica hosts use a lifetime Web Lock; RPC remains the standard ontology
-  protocol. Local private projections use storage invalidations, and transactional
-  Connect claims protect token rotation. SDK sessions/sockets remain context-local
-  resources and reconcile external sign-in/logout. Native keyrings compose OS
-  keychain/SecureStore with device encryption; Expo uses its native AES-GCM API.
-- **Browser placement:** persisted SharedWorker owner, memory tab Replicas, Effect
-  RPC transport and helper operations. Parent state/overlay/outbox handoff is atomic;
-  scoped connections forward local work and recover lost replies. Selected snapshots,
-  view-generation fencing, normalized imported tables, client sessions and bounded
-  admission details are implemented. Unsupported worker startup has an in-process
-  fallback protected by Web Locks. See [replica-state.md](./replica-state.md).
+- **Effect lifetimes/platform ownership:** native scoped Runtime Layers, partition
+  requirements and LayerMap acquisition replace callback providers and hidden
+  adapter bindings. Byte drivers are Effect-native. Runtime no longer exposes
+  storageNotifications, actorLiveness, acquireHost, captured Context or Scope.
+  Exclusive-owner restart recovers temporary retention roots without dropping pins
+  or action dependencies. Keyrings compose OS keychain/SecureStore or explicitly
+  opted-in browser keys; credential fallback paths are removed.
+- **Browser placement:** one installation SharedWorker owns Connect, refresh,
+  sessions and persistent ontology partitions. Tabs have memory replicas and local
+  byte caches. Installation controls, connection snapshots and ontology operations
+  share Effect RPC. Browser presentation stays in the page; PKCE/token processing
+  stays in the worker. Idle ontology endpoints are scoped LayerMap entries.
+  Unsupported worker startup fails explicitly; no persistent in-process fallback.
 - **Providers:** Foundry snapshots/actions, shared scoped watcher, receipt-directed
   search reads, native Admin Users queries and metadata snapshots. Salesforce native
   snapshots/actions/query functions and synthetic CRUD receipts. Known identities

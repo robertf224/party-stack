@@ -94,7 +94,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
     options: ReplicaViewOptions
 ): Effect.fn.Return<Omit<LiveOntology, "cleanup" | "destroy">, BackendError, Runtime | Scope.Scope> {
     const services = yield* Runtime;
-    const runtime = services.adapter;
+    const runtime = services;
     const { ir, context, replica } = options;
     const visiblePending = replica.pendingActions;
     const replicaMonitor = yield* makeReplicaMonitor(replica.statuses);

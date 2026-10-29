@@ -100,7 +100,8 @@ test("the synchronous local helper uses owned tables and runtime cleanup closes 
     const adapter = defineRuntimeFixture(() => ({ ...base, tables: make() }))("test", "compatibility-local");
     const options = {
         name: "notes",
-        runtime: adapter,
+        runtime: runtimeFixtureContext(adapter).service,
+        scope: runtimeFixtureContext(adapter).scope,
         getKey: (note: { id: string; title: string }) => note.id,
     };
     const first = createLocalCollection(options);

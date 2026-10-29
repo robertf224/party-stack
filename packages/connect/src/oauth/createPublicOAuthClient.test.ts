@@ -69,7 +69,8 @@ describe("createPublicOAuthClient", () => {
                     tokenEndpoint: "https://auth.example/token",
                     revocationEndpoint: "https://auth.example/revoke",
                 },
-                runtime,
+                runtime: runtimeFixtureContext(runtime).service,
+                scope: runtimeFixtureContext(runtime).scope,
                 fetch,
                 resolveUserId: () => "user-1",
             };
@@ -117,7 +118,8 @@ describe("createPublicOAuthClient", () => {
                     authorizationEndpoint: "https://auth.example/authorize",
                     tokenEndpoint: "https://auth.example/token",
                 },
-                runtime,
+                runtime: runtimeFixtureContext(runtime).service,
+                scope: runtimeFixtureContext(runtime).scope,
                 resolveUserId: () => "user-1",
             })
         ).rejects.toThrow(/requires an encryption keyring/);
@@ -183,7 +185,8 @@ describe("createPublicOAuthClient", () => {
                 authorizationEndpoint: "https://auth.example/authorize",
                 tokenEndpoint: "https://auth.example/token",
             },
-            runtime,
+            runtime: runtimeFixtureContext(runtime).service,
+            scope: runtimeFixtureContext(runtime).scope,
             fetch,
             resolveUserId: () => "user-1",
         });
@@ -250,7 +253,8 @@ it("runtime shutdown aborts token refresh and closes the OAuth owner without dis
         });
     });
     const options = {
-        runtime,
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
         fetch,
         clientId: "client",
         redirectUrl: "https://app.example/callback",
@@ -272,7 +276,11 @@ it("runtime shutdown aborts token refresh and closes the OAuth owner without dis
     expect(await refreshed).toBeInstanceOf(Error);
     await client.cleanup();
     const reopenedRuntime = provider("installation", namespace);
-    const reopened = await createPublicOAuthClient({ ...options, runtime: reopenedRuntime });
+    const reopened = await createPublicOAuthClient({
+        ...options,
+        runtime: runtimeFixtureContext(reopenedRuntime).service,
+        scope: runtimeFixtureContext(reopenedRuntime).scope,
+    });
     try {
         expect((await reopened.restoreSessions()).map((session) => session.userId)).toEqual(["user"]);
         expect(await reopened.getAccessToken("user")).toBe("fixture-access");

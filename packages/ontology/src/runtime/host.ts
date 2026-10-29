@@ -18,7 +18,6 @@ import type { AttachmentTypeDef, OntologyIR } from "@party-stack/ontology-spec";
 import type { attachment } from "@party-stack/ontology-spec/values";
 import type { Row } from "@party-stack/ontology-storage";
 import type { ByteInput } from "@party-stack/ontology-storage/blobs";
-import type { RuntimeAdapter } from "@party-stack/runtime";
 
 const failure = (cause: unknown) =>
     cause instanceof BackendError
@@ -36,7 +35,6 @@ interface ReplicaHostCommonOptions {
     readonly id?: string;
     readonly ir: OntologyIR;
     readonly context: Record<string, unknown>;
-    readonly runtime: RuntimeAdapter;
     readonly writes?: LiveOntologyWrites;
     readonly connection?: ConnectionMonitor;
     readonly gc?: ReplicaOptions["gc"];
@@ -78,7 +76,8 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
     options: ReplicaHostOptions
 ): Effect.fn.Return<ReplicaHostService, BackendError, Runtime | Scope.Scope> {
     const services = yield* Runtime;
-    const { runtime, context, ir } = options;
+    const runtime = services;
+    const { context, ir } = options;
     const backend = options.backend ?? (yield* options.backendAdapter!.open(context));
     const captured = yield* Effect.context<never>();
     const scope = yield* Effect.scope;
@@ -227,14 +226,6 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         gc: options.gc,
         demand: options.demand,
         outbox: options.writes?.outbox,
-        externalChanges: services.externalChanges,
-        publish: services.notify,
-        registerOwner: runtime.actorLiveness
-            ? (owner) => runtime.actorLiveness!.acquire(owner).pipe(Effect.mapError(failure))
-            : undefined,
-        isOwnerAlive: runtime.actorLiveness
-            ? (owner) => runtime.actorLiveness!.isAlive(owner).pipe(Effect.mapError(failure))
-            : undefined,
     });
     return {
         replica,

@@ -1,23 +1,27 @@
-import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
+import {
+    byteSource,
+    collectByteBlob,
+    type ByteInput,
+    type BlobBytesService,
+} from "@party-stack/ontology-storage/blobs";
 import { Effect } from "effect";
-import { BlobBytesNotFoundError } from "../BlobBytesNotFoundError.js";
-import type { BlobBytesStore } from "../types.js";
 
-export class MemoryBlobBytesStore implements BlobBytesStore {
+export class MemoryBlobBytesStore implements BlobBytesService {
     constructor(readonly blobs = new Map<string, Blob>()) {}
 
-    async write(id: string, value: ByteInput, signal?: AbortSignal): Promise<void> {
-        const blob = await Effect.runPromise(collectByteBlob(value), { signal });
-        this.blobs.set(id, blob);
-    }
-
-    read(id: string): Promise<Blob> {
-        const blob = this.blobs.get(id);
-        return blob ? Promise.resolve(blob) : Promise.reject(new BlobBytesNotFoundError(id));
-    }
-
-    delete(id: string): Promise<void> {
-        this.blobs.delete(id);
-        return Promise.resolve();
-    }
+    readonly write = (id: string, value: ByteInput) =>
+        collectByteBlob(value).pipe(
+            Effect.map((blob) => {
+                this.blobs.set(id, blob);
+            })
+        );
+    readonly read = (id: string) =>
+        Effect.sync(() => {
+            const blob = this.blobs.get(id);
+            return blob === undefined ? undefined : byteSource(blob);
+        });
+    readonly delete = (id: string) =>
+        Effect.sync(() => {
+            this.blobs.delete(id);
+        });
 }

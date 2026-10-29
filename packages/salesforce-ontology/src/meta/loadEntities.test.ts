@@ -40,7 +40,6 @@ describe("Salesforce ObjectType metadata queries", () => {
                         describeSObject,
                     } as never,
                 }),
-            persistObjects: false,
         });
 
         try {
@@ -89,7 +88,6 @@ describe("Salesforce ObjectType metadata queries", () => {
                         describeSObject,
                     } as never,
                 }),
-            persistObjects: false,
         });
 
         try {

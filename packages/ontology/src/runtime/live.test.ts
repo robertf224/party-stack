@@ -1,13 +1,13 @@
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { MemoryBlobBytesStore } from "@party-stack/runtime";
-import { asProvider } from "@party-stack/runtime/testing";
+import { MemoryBlobBytesStore, Runtimes } from "@party-stack/runtime";
+import { asRuntimeLayer } from "@party-stack/runtime/testing";
 import { defineRuntimeFixture, runtimeFixtureContext } from "@party-stack/runtime/testing";
-import { queryOnce } from "@tanstack/db";
-import { Effect, Exit, Scope } from "effect";
+import { createLiveQueryCollection, queryOnce } from "@tanstack/db";
+import { Effect, Exit, Scope, Layer, Deferred } from "effect";
 import { expect, test, vi } from "vite-plus/test";
-import { createLiveOntology } from "../live/LiveOntology.js";
+import { createLiveOntology, makeLiveOntology } from "../live/LiveOntology.js";
 import { makeReplicaHost } from "./host.js";
 
 const ir: OntologyIR = {
@@ -43,6 +43,70 @@ const ir: OntologyIR = {
         },
     ],
 };
+
+test.each([false, true])(
+    "live queries publish optimistic edits before the server replies (inspect outbox: %s)",
+    async (inspectOutbox) => {
+        const entered = Effect.runSync(Deferred.make<void>());
+        const release = Effect.runSync(Deferred.make<void>());
+        const owned = await Effect.runPromise(
+            makeOwnedBackend({
+                namespace: "optimistic-publication",
+                ir,
+                tables: await Effect.runPromise(Memory.make()),
+                mutators: {
+                    rename: (tx, request) =>
+                        tx.put("Note", { id: request.parameters.note, title: request.parameters.title }),
+                },
+            })
+        );
+        await Effect.runPromise(
+            owned.storage.transaction((tx) => tx.put("Note", { id: "one", title: "Before" }))
+        );
+        const live = await createLiveOntology({
+            ir,
+            backend: () => ({
+                name: "delayed",
+                open: () =>
+                    Effect.succeed({
+                        ...owned,
+                        applyAction: (request) =>
+                            Deferred.succeed(entered, undefined).pipe(
+                                Effect.andThen(Deferred.await(release)),
+                                Effect.andThen(owned.applyAction(request))
+                            ),
+                    }),
+            }),
+            writes: { defaultMode: "outbox", defaultVisibility: "optimistic" },
+        });
+        const query = createLiveQueryCollection({
+            query: (q) => q.from({ note: live.objects.Note! }).orderBy(({ note }) => note.title, "asc"),
+            gcTime: 0,
+        });
+        const subscription = query.subscribeChanges(() => {});
+        try {
+            await query.preload();
+            expect(query.toArray).toMatchObject([{ id: "one", title: "Before" }]);
+            if (inspectOutbox) await live.outbox.collection._sync.loadSubset({});
+            let confirmed = false;
+            const applying = live.actions.rename!({ note: "one", title: "Optimistic" }).then(() => {
+                confirmed = true;
+            });
+            void applying.catch(() => undefined);
+            await Effect.runPromise(Deferred.await(entered).pipe(Effect.timeout("2 seconds")));
+            await vi.waitFor(() => expect(query.toArray).toMatchObject([{ id: "one", title: "Optimistic" }]));
+            expect(confirmed).toBe(false);
+            await Effect.runPromise(Deferred.succeed(release, undefined));
+            await applying;
+            expect(query.toArray).toMatchObject([{ id: "one", title: "Optimistic" }]);
+        } finally {
+            await Effect.runPromise(Deferred.succeed(release, undefined));
+            subscription.unsubscribe();
+            await query.cleanup();
+            await live.cleanup();
+        }
+    }
+);
 
 test("LiveOntology persists and restores offline projections, exposes local-only inspection, and records Effect spans", async () => {
     const local = await Effect.runPromise(Memory.make());
@@ -114,8 +178,7 @@ test("LiveOntology persists and restores offline projections, exposes local-only
     const settings = {
         ir,
         backend: adapter,
-        runtime: asProvider(runtime),
-        persistObjects: true,
+        runtime: asRuntimeLayer(runtime),
         writes: { defaultMode: "outbox" as const, defaultVisibility: "optimistic" as const },
     };
     const first = await createLiveOntology(settings);
@@ -158,7 +221,7 @@ test("LiveOntology persists and restores offline projections, exposes local-only
     }
 });
 
-test("runtime cleanup closes the ontology's DbClient collections and sync scope", async () => {
+test("closing the owning Effect scope closes DbClient collections and replica fibers", async () => {
     const tables = await Effect.runPromise(Memory.make());
     const backend = await Effect.runPromise(
         makeOwnedBackend({ namespace: "lifetime-server", ir, tables, mutators: {} })
@@ -172,16 +235,24 @@ test("runtime cleanup closes the ontology's DbClient collections and sync scope"
         connectivity: { isConnected: false, subscribe: () => () => undefined },
     }))("user", "lifetime");
     const cleanupBackend = vi.fn();
-    const ontology = await createLiveOntology({
-        ir,
-        runtime: asProvider(() => runtime),
-        backend: () => ({
-            name: "lifetime",
-            open: () => Effect.acquireRelease(Effect.succeed(backend), () => Effect.sync(cleanupBackend)),
-        }),
-        persistObjects: true,
-    });
-    await runtime.cleanup?.();
+    const scope = Effect.runSync(Scope.make());
+    const services = await Effect.runPromise(
+        Layer.buildWithScope(Runtimes.layer(asRuntimeLayer(() => runtime)), scope)
+    );
+    const ontology = await Effect.runPromise(
+        Scope.provide(
+            makeLiveOntology({
+                ir,
+                backend: () => ({
+                    name: "lifetime",
+                    open: () =>
+                        Effect.acquireRelease(Effect.succeed(backend), () => Effect.sync(cleanupBackend)),
+                }),
+            }).pipe(Effect.provideContext(services)),
+            scope
+        )
+    );
+    await Effect.runPromise(Scope.close(scope, Exit.void));
     expect(Object.values(ontology.objects).every((collection) => collection.status === "cleaned-up")).toBe(
         true
     );
@@ -234,7 +305,7 @@ test("a scoped replica host runs without application collections and outlives in
     const secondSession = Effect.runSync(Scope.make());
     try {
         const host = await managed.runPromise(
-            Scope.provide(makeReplicaHost({ ir, context: {}, runtime, backendAdapter: adapter }), owner)
+            Scope.provide(makeReplicaHost({ ir, context: {}, backendAdapter: adapter }), owner)
         );
         await Effect.runPromise(Scope.provide(host.replica.retainLocal("Note"), firstSession));
         await Effect.runPromise(Scope.provide(host.replica.retainLocal("Note"), secondSession));

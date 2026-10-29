@@ -1,5 +1,5 @@
 import type { BlobStorageService, ByteInput, ByteSource } from "@party-stack/ontology-storage/blobs";
-import type { RuntimeAdapter } from "@party-stack/runtime";
+import type { RuntimeService } from "@party-stack/runtime";
 import type { Scope } from "effect";
 
 export interface PartialBlobMetadata {
@@ -44,8 +44,8 @@ export interface BlobManager {
 }
 
 export interface BlobManagerOptions {
-    runtime: RuntimeAdapter;
-    scope?: Scope.Scope;
+    runtime: RuntimeService;
+    scope: Scope.Scope;
     remote: BlobRemoteSource;
     gcTime?: number;
 }

@@ -3,6 +3,7 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { MemoryBlobBytesStore, Runtime } from "@party-stack/runtime";
+import { makeTestRuntime } from "@party-stack/runtime/testing";
 import { queryOnce } from "@tanstack/db";
 import { Effect, Layer } from "effect";
 import { RpcTest } from "effect/rpc";
@@ -42,7 +43,7 @@ test("framework composition retains platform/transport after acquisition, confir
                     released.push("runtime");
                 })
             );
-            return yield* Runtime.make({
+            return yield* makeTestRuntime({
                 owner: "test",
                 namespace: "client",
                 blobBytes: new MemoryBlobBytesStore(),
@@ -124,7 +125,7 @@ test("framework composition retains platform/transport after acquisition, confir
     expect(live.objects.Counter!.status).toBe("cleaned-up");
 });
 
-test("startup failure closes the partial transport and platform and preserves the typed error", async () => {
+test("failed description closes the partial transport before platform acquisition and preserves the typed error", async () => {
     const released: string[] = [];
     const failure = new BackendError({
         operation: "worker.connect",
@@ -140,7 +141,7 @@ test("startup failure closes the partial transport and platform and preserves th
                     released.push("runtime");
                 })
             );
-            return yield* Runtime.make({
+            return yield* makeTestRuntime({
                 owner: "test",
                 namespace: "failure",
                 blobBytes: new MemoryBlobBytesStore(),
@@ -156,5 +157,5 @@ test("startup failure closes the partial transport and platform and preserves th
         return yield* failure;
     });
     await expect(createConnectedLiveOntology({ ir, runtime, connection })).rejects.toBe(failure);
-    expect(released).toEqual(["transport", "runtime"]);
+    expect(released).toEqual(["transport"]);
 });

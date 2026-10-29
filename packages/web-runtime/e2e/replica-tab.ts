@@ -2,7 +2,7 @@ import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
 import { makeReplica } from "@party-stack/ontology-replica";
 import { connectOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
 import { makeReplicatedCollection } from "@party-stack/ontology/tanstack";
-import { Runtime } from "@party-stack/runtime";
+import { Runtime, RuntimePartition } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
 import { Context, Effect, Layer, ManagedRuntime } from "effect";
 import * as WebRuntime from "../src/WebRuntime.js";
@@ -28,7 +28,6 @@ const makeTab = Effect.gen(function* () {
         tables: runtime.tables,
         source,
         execute: increment,
-        gc: false,
     });
     const collection = yield* makeReplicatedCollection<{ id: string; count: number }>({
         id: "counter",
@@ -43,7 +42,11 @@ class Tab extends Context.Service<Tab, Effect.Success<typeof makeTab>>()("test/T
 const app = ManagedRuntime.make(
     Layer.effect(Tab, makeTab).pipe(
         Layer.provide(
-            WebRuntime.layer({ owner: "tab-test", namespace: crypto.randomUUID(), storage: "memory" })
+            WebRuntime.layer({ storage: "memory" }).pipe(
+                Layer.provide(
+                    Layer.succeed(RuntimePartition)({ owner: "tab-test", namespace: crypto.randomUUID() })
+                )
+            )
         )
     )
 );

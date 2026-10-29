@@ -1,6 +1,6 @@
 import { classifyBackendFailure } from "@party-stack/ontology-backend";
-import { getRuntime } from "@party-stack/runtime";
-import { Effect, Exit, Fiber, Scope } from "effect";
+import { Runtime } from "@party-stack/runtime";
+import { Context, Effect, Exit, Fiber, Scope } from "effect";
 import { makeBlobManager, type BlobManagerService } from "./BlobManager.js";
 import type { BlobManager, BlobManagerOptions } from "./types.js";
 import type { BackendError } from "@party-stack/ontology-backend";
@@ -24,10 +24,9 @@ export function blobManagerClient(
 }
 
 export function createBlobManager(options: BlobManagerOptions): BlobManager {
-    const runtime = getRuntime(options.runtime);
-    const owner = Effect.runSync(Scope.fork(runtime.scope));
-    if (options.scope) Effect.runSync(Scope.addFinalizer(options.scope, Scope.close(owner, Exit.void)));
-    const run = Effect.runPromiseWith(runtime.context);
+    const runtime = options.runtime;
+    const owner = Effect.runSync(Scope.fork(options.scope));
+    const run = Effect.runPromiseWith(Context.make(Runtime, runtime));
     const initialized = run(
         Effect.flatMap(
             Effect.forkIn(

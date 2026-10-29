@@ -34,7 +34,7 @@ export const makeLiveDecryption = Effect.fnUntraced(function* (options: {
 }) {
     const runtime = yield* Runtime;
     const { backend, ir } = options;
-    const namespace = JSON.stringify(["decrypted-cache", runtime.adapter.owner, runtime.adapter.namespace]);
+    const namespace = JSON.stringify(["decrypted-cache", runtime.owner, runtime.namespace]);
     const CachedPlaintext = Schema.Struct({ binding: Schema.String, value: Schema.Unknown });
     const parse = (value: Encrypted) =>
         Effect.try({

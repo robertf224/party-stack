@@ -2,6 +2,7 @@ import { createOntologyClient } from "@party-stack/foundry-client";
 import {
     createMetaOntologyConfiguration,
     createOntologyBackendInstallation,
+    makeOntologyBackendInstallation,
     type LiveOntologyWrites,
     type OntologyBackendInstallation,
     type ConfigureOntologyOptions,
@@ -21,7 +22,7 @@ import {
 import { createFoundryMetaOntologyBackendAdapter } from "../meta/createFoundryMetaOntologyBackendAdapter.js";
 import type { BackendConnectionAdapterProvider, ConnectionEgress } from "@party-stack/connect";
 import type { OntologyIR } from "@party-stack/ontology";
-import type { RuntimeAdapterProvider } from "@party-stack/runtime";
+import type { RuntimeLayer } from "@party-stack/runtime";
 
 export type FoundryConnectionOptions = Omit<CreateFoundryConnectionAdapterOptions, "baseUrl">;
 export type FoundryOntologyRoute = (baseUrl: string) => OntologyRoute;
@@ -31,7 +32,7 @@ export interface CreateFoundryBackendInstallationOptions<
 > {
     installationId?: string;
     baseUrl: string;
-    runtime: RuntimeAdapterProvider;
+    runtime: RuntimeLayer;
     connections: FoundryConnectionOptions | BackendConnectionAdapterProvider<AuthenticationClient>;
     routes: readonly FoundryOntologyRoute[];
     createContext?: (userId: string, ontologyId: string) => Record<string, unknown>;
@@ -70,7 +71,6 @@ export function createFoundryOntologyRoute(options: {
     ir?: OntologyIR;
     users?: FoundryUsersIntegration | ((userId: string) => FoundryUsersIntegration);
     watch?: boolean;
-    persistObjects?: boolean;
     writes?: LiveOntologyWrites;
     /** Metadata polling interval in milliseconds, or false to disable. Only applies when IR is omitted. */
     metaRefetchInterval?: number | false;
@@ -93,7 +93,6 @@ export function createFoundryOntologyRoute(options: {
                                 : options.users,
                         watch: options.watch,
                     }),
-                    persistObjects: options.persistObjects,
                     writes: options.writes,
                 };
             };
@@ -124,5 +123,24 @@ export function createFoundryBackendInstallation<
         routes: options.routes.map((route) => route(options.baseUrl)),
         createContext: options.createContext,
         openOntology: options.openOntology,
+    });
+}
+
+/** Native construction; platform partitions are supplied through the Runtimes Layer. */
+export function makeFoundryBackendInstallation<
+    AuthenticationClient extends object = FoundryAuthenticationClient,
+>(options: Omit<CreateFoundryBackendInstallationOptions<AuthenticationClient>, "runtime" | "openOntology">) {
+    const connections =
+        typeof options.connections === "function"
+            ? options.connections
+            : (createFoundryConnectionAdapter({
+                  ...options.connections,
+                  baseUrl: options.baseUrl,
+              }) as BackendConnectionAdapterProvider<AuthenticationClient>);
+    return makeOntologyBackendInstallation<AuthenticationClient>({
+        installationId: options.installationId ?? new URL(options.baseUrl).origin,
+        connections,
+        routes: options.routes.map((route) => route(options.baseUrl)),
+        createContext: options.createContext,
     });
 }

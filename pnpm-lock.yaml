@@ -1730,6 +1730,9 @@ importers:
 
   packages/ontology-server:
     dependencies:
+      '@party-stack/connect':
+        specifier: workspace:*
+        version: link:../connect
       '@party-stack/ontology':
         specifier: workspace:*
         version: link:../ontology
@@ -2079,6 +2082,9 @@ importers:
       '@party-stack/build-config':
         specifier: workspace:*
         version: link:../build-config
+      '@party-stack/connect':
+        specifier: workspace:*
+        version: link:../connect
       '@party-stack/ontology':
         specifier: workspace:*
         version: link:../ontology

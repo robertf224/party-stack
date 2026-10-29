@@ -77,9 +77,9 @@ async function main(): Promise<void> {
             .description(`Pull ontology metadata using ${ONTOLOGY_PULL_CONFIG_PATH}`)
             .action(async () => {
                 const config = await loadOntologyPullConfig(configPath);
-                const { createNodeRuntime } = await import("@party-stack/node-runtime");
+                const { layer: nodeRuntimeLayer } = await import("@party-stack/node-runtime");
                 await writePulledOntology(config, ontologyPath, {
-                    runtime: createNodeRuntime,
+                    runtime: nodeRuntimeLayer(),
                 });
                 console.log(`Generated ontology written to: ${ontologyPath}`);
             });

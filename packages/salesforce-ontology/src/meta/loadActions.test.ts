@@ -23,7 +23,6 @@ describe("Salesforce ActionType metadata queries", () => {
                         describeStandardAction,
                     } as never,
                 }),
-            persistObjects: false,
         });
 
         try {
@@ -92,7 +91,6 @@ describe("Salesforce ActionType metadata queries", () => {
                         describeStandardAction,
                     } as never,
                 }),
-            persistObjects: false,
         });
 
         try {
@@ -162,7 +160,6 @@ describe("Salesforce ActionType metadata queries", () => {
                         },
                     ],
                 }),
-            persistObjects: false,
         });
 
         try {

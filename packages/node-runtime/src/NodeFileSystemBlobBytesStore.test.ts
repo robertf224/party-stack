@@ -14,7 +14,7 @@ afterEach(async () => {
             const store = new NodeFileSystemBlobBytesStore({
                 directory,
             });
-            await store.clear();
+            await Effect.runPromise(store.clear());
         })
     );
 });
@@ -27,12 +27,16 @@ describe("NodeFileSystemBlobBytesStore", () => {
             directory,
         });
 
-        await store.write("../../outside", new Blob(["hello"]));
+        await Effect.runPromise(store.write("../../outside", new Blob(["hello"])));
 
         await expect(
-            (await Effect.runPromise(collectByteBlob(await store.read("../../outside")))).text()
+            (
+                await Effect.runPromise(
+                    collectByteBlob((await Effect.runPromise(store.read("../../outside")))!)
+                )
+            ).text()
         ).resolves.toBe("hello");
-        await expect(store.read("outside")).rejects.toThrow('Blob bytes not found for "outside".');
+        expect(await Effect.runPromise(store.read("outside"))).toBeUndefined();
     });
 
     it("deletes missing and existing blobs idempotently", async () => {
@@ -42,10 +46,10 @@ describe("NodeFileSystemBlobBytesStore", () => {
             directory,
         });
 
-        await store.write("one", new Blob(["one"]));
-        await store.delete("one");
-        await store.delete("one");
+        await Effect.runPromise(store.write("one", new Blob(["one"])));
+        await Effect.runPromise(store.delete("one"));
+        await Effect.runPromise(store.delete("one"));
 
-        await expect(store.read("one")).rejects.toThrow('Blob bytes not found for "one".');
+        expect(await Effect.runPromise(store.read("one"))).toBeUndefined();
     });
 });

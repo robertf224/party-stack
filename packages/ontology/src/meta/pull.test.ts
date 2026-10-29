@@ -1,6 +1,6 @@
 import { o } from "@party-stack/ontology-spec";
 import { context, eq, field, selectField, sub } from "@party-stack/ontology-spec/query";
-import { asProvider, memoryRuntimeFixture } from "@party-stack/runtime/testing";
+import { asRuntimeLayer, memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { expect, test } from "vite-plus/test";
 import { createLocalMetaOntologyBackendAdapter } from "./createLocalMetaOntologyBackendAdapter.js";
 import { createMetaLiveOntology } from "./generated/live.js";
@@ -48,7 +48,7 @@ test("metadata pull preserves the descriptor contract and transitive context/val
     };
     const live = await createMetaLiveOntology({
         backend: () => createLocalMetaOntologyBackendAdapter(ir),
-        runtime: asProvider(memoryRuntimeFixture),
+        runtime: asRuntimeLayer(memoryRuntimeFixture),
     });
     try {
         const result = await pull(live, {

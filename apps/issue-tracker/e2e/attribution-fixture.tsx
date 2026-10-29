@@ -2,15 +2,10 @@ import { createLiveOntology, o, type OntologyIR } from "@party-stack/ontology";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { OntologyDevtoolsPanel } from "@party-stack/ontology-devtools";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import {
-    memoryRuntimeFixture,
-    defineRuntimeFixture,
-    runtimeFixtureContext,
-    asProvider,
-} from "@party-stack/runtime/testing";
+import { MemoryRuntime, Runtime, type RuntimeService } from "@party-stack/runtime";
 import { createLiveQueryCollection, eq } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
-import { Effect } from "effect";
+import { Effect, Layer, Tracer } from "effect";
 import { StrictMode, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -49,15 +44,20 @@ const backend = await Effect.runPromise(
 );
 await Effect.runPromise(backend.applyAction({ id: "seed", name: "seed", parameters: {} }));
 let loads = 0;
-const fixtureRuntime = defineRuntimeFixture((owner, namespace) => ({
-    ...memoryRuntimeFixture(owner, namespace),
-    tables: Memory.make(),
-}))("anonymous", "attribution-fixture");
+let fixtureRuntime: RuntimeService;
 const ontology = await createLiveOntology<Definition>({
     id: "attribution-fixture",
     ir,
-    persistObjects: true,
-    runtime: asProvider(() => fixtureRuntime),
+    runtime: Layer.effect(
+        Runtime,
+        MemoryRuntime.make().pipe(
+            Effect.tap((runtime) =>
+                Effect.sync(() => {
+                    fixtureRuntime = runtime;
+                })
+            )
+        )
+    ),
     backend: () => ({
         name: "fixture",
         open: () =>
@@ -112,9 +112,10 @@ const inspectedOntology = {
 };
 
 async function recordTraceFixtures() {
-    const runtime = runtimeFixtureContext(fixtureRuntime).runtime;
+    const run = <A, E>(effect: Effect.Effect<A, E>) =>
+        Effect.runPromise(effect.pipe(Effect.provideService(Tracer.Tracer, fixtureRuntime.traces.tracer)));
     for (const name of ["Demand", "Traces"])
-        await runtime.runPromise(
+        await run(
             Effect.exit(
                 Effect.gen(function* () {
                     const span = yield* Effect.currentSpan;
@@ -123,8 +124,8 @@ async function recordTraceFixtures() {
                 }).pipe(Effect.withSpan(name, { attributes: { activity: "subscription" } }))
             )
         );
-    await runtime.runPromise(Effect.exit(Effect.interrupt.pipe(Effect.withSpan("Fixture.cancelled"))));
-    await runtime.runPromise(
+    await run(Effect.exit(Effect.interrupt.pipe(Effect.withSpan("Fixture.cancelled"))));
+    await run(
         Effect.exit(
             Effect.fail(new Error("Fixture connection refused")).pipe(Effect.withSpan("Fixture.failure"))
         )

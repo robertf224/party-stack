@@ -1,7 +1,7 @@
 import { o } from "@party-stack/ontology-spec";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { MemoryBlobBytesStore } from "@party-stack/runtime";
-import { asProvider } from "@party-stack/runtime/testing";
+import { asRuntimeLayer } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createLiveOntology } from "../LiveOntology.js";
@@ -223,7 +223,7 @@ describe("createLiveOntologyAttachments", () => {
         const ontology = await createLiveOntology({
             ir,
             backend: () => backendAdapter,
-            runtime: asProvider(() => runtime),
+            runtime: asRuntimeLayer(() => runtime),
         });
 
         const creation = await ontology.attachments.create(new Blob(["hello"]), {
@@ -272,7 +272,7 @@ describe("createLiveOntologyAttachments", () => {
         const ontology = await createLiveOntology({
             ir,
             backend: () => backendAdapter,
-            runtime: asProvider(() => runtime),
+            runtime: asRuntimeLayer(() => runtime),
         });
 
         const creation = await ontology.attachments.create(new Blob(["hello"]));
@@ -305,7 +305,7 @@ describe("createLiveOntologyAttachments", () => {
         const ontology = await createLiveOntology({
             ir,
             backend: () => backendAdapter,
-            runtime: asProvider(() => runtime),
+            runtime: asRuntimeLayer(() => runtime),
         });
 
         const creation = await ontology.attachments.create(new Blob(["hello"]), {
@@ -350,7 +350,7 @@ describe("createLiveOntologyAttachments", () => {
         const ontology = await createLiveOntology({
             ir: actionIr,
             backend: () => backendAdapter,
-            runtime: asProvider(() => runtime),
+            runtime: asRuntimeLayer(() => runtime),
         });
         const { attachment } = await ontology.attachments.create(new Blob(["hello"]), {
             id: "local-id",

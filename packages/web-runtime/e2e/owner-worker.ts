@@ -2,8 +2,8 @@ import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunn
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica, replicaStateSource } from "@party-stack/ontology-replica";
 import { serveOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
-import { Runtime } from "@party-stack/runtime";
-import { Effect, Fiber } from "effect";
+import { Runtime, RuntimePartition } from "@party-stack/runtime";
+import { Effect, Fiber, Layer } from "effect";
 import * as WebRuntime from "../src/WebRuntime.js";
 import { increment, ir } from "./replica-fixture.js";
 
@@ -31,5 +31,11 @@ Effect.runFork(
             }).pipe(Effect.provide(BrowserWorkerRunner.layer));
             yield* Fiber.join(server);
         })
-    ).pipe(Effect.provide(WebRuntime.layer({ owner: "worker-test", namespace })))
+    ).pipe(
+        Effect.provide(
+            WebRuntime.layer().pipe(
+                Layer.provide(Layer.succeed(RuntimePartition)({ owner: "worker-test", namespace }))
+            )
+        )
+    )
 );

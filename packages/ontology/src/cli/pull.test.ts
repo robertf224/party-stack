@@ -1,10 +1,11 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MemoryRuntime } from "@party-stack/runtime";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { writePulledOntology } from "./pull.js";
 import type { OntologyIR, OntologyPullConfig } from "../index.js";
-import type { RuntimeAdapterProvider } from "@party-stack/runtime";
+import type { RuntimeLayer } from "@party-stack/runtime";
 
 const mocks = vi.hoisted(() => ({
     pull: vi.fn(),
@@ -44,7 +45,7 @@ describe("writePulledOntology", () => {
     it("opens metadata through the source installation", async () => {
         const directory = await mkdtemp(join(tmpdir(), "ontology-pull-"));
         directories.push(directory);
-        const runtime = vi.fn() as unknown as RuntimeAdapterProvider;
+        const runtime = vi.fn() as unknown as RuntimeLayer;
         const liveOntology = { id: "meta" };
         const cleanup = vi.fn(() => Promise.resolve());
         const openMetaOntology = vi.fn(() => Promise.resolve(liveOntology));
@@ -120,7 +121,7 @@ describe("writePulledOntology", () => {
 
         await expect(
             writePulledOntology(config, join(directory, "ontology.ts"), {
-                runtime: vi.fn(),
+                runtime: MemoryRuntime.layer,
             })
         ).rejects.toThrow("transform failed");
         expect(cleanup).toHaveBeenCalledOnce();
@@ -150,7 +151,7 @@ describe("writePulledOntology", () => {
 
         await expect(
             writePulledOntology(config, join(directory, "ontology.ts"), {
-                runtime: vi.fn(),
+                runtime: MemoryRuntime.layer,
             })
         ).rejects.toThrow("open failed");
         expect(cleanup).toHaveBeenCalledOnce();

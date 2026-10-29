@@ -9,6 +9,7 @@ import {
 import { replicaStateSource } from "@party-stack/ontology-replica";
 import { byteSource, collectByteBlob, makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import { MemoryBlobBytesStore, Runtime } from "@party-stack/runtime";
+import { makeTestRuntime } from "@party-stack/runtime/testing";
 import { Deferred, Effect, Fiber, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
 import { expect, test, vi } from "vite-plus/test";
@@ -49,7 +50,7 @@ test("an owned RPC parent accepts locally staged child attachments through its c
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const authority = yield* Runtime.make({
+                const authority = yield* makeTestRuntime({
                     owner: "authority",
                     namespace: "committed",
                     blobBytes: new MemoryBlobBytesStore(),
@@ -71,7 +72,7 @@ test("an owned RPC parent accepts locally staged child attachments through its c
                 );
                 const connection = yield* makeOntologyProtocolClient(rpc);
                 expect(connection.replication.kind).toBe("committed");
-                const childRuntime = yield* Runtime.make({
+                const childRuntime = yield* makeTestRuntime({
                     owner: "user",
                     namespace: "committed-child",
                     blobBytes: new MemoryBlobBytesStore(),
@@ -101,7 +102,7 @@ test("a speculative client stages locally, transfers before acceptance, and stre
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const authorityRuntime = yield* Runtime.make({
+                const authorityRuntime = yield* makeTestRuntime({
                     owner: "authority",
                     namespace: "authority",
                     blobBytes: new MemoryBlobBytesStore(),
@@ -163,14 +164,14 @@ test("a speculative client stages locally, transfers before acceptance, and stre
                     },
                 };
                 const parentBytes = new MemoryBlobBytesStore();
-                const parentRuntime = yield* Runtime.make({
+                const parentRuntime = yield* makeTestRuntime({
                     owner: "user",
                     namespace: "parent",
                     blobBytes: parentBytes,
                 });
                 const parent = yield* makeReplicaLiveOntology({
                     ir,
-                    runtime: parentRuntime.adapter,
+
                     context: {},
                     backendAdapter: { name: "authority", open: () => Effect.succeed(backend) },
                     writes: { defaultMode: "outbox", defaultVisibility: "optimistic", mutators },
@@ -193,7 +194,7 @@ test("a speculative client stages locally, transfers before acceptance, and stre
                 );
                 const connection = yield* makeOntologyProtocolClient(rpc);
                 const childBytes = new MemoryBlobBytesStore();
-                const childRuntime = yield* Runtime.make({
+                const childRuntime = yield* makeTestRuntime({
                     owner: "user",
                     namespace: "child",
                     blobBytes: childBytes,

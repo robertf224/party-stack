@@ -314,9 +314,6 @@ interface ReplicaCommonOptions {
         | false
         | { readonly intervalMs?: number; readonly olderThanMs?: number; readonly limit?: number };
     readonly publish?: Effect.Effect<void>;
-    readonly externalChanges?: Stream.Stream<void>;
-    readonly registerOwner?: (owner: string) => Effect.Effect<void, BackendError, Scope.Scope>;
-    readonly isOwnerAlive?: (owner: string) => Effect.Effect<boolean, BackendError>;
 }
 /** Use a provider/owned backend binding or a protocol source, never both.
  * Both paths own ordinary local row and attachment retention.
@@ -450,11 +447,6 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             gc.limit > 10_000)
     )
         return yield* fault("InvalidConfiguration", "Invalid automatic GC policy.");
-    if (Boolean(options.registerOwner) !== Boolean(options.isOwnerAlive))
-        return yield* fault(
-            "InvalidConfiguration",
-            "Owner registration and liveness checks must be supplied together."
-        );
     const schemas = yield* Effect.try({
         try: () => compileEffectSchemas(options.ir),
         catch: (cause) => fault("InvalidConfiguration", "Invalid ontology definition.", cause),
@@ -549,7 +541,6 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     });
     const sweep = Table.make<{ after?: Cursor }>({ name: name("sweep") });
     const rootOwner = crypto.randomUUID();
-    if (options.registerOwner) yield* options.registerOwner(rootOwner);
     const rootCounts = new Map<string, number>();
     const rootGate = yield* Semaphore.make(1);
     const pins = Table.make<{ objectType: string; key: Key }>({ name: name("pins") });
@@ -999,6 +990,9 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         tables.transaction((tx) =>
             Effect.gen(function* () {
                 yield* tx.put(metadata, "head", yield* position(tx));
+                // One designated owner opens this namespace. Query/read leases from
+                // a previous incarnation are volatile; pins and outbox roots are separate.
+                yield* tx.clear(roots);
                 yield* tx.ensureIndex(roots, { name: "objectType", field: field("objectType") });
                 yield* tx.ensureIndex(retention, { name: "accessedAt", field: field("accessedAt") });
                 yield* tx.ensureIndex(outbox, { name: "sequence", field: field("sequence") });
@@ -3645,9 +3639,8 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             const removed = yield* access(
                 tables.transaction((tx) =>
                     Effect.gen(function* () {
-                        // Root leases are in the same database, so another tab's demand/read
-                        // acquisition and this sweep serialize with each other. Unknown crashed
-                        // owners remain conservative roots until an explicit owner-recovery pass.
+                        // Client demand is owned here through RPC scopes/session leases.
+                        // Acquisition and collection share the metadata transaction.
                         const cursor = (yield* tx.get(sweep, "position"))?.after;
                         const candidates = yield* tx.loadSubset(retention, {
                             where: lte(field("accessedAt"), now - age),
@@ -3665,9 +3658,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             for (const root of yield* tx.loadSubset(roots, {
                                 where: eq(field("objectType"), objectType),
                             })) {
-                                if (!options.isOwnerAlive || (yield* options.isOwnerAlive(root.value.owner)))
-                                    queries.push(root.value.query ?? {});
-                                else yield* tx.delete(roots, root.key);
+                                queries.push(root.value.query ?? {});
                             }
                             for (const root of yield* tx.loadSubset(actionQueries, {
                                 where: eq(field("subset", "objectType"), objectType),
@@ -3849,9 +3840,5 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             )
         );
     }
-    if (options.externalChanges)
-        yield* Effect.forkScoped(
-            Stream.runForEach(options.externalChanges, () => localNotify.pipe(Effect.andThen(wake)))
-        );
     return service;
 });

@@ -48,6 +48,8 @@ import {
     Columns3 as ViewColumnsIcon,
 } from "lucide-react";
 import {
+    memo,
+    useDeferredValue,
     useEffect,
     useId,
     useMemo,
@@ -775,7 +777,7 @@ function AttachmentPreview({ attachment, ontology }: { attachment: v.attachment;
     );
 }
 
-function PropertyValuePreview({
+const PropertyValuePreview = memo(function PropertyValuePreview({
     ir,
     ontology,
     type,
@@ -831,7 +833,7 @@ function PropertyValuePreview({
             {formatted}
         </span>
     );
-}
+});
 
 function defaultColumnSize(ir: OntologyIR, type: TypeDef): number {
     switch (resolvedType(ir, type).kind) {
@@ -926,7 +928,9 @@ function ObjectTable({
         { pageSize },
         [collection.id, objectType.primaryKey, pageSize, selectedSort?.id, selectedSort?.desc]
     );
-    const rows = data as Array<Record<string, unknown>>;
+    // Inspection can follow the app's urgent optimistic render. A wide table
+    // must not delay a click's visible result while formatting every cell.
+    const rows = useDeferredValue(data) as Array<Record<string, unknown>>;
     const columns = useMemo(
         () =>
             objectType.properties.map((property) =>
@@ -1294,7 +1298,15 @@ function ObjectTable({
     );
 }
 
-function ObjectsView({ ontology, pageSize = 50 }: { ontology: LiveOntology; pageSize?: number }) {
+// Outbox badge/status updates must not rerender the inspector's table. Its own
+// live query still updates changed rows; unchanged property previews can be reused.
+const ObjectsView = memo(function ObjectsView({
+    ontology,
+    pageSize = 50,
+}: {
+    ontology: LiveOntology;
+    pageSize?: number;
+}) {
     const objectTypes = ontology.ir.objectTypes;
     const [selectedName, setSelectedName] = useState(() => objectTypes[0]?.name);
     const selected = objectTypes.find((objectType) => objectType.name === selectedName) ?? objectTypes[0];
@@ -1343,7 +1355,7 @@ function ObjectsView({ ontology, pageSize = 50 }: { ontology: LiveOntology; page
             />
         </div>
     );
-}
+});
 
 export function OntologyDevtoolsPanel<
     Ontology extends OntologyDefinition,

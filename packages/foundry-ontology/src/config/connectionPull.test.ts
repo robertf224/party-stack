@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { RuntimeAdapterProvider } from "@party-stack/runtime";
+import type { RuntimeLayer } from "@party-stack/runtime";
 
 const mocks = vi.hoisted(() => ({
     createFoundryBackendInstallation: vi.fn(),
@@ -51,7 +51,7 @@ describe("Foundry connection-backed pull", () => {
     it("creates a metadata-capable backend installation", async () => {
         const backendInstallation = installation();
         mocks.createFoundryBackendInstallation.mockResolvedValue(backendInstallation);
-        const runtime = vi.fn() as unknown as RuntimeAdapterProvider;
+        const runtime = vi.fn() as unknown as RuntimeLayer;
         const source = createFoundryOntologyPullSource({
             baseUrl: "https://foundry.example",
             ontologyRid: "ri.ontology.main",

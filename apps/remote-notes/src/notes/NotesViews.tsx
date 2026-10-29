@@ -1,6 +1,6 @@
 import { createOntologyDevtoolsPlugin, ontologyDevtoolsTrigger } from "@party-stack/ontology-devtools";
 import { connectOntologyBackendHttp } from "@party-stack/ontology-server/rpc/http";
-import { createWebRuntime } from "@party-stack/web-runtime";
+import { layer as webRuntimeLayer } from "@party-stack/web-runtime";
 import { ilike, or } from "@tanstack/db";
 import { debounceStrategy, useLiveQuery, usePacedMutations } from "@tanstack/react-db";
 import { TanStackDevtools } from "@tanstack/react-devtools";
@@ -79,8 +79,7 @@ function createClientOntology(userEmail: string) {
     return createRemoteNotesLiveOntology({
         backend,
         id: "remote-notes-rpc",
-        runtime: createWebRuntime,
-        persistObjects: true,
+        runtime: webRuntimeLayer(),
         writes: {
             defaultMode: "outbox",
             defaultVisibility: "optimistic",

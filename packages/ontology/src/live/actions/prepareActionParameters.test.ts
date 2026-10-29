@@ -1,6 +1,7 @@
 import { classifyBackendFailure } from "@party-stack/ontology-backend";
 import { o } from "@party-stack/ontology-spec";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
+import { runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -33,7 +34,8 @@ describe("prepareActionParameters", () => {
     it("collects action attachment uploads with resolved attachment type targets", async () => {
         const runtime = memoryRuntimeFixture("test", "prepare-action");
         const blobManager = createBlobManager({
-            runtime,
+            runtime: runtimeFixtureContext(runtime).service,
+            scope: runtimeFixtureContext(runtime).scope,
             remote: {
                 metadata: (id) => Promise.resolve({ id, size: 0, type: "", name: "" }),
                 read: () => Promise.reject(new Error("unexpected remote read")),
@@ -76,7 +78,11 @@ describe("prepareActionParameters", () => {
     it("leaves remote handles unchanged without downloading cached or unseen bytes", async () => {
         const runtime = memoryRuntimeFixture("test", "remote-action");
         const remoteRead = vi.fn(() => Promise.reject(new Error("must not download")));
-        const manager = createBlobManager({ runtime, remote: { read: remoteRead } });
+        const manager = createBlobManager({
+            runtime: runtimeFixtureContext(runtime).service,
+            scope: runtimeFixtureContext(runtime).scope,
+            remote: { read: remoteRead },
+        });
         await manager.stage("local-id", new Blob(["hello"]));
         await manager.bindRemoteId("local-id", "remote-id");
         for (const id of ["remote-id", "unseen-remote-id"]) {

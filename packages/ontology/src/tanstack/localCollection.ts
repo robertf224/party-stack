@@ -1,27 +1,25 @@
-import { Runtime, getRuntime } from "@party-stack/runtime";
+import { Runtime } from "@party-stack/runtime";
 import { BasicIndex, createCollection } from "@tanstack/db";
-import { Effect, Exit, Scope } from "effect";
+import { Context, Effect, Exit, Scope } from "effect";
 import { localCollectionOptions } from "./collections.js";
-import type { RuntimeAdapter } from "@party-stack/runtime";
+import type { RuntimeService } from "@party-stack/runtime";
 import type { Collection, CollectionConfig } from "@tanstack/db";
 
 /** Synchronous application boundary; storage acquisition and all work stay in the runtime's scope. */
 export function createEffectLocalCollection<A extends object, K extends string | number>(options: {
     name: string;
     getKey: (value: A) => K;
-    runtime: RuntimeAdapter;
+    runtime: RuntimeService;
     schemaVersion?: number;
-    scope?: Scope.Scope;
+    scope: Scope.Scope;
 }): Collection<A, K> {
-    const managed = { runPromise: Effect.runPromiseWith(getRuntime(options.runtime).context) };
+    const managed = { runPromise: Effect.runPromiseWith(Context.make(Runtime, options.runtime)) };
     let closed = false;
     let collection: Collection<A, K>;
     let scopeClosing = false;
     const initialized = managed.runPromise(
         Effect.gen(function* () {
-            const runtime = yield* Runtime;
-            const scope = yield* Scope.fork(runtime.scope);
-            if (options.scope) yield* Scope.addFinalizer(options.scope, Scope.close(scope, Exit.void));
+            const scope = yield* Scope.fork(options.scope);
             yield* Scope.addFinalizer(
                 scope,
                 Effect.promise(async () => {

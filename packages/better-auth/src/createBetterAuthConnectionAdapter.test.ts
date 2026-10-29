@@ -1,25 +1,25 @@
-import { Runtime, type RuntimeAdapter } from "@party-stack/runtime";
 import { closeRuntimeFixture } from "@party-stack/runtime/testing";
 import { runtimeFixtureContext, memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect, Exit, Scope } from "effect";
 import type { BackendConnectionAdapterProvider } from "@party-stack/connect";
+import type { RuntimeFixtureOptions } from "@party-stack/runtime/testing";
 const releaseAdapters: Array<() => Promise<void>> = [];
 afterEach(async () => {
     for (const close of releaseAdapters.splice(0)) await close();
 });
 async function openAdapter<A extends object>(
     provider: BackendConnectionAdapterProvider<A>,
-    options: { installationId: string; runtime?: RuntimeAdapter }
+    options: { installationId: string; runtime?: RuntimeFixtureOptions }
 ) {
     const runtime = options.runtime ?? memoryRuntimeFixture("installation", crypto.randomUUID());
     const managed = runtimeFixtureContext(runtime).runtime;
-    const owner = await managed.runPromise(Effect.flatMap(Runtime, (service) => Scope.fork(service.scope)));
+    const owner = await Effect.runPromise(Scope.fork(runtimeFixtureContext(runtime).scope));
     releaseAdapters.push(async () => {
         await Effect.runPromise(Scope.close(owner, Exit.void));
         await closeRuntimeFixture(runtime);
     });
     const adapter = await managed.runPromise(
-        Scope.provide(provider({ ...options, runtime, scope: owner }), owner)
+        Scope.provide(provider({ installationId: options.installationId }), owner)
     );
     await Effect.runPromise(Scope.addFinalizer(owner, adapter.cleanup?.() ?? Effect.void));
     return adapter;

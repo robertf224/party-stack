@@ -1,9 +1,10 @@
 import { makeReplicaHost, makeReplicaOntologyView } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { equalValues } from "@party-stack/ontology-spec/query";
+import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { digestBytes } from "@party-stack/ontology-storage/blobs";
-import { Runtime } from "@party-stack/runtime";
+import { Runtime, RuntimePartition } from "@party-stack/runtime";
 import { Context, Effect, Exit, Layer, ManagedRuntime, Scope, Stream, Tracer } from "effect";
 import type { OntologyConnection } from "./rpc.js";
 import type { LiveOntology, LiveOntologyWrites, OntologyIR } from "@party-stack/ontology";
@@ -85,7 +86,6 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
         const speculative =
             connection.replication.kind === "speculative" ? connection.replication.source : undefined;
         const { replica, attachments } = yield* makeReplicaHost({
-            runtime: runtime.adapter,
             id: options.id,
             ir,
             context,
@@ -149,12 +149,54 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
  * after construction; cleanup closes the client before its platform resources.
  */
 export async function createConnectedLiveOntology<E>(
-    options: ConnectLiveOntologyOptions & { readonly runtime: Layer.Layer<Runtime, E> }
+    options: ConnectLiveOntologyOptions & { readonly runtime: Layer.Layer<Runtime, E, RuntimePartition> }
 ): Promise<LiveOntology> {
     class Client extends Context.Service<Client, LiveOntology>()("@party-stack/ontology-server/Client") {}
     const app = ManagedRuntime.make(
-        Layer.effect(Client, connectLiveOntology(options)).pipe(Layer.provide(options.runtime))
+        Layer.unwrap(
+            Effect.gen(function* () {
+                // Describe determines the partition, but teardown must still stop
+                // the client/transport before closing its platform storage.
+                const platformScope = yield* Scope.fork(yield* Effect.scope);
+                const connectionScope = yield* Scope.fork(yield* Effect.scope);
+                const connection = yield* Scope.provide(options.connection, connectionScope);
+                const ir = options.ir ?? connection.ir;
+                if (!ir)
+                    return yield* new BackendError({
+                        operation: "ontology.connect",
+                        kind: "InvalidConfiguration",
+                        retryable: false,
+                        message: "Supply an ontology definition when the server does not describe one.",
+                    });
+                const context = connection.context ?? options.context ?? {};
+                const partition = yield* Effect.try({
+                    try: () => ({
+                        owner: contextPartition(ir, context),
+                        namespace: options.id ?? "connected",
+                    }),
+                    catch: (cause) =>
+                        new BackendError({
+                            operation: "runtime.partition",
+                            kind: "InvalidConfiguration",
+                            retryable: false,
+                            message: "Invalid context partition.",
+                            cause,
+                        }),
+                });
+                const platform = yield* Layer.buildWithScope(
+                    options.runtime.pipe(Layer.provide(Layer.succeed(RuntimePartition)(partition))),
+                    platformScope
+                );
+                return Layer.effect(
+                    Client,
+                    connectLiveOntology({ ...options, connection: Effect.succeed(connection) }).pipe(
+                        Effect.provideContext(platform)
+                    )
+                );
+            })
+        )
     );
+
     try {
         const live = await app.runPromise(Client);
         return {

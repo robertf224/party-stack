@@ -1,6 +1,6 @@
 import { unauthenticated, type UnauthenticatedError } from "@party-stack/ontology-backend";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Runtime, getRuntime } from "@party-stack/runtime";
+import { Runtime } from "@party-stack/runtime";
 import { Clock, Context, Effect, Exit, Fiber, Layer, Queue, RcMap, Scope, Semaphore, Stream } from "effect";
 import { ConnectionError } from "./ConnectionError.js";
 import { createDefaultConnectionEgressHandlers } from "./createDefaultConnectionEgressHandlers.js";
@@ -16,7 +16,7 @@ import type {
 } from "./types.js";
 import type { OntologyStorageError } from "@party-stack/ontology-storage";
 import type { Transaction } from "@party-stack/ontology-storage/tables";
-import type { RuntimeAdapter } from "@party-stack/runtime";
+import type { RuntimeService } from "@party-stack/runtime";
 
 const REFRESH_POLL_MS = 30_000;
 const REFRESH_WINDOW_MS = 60_000;
@@ -30,8 +30,8 @@ export interface ConnectionManagerOptions<AuthenticationClient extends object = 
 export interface CreateConnectionManagerOptions<
     A extends object = object,
 > extends ConnectionManagerOptions<A> {
-    runtime: RuntimeAdapter;
-    scope?: Scope.Scope;
+    runtime: RuntimeService;
+    scope: Scope.Scope;
 }
 
 export class Connections extends Context.Service<Connections, ConnectionManagerService>()(
@@ -53,15 +53,15 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
     const lifetime = new AbortController();
     const adapter = yield* options.adapter({
         installationId: options.installationId,
-        runtime: runtime.adapter,
-        scope: owner,
     });
     yield* Effect.addFinalizer(() => adapter.cleanup?.() ?? Effect.void);
     const connectionTable = Table.make<Connection>({
-        name: JSON.stringify(["local", runtime.adapter.owner, runtime.adapter.namespace, "connections"]),
+        name: JSON.stringify(["local", runtime.owner, runtime.namespace, "connections"]),
         version: 2,
     });
     const connections = new Map<string, Connection>();
+    const connectionListeners = new Set<() => void>();
+    let connectionVersion = 0;
     const listeners = new Map<string, Set<(state: Connection["state"]) => void>>();
     const stateGate = yield* Semaphore.make(1);
     const installState = Effect.fnUntraced(function* (rows: readonly { value: Connection }[]) {
@@ -81,6 +81,7 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
                     Effect.catch(() => Effect.logWarning("Connection state subscriber failed"))
                 );
         }
+        if (changed.length) for (const listener of connectionListeners) listener();
     });
     const reloadState = stateGate.withPermit(
         runtime.tables.loadSubset(connectionTable).pipe(
@@ -100,11 +101,9 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
                     )
                     .pipe(Effect.mapError((cause) => ConnectionError.from("persist", cause)));
                 yield* installState(rows);
-                yield* runtime.notify;
             })
         );
     const sessions = new Map<string, ConnectionSession>();
-    const sessionStates = new Map<string, string>();
     const sockets = new Map<string, Set<WebSocket>>();
     const locks = yield* RcMap.make({
         lookup: () =>
@@ -139,7 +138,6 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
         yield* closeSockets(userId);
         const session = sessions.get(userId);
         sessions.delete(userId);
-        sessionStates.delete(userId);
         yield* session?.cleanup?.() ?? Effect.void;
     });
     yield* Effect.addFinalizer(() =>
@@ -170,7 +168,6 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
         if (disposed) return yield* closed();
         const previous = sessions.get(connection.userId);
         sessions.set(connection.userId, session);
-        sessionStates.set(connection.userId, JSON.stringify(connection.state));
         adopted?.();
         if (previous && previous !== session) {
             yield* closeSockets(connection.userId);
@@ -207,6 +204,7 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
             );
         });
     const markUnauthenticated = Effect.fnUntraced(function* (userId: string, error: UnauthenticatedError) {
+        connectionVersion++;
         yield* releaseSession(userId);
         yield* updateConnection(userId, (row) => {
             row.state = { status: "needs-auth", error: error.message };
@@ -216,24 +214,30 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
         owned(locked(userId, markUnauthenticated(userId, error)));
     const controller: ConnectionController = {
         connect: (entry) =>
-            handoff(entry, (adopted) =>
-                owned(locked(entry.connection.userId, applyEstablished(entry, adopted))).pipe(
-                    Effect.tap(() => Effect.sync(notify))
-                )
-            ),
+            Effect.suspend(() => {
+                connectionVersion++;
+                return handoff(entry, (adopted) =>
+                    owned(locked(entry.connection.userId, applyEstablished(entry, adopted))).pipe(
+                        Effect.tap(() => Effect.sync(notify))
+                    )
+                );
+            }),
         disconnect: (userId) =>
-            owned(
-                locked(
-                    userId,
-                    Effect.gen(function* () {
-                        yield* releaseSession(userId);
-                        yield* updateConnection(userId, (row) => {
-                            row.state = { status: "inactive" };
-                        });
-                        notify();
-                    })
-                )
-            ),
+            Effect.suspend(() => {
+                connectionVersion++;
+                return owned(
+                    locked(
+                        userId,
+                        Effect.gen(function* () {
+                            yield* releaseSession(userId);
+                            yield* updateConnection(userId, (row) => {
+                                row.state = { status: "inactive" };
+                            });
+                            notify();
+                        })
+                    )
+                );
+            }),
     };
     const authentication = yield* Effect.try({
         try: () => adapter.createAuthenticationClient(controller),
@@ -241,7 +245,7 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
     });
     const refresh = Effect.fn("Connections.refresh")(function* () {
         const now = yield* Clock.currentTimeMillis;
-        for (const connection of [...connections.values()]) {
+        for (const connection of connections.values()) {
             const state = connection.state;
             if (state.status !== "active" || !state.expiration) continue;
             const { expiresAt, refreshable } = state.expiration;
@@ -318,6 +322,7 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
             locked(
                 userId,
                 Effect.gen(function* () {
+                    connectionVersion++;
                     const session = sessions.get(userId);
                     // SDK logout may await a controller callback. Only local state transitions
                     // take the state lock; commands serialize separately to avoid reentrancy deadlocks.
@@ -340,10 +345,55 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
                 "command"
             )
         );
+    const refreshConnections = Effect.fn("Connections.restore")(function* () {
+        const observed = connectionVersion;
+        const entries = yield* adapter.restoreConnections();
+        const present = new Set(entries.map((entry) => entry.connection.userId));
+        for (const entry of entries)
+            yield* handoff(entry, (adopted) =>
+                locked(
+                    entry.connection.userId,
+                    observed === connectionVersion ? applyEstablished(entry, adopted) : Effect.void
+                )
+            );
+        if (observed !== connectionVersion) return;
+        for (const id of sessions.keys())
+            if (!present.has(id))
+                yield* locked(
+                    id,
+                    Effect.gen(function* () {
+                        if (observed !== connectionVersion) return;
+                        yield* releaseSession(id);
+                        yield* updateConnection(id, (row) => {
+                            row.state = { status: "inactive" };
+                        });
+                    })
+                );
+    });
+    const connectionChanges = Stream.callback<readonly Connection[]>(
+        (queue) =>
+            Effect.acquireRelease(
+                Effect.sync(() => {
+                    const emit = () => {
+                        Queue.offerUnsafe(queue, [...connections.values()]);
+                    };
+                    connectionListeners.add(emit);
+                    emit();
+                    return emit;
+                }),
+                (emit) =>
+                    Effect.sync(() => {
+                        connectionListeners.delete(emit);
+                    })
+            ),
+        { bufferSize: 1, strategy: "sliding" }
+    );
     const manager: ConnectionManagerService<A> = {
         installationId: options.installationId,
         authentication,
         connections,
+        connectionChanges,
+        refreshConnections: () => owned(refreshConnections()),
         subscribeConnection(userId, listener) {
             if (disposed) return () => {};
             let subscribers = listeners.get(userId);
@@ -422,72 +472,12 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
     for (const entry of restored) sessions.set(entry.connection.userId, entry.session);
     for (const entry of restored) yield* applyEstablished(entry);
     const restoredIds = new Set(restored.map((entry) => entry.connection.userId));
-    for (const connection of [...connections.values()])
+    for (const connection of connections.values())
         if (!restoredIds.has(connection.userId) && connection.state.status !== "needs-auth") {
             yield* updateConnection(connection.userId, (row) => {
                 row.state = { status: "inactive" };
             });
         }
-    // Credentials are shared transactionally; SDK clients and sockets belong to their context.
-    // Restore a local handle after another context signs in, and close it after remote logout.
-    const reconcile = Effect.fn("Connections.reconcile")(function* () {
-        const rows = yield* reloadState;
-        const activeRows = rows.filter(({ value }) => value.state.status === "active");
-        const active = new Set(activeRows.map(({ value }) => value.userId));
-        for (const id of sessions.keys()) if (!active.has(id)) yield* locked(id, releaseSession(id));
-        const changed = new Set(
-            activeRows
-                .filter(
-                    ({ value }) =>
-                        !sessions.has(value.userId) ||
-                        sessionStates.get(value.userId) !== JSON.stringify(value.state)
-                )
-                .map(({ value }) => value.userId)
-        );
-        if (!changed.size) return;
-        yield* Effect.uninterruptibleMask((restore) =>
-            Effect.flatMap(restore(adapter.restoreConnections()), (entries) =>
-                Effect.forEach(
-                    entries,
-                    (entry) =>
-                        handoff(entry, (adopted) =>
-                            locked(
-                                entry.connection.userId,
-                                Effect.gen(function* () {
-                                    if (!changed.has(entry.connection.userId)) return;
-                                    const current = yield* runtime.tables
-                                        .get(connectionTable, entry.connection.userId)
-                                        .pipe(
-                                            Effect.mapError((cause) => ConnectionError.from("restore", cause))
-                                        );
-                                    // This is a projection of shared state. A late restore must never
-                                    // persist an old active status over another context's logout.
-                                    if (current?.state.status === "active")
-                                        yield* adoptSession(
-                                            {
-                                                ...entry,
-                                                connection: {
-                                                    ...current,
-                                                    state: current.state as Connection<"active">["state"],
-                                                },
-                                            },
-                                            adopted
-                                        );
-                                })
-                            )
-                        ),
-                    { discard: true }
-                )
-            )
-        );
-    });
-    yield* Stream.runForEach(runtime.externalChanges, () =>
-        reconcile().pipe(
-            Effect.catch((error) =>
-                Effect.logWarning("Connection reconciliation failed", { kind: error.kind })
-            )
-        )
-    ).pipe(Effect.forkScoped);
     yield* Effect.forever(
         Effect.andThen(
             Effect.race(Queue.take(wake), Effect.sleep(REFRESH_POLL_MS)),
@@ -504,6 +494,7 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
             lifetime.abort();
             connections.clear();
             listeners.clear();
+            connectionListeners.clear();
         })
     );
     notify();
@@ -514,15 +505,8 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
 export async function createConnectionManager<A extends object = object>(
     options: CreateConnectionManagerOptions<A>
 ): Promise<ConnectionManager<A>> {
-    const managed = { runPromise: Effect.runPromiseWith(getRuntime(options.runtime).context) };
-    const owner = await managed.runPromise(
-        Effect.gen(function* () {
-            const runtime = yield* Runtime;
-            const scope = yield* Scope.fork(runtime.scope);
-            if (options.scope) yield* Scope.addFinalizer(options.scope, Scope.close(scope, Exit.void));
-            return scope;
-        })
-    );
+    const managed = { runPromise: Effect.runPromiseWith(Context.make(Runtime, options.runtime)) };
+    const owner = await Effect.runPromise(Scope.fork(options.scope));
     try {
         const manager = await managed.runPromise(
             Effect.flatMap(
@@ -533,6 +517,7 @@ export async function createConnectionManager<A extends object = object>(
         let closing: Promise<void> | undefined;
         return {
             ...manager,
+            refreshConnections: () => managed.runPromise(manager.refreshConnections()),
             disconnect: (id) => managed.runPromise(manager.disconnect(id)),
             forget: (id) => managed.runPromise(manager.forget(id)),
             reportUnauthenticated: (id, error) =>

@@ -1,14 +1,20 @@
+import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
+import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import { MemoryBlobBytesStore } from "./MemoryBlobBytesStore.js";
 
 describe("MemoryBlobBytesStore", () => {
-    it("stores, reads, and deletes blobs", async () => {
+    it("lazily stores bytes, reads a source, and deletes idempotently", async () => {
         const store = new MemoryBlobBytesStore();
-        await store.write("folder/blob", new Blob(["hello"]));
-
-        expect(await (await store.read("folder/blob")).text()).toBe("hello");
-
-        await store.delete("folder/blob");
-        await expect(store.read("folder/blob")).rejects.toThrow('Blob bytes not found for "folder/blob".');
+        const write = store.write("folder/blob", new Blob(["hello"]));
+        expect(store.blobs.size).toBe(0);
+        await Effect.runPromise(write);
+        const source = await Effect.runPromise(store.read("folder/blob"));
+        expect(source).toBeDefined();
+        const blob = await Effect.runPromise(collectByteBlob(source!));
+        expect(await blob.text()).toBe("hello");
+        await Effect.runPromise(store.delete("folder/blob"));
+        await Effect.runPromise(store.delete("folder/blob"));
+        expect(await Effect.runPromise(store.read("folder/blob"))).toBeUndefined();
     });
 });

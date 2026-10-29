@@ -1,10 +1,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createNodeRuntimeWithOptions } from "@party-stack/node-runtime";
+import { make as makeNodeRuntime } from "@party-stack/node-runtime";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { collectByteBlob } from "@party-stack/runtime";
-import { Runtime } from "@party-stack/runtime";
+import { Runtime, RuntimePartition } from "@party-stack/runtime";
 import { acquireRuntime } from "@party-stack/runtime/testing";
 import { runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { queryOnce } from "@tanstack/db";
@@ -12,6 +12,10 @@ import { Effect } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { createLocalCollection } from "./createLocalCollection.js";
+
+const createNodeRuntimeWithOptions =
+    (options: Parameters<typeof makeNodeRuntime>[0]) => (owner: string, namespace: string) =>
+        makeNodeRuntime(options).pipe(Effect.provideService(RuntimePartition, { owner, namespace }));
 
 interface Item {
     id: string;
@@ -35,7 +39,8 @@ function createItems(runtime: Awaited<ReturnType<typeof acquireRuntime>>) {
     return createLocalCollection<Item, string>({
         name: "items",
         getKey: (item) => item.id,
-        runtime,
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
         schemaVersion: 1,
     });
 }
@@ -54,7 +59,8 @@ describe("createNodeRuntime", () => {
             >({
                 name: "temporal",
                 getKey: (item) => item.id,
-                runtime,
+                runtime: runtimeFixtureContext(runtime).service,
+                scope: runtimeFixtureContext(runtime).scope,
                 schemaVersion: 1,
             });
         const firstRuntime = await acquireRuntime(provider("owner", "temporal"));
@@ -133,7 +139,8 @@ describe("createNodeRuntime", () => {
             createLocalCollection<Item, string>({
                 name,
                 schemaVersion,
-                runtime,
+                runtime: runtimeFixtureContext(runtime).service,
+                scope: runtimeFixtureContext(runtime).scope,
                 getKey: (item) => item.id,
             });
         const tasks = open("tasks", 2);
@@ -179,14 +186,22 @@ describe("createNodeRuntime", () => {
         const first = await acquireRuntime(provider("owner", "one"));
         const second = await acquireRuntime(provider("owner", "two"));
 
-        await first.blobBytes.write("blob", new Blob(["first"]));
-        await second.blobBytes.write("blob", new Blob(["second"]));
+        await Effect.runPromise(first.blobBytes.write("blob", new Blob(["first"])));
+        await Effect.runPromise(second.blobBytes.write("blob", new Blob(["second"])));
 
         await expect(
-            (await Effect.runPromise(collectByteBlob(await first.blobBytes.read("blob")))).text()
+            (
+                await Effect.runPromise(
+                    collectByteBlob((await Effect.runPromise(first.blobBytes.read("blob")))!)
+                )
+            ).text()
         ).resolves.toBe("first");
         await expect(
-            (await Effect.runPromise(collectByteBlob(await second.blobBytes.read("blob")))).text()
+            (
+                await Effect.runPromise(
+                    collectByteBlob((await Effect.runPromise(second.blobBytes.read("blob")))!)
+                )
+            ).text()
         ).resolves.toBe("second");
         await first.destroy?.();
         await second.destroy?.();

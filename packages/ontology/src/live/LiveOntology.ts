@@ -2,8 +2,8 @@ import type { OntologyDefinition } from "@party-stack/ontology-spec";
 export type { OntologyDefinition } from "@party-stack/ontology-spec";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { contextPartition } from "@party-stack/ontology-spec/utils";
-import { createDefaultRuntime, type RuntimeAdapterProvider } from "@party-stack/runtime";
-import { Effect, Exit, Scope } from "effect";
+import { Runtime, MemoryRuntime, Runtimes, type RuntimeLayer } from "@party-stack/runtime";
+import { Effect, Exit, Scope, Layer, Tracer } from "effect";
 import { makeReplicaLiveOntology } from "../runtime/live.js";
 import { provide } from "../utils/provide.js";
 import type { LiveOntologyAction } from "./actions/createLiveOntologyAction.js";
@@ -127,8 +127,7 @@ export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> 
     id?: string;
     ir: OntologyIR;
     backend: OntologyBackendAdapterProvider<NoInfer<Context>>;
-    runtime?: RuntimeAdapterProvider;
-    persistObjects?: boolean;
+    runtime?: RuntimeLayer;
     demand?: import("@party-stack/ontology-replica").DemandPolicy;
     gc?: import("@party-stack/ontology-replica").ReplicaOptions["gc"];
     writes?: LiveOntologyWrites;
@@ -147,7 +146,7 @@ export async function waitForLiveOntologyReady(ontology: LiveOntology): Promise<
 export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
     Ontology extends OntologyDefinition = OntologyDefinition,
     Context extends Record<string, unknown> = Record<string, unknown>,
->(opts: CreateLiveOntologyOpts<Context>) {
+>(opts: Omit<CreateLiveOntologyOpts<Context>, "runtime">) {
     const scope = yield* Scope.fork(yield* Effect.scope);
     const opened = Effect.gen(function* () {
         const ontologyId = opts.id ?? "default";
@@ -163,36 +162,29 @@ export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
                     cause,
                 }),
         });
-        const runtime = yield* (opts.runtime ?? createDefaultRuntime)(owner, ontologyId);
-        const platform = runtime.adapter;
-        const resources = yield* Scope.fork(runtime.scope);
-        if (runtime.scope !== scope) yield* Scope.addFinalizer(scope, Scope.close(resources, Exit.void));
+        const runtime = yield* Effect.flatMap(Runtimes, (runtimes) =>
+            runtimes.acquire({ owner, namespace: ontologyId })
+        );
+        const platform = runtime;
+        const resources = yield* Scope.fork(yield* Effect.scope);
         return yield* Scope.provide(
             Effect.gen(function* () {
                 const backendAdapter = yield* Effect.tryPromise({
                     try: () => provide(opts.backend, opts.ir, context),
                     catch: (cause) => classifyBackendFailure("backend.configure", cause),
                 });
-                if (opts.persistObjects && !platform.tables) {
-                    return yield* Effect.fail(
-                        new BackendError({
-                            operation: "ontology.make",
-                            kind: "InvalidConfiguration",
-                            retryable: false,
-                            message: "Persisted ontology objects require owned Tables storage.",
-                        })
-                    );
-                }
                 const live = yield* makeReplicaLiveOntology({
                     ir: opts.ir,
                     context,
-                    runtime: platform,
                     backendAdapter,
                     writes: opts.writes,
                     demand: opts.demand,
                     gc: opts.gc,
                     connection: opts.connection,
-                }).pipe(Effect.provide(runtime.context));
+                }).pipe(
+                    Effect.provideService(Runtime, runtime),
+                    Effect.provideService(Tracer.Tracer, runtime.traces.tracer)
+                );
                 let closing: Promise<void> | undefined;
                 const cleanup = () => (closing ??= Effect.runPromise(Scope.close(scope, Exit.void)));
                 return {
@@ -200,7 +192,7 @@ export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
                     cleanup,
                     destroy: async () => {
                         await cleanup();
-                        await platform.destroy?.();
+                        await Effect.runPromise(platform.destroy);
                     },
                 } as LiveOntology<Ontology>;
             }),
@@ -219,7 +211,15 @@ export async function createLiveOntology<
 >(opts: CreateLiveOntologyOpts<Context>): Promise<LiveOntology<Ontology>> {
     const scope = Effect.runSync(Scope.make());
     try {
-        const live = await Effect.runPromise(Scope.provide(makeLiveOntology<Ontology, Context>(opts), scope));
+        const context = await Effect.runPromise(
+            Layer.buildWithScope(Runtimes.layer(opts.runtime ?? MemoryRuntime.layer), scope)
+        );
+        const live = await Effect.runPromise(
+            Scope.provide(
+                makeLiveOntology<Ontology, Context>(opts).pipe(Effect.provideContext(context)),
+                scope
+            )
+        );
         let closing: Promise<void> | undefined;
         const cleanup = () => (closing ??= Effect.runPromise(Scope.close(scope, Exit.void)));
         return {

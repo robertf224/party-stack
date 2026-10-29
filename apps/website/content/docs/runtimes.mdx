@@ -1,69 +1,64 @@
 ---
-title: Browser runtimes
-description: Platform resources, worker placement, and scoped ontology composition.
+title: Platform runtimes
+description: Scoped platform capabilities and memory or persistent storage.
 ---
 
-## Available today
-
-`@party-stack/web-runtime` provides a scoped Runtime Layer. The containing Effect
-scope owns connectivity subscriptions, storage resources, channels, and host locks.
+`@party-stack/web-runtime` provides a Runtime Layer. Storage mode is independent
+of process placement: a tab, worker or another process can use memory or durable
+storage, but each persistent namespace must have one designated owner.
 
 ```ts
+import { Runtime, RuntimePartition } from "@party-stack/runtime";
 import * as WebRuntime from "@party-stack/web-runtime";
+import { Effect } from "effect";
 
-const persistent = WebRuntime.layer({
-    owner: userId,
-    namespace: ontologyId,
-    storage: "indexeddb",
-    persistEncryptionKeys: true,
-});
+const platform = WebRuntime.layer({ persistEncryptionKeys: true });
+const inspect = Effect.scoped(
+    Effect.gen(function* () {
+        const runtime = yield* Runtime;
+        return yield* runtime.online;
+    })
+).pipe(
+    Effect.provide(platform),
+    Effect.provideService(RuntimePartition, { owner: userId, namespace: ontologyId })
+);
 
-const isolated = WebRuntime.layer({
-    owner: userId,
-    namespace: "isolated-view",
-    storage: "memory",
-});
+const memory = WebRuntime.layer({ storage: "memory" });
 ```
 
-Persistent mode uses IndexedDB tables, OPFS bytes, and a lifetime Web Lock for
-host ownership. It requires those browser facilities. Memory mode is isolated.
+Persistent mode uses IndexedDB tables and OPFS bytes. Memory mode provides
+isolated tables, byte storage and ephemeral encryption keys. Scope closure releases
+platform resources. Partition identity comes from `RuntimePartition`, rather than
+being mixed into static platform configuration. Installations use `Runtimes.layer(platform)`
+to acquire multiple partitions through LayerMap.
 
-`persistEncryptionKeys: true` explicitly permits persistent device encryption
-keys. Same-origin code can still use those keys; this is not protection from
-malicious same-origin JavaScript. Property decryption separately defaults to
-no plaintext caching unless the caller opts in.
+`persistEncryptionKeys: true` permits a non-extractable AES key to persist in
+IndexedDB. Same-origin JavaScript can use it to decrypt; this is not a vault lock
+or XSS protection. Individual property decrypt calls still default to `cache: false`.
+Without that flag, a persistent browser runtime needs a separately composed keyring
+before it can persist credentials.
 
-## The issue-tracker topology today
+## Shared browser ownership
 
-Each identity/installation/ontology partition opens one persistent SharedWorker
-owner. Tabs use memory replicas with their own memory attachment storage; the
-worker uses durable metadata and bytes. A tab fetches remote bytes through its
-parent on a cache miss. Tabs query their own materialized collections.
+Issue-tracker opens one SharedWorker per installation. Connect, token refresh,
+backend sessions and persistent ontology partitions live there. The page uses
+Effect RPC for installation/authentication operations and subscribes to connection
+snapshots; it opens only memory replicas and byte caches. Browser authorization
+presentation remains in the page. Neither storage broadcasts nor shared-table
+access from tabs are needed.
 
-The application now supplies domain/placement choices to
-`createConnectedLiveOntology` and `serveOpenedOntologyWorker`. Replica construction,
-operation forwarding, tracing and startup readiness live in the ontology server
-package. Collection translation and demand diagnostics live in
-`@party-stack/ontology/tanstack`; Runtime has no Replica/TanStack dependency.
+`serveInstallationWorker` and `connectInstallationWorker` are in
+`@party-stack/ontology-server/installation/worker`. They multiplex ontology RPC
+alongside trusted same-origin installation controls. Pass an `open` Effect to
+start the transport before installation acquisition; clients receive typed startup
+failures. An already acquired installation is also accepted. They are not public server
+authentication endpoints. Public HTTP clients use the authorized ontology protocol.
 
-## Application setup
+For a server that already owns its authentication/installation lifecycle,
+`connectLiveOntology` / `createConnectedLiveOntology` and `serveOntologyWorker`
+remain the lower-level ontology composers. They accept platform/transport Layers;
+Runtime itself has no ontology or TanStack dependency.
 
-See [installation and setup](/docs/getting-started) for Vite/TanStack Start,
-SharedWorker, Node and Expo composition. `createConnectedLiveOntology` accepts a
-connection acquisition Effect and a Runtime Layer. Its ManagedRuntime keeps the
-Layer alive after the constructor returns; `cleanup()` closes the scoped client
-and then platform resources.
-
-Native Effect applications use `connectLiveOntology` in a service Layer. Runtime
-is supplied independently, so memory/persistent storage is not coupled to a
-worker/tab role. `serveOpenedOntologyWorker` takes an `open` Effect plus mandatory
-authorization and the platform worker-runner Layer. Domain code owns partition
-validation/authenticated acquisition; infrastructure owns readiness and shutdown.
-
-Worker startup fallback must happen before accepting writes. A failed connection
-does not authorize silently creating a second persistent owner. A configured
-in-process fallback acquires the same namespace lock. Persistent platform storage
-being unavailable needs an explicit application policy; it must not silently
-turn durable acceptance into memory-only acceptance.
-
-See [architecture](/docs/architecture) for the package responsibilities and server roles.
+See [installation and setup](/docs/getting-started) for examples. Worker failure
+does not silently start a second persistent owner. Choose memory-only or another
+placement explicitly when the required browser facilities are unavailable.

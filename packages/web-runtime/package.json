@@ -22,6 +22,7 @@
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/connect": "workspace:*",
         "@party-stack/ontology": "workspace:*",
         "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-replica": "workspace:*",

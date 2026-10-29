@@ -73,7 +73,6 @@ describe("Foundry ObjectType metadata queries", () => {
         });
         const meta = await createMetaLiveOntology({
             backend: () => createFoundryMetaOntologyBackendAdapter({ client }),
-            persistObjects: false,
         });
 
         try {

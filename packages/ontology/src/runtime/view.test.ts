@@ -4,6 +4,7 @@ import { makeReplica, replicaStateSource } from "@party-stack/ontology-replica";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Runtime } from "@party-stack/runtime";
+import { makeTestRuntime } from "@party-stack/runtime/testing";
 import { memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect, Exit, Scope, Fiber, Deferred } from "effect";
 import { expect, test, vi } from "vite-plus/test";
@@ -44,7 +45,7 @@ test.each(["pause", "discard-all"] as const)(
                             await adapter.cleanup?.();
                         })
                     );
-                    const runtime = yield* Runtime.make(adapter);
+                    const runtime = yield* makeTestRuntime(adapter);
                     const owned = yield* makeOwnedBackend({
                         namespace: "rejected-server",
                         ir,
@@ -225,7 +226,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                                     await adapter.cleanup?.();
                                 })
                             );
-                            const runtime = yield* Runtime.make(adapter);
+                            const runtime = yield* makeTestRuntime(adapter);
                             const replica = yield* makeReplica({
                                 namespace: name,
                                 ir,

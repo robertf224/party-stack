@@ -297,40 +297,29 @@ it is not a second persistence or outbox executor.
 
 ### Runtime interface review
 
-`RuntimeAdapter` is a platform construction record; `RuntimeService` is the scoped,
-acquired service. The split currently leaks into SDK boundaries: platform factories
-return RuntimeService, but APIs accept `.adapter` and use a hidden symbol binding
-through `getRuntime` to recover that service. `RuntimeAdapterProvider` is also a
-misnomer because it yields RuntimeService. `scope` and `context` on the service
-support these bridges, not additional platform capabilities.
+Runtime is now a scoped Effect service. Platform configuration supplies a Layer;
+partition identity is the RuntimePartition requirement. Runtimes uses LayerMap to
+share active keyed acquisitions. No RuntimeAdapterProvider, hidden getRuntime
+binding, captured Context, owning Scope, storageNotifications, actorLiveness or
+acquireHost remains on the public Runtime service. Byte drivers implement the
+Effect BlobBytesService; normalized Runtime reads return ByteSource.
 
-The base branch had coordination and TanStack persistence on RuntimeAdapter.
-Those were removed; Tables acquisition, encryption keys, bounded tracing and
-storage-change streams are their native replacements or new platform support.
-`storageNotifications` still supports Connect/private local table invalidations;
-it is distinct from replicated ontology delivery and is not dead code.
+Issue-tracker uses one installation SharedWorker owning Connect, token refresh,
+sessions and persistent ontology partitions. Pages use installation RPC controls,
+connection snapshot streams and ordinary memory replicas. OAuth browser UI stays
+in the page; PKCE/credential processing stays in the worker. The worker retains
+ontology endpoint contexts in LayerMap and releases idle entries. The old
+multiwriter/BroadcastChannel and persistent fallback paths are removed.
 
-The `acquireHost` hook is replica-specific and currently invoked by high-level
-LiveOntology construction. `actorLiveness` holds/checks Web Locks for persistent
-row/blob owner records; it is not an actor execution model. SharedWorker reuse
-already supplies one worker per identity; the host lock protects the storage
-namespace against different worker identities or an in-process fallback.
+Replica exclusive-owner startup discards abandoned query/read roots; pins,
+outbox/action dependencies and object/blob references survive. Native blob IO
+tracks its active scopes inside storage, rather than requiring a Runtime liveness
+hook. This covers process restart on Node/Expo as well as the browser owner.
 
-The direct SecretStore credential fallback and plaintext opt-in are removed.
-Node/Expo keep a small internal KeyMaterialStore under the encryption keyring;
-Connect writes embedded token ciphertext through the same Tables transaction as
-its records. The unused encrypted-secret wrapper is removed. Memory runtimes
-have ephemeral keyrings, and persistent browser key storage requires explicit
-`persistEncryptionKeys` consent. Native OAuth regression tests verify that token
-plaintext does not enter the platform key-material store.
-
-Potential simplification, not implemented in this checkpoint: expose RuntimeService
-consistently to application APIs, keep the adapter record as platform construction
-input, rename its provider, and relocate ownership/crash recovery to storage
-acquisition or explicit replica composition. Any exclusive-owner startup cleanup
-must prove exclusive access before clearing temporary roots. Independent shared
-store users still require reliable owner tracking. This must resolve the Node/Expo
-crash-root gap rather than just removing the liveness hooks.
+The direct SecretStore credential fallback is removed. Node/Expo keep internal
+KeyMaterialStore implementations beneath the keyring. Memory keys are ephemeral;
+persistent browser keys require persistEncryptionKeys consent. Credential rows
+contain encrypted values, never a plaintext SecretStore fallback.
 
 ### Independent state and outbox lifetimes
 

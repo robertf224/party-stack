@@ -3,13 +3,14 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { eq, field } from "@party-stack/ontology-storage";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Runtime } from "@party-stack/runtime";
+import { Runtime, Runtimes } from "@party-stack/runtime";
 import { Context, Effect, Exit, Fiber, Layer, RcMap, Scope, ScopedCache, Semaphore } from "effect";
 import { makeLiveOntology } from "../live/LiveOntology.js";
 import { createMetaOntologyConfiguration } from "./createMetaOntologyConfiguration.js";
 import type { LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 import type {
     CreateOntologyBackendInstallationOptions,
+    OntologyBackendInstallationOptions,
     OntologyBackendInstallation,
     OntologyBackendInstallationService,
     OntologyRoute,
@@ -70,7 +71,7 @@ export class OntologyInstallation extends Context.Service<
     OntologyInstallation,
     OntologyBackendInstallationService
 >()("@party-stack/ontology/OntologyInstallation") {
-    static readonly layer = (options: CreateOntologyBackendInstallationOptions) =>
+    static readonly layer = (options: OntologyBackendInstallationOptions) =>
         Layer.effect(OntologyInstallation, makeOntologyBackendInstallation(options));
 }
 
@@ -78,11 +79,12 @@ export class OntologyInstallation extends Context.Service<
 export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.make")(function* <
     A extends object = object,
 >(
-    options: CreateOntologyBackendInstallationOptions<A>
-): Effect.fn.Return<OntologyBackendInstallationService<A>, BackendError, Scope.Scope> {
+    options: OntologyBackendInstallationOptions<A>
+): Effect.fn.Return<OntologyBackendInstallationService<A>, BackendError, Scope.Scope | Runtimes> {
     const owner = yield* Effect.scope;
-    const runtime = yield* options
-        .runtime("installation", scope(options.installationId))
+    const runtimes = yield* Runtimes;
+    const runtime = yield* runtimes
+        .acquire({ owner: "installation", namespace: scope(options.installationId) })
         .pipe(Effect.mapError((cause) => failure("installation.runtime", cause)));
     return yield* Effect.gen(function* () {
         const connectionManager = yield* makeConnectionManager({
@@ -90,12 +92,7 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
             adapter: options.connections,
         }).pipe(Effect.mapError((cause) => failure("installation.connections", cause)));
         const partitions = Table.make<LocalOntologyPartition>({
-            name: JSON.stringify([
-                "local",
-                runtime.adapter.owner,
-                runtime.adapter.namespace,
-                "ontology-partitions",
-            ]),
+            name: JSON.stringify(["local", runtime.owner, runtime.namespace, "ontology-partitions"]),
             version: 1,
         });
         yield* runtime.tables
@@ -176,9 +173,7 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                     id: `${liveOntologyNamespace(options.installationId, ontologyId)}${meta ? ":meta" : ""}`,
                     ir: configured.ir,
                     backend: configured.backend,
-                    runtime: options.runtime,
                     context: boundContext,
-                    persistObjects: configured.persistObjects,
                     writes: configured.writes,
                     connection: createConnectionMonitor(connectionManager, userId),
                 };
@@ -188,6 +183,7 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                         (ontology) => Effect.promise(() => ontology.cleanup())
                     );
                 return yield* makeLiveOntology(settings).pipe(
+                    Effect.provideService(Runtimes, runtimes),
                     Effect.mapError((cause) => failure("installation.open", cause))
                 );
             }),
@@ -201,8 +197,24 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                     Effect.andThen(ensureOpen, ScopedCache.get(cache, keyFor(userId, ontologyId, meta)))
                 )
             ) as Effect.Effect<LiveOntology<T>, BackendError>;
-        const close = (userId: string, ontologyId: string, meta: boolean) =>
-            owned(locked(userId, ScopedCache.invalidate(cache, keyFor(userId, ontologyId, meta))));
+        const close = (
+            userId: string,
+            ontologyId: string,
+            meta: boolean,
+            ifReplica?: LiveOntology["storage"]
+        ) =>
+            owned(
+                locked(
+                    userId,
+                    ifReplica
+                        ? ScopedCache.invalidateWhen(
+                              cache,
+                              keyFor(userId, ontologyId, meta),
+                              (live) => live.storage === ifReplica
+                          ).pipe(Effect.asVoid)
+                        : ScopedCache.invalidate(cache, keyFor(userId, ontologyId, meta))
+                )
+            );
         const closeUser = Effect.fnUntraced(function* (userId: string) {
             for (const key of yield* ScopedCache.keys(cache))
                 if ((JSON.parse(key) as string[])[0] === userId) yield* ScopedCache.invalidate(cache, key);
@@ -218,13 +230,13 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                     Effect.gen(function* () {
                         const platformScope = yield* Scope.fork(yield* Effect.scope);
                         const runtime = yield* Scope.provide(
-                            options.runtime(partition.owner ?? userId, namespace),
+                            runtimes.acquire({ owner: partition.owner ?? userId, namespace }),
                             platformScope
                         ).pipe(Effect.mapError((cause) => failure("installation.runtime", cause)));
                         yield* Scope.close(platformScope, Exit.void);
-                        yield* boundary("installation.destroy", async () => {
-                            await runtime.adapter.destroy?.();
-                        });
+                        yield* runtime.destroy.pipe(
+                            Effect.mapError((cause) => failure("installation.destroy", cause))
+                        );
                     })
                 );
                 yield* runtime.tables
@@ -241,6 +253,13 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
             installationId: options.installationId,
             authentication: connectionManager.authentication,
             connections: connectionManager.connections,
+            connectionChanges: connectionManager.connectionChanges,
+            refreshConnections: () =>
+                owned(
+                    connectionManager
+                        .refreshConnections()
+                        .pipe(Effect.mapError((cause) => failure("installation.connections", cause)))
+                ),
             connectionMonitor: (userId: string) => createConnectionMonitor(connectionManager, userId),
             openOntology: <T extends OntologyDefinition>({
                 userId,
@@ -251,10 +270,24 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
             }) => open<T>(userId, ontologyId, false),
             openMetaOntology: ({ userId, ontologyId }: { userId: string; ontologyId: string }) =>
                 open<MetaOntology>(userId, ontologyId, true),
-            closeOntology: ({ userId, ontologyId }: { userId: string; ontologyId: string }) =>
-                close(userId, ontologyId, false),
-            closeMetaOntology: ({ userId, ontologyId }: { userId: string; ontologyId: string }) =>
-                close(userId, ontologyId, true),
+            closeOntology: ({
+                userId,
+                ontologyId,
+                ifReplica,
+            }: {
+                userId: string;
+                ontologyId: string;
+                ifReplica?: LiveOntology["storage"];
+            }) => close(userId, ontologyId, false, ifReplica),
+            closeMetaOntology: ({
+                userId,
+                ontologyId,
+                ifReplica,
+            }: {
+                userId: string;
+                ontologyId: string;
+                ifReplica?: LiveOntology["storage"];
+            }) => close(userId, ontologyId, true, ifReplica),
             disconnect: (userId: string) =>
                 owned(
                     locked(
@@ -295,9 +328,16 @@ export async function createOntologyBackendInstallation<A extends object = objec
     const owner = Effect.runSync(Scope.make());
     const run = <B>(effect: Effect.Effect<B, BackendError>) => Effect.runPromise(effect);
     try {
+        const context = await Effect.runPromise(Layer.buildWithScope(Runtimes.layer(options.runtime), owner));
         const installation = await run(
             Effect.flatMap(
-                Effect.forkIn(Scope.provide(makeOntologyBackendInstallation(options), owner), owner),
+                Effect.forkIn(
+                    Scope.provide(
+                        makeOntologyBackendInstallation(options).pipe(Effect.provideContext(context)),
+                        owner
+                    ),
+                    owner
+                ),
                 Fiber.join
             )
         );
@@ -308,6 +348,7 @@ export async function createOntologyBackendInstallation<A extends object = objec
             openMetaOntology: (options) => run(installation.openMetaOntology(options)),
             closeOntology: (options) => run(installation.closeOntology(options)),
             closeMetaOntology: (options) => run(installation.closeMetaOntology(options)),
+            refreshConnections: () => run(installation.refreshConnections()),
             disconnect: (id) => run(installation.disconnect(id)),
             forget: (id) => run(installation.forget(id)),
             cleanup: () => (closing ??= Effect.runPromise(Scope.close(owner, Exit.void))),

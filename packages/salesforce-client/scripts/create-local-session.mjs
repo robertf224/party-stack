@@ -1,5 +1,6 @@
 import { createClientCredentialsOAuthClient, createPublicOAuthClient } from "@party-stack/connect";
-import { createNodeRuntime } from "@party-stack/node-runtime";
+import { make as makeNodeRuntime } from "@party-stack/node-runtime";
+import { RuntimePartition } from "@party-stack/runtime";
 import { Effect, Scope, Exit } from "effect";
 import { createSalesforceClient } from "../lib/index.js";
 
@@ -69,7 +70,17 @@ export async function createLocalSalesforceSession() {
     // completed by either command can be restored by the other.
     const runtimeScope = Effect.runSync(Scope.make());
     const runtime = (
-        await Effect.runPromise(Scope.provide(createNodeRuntime("salesforce-smoke", clientId), runtimeScope))
+        await Effect.runPromise(
+            Scope.provide(
+                makeNodeRuntime().pipe(
+                    Effect.provideService(RuntimePartition, {
+                        owner: "salesforce-smoke",
+                        namespace: clientId,
+                    })
+                ),
+                runtimeScope
+            )
+        )
     ).adapter;
     const oauth = await createPublicOAuthClient({
         clientId,

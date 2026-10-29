@@ -1,39 +1,68 @@
-/** Explicit test boundaries for suites that drive scoped services from Promise-based assertions. */
-import { Effect, Exit, Scope } from "effect";
+/** Test boundaries for driving scoped services from Promise-based assertions. */
+import { Context, Effect, Exit, Layer, Scope, Tracer } from "effect";
 import { MemoryBlobBytesStore } from "./memory/MemoryBlobBytesStore.js";
-import { Runtime, getRuntime } from "./Runtime.js";
-import type { RuntimeAdapter, RuntimeService } from "./index.js";
+import { Runtime, RuntimeError } from "./Runtime.js";
+import { RuntimePartition } from "./RuntimePartition.js";
+import type { RuntimeOptions, RuntimeService } from "./index.js";
 
-type Fixture = RuntimeAdapter & { cleanup(): Promise<void>; destroy(): Promise<void> };
-const scopes = new WeakMap<RuntimeAdapter, Scope.Closeable>();
+export type RuntimeFixtureOptions = Omit<RuntimeOptions, "destroy"> & {
+    readonly owner: string;
+    readonly namespace: string;
+    readonly destroy?: RuntimeOptions["destroy"] | (() => void | Promise<void>);
+};
+export type RuntimeFixture = Omit<RuntimeFixtureOptions, "destroy"> & {
+    cleanup(): Promise<void>;
+    destroy(): Promise<void>;
+};
+const optionsByFixture = new WeakMap<object, RuntimeFixtureOptions>();
+const states = new WeakMap<
+    object,
+    { service: RuntimeService; scope: Scope.Closeable; closed: boolean; closing?: Promise<void> }
+>();
 const bridges = new WeakMap<
-    RuntimeAdapter,
+    object,
     {
+        service: RuntimeService;
+        scope: Scope.Closeable;
         runtime: { runPromise: ReturnType<typeof Effect.runPromiseWith<Runtime>> };
         traces: RuntimeService["traces"];
     }
 >();
-
-function fixture(service: RuntimeService, scope: Scope.Closeable): Fixture {
-    const adapter = service.adapter;
-    scopes.set(adapter, scope);
-    let closing: Promise<void> | undefined;
-    let destroying: Promise<void> | undefined;
-    const remove = adapter.destroy;
-    return Object.assign(adapter, {
-        cleanup: () => (closing ??= Effect.runPromise(Scope.close(scope, Exit.void))),
-        destroy: () =>
-            (destroying ??= (closing ??= Effect.runPromise(Scope.close(scope, Exit.void))).then(() =>
-                remove?.()
-            )),
-    });
-}
-export function defineRuntimeFixture(provider: (owner: string, namespace: string) => RuntimeAdapter) {
-    return (owner: string, namespace: string) => {
-        const scope = Effect.runSync(Scope.make());
-        const adapter = provider(owner, namespace);
-        return fixture(Effect.runSync(Scope.provide(Runtime.make(adapter), scope)), scope);
+const optionsFor = (value: RuntimeFixtureOptions): RuntimeOptions => {
+    const original = optionsByFixture.get(value) ?? value;
+    const destroy = original.destroy;
+    return {
+        ...original,
+        destroy:
+            typeof destroy === "function"
+                ? Effect.tryPromise({
+                      try: async () => {
+                          await destroy();
+                      },
+                      catch: (cause) => new RuntimeError({ operation: "destroy", cause }),
+                  })
+                : destroy,
     };
+};
+export const makeTestRuntime = (options: RuntimeFixtureOptions) =>
+    Runtime.make(optionsFor(options)).pipe(
+        Effect.provideService(RuntimePartition, { owner: options.owner, namespace: options.namespace })
+    );
+function fixture(options: RuntimeFixtureOptions): RuntimeFixture {
+    let destroying: Promise<void> | undefined;
+    const value = {
+        ...options,
+        cleanup: () => closeRuntimeFixture(value),
+        destroy: () =>
+            (destroying ??= closeRuntimeFixture(value).then(() =>
+                Effect.runPromise(optionsFor(value).destroy ?? Effect.void)
+            )),
+    };
+    optionsByFixture.set(value, options);
+    return value;
+}
+export function defineRuntimeFixture(provider: (owner: string, namespace: string) => RuntimeFixtureOptions) {
+    return (owner: string, namespace: string) => fixture(provider(owner, namespace));
 }
 export const memoryRuntimeFixture = defineRuntimeFixture((owner, namespace) => ({
     owner,
@@ -42,53 +71,92 @@ export const memoryRuntimeFixture = defineRuntimeFixture((owner, namespace) => (
 }));
 export async function acquireRuntime<E>(
     effect: Effect.Effect<RuntimeService, E, Scope.Scope>
-): Promise<Fixture> {
+): Promise<RuntimeFixture> {
     const scope = Effect.runSync(Scope.make());
     try {
-        return fixture(await Effect.runPromise(Scope.provide(effect, scope)), scope);
+        const service = await Effect.runPromise(Scope.provide(effect, scope));
+        const value = fixture({
+            owner: service.owner,
+            namespace: service.namespace,
+            tables: Effect.succeed(service.tables),
+            encryptionKeyring: service.encryptionKeyring
+                ? Effect.succeed(service.encryptionKeyring)
+                : undefined,
+            browserAuthentication: service.browserAuthentication,
+            blobBytes: service.bytes,
+            destroy: service.destroy,
+        });
+        states.set(value, { service, scope, closed: false });
+        return value;
     } catch (cause) {
         await Effect.runPromise(Scope.close(scope, Exit.fail(cause)));
         throw cause;
     }
 }
-export function runtimeFixtureContext(adapter: RuntimeAdapter) {
-    let service: RuntimeService;
-    try {
-        service = getRuntime(adapter);
-    } catch {
-        if (scopes.has(adapter)) throw new Error("Runtime is closed.");
+export function runtimeFixtureContext(value: RuntimeFixtureOptions) {
+    let state = states.get(value);
+    if (state?.closed) throw new Error("Runtime is closed.");
+    if (!state) {
         const scope = Effect.runSync(Scope.make());
-        fixture(Effect.runSync(Scope.provide(Runtime.make(adapter), scope)), scope);
-        service = getRuntime(adapter);
+        const service = Effect.runSync(
+            Scope.provide(
+                Runtime.make(optionsFor(value)).pipe(
+                    Effect.provideService(RuntimePartition, {
+                        owner: value.owner,
+                        namespace: value.namespace,
+                    })
+                ),
+                scope
+            )
+        );
+        state = { service, scope, closed: false };
+        states.set(value, state);
     }
-    let bridge = bridges.get(adapter);
+    let bridge = bridges.get(value);
     if (!bridge) {
-        bridge = { runtime: { runPromise: Effect.runPromiseWith(service.context) }, traces: service.traces };
-        bridges.set(adapter, bridge);
+        bridge = {
+            service: state.service,
+            scope: state.scope,
+            runtime: {
+                runPromise: Effect.runPromiseWith(
+                    Context.make(Runtime, state.service).pipe(
+                        Context.add(Tracer.Tracer, state.service.traces.tracer)
+                    )
+                ),
+            },
+            traces: state.service.traces,
+        };
+        bridges.set(value, bridge);
     }
     return bridge;
 }
-export const closeRuntimeFixture = (adapter: RuntimeAdapter) => {
-    const scope = scopes.get(adapter);
-    return scope ? Effect.runPromise(Scope.close(scope, Exit.void)) : Promise.resolve();
+export const closeRuntimeFixture = (value: object) => {
+    const state = states.get(value);
+    if (!state) return Promise.resolve();
+    if (state.closing) return state.closing;
+    state.closed = true;
+    return (state.closing = Effect.runPromise(Scope.close(state.scope, Exit.void)));
 };
-
-/** Adapt a synchronous test capability factory to the production scoped provider contract. */
-export const asProvider =
-    (
-        provider: (
-            owner: string,
-            namespace: string
-        ) => RuntimeAdapter & { cleanup?: () => void | Promise<void> }
-    ) =>
-    (owner: string, namespace: string) =>
+/** Test Layers supply the same service contract as native platform Layers. */
+export const asRuntimeLayer = (
+    provider: (
+        owner: string,
+        namespace: string
+    ) => RuntimeFixtureOptions & { cleanup?: () => void | Promise<void> }
+) =>
+    Layer.effect(
+        Runtime,
         Effect.gen(function* () {
-            const adapter = yield* Effect.acquireRelease(
-                Effect.sync(() => provider(owner, namespace)),
+            const partition = yield* RuntimePartition;
+            const value = yield* Effect.acquireRelease(
+                Effect.sync(() => provider(partition.owner, partition.namespace)),
                 (value) =>
                     Effect.promise(async () => {
                         await value.cleanup?.();
                     })
             );
-            return yield* Runtime.make(adapter);
-        });
+            const existing = states.get(value);
+            if (existing && !existing.closed) return existing.service;
+            return yield* Runtime.make(optionsFor(value));
+        })
+    );

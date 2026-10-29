@@ -5,6 +5,7 @@ import {
     byteChunks,
     collectByteBlob,
     makeBlobStorage,
+    exclusiveOwnerLiveness,
     type BlobStorageService,
     type BlobRecord,
     type ByteInput,
@@ -101,35 +102,10 @@ export const makeBlobManager = Effect.fn("BlobManager.make")(function* (
             );
             const storage = yield* boundary(
                 makeBlobStorage({
-                    namespace: JSON.stringify([runtime.adapter.owner, runtime.adapter.namespace]),
+                    namespace: JSON.stringify([runtime.owner, runtime.namespace]),
                     tables: runtime.tables,
                     bytes: runtime.bytes,
-                    registerOwner: runtime.adapter.actorLiveness
-                        ? (id) =>
-                              runtime.adapter.actorLiveness!.acquire(id).pipe(
-                                  Effect.mapError(
-                                      (cause) =>
-                                          new BlobStorageError({
-                                              kind: "Bytes",
-                                              message: "Blob owner registration failed.",
-                                              cause,
-                                          })
-                                  )
-                              )
-                        : undefined,
-                    isOwnerAlive: runtime.adapter.actorLiveness
-                        ? (id) =>
-                              runtime.adapter.actorLiveness!.isAlive(id).pipe(
-                                  Effect.mapError(
-                                      (cause) =>
-                                          new BlobStorageError({
-                                              kind: "Bytes",
-                                              message: "Blob owner lookup failed.",
-                                              cause,
-                                          })
-                                  )
-                              )
-                        : undefined,
+                    ...exclusiveOwnerLiveness(runtime.tables),
                 })
             );
             const owned = <A>(work: Effect.Effect<A, BackendError>) =>
@@ -158,15 +134,6 @@ export const makeBlobManager = Effect.fn("BlobManager.make")(function* (
                 Effect.gen(function* () {
                     yield* maintain;
                     if (gcTime === Infinity) return;
-                    yield* Effect.forkScoped(
-                        Stream.runForEach(runtime.changes, () =>
-                            collect.pipe(
-                                Effect.catch((error) =>
-                                    Effect.logWarning("Blob cache collection failed", { kind: error.kind })
-                                )
-                            )
-                        )
-                    );
                     yield* Effect.forever(Effect.sleep(Math.max(10, gcTime)).pipe(Effect.andThen(maintain)));
                 })
             );
@@ -267,9 +234,7 @@ export const makeBlobManager = Effect.fn("BlobManager.make")(function* (
                             capacity: 2,
                         });
                         const writing = yield* Effect.forkScoped(
-                            boundary(storage.cache(record?.id ?? id, { ...remote, stream: cache })).pipe(
-                                Effect.tap(() => runtime.notify)
-                            )
+                            boundary(storage.cache(record?.id ?? id, { ...remote, stream: cache })).pipe()
                         );
                         const delivered = Stream.concat(
                             reader,
@@ -332,12 +297,8 @@ export const makeBlobManager = Effect.fn("BlobManager.make")(function* (
             });
             return {
                 storage,
-                stage: (id, input) =>
-                    owned(boundary(storage.stage(id, input)).pipe(Effect.tap(() => runtime.notify))),
-                bindRemoteId: (id, remoteId) =>
-                    owned(
-                        boundary(storage.bindRemoteId(id, remoteId)).pipe(Effect.tap(() => runtime.notify))
-                    ),
+                stage: (id, input) => owned(boundary(storage.stage(id, input))),
+                bindRemoteId: (id, remoteId) => owned(boundary(storage.bindRemoteId(id, remoteId))),
                 source: (id, settings) => owned(source(id, settings)),
                 read: (id, settings) => owned(read(id, settings)),
                 metadata: (id, settings) => owned(metadata(id, settings)),

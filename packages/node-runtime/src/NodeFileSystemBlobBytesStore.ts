@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
-    BlobBytesNotFoundError,
     byteSource,
     type ByteInput,
     type ByteSource,
-    type BlobBytesStore,
+    byteIO,
+    type BlobBytesService,
 } from "@party-stack/runtime";
-import { Stream } from "effect";
+import { Effect, Stream } from "effect";
 
 export interface NodeFileSystemBlobBytesStoreOptions {
     directory: string;
@@ -21,14 +21,22 @@ function fileName(id: string): string {
     return createHash("sha256").update(id).digest("hex");
 }
 
-export class NodeFileSystemBlobBytesStore implements BlobBytesStore {
+export class NodeFileSystemBlobBytesStore implements BlobBytesService {
     readonly #directory: string;
+
+    readonly write = (id: string, value: ByteInput) => byteIO((signal) => this.#write(id, value, signal));
+    readonly read = (id: string) =>
+        Effect.tryPromise(() => this.#read(id)).pipe(
+            Effect.map((value) => (value === undefined ? undefined : byteSource(value)))
+        );
+    readonly delete = (id: string) => Effect.tryPromise(() => this.#delete(id));
+    readonly clear = () => Effect.tryPromise(() => this.#clear());
 
     constructor(options: NodeFileSystemBlobBytesStoreOptions) {
         this.#directory = options.directory;
     }
 
-    async write(id: string, input: ByteInput, signal?: AbortSignal): Promise<void> {
+    async #write(id: string, input: ByteInput, signal?: AbortSignal): Promise<void> {
         await mkdir(this.#directory, { recursive: true });
         const target = this.#path(id);
         const temporary = join(this.#directory, `.${fileName(id)}.${randomUUID()}.tmp`);
@@ -45,7 +53,7 @@ export class NodeFileSystemBlobBytesStore implements BlobBytesStore {
         }
     }
 
-    async read(id: string): Promise<ByteSource> {
+    async #read(id: string): Promise<ByteSource | undefined> {
         try {
             const path = this.#path(id);
             const info = await stat(path);
@@ -58,19 +66,17 @@ export class NodeFileSystemBlobBytesStore implements BlobBytesStore {
             };
         } catch (error) {
             if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-                throw new BlobBytesNotFoundError(id, {
-                    cause: error,
-                });
+                return undefined;
             }
             throw error;
         }
     }
 
-    async delete(id: string): Promise<void> {
+    async #delete(id: string): Promise<void> {
         await rm(this.#path(id), { force: true });
     }
 
-    async clear(): Promise<void> {
+    async #clear(): Promise<void> {
         await rm(this.#directory, { recursive: true, force: true });
     }
 

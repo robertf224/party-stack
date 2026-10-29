@@ -1,7 +1,8 @@
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
+import { OntologyStorageError, ConfigurationError } from "@party-stack/ontology-storage";
 import { MemoryBlobBytesStore } from "@party-stack/runtime";
-import { asProvider } from "@party-stack/runtime/testing";
+import { asRuntimeLayer } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createLiveOntology, waitForLiveOntologyReady } from "./LiveOntology.js";
@@ -47,7 +48,7 @@ describe("native LiveOntology construction", () => {
         const applyAction = vi.fn(() => Effect.die("must not submit"));
         const live = await createLiveOntology({
             ir,
-            runtime: asProvider(() => platform()),
+            runtime: asRuntimeLayer(() => platform()),
             backend: () => adapter(native({ resolveActionParameters: resolve, applyAction })),
         });
         try {
@@ -70,7 +71,7 @@ describe("native LiveOntology construction", () => {
             ir,
             context,
             id: "ontology-a",
-            runtime: asProvider((owner, namespace) => {
+            runtime: asRuntimeLayer((owner, namespace) => {
                 expect(owner).toBe("user-42");
                 expect(namespace).toBe("ontology-a");
                 return runtime;
@@ -93,18 +94,26 @@ describe("native LiveOntology construction", () => {
         expect(live.outbox.collection.status).toBe("cleaned-up");
     });
 
-    it("cleans up providers when persistence cannot be supplied", async () => {
+    it("releases platform resources when Tables acquisition fails", async () => {
         const openBackend = vi.fn(adapter().open);
         const runtime = platform();
         const cleanupRuntime = vi.fn();
         await expect(
             createLiveOntology({
                 ir,
-                persistObjects: true,
                 backend: () => ({ ...adapter(), open: openBackend }),
-                runtime: asProvider(() => ({ ...runtime, cleanup: cleanupRuntime })),
+                runtime: asRuntimeLayer(() => ({
+                    ...runtime,
+                    tables: Effect.fail(
+                        new OntologyStorageError({
+                            operation: "open",
+                            reason: new ConfigurationError({ message: "Could not open tables." }),
+                        })
+                    ),
+                    cleanup: cleanupRuntime,
+                })),
             })
-        ).rejects.toThrow("owned Tables storage");
+        ).rejects.toMatchObject({ _tag: "OntologyStorageError" });
         expect(openBackend).not.toHaveBeenCalled();
         expect(cleanupRuntime).toHaveBeenCalledOnce();
     });
@@ -116,7 +125,7 @@ describe("native LiveOntology construction", () => {
         await expect(
             createLiveOntology({
                 ir,
-                runtime: asProvider(() => ({ ...runtime, cleanup: cleanupRuntime })),
+                runtime: asRuntimeLayer(() => ({ ...runtime, cleanup: cleanupRuntime })),
                 backend: () => ({
                     name: "fail",
                     open: () =>
@@ -145,7 +154,7 @@ describe("native LiveOntology construction", () => {
         const live = await createLiveOntology({
             ir,
             backend: () => adapter(native({ applyAction })),
-            runtime: asProvider(() => runtime),
+            runtime: asRuntimeLayer(() => runtime),
         });
         try {
             const queued = await live.outbox.enqueue({
@@ -207,7 +216,7 @@ describe("native LiveOntology construction", () => {
         const applyAction = vi.fn(native().applyAction);
         const live = await createLiveOntology({
             ir,
-            runtime: asProvider(() => runtime),
+            runtime: asRuntimeLayer(() => runtime),
             backend: () => adapter(native({ applyAction })),
         });
         try {
@@ -252,7 +261,7 @@ describe("native LiveOntology construction", () => {
         const applyAction = vi.fn(() => Effect.fail(failure));
         const live = await createLiveOntology({
             ir,
-            runtime: asProvider(() => platform()),
+            runtime: asRuntimeLayer(() => platform()),
             backend: () => adapter(native({ applyAction })),
             writes: { defaultMode: "outbox", outbox: { failureStrategy: "discard-all" } },
         });

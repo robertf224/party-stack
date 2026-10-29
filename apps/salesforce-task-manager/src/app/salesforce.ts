@@ -3,7 +3,7 @@ import {
     createSalesforceBackendInstallation,
     createSalesforceOntologyRoute,
 } from "@party-stack/salesforce-ontology";
-import { createWebRuntime } from "@party-stack/web-runtime";
+import { layer as webRuntimeLayer } from "@party-stack/web-runtime";
 import ontology from "../ontology/ontology";
 import { SALESFORCE_TASK_MANAGER_ONTOLOGY_ID } from "../settings";
 import type { SalesforceTaskManagerOntology } from "../ontology/generated/types";
@@ -37,7 +37,7 @@ const useDevelopmentCredentials =
 const installation = await createSalesforceBackendInstallation({
     instanceUrl,
     apiVersion,
-    runtime: (owner, namespace) => createWebRuntime(owner, namespace, { persistEncryptionKeys: true }),
+    runtime: webRuntimeLayer({ persistEncryptionKeys: true }),
     connections: {
         oauth: {
             clientId,
@@ -49,7 +49,6 @@ const installation = await createSalesforceBackendInstallation({
         createSalesforceOntologyRoute({
             ontologyId: SALESFORCE_TASK_MANAGER_ONTOLOGY_ID,
             ir: ontology,
-            persistObjects: false,
             writes: {
                 // defaultMode: "outbox",
                 defaultVisibility: "optimistic",

@@ -1,5 +1,6 @@
 import {
     connectionOperation,
+    ConnectionError,
     type BackendConnectionAdapter,
     type BackendConnectionAdapterContext,
     type BackendConnectionAdapterProvider,
@@ -10,8 +11,8 @@ import {
     withHttpAuthenticationErrorHandling,
 } from "@party-stack/connect";
 import {
-    createClientCredentialsOAuthClient,
-    createPublicOAuthClient,
+    makeClientCredentialsOAuthClient,
+    makePublicOAuthClient,
     type ClientCredentialsOAuthClient,
     type OAuthSession,
     type PublicOAuthClient,
@@ -19,6 +20,7 @@ import {
 import { createFoundryFetch, createFoundryWebSocket, getTokenDetails } from "@party-stack/foundry-client";
 import { unauthenticated } from "@party-stack/ontology-backend";
 import { Effect } from "effect";
+import type { Runtime } from "@party-stack/runtime";
 import type { BrowserAuthenticationPresentation } from "@party-stack/runtime";
 import type { Scope } from "effect";
 
@@ -45,6 +47,8 @@ export interface CreateFoundryConnectionAdapterOptions {
 }
 
 export interface FoundryAuthenticationClient {
+    readonly oauthRedirectUrl?: string;
+    beginOAuth(): Promise<{ authorizationUrl: string; redirectUrl: string }>;
     completeOAuthRedirect(url: string): Promise<Connection<"active"> | undefined>;
     signIn: {
         oauth(options?: {
@@ -100,73 +104,59 @@ function createFoundryEgressWrapper(options: {
 
 const createFoundryConnectionAdapterInstance = Effect.fn("Foundry.connections")(function* (
     options: CreateFoundryConnectionAdapterOptions,
-    context: BackendConnectionAdapterContext
+    _context: BackendConnectionAdapterContext
 ): Effect.fn.Return<
     BackendConnectionAdapter<FoundryAuthenticationClient>,
     import("@party-stack/connect").ConnectionError,
-    Scope.Scope
+    Scope.Scope | Runtime
 > {
     const oauthOptions = options.oauth;
     const clientCredentialsOptions = options.clientCredentials;
     let tokenActive = Boolean(options.token);
     const publicOauth: PublicOAuthClient | undefined = oauthOptions
-        ? yield* Effect.acquireRelease(
-              connectionOperation("oauth.open", async () =>
-                  createPublicOAuthClient({
-                      clientId: oauthOptions.clientId,
-                      redirectUrl: oauthOptions.redirectUrl,
-                      scopes: [...new Set(["offline_access", ...(oauthOptions.scopes ?? DEFAULT_SCOPES)])],
-                      authorizationServer: {
-                          issuer: new URL(
-                              "multipass/",
-                              options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
-                          ).toString(),
-                          authorizationEndpoint: new URL(
-                              "multipass/api/oauth2/authorize",
-                              options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
-                          ).toString(),
-                          tokenEndpoint: new URL(
-                              "multipass/api/oauth2/token",
-                              options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
-                          ).toString(),
-                          revocationEndpoint: new URL(
-                              "multipass/api/oauth2/revoke_token",
-                              options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
-                          ).toString(),
-                      },
-                      runtime: context.runtime,
-                      scope: context.scope,
-                      fetch: oauthOptions.fetch,
-                      resolveUserId: (token) => getTokenDetails(token).userId,
-                  })
-              ),
-              (client) => Effect.promise(() => client.cleanup())
-          )
+        ? yield* makePublicOAuthClient({
+              clientId: oauthOptions.clientId,
+              redirectUrl: oauthOptions.redirectUrl,
+              scopes: [...new Set(["offline_access", ...(oauthOptions.scopes ?? DEFAULT_SCOPES)])],
+              authorizationServer: {
+                  issuer: new URL(
+                      "multipass/",
+                      options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
+                  ).toString(),
+                  authorizationEndpoint: new URL(
+                      "multipass/api/oauth2/authorize",
+                      options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
+                  ).toString(),
+                  tokenEndpoint: new URL(
+                      "multipass/api/oauth2/token",
+                      options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
+                  ).toString(),
+                  revocationEndpoint: new URL(
+                      "multipass/api/oauth2/revoke_token",
+                      options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
+                  ).toString(),
+              },
+              fetch: oauthOptions.fetch,
+              resolveUserId: (token) => getTokenDetails(token).userId,
+          }).pipe(Effect.mapError((cause) => ConnectionError.from("oauth.open", cause)))
         : undefined;
     const clientCredentialsOauth: ClientCredentialsOAuthClient | undefined = clientCredentialsOptions
-        ? yield* Effect.acquireRelease(
-              connectionOperation("oauth.open", async () =>
-                  createClientCredentialsOAuthClient({
-                      scope: context.scope,
-                      clientId: clientCredentialsOptions.clientId,
-                      clientSecret: clientCredentialsOptions.clientSecret,
-                      tokenEndpoint: new URL(
-                          "multipass/api/oauth2/token",
-                          options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
-                      ).toString(),
-                      tokenEndpointAuthMethod: "client_secret_basic",
-                      revocationEndpoint: new URL(
-                          "multipass/api/oauth2/revoke_token",
-                          options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
-                      ).toString(),
-                      scopes: clientCredentialsOptions.scopes ?? DEFAULT_SCOPES,
-                      fetch: clientCredentialsOptions.fetch,
-                      resolveUserId: (token) =>
-                          clientCredentialsOptions?.userId ?? getTokenDetails(token).userId,
-                  })
-              ),
-              (client) => Effect.promise(() => client.cleanup())
-          )
+        ? yield* makeClientCredentialsOAuthClient({
+              clientId: clientCredentialsOptions.clientId,
+              clientSecret: clientCredentialsOptions.clientSecret,
+              tokenEndpoint: new URL(
+                  "multipass/api/oauth2/token",
+                  options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
+              ).toString(),
+              tokenEndpointAuthMethod: "client_secret_basic",
+              revocationEndpoint: new URL(
+                  "multipass/api/oauth2/revoke_token",
+                  options.baseUrl.endsWith("/") ? options.baseUrl : `${options.baseUrl}/`
+              ).toString(),
+              scopes: clientCredentialsOptions.scopes ?? DEFAULT_SCOPES,
+              fetch: clientCredentialsOptions.fetch,
+              resolveUserId: (token) => clientCredentialsOptions?.userId ?? getTokenDetails(token).userId,
+          }).pipe(Effect.mapError((cause) => ConnectionError.from("oauth.open", cause)))
         : undefined;
 
     const createTokenSession = (candidate?: string): EstablishedConnection => {
@@ -255,6 +245,11 @@ const createFoundryConnectionAdapterInstance = Effect.fn("Foundry.connections")(
         name: "foundry",
         createAuthenticationClient(controller) {
             return {
+                oauthRedirectUrl: oauthOptions?.redirectUrl,
+                async beginOAuth() {
+                    if (!publicOauth) throw unauthenticated("Public OAuth is not configured.");
+                    return publicOauth.beginAuthorization();
+                },
                 async completeOAuthRedirect(url) {
                     if (!publicOauth) return;
                     const session = await publicOauth.completeRedirect(url);

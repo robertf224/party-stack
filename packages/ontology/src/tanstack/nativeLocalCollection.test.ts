@@ -6,19 +6,19 @@ import {
     type TablesService,
 } from "@party-stack/ontology-storage/tables";
 import { MemoryBlobBytesStore } from "@party-stack/runtime";
+import { runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { memoryRuntimeFixture, defineRuntimeFixture } from "@party-stack/runtime/testing";
 import { eq, queryOnce } from "@tanstack/db";
 import { Effect } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { createLocalCollection } from "./createLocalCollection.js";
-import type { RuntimeAdapter } from "@party-stack/runtime";
+import type { RuntimeFixtureOptions } from "@party-stack/runtime/testing";
 
 interface Item {
     id: string;
     title: string;
 }
 function provider(tables: TablesService) {
-    const listeners = new Set<() => void>();
     return defineRuntimeFixture((owner, namespace) => {
         return {
             owner,
@@ -26,22 +26,17 @@ function provider(tables: TablesService) {
 
             tables: Effect.succeed(tables),
             blobBytes: new MemoryBlobBytesStore(),
-            storageNotifications: {
-                publish: () => {
-                    for (const listener of listeners) listener();
-                },
-                subscribe: (listener: () => void) => {
-                    listeners.add(listener);
-                    return () => {
-                        listeners.delete(listener);
-                    };
-                },
-            },
         };
     });
 }
-const open = (runtime: RuntimeAdapter, name = "items", schemaVersion = 1) =>
-    createLocalCollection<Item, string>({ name, schemaVersion, runtime, getKey: (item) => item.id });
+const open = (runtime: RuntimeFixtureOptions, name = "items", schemaVersion = 1) =>
+    createLocalCollection<Item, string>({
+        name,
+        schemaVersion,
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
+        getKey: (item) => item.id,
+    });
 const rows = (collection: ReturnType<typeof open>) => queryOnce((q) => q.from({ row: collection }));
 
 test("default runtime collections use owned memory tables and survive collection close/reopen", async () => {
@@ -89,10 +84,10 @@ test("untyped local predicates keep filtering and limiting in TanStack when sema
     }
 });
 
-test("independent contexts reread shared tables after notifications without a persistence coordinator", async () => {
+test("collections in one owner observe committed local writes", async () => {
     const create = provider(await Effect.runPromise(Memory.make()));
     const a = create("owner", "shared");
-    const b = create("owner", "shared");
+    const b = a;
     const first = open(a);
     const second = open(b);
     const subscriptions = [first, second].map((collection) =>
@@ -103,9 +98,9 @@ test("independent contexts reread shared tables after notifications without a pe
         await first.insert({ id: "one", title: "Initial" }).isPersisted.promise;
         await vi.waitFor(() => expect(second.get("one")?.title).toBe("Initial"));
         await second.update("one", (draft) => {
-            draft.title = "Other context";
+            draft.title = "Other collection";
         }).isPersisted.promise;
-        await vi.waitFor(() => expect(first.get("one")?.title).toBe("Other context"));
+        await vi.waitFor(() => expect(first.get("one")?.title).toBe("Other collection"));
         await first.delete("one").isPersisted.promise;
         await vi.waitFor(() => expect(second.has("one")).toBe(false));
     } finally {
@@ -117,10 +112,10 @@ test("independent contexts reread shared tables after notifications without a pe
     }
 });
 
-test("concurrent writers preserve all rows in native transactions", async () => {
+test("concurrent collections in one owner preserve all rows in native transactions", async () => {
     const create = provider(await Effect.runPromise(Memory.make()));
     const a = create("owner", "concurrent");
-    const b = create("owner", "concurrent");
+    const b = a;
     const first = open(a);
     const second = open(b);
     const subscriptions = [first, second].map((collection) =>

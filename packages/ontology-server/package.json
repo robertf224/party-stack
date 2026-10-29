@@ -25,9 +25,14 @@
         "./rpc/worker": {
             "types": "./lib/rpcWorker.d.ts",
             "default": "./lib/rpcWorker.js"
+        },
+        "./installation/worker": {
+            "types": "./lib/installationWorker.d.ts",
+            "default": "./lib/installationWorker.js"
         }
     },
     "dependencies": {
+        "@party-stack/connect": "workspace:*",
         "@party-stack/ontology": "workspace:*",
         "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-replica": "workspace:*",

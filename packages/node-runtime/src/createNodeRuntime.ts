@@ -3,12 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { storageError } from "@party-stack/ontology-storage/driver";
-import {
-    Runtime,
-    RuntimeError,
-    makeKeyMaterialStoreKeyring,
-    type RuntimeAdapterProvider,
-} from "@party-stack/runtime";
+import { Runtime, RuntimeError, makeKeyMaterialStoreKeyring, RuntimePartition } from "@party-stack/runtime";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import * as SqlTables from "@party-stack/sql-ontology-storage/tables";
 import Database from "better-sqlite3";
@@ -39,17 +34,8 @@ function runtimeId(owner: string, namespace: string): string {
         .digest("hex");
 }
 
-export function createNodeRuntimeWithOptions(options: CreateNodeRuntimeOptions): RuntimeAdapterProvider {
-    return (owner, namespace) => make({ ...options, owner, namespace });
-}
-
-export interface NodeRuntimeOptions extends CreateNodeRuntimeOptions {
-    readonly owner: string;
-    readonly namespace: string;
-}
-
-export const make = Effect.fn("NodeRuntime.make")(function* (options: NodeRuntimeOptions) {
-    const { owner, namespace } = options;
+export const make = Effect.fn("NodeRuntime.make")(function* (options: CreateNodeRuntimeOptions = {}) {
+    const { owner, namespace } = yield* RuntimePartition;
     const directory = join(options.dataDirectory ?? defaultDataDirectory(), runtimeId(owner, namespace));
     yield* Effect.tryPromise({
         try: () => mkdir(directory, { recursive: true }),
@@ -80,21 +66,16 @@ export const make = Effect.fn("NodeRuntime.make")(function* (options: NodeRuntim
     const ownedTables = yield* tables;
     const encryptionKeyring = yield* makeKeyMaterialStoreKeyring(secrets);
     return yield* Runtime.make({
-        owner,
-        namespace,
         blobBytes,
         browserAuthentication: createNodeBrowserAuthentication(),
         encryptionKeyring: Effect.succeed(encryptionKeyring),
 
         tables: Effect.succeed(ownedTables),
-        destroy: () =>
-            rm(directory, {
-                recursive: true,
-                force: true,
-            }),
+        destroy: Effect.tryPromise({
+            try: () => rm(directory, { recursive: true, force: true }),
+            catch: (cause) => new RuntimeError({ operation: "destroy", cause }),
+        }),
     });
 });
 
-export const layer = (options: NodeRuntimeOptions) => Layer.effect(Runtime, make(options));
-
-export const createNodeRuntime = createNodeRuntimeWithOptions({});
+export const layer = (options: CreateNodeRuntimeOptions = {}) => Layer.effect(Runtime, make(options));

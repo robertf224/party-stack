@@ -1,4 +1,4 @@
-import { createNodeRuntime } from "@party-stack/node-runtime";
+import { layer as nodeRuntimeLayer } from "@party-stack/node-runtime";
 import {
     createSalesforceBackendInstallation,
     createSalesforceOntologyRoute,
@@ -14,7 +14,7 @@ const installation = await createSalesforceBackendInstallation({
     installationId,
     instanceUrl: settings.instanceUrl,
     apiVersion: settings.apiVersion,
-    runtime: createNodeRuntime,
+    runtime: nodeRuntimeLayer(),
     connections: {
         oauth: {
             clientId: settings.clientId,
@@ -26,7 +26,6 @@ const installation = await createSalesforceBackendInstallation({
         createSalesforceOntologyRoute({
             ontologyId: SALESFORCE_TASK_MANAGER_ONTOLOGY_ID,
             ir: ontology,
-            persistObjects: false,
         }),
     ],
 });

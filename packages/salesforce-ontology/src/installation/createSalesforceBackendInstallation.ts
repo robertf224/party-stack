@@ -18,7 +18,7 @@ import {
 import { createSalesforceMetaOntologyBackendAdapter } from "../meta/createSalesforceMetaOntologyBackendAdapter.js";
 import type { SalesforceCrudActionTypeSelection } from "../crud.js";
 import type { BackendConnectionAdapterProvider, ConnectionEgress } from "@party-stack/connect";
-import type { RuntimeAdapterProvider } from "@party-stack/runtime";
+import type { RuntimeLayer } from "@party-stack/runtime";
 
 export type SalesforceConnectionOptions = Omit<
     CreateSalesforceConnectionAdapterOptions,
@@ -33,7 +33,7 @@ export interface CreateSalesforceBackendInstallationOptions<
     installationId?: string;
     instanceUrl: string;
     apiVersion: string;
-    runtime: RuntimeAdapterProvider;
+    runtime: RuntimeLayer;
     connections: SalesforceConnectionOptions | BackendConnectionAdapterProvider<AuthenticationClient>;
     routes: readonly SalesforceOntologyRoute[];
     createContext?: (userId: string, ontologyId: string) => Record<string, unknown>;
@@ -89,7 +89,6 @@ export function createSalesforceOntologyRoute(options: {
     standardQueryFunctionTypeNames?: string[];
     crudActionTypes?: readonly SalesforceCrudActionTypeSelection[];
 
-    persistObjects?: boolean;
     writes?: LiveOntologyWrites;
 }): SalesforceOntologyRoute {
     return ({ instanceUrl, apiVersion }) => {
@@ -109,7 +108,6 @@ export function createSalesforceOntologyRoute(options: {
                     backend: createSalesforceOntologyBackend({
                         client,
                     }),
-                    persistObjects: options.persistObjects,
                     writes: options.writes,
                 };
             };

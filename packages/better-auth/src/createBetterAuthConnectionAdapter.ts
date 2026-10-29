@@ -60,8 +60,9 @@ export interface CreateBetterAuthConnectionAdapterOptions<Client extends BetterA
 export function createBetterAuthConnectionAdapter<Client extends BetterAuthConnectionClient>(
     options: CreateBetterAuthConnectionAdapterOptions<Client>
 ): BackendConnectionAdapterProvider<Client> {
-    return Effect.fn("BetterAuth.connections")(function* ({ installationId, scope }) {
+    return Effect.fn("BetterAuth.connections")(function* ({ installationId }) {
         const service = yield* Runtime;
+        const scope = yield* Effect.scope;
         const context = yield* Effect.context<never>();
         const run = Effect.runPromiseWith(context);
         const table = Table.make<CachedSession>({

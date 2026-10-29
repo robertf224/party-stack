@@ -1,5 +1,6 @@
 export {
     createFoundryBackendInstallation,
+    makeFoundryBackendInstallation,
     createFoundryOntologyRoute,
     type CreateFoundryBackendInstallationOptions,
     type FoundryConnectionOptions,

@@ -11,13 +11,12 @@ const ir: OntologyIR = {
 };
 
 describe("createMetaOntologyConfiguration", () => {
-    it("creates a non-persistent local metadata backend from IR", async () => {
+    it("creates a local metadata backend from IR", async () => {
         const configuration = createMetaOntologyConfiguration({
             ir,
         });
         const backend = await configuration.backend(configuration.ir, {});
 
-        expect(configuration.persistObjects).toBe(false);
         expect(backend.name).toBe("local-metadata");
     });
 });

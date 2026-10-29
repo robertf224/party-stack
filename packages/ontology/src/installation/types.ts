@@ -9,8 +9,8 @@ import type {
 import type { BackendError } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { MetaOntology } from "@party-stack/ontology-spec/meta";
-import type { RuntimeAdapterProvider } from "@party-stack/runtime";
-import type { Effect } from "effect";
+import type { RuntimeLayer } from "@party-stack/runtime";
+import type { Effect, Stream } from "effect";
 
 export interface ConfigureOntologyOptions {
     connection: Connection<"active">;
@@ -22,7 +22,6 @@ export interface OntologyConfiguration {
     ir: OntologyIR;
     backend: OntologyBackendAdapterProvider;
     context?: Record<string, unknown>;
-    persistObjects?: boolean;
     writes?: CreateLiveOntologyOpts["writes"];
 }
 
@@ -32,7 +31,7 @@ export interface OntologyRoute {
     configureMeta?(options: ConfigureOntologyOptions): OntologyConfiguration | Promise<OntologyConfiguration>;
 }
 
-export interface CreateOntologyBackendInstallationOptions<AuthenticationClient extends object = object> {
+export interface OntologyBackendInstallationOptions<AuthenticationClient extends object = object> {
     /**
      * Stable identity for one deployed backend and authentication domain.
      * Every ontology route must be usable through this installation's
@@ -40,7 +39,6 @@ export interface CreateOntologyBackendInstallationOptions<AuthenticationClient e
      */
     installationId: string;
     connections: BackendConnectionAdapterProvider<AuthenticationClient>;
-    runtime: RuntimeAdapterProvider;
     routes: readonly OntologyRoute[];
     createContext?: (userId: string, ontologyId: string) => Record<string, unknown>;
     /** Application placement boundary. Metadata keeps its normal local construction. */
@@ -49,10 +47,18 @@ export interface CreateOntologyBackendInstallationOptions<AuthenticationClient e
     ) => Promise<LiveOntology>;
 }
 
+/** Framework composition supplies a configured platform Layer, never a callback factory. */
+export interface CreateOntologyBackendInstallationOptions<
+    AuthenticationClient extends object = object,
+> extends OntologyBackendInstallationOptions<AuthenticationClient> {
+    runtime: RuntimeLayer;
+}
+
 export interface OntologyBackendInstallation<AuthenticationClient extends object = object> {
     readonly installationId: string;
     readonly authentication: AuthenticationClient;
     readonly connections: ReadonlyMap<string, Connection>;
+    readonly connectionChanges: Stream.Stream<readonly Connection[]>;
     connectionMonitor(userId: string): ConnectionMonitor;
 
     /**
@@ -79,6 +85,7 @@ export interface OntologyBackendInstallation<AuthenticationClient extends object
      * credentials. The persisted Connection remains inactive. Local ontology
      * data and pending writes are retained.
      */
+    refreshConnections(): Promise<void>;
     disconnect(userId: string): Promise<void>;
     /**
      * Logs the user out and removes the persisted Connection from this
@@ -102,6 +109,7 @@ export interface OntologyBackendInstallationService<A extends object = object> {
     readonly installationId: string;
     readonly authentication: A;
     readonly connections: ReadonlyMap<string, Connection>;
+    readonly connectionChanges: Stream.Stream<readonly Connection[]>;
     connectionMonitor(userId: string): ConnectionMonitor;
     openOntology<T extends OntologyDefinition = OntologyDefinition>(options: {
         userId: string;
@@ -111,8 +119,17 @@ export interface OntologyBackendInstallationService<A extends object = object> {
         userId: string;
         ontologyId: string;
     }): Effect.Effect<LiveOntology<MetaOntology>, BackendError>;
-    closeOntology(options: { userId: string; ontologyId: string }): Effect.Effect<void, BackendError>;
-    closeMetaOntology(options: { userId: string; ontologyId: string }): Effect.Effect<void, BackendError>;
+    closeOntology(options: {
+        userId: string;
+        ontologyId: string;
+        ifReplica?: LiveOntology["storage"];
+    }): Effect.Effect<void, BackendError>;
+    closeMetaOntology(options: {
+        userId: string;
+        ontologyId: string;
+        ifReplica?: LiveOntology["storage"];
+    }): Effect.Effect<void, BackendError>;
+    refreshConnections(): Effect.Effect<void, BackendError>;
     disconnect(userId: string): Effect.Effect<void, BackendError>;
     forget(userId: string): Effect.Effect<void, BackendError>;
 }

@@ -144,7 +144,7 @@ export function Queries({ ontology }: { ontology: LiveOntology }) {
                                 </QueryTarget>
                             </header>
                             <QueryPushdown
-                                key={(parentStatus ?? status)?.sourceId}
+                                key={ontology.storage?.sourceId}
                                 requests={requests}
                                 demand={demand}
                                 load={latest}

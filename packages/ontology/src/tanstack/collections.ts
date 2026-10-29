@@ -1,11 +1,12 @@
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Runtime } from "@party-stack/runtime";
 import { BasicIndex, createCollection, collectionOptions, whenSyncAccepted } from "@tanstack/db";
-import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Scope, Stream, Queue } from "effect";
 import { registerCollectionDemands, type CollectionDemandDiagnostic } from "./diagnostics.js";
 import { analyzeStorageSubset, storageSubset } from "./subset.js";
 import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { Key } from "@party-stack/ontology-storage";
+import type { TablesService } from "@party-stack/ontology-storage/tables";
 import type { CollectionConfig, DbClient, LoadSubsetOptions } from "@tanstack/db";
 
 interface Change<A> {
@@ -272,21 +273,51 @@ export const persistedCollectionOptions = Effect.fnUntraced(function* <
     };
     return config;
 });
+// Local collection clients share the owning tables service, never another context's tables.
+const localListeners = new WeakMap<TablesService, Set<() => void>>();
+const localChanges = (tables: TablesService) => {
+    let listeners = localListeners.get(tables);
+    if (!listeners) localListeners.set(tables, (listeners = new Set()));
+    const current = listeners;
+    return {
+        changes: Stream.callback<void>(
+            (queue) =>
+                Effect.acquireRelease(
+                    Effect.sync(() => {
+                        const listener = () => {
+                            Queue.offerUnsafe(queue, undefined);
+                        };
+                        current.add(listener);
+                        return listener;
+                    }),
+                    (listener) =>
+                        Effect.sync(() => {
+                            current.delete(listener);
+                        })
+                ),
+            { bufferSize: 1, strategy: "sliding" }
+        ),
+        notify: Effect.sync(() => {
+            for (const listener of current) listener();
+        }),
+    };
+};
 export const localCollectionOptions = Effect.fnUntraced(function* <A extends object, K extends Key>(options: {
     readonly name: string;
     readonly getKey: (value: A) => K;
     readonly schemaVersion?: number;
 }) {
     const runtime = yield* Runtime;
+    const local = localChanges(runtime.tables);
     const table = Table.make<A>({
-        name: JSON.stringify(["local", runtime.adapter.owner, runtime.adapter.namespace, options.name]),
+        name: JSON.stringify(["local", runtime.owner, runtime.namespace, options.name]),
         version: options.schemaVersion,
     });
     const config = yield* persistedCollectionOptions<A, K>({
-        id: `party-stack:${runtime.adapter.owner}:${runtime.adapter.namespace}:${options.name}`,
+        id: `party-stack:${runtime.owner}:${runtime.namespace}:${options.name}`,
         getKey: options.getKey,
         load: (subset) => runtime.tables.loadSubset(table, storageSubset(subset)),
-        changes: yield* runtime.subscribeChanges,
+        changes: local.changes,
         persist: (mutations) =>
             runtime.tables
                 .transaction((tx) =>
@@ -297,7 +328,7 @@ export const localCollectionOptions = Effect.fnUntraced(function* <A extends obj
                         }
                     })
                 )
-                .pipe(Effect.tap(() => runtime.notify)),
+                .pipe(Effect.tap(() => local.notify)),
     });
     return config;
 });

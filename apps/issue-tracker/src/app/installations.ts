@@ -1,80 +1,66 @@
 import { createBetterAuthConnectionAdapter } from "@party-stack/better-auth";
-import { createFoundryBackendInstallation, createFoundryOntologyRoute } from "@party-stack/foundry-ontology";
+import { makeFoundryBackendInstallation, createFoundryOntologyRoute } from "@party-stack/foundry-ontology";
 import { createFoundryUsersIntegration } from "@party-stack/foundry-ontology/users";
 import {
-    createOntologyBackendInstallation,
-    type CreateOntologyBackendInstallationOptions,
-    type OntologyBackendInstallation,
+    makeOntologyBackendInstallation,
+    type OntologyBackendInstallationService,
 } from "@party-stack/ontology";
+import { BackendError } from "@party-stack/ontology-backend";
 import { connectOntologyBackendHttp } from "@party-stack/ontology-server/rpc/http";
-import { createWebRuntime } from "@party-stack/web-runtime";
-import { Effect } from "effect";
+import { Runtime, RuntimePartition, type Runtimes } from "@party-stack/runtime";
+import { make as makeWebRuntime } from "@party-stack/web-runtime";
+import { Effect, Layer, type Scope } from "effect";
 import { FetchHttpClient } from "effect/http";
 import ontology from "../ontology/ontology";
 import { foundryUserToUser } from "../ontology/user";
 import { authClient } from "./auth";
-
-const writes = {
-    defaultMode: "outbox" as const,
-    defaultVisibility: "optimistic" as const,
-    outbox: { failureStrategy: "discard-all" as const },
-};
-
-function requiredEnv(name: string, value: string | undefined): string {
-    if (!value) {
-        throw new Error(`Missing required environment variable ${name}.`);
-    }
-    return value;
-}
-
-const FOUNDRY_URL = requiredEnv("VITE_FOUNDRY_URL", import.meta.env.VITE_FOUNDRY_URL);
-export const FOUNDRY_ONTOLOGY_RID = requiredEnv(
-    "VITE_FOUNDRY_ONTOLOGY_RID",
-    import.meta.env.VITE_FOUNDRY_ONTOLOGY_RID
-);
-const FOUNDRY_CLIENT_ID = requiredEnv("VITE_FOUNDRY_CLIENT_ID", import.meta.env.VITE_FOUNDRY_CLIENT_ID);
-const FOUNDRY_REDIRECT_URL =
-    import.meta.env.VITE_FOUNDRY_REDIRECT_URL ?? new URL("/auth/callback", globalThis.location.origin).href;
-
-export const TRACKER_CACHE_EPOCH = "query-ir-v0";
+import {
+    FOUNDRY_URL,
+    FOUNDRY_CLIENT_ID,
+    FOUNDRY_REDIRECT_URL,
+    FOUNDRY_ONTOLOGY_RID,
+    FOUNDRY_INSTALLATION_ID,
+    TRACKER_CACHE_EPOCH,
+    trackerWrites,
+} from "./trackerConfig";
 
 // This example deliberately opts into persistent browser credentials.
-const trackerRuntime = Effect.fn("Tracker.runtime")(function* (owner: string, namespace: string) {
-    // Explicit alpha cache epoch for the new IR/context contract. Installation
-    // credentials keep their existing namespace; prior replica caches are retained.
-    const storageNamespace = owner === "installation" ? namespace : `${TRACKER_CACHE_EPOCH}:${namespace}`;
-    return yield* createWebRuntime(owner, storageNamespace, { persistEncryptionKeys: true });
-});
+export const trackerRuntime = Layer.effect(
+    Runtime,
+    Effect.gen(function* () {
+        const { owner, namespace } = yield* RuntimePartition;
+        return yield* makeWebRuntime({ persistEncryptionKeys: true }).pipe(
+            Effect.provideService(RuntimePartition, {
+                owner,
+                namespace: owner === "installation" ? namespace : `${TRACKER_CACHE_EPOCH}:${namespace}`,
+            })
+        );
+    })
+);
 
-type OpenOntology = CreateOntologyBackendInstallationOptions["openOntology"];
-
-export async function createTrackerInstallations(options?: { openOntology?: OpenOntology }) {
-    const foundry = await createFoundryInstallation(options?.openOntology);
-    try {
-        const sqlite = await createSqliteInstallation(options?.openOntology);
-        return { foundry, sqlite };
-    } catch (cause) {
-        await foundry.cleanup();
-        throw cause;
-    }
+export function makeTrackerInstallation(
+    installationId: string
+): Effect.Effect<OntologyBackendInstallationService, BackendError, Runtimes | Scope.Scope> {
+    if (installationId === "issue-tracker-sqlite") return makeSqliteInstallation();
+    if (installationId === FOUNDRY_INSTALLATION_ID) return makeFoundryInstallation();
+    return Effect.fail(
+        new BackendError({
+            operation: "installation.open",
+            kind: "InvalidConfiguration",
+            retryable: false,
+            message: "Unknown ontology installation.",
+        })
+    );
 }
 
-export function createTrackerInstallation(installationId: string): Promise<OntologyBackendInstallation> {
-    if (installationId === "issue-tracker-sqlite") return createSqliteInstallation();
-    if (installationId === new URL(FOUNDRY_URL).origin) return createFoundryInstallation();
-    throw new Error("Unknown ontology installation.");
-}
-
-async function createFoundryInstallation(openOntology?: OpenOntology) {
+function makeFoundryInstallation() {
     const foundryUsers = createFoundryUsersIntegration({
         objectType: "User",
         lens: foundryUserToUser,
     });
 
-    return createFoundryBackendInstallation({
+    return makeFoundryBackendInstallation({
         baseUrl: FOUNDRY_URL,
-        runtime: trackerRuntime,
-        openOntology: openOntology,
         connections: {
             oauth: {
                 clientId: FOUNDRY_CLIENT_ID,
@@ -94,21 +80,18 @@ async function createFoundryInstallation(openOntology?: OpenOntology) {
                 ontologyId: FOUNDRY_ONTOLOGY_RID,
                 ir: ontology,
                 users: foundryUsers,
-                persistObjects: true,
-                writes,
+                writes: trackerWrites,
             }),
         ],
     });
 }
 
-async function createSqliteInstallation(openOntology?: OpenOntology) {
-    return createOntologyBackendInstallation<typeof authClient>({
+function makeSqliteInstallation() {
+    return makeOntologyBackendInstallation<typeof authClient>({
         installationId: "issue-tracker-sqlite",
         connections: createBetterAuthConnectionAdapter({
             client: authClient,
         }),
-        runtime: trackerRuntime,
-        openOntology: openOntology,
         routes: [
             {
                 matches: (ontologyId) => ontologyId === "issue-tracker",
@@ -126,8 +109,7 @@ async function createSqliteInstallation(openOntology?: OpenOntology) {
                                 )
                             ),
                     }),
-                    persistObjects: true,
-                    writes,
+                    writes: trackerWrites,
                 }),
             },
         ],

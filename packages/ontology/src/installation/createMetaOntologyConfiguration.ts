@@ -12,7 +12,6 @@ export function createMetaOntologyConfiguration(
         ...("ir" in options
             ? {
                   backend: () => createLocalMetaOntologyBackendAdapter(options.ir),
-                  persistObjects: false,
               }
             : options),
         ir: metaOntology,

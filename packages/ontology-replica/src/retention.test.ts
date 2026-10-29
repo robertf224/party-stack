@@ -3,6 +3,7 @@ import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o } from "@party-stack/ontology-spec";
 import { eq, field, gte } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
+import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Scope, Exit, Result } from "effect";
 import { expect, test, vi } from "vitest";
 import { makeReplica } from "./index.js";
@@ -243,6 +244,38 @@ test("automatic bounded collection belongs to the replica scope and preserves a 
                 const closedAt = transactions;
                 yield* Effect.sleep(30);
                 expect(transactions).toBe(closedAt);
+            })
+        )
+    );
+});
+
+test("owner restart discards abandoned query leases while retaining pins and pending action dependencies", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const oldScope = yield* Scope.fork(yield* Effect.scope);
+                const { replica, tables, options } = yield* Scope.provide(
+                    setup((tx) => tx.get("Row", "row1").pipe(Effect.asVoid)),
+                    oldScope
+                );
+                yield* replica.pin("Row", "row0", true);
+                yield* replica.enqueue({ id: "pending", name: "queued", parameters: {} });
+                yield* Scope.close(oldScope, Exit.void);
+                // A process crash cannot execute finalizers. Seed the persisted lease it leaves behind.
+                const roots = Table.make<{ owner: string; objectType: string; kind: "remote"; query: {} }>({
+                    name: JSON.stringify(["replica", options.namespace, "roots"]),
+                });
+                yield* tables.put(roots, "old-query", {
+                    owner: "previous-process",
+                    objectType: "Row",
+                    kind: "remote",
+                    query: {},
+                });
+                const reopened = yield* makeReplica(options);
+                expect(yield* tables.loadSubset(roots)).toEqual([]);
+                expect(yield* reopened.collectGarbage({ olderThanMs: 0 })).toBe(3);
+                expect((yield* reopened.loadSubset("Row")).map((row) => row.key)).toEqual(["row0", "row1"]);
+                expect((yield* reopened.pending).map((entry) => entry.invocation.id)).toEqual(["pending"]);
             })
         )
     );

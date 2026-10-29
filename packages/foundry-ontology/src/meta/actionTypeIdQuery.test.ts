@@ -62,7 +62,6 @@ describe("Foundry ActionType metadata ID queries", () => {
         });
         const meta = await createMetaLiveOntology({
             backend: () => createFoundryMetaOntologyBackendAdapter({ client }),
-            persistObjects: false,
         });
 
         try {
@@ -126,7 +125,6 @@ describe("Foundry ActionType metadata ID queries", () => {
                 createFoundryMetaOntologyBackendAdapter({
                     client,
                 }),
-            persistObjects: false,
         });
 
         try {

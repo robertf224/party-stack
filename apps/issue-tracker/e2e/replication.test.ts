@@ -15,6 +15,89 @@ const visible = async (page: Page, role: Parameters<Page["getByRole"]>[0], name:
     await expect.poll(() => page.getByRole(role, { name }).isVisible()).toBe(true);
 };
 
+test.skipIf(!url).each(["offline", "online"])(
+    "status updates with %s are optimistic with devtools closed, Objects selected, or Outbox selected",
+    async (network) => {
+        const context = await browser.newContext({ ignoreHTTPSErrors: true });
+        const title = `Optimistic status ${crypto.randomUUID().slice(0, 8)}`;
+        try {
+            const page = await context.newPage();
+            await page.goto(url!);
+            await visible(page, "heading", "Connect profile");
+            await page.getByRole("button", { name: "Connect", exact: true }).click();
+            await visible(page, "button", "New issue");
+            await page.getByRole("button", { name: "New issue", exact: true }).click();
+            const form = page.getByRole("dialog", { name: "Create issue", exact: true });
+            await form.getByLabel("Title", { exact: true }).fill(title);
+            await form.getByRole("button", { name: "Create issue", exact: true }).click();
+            await page.getByPlaceholder("Search issues").fill(title);
+            await visible(page, "button", new RegExp(title));
+            // Offline updates prove the UI does not depend on a server reply.
+            // Repeat online as well to catch publication/confirmation races.
+            if (network === "offline") await context.setOffline(true);
+            const timings: { panel: string; ms: number }[] = [];
+            let previous = "Open";
+            for (const [panel, next] of [
+                [undefined, "Waiting"],
+                ["Objects", "In Progress"],
+                ["Outbox", "Open"],
+                ["Objects", "Waiting"],
+                ["Outbox", "In Progress"],
+                ["Objects", "Open"],
+            ] as const) {
+                if (panel) {
+                    const opener = page.getByRole("button", { name: "Open TanStack Devtools", exact: true });
+                    if (await opener.isVisible()) await opener.click();
+                    await page
+                        .getByRole("tab", {
+                            name: panel === "Outbox" ? /^Outbox/ : panel,
+                            exact: panel !== "Outbox",
+                        })
+                        .click();
+                }
+                await page
+                    .getByRole("combobox", { name: `Change status from ${previous}`, exact: true })
+                    .click();
+                await page.getByRole("main").evaluate((main, next) => {
+                    const click = () => {
+                        const started = performance.now();
+                        const observer = new MutationObserver(() => {
+                            if (!main.querySelector(`[aria-label="Change status from ${next}"]`)) return;
+                            Reflect.set(window, "statusLatency", performance.now() - started);
+                            observer.disconnect();
+                        });
+                        observer.observe(main, { subtree: true, attributes: true, childList: true });
+                    };
+                    Reflect.deleteProperty(window, "statusLatency");
+                    document.addEventListener("click", click, { once: true, capture: true });
+                }, next);
+                await page.getByRole("listbox").getByRole("option", { name: next, exact: true }).click();
+                await expect
+                    .poll(
+                        () =>
+                            page
+                                .getByRole("combobox", { name: `Change status from ${next}`, exact: true })
+                                .isVisible(),
+                        {
+                            timeout: 1_000,
+                            interval: 10,
+                        }
+                    )
+                    .toBe(true);
+                timings.push({
+                    panel: panel ?? "closed",
+                    ms: await page.evaluate(() => Reflect.get(window, "statusLatency") as number),
+                });
+                previous = next;
+            }
+            console.info(network, timings);
+        } finally {
+            await context.setOffline(false);
+            await context.close();
+        }
+    }
+);
+
 test.skipIf(!url)(
     "offline actions survive initiating-tab closure and settle through one shared owner",
     async () => {
@@ -57,12 +140,16 @@ test.skipIf(!url)(
                 .toContain("Tab replica");
             await expect
                 .poll(() => searchDemand.locator(".ps-query-execution").innerText())
-                .toContain("Satisfied by local coverage; no upstream request needed.");
+                .toMatch(
+                    /(?:Satisfied by local coverage|Reused this query’s previous result); no upstream request needed\./
+                );
             expect(
                 await searchDemand.getByRole("heading", { name: "Coverage", exact: true }).isVisible()
             ).toBe(true);
-            expect(await searchDemand.locator(".ps-query-execution").innerText()).toContain(
-                "Complete collection; includes every matching row."
+            // Initial whole-collection demand may finish before or after this
+            // narrower query. Either complete coverage is a valid cache hit.
+            expect(await searchDemand.locator(".ps-query-execution").innerText()).toMatch(
+                /Complete collection; includes every matching row\.|Previously loaded complete result of the same query or primary-key lookup\./
             );
             expect(await searchDemand.locator(".ps-query-execution").innerText()).toMatch(
                 /Refreshed (through journal catch-up|by source change notifications)\./
@@ -178,7 +265,7 @@ test.skipIf(!url)(
             await expect
                 .poll(() =>
                     second
-                        .getByRole("button", { name: "Replica.syncParent", exact: true })
+                        .getByRole("button", { name: "Replica.receiveDelivery", exact: true })
                         .first()
                         .isVisible()
                 )
@@ -307,25 +394,28 @@ test.skipIf(!url).fails("reload cleans derived React queries before their source
 });
 
 test.skipIf(!url)(
-    "single-process tracing identifies the host without an upstream source selector",
+    "unsupported worker environments do not silently open persistent tables in the page",
     async () => {
         const context = await browser.newContext({ ignoreHTTPSErrors: true });
         await context.addInitScript(() => {
             Object.defineProperty(globalThis, "SharedWorker", { value: undefined, configurable: true });
+            indexedDB.open = () => {
+                throw new Error("The page must not open private storage.");
+            };
         });
         try {
             const page = await context.newPage();
             await page.goto(url!);
-            await visible(page, "heading", "Connect profile");
-            await page.getByRole("button", { name: "Connect", exact: true }).click();
-            await visible(page, "button", "New issue");
-            const opener = page.getByRole("button", { name: "Open TanStack Devtools" });
-            await opener.click();
-            await page.getByRole("tab", { name: "Tracing", exact: true }).click();
-            await visible(page, "table", "Tracing timeline");
-            await expect.poll(() => page.getByLabel("Tracing inspector").innerText()).toContain("This tab");
-            expect(await page.getByLabel("Trace source", { exact: true }).count()).toBe(0);
-            expect(await page.getByLabel("Tracing inspector").innerText()).not.toContain("No parent replica");
+            await expect
+                .poll(() =>
+                    page
+                        .getByText("This example requires SharedWorker support for persistent storage.", {
+                            exact: true,
+                        })
+                        .isVisible()
+                )
+                .toBe(true);
+            expect(await page.getByRole("button", { name: "New issue", exact: true }).count()).toBe(0);
         } finally {
             await context.close();
         }

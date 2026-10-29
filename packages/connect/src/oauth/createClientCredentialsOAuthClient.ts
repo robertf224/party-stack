@@ -23,22 +23,20 @@ export interface ClientCredentialsOAuthClient {
     cleanup(): Promise<void>;
 }
 
-/** SDK boundary for non-interactive credentials; its scope owns every request. */
-export function createClientCredentialsOAuthClient(
-    options: CreateClientCredentialsOAuthClientOptions
-): ClientCredentialsOAuthClient {
-    const owner = options.scope ? Effect.runSync(Scope.fork(options.scope)) : Scope.makeUnsafe();
+/** Scoped provider client. Only the SDK methods bridge to Promise-based consumers. */
+export const makeClientCredentialsOAuthClient = Effect.fn("ClientCredentialsOAuthClient.make")(function* (
+    options: Omit<CreateClientCredentialsOAuthClientOptions, "scope">
+) {
+    const owner = yield* Scope.fork(yield* Effect.scope);
     const gate = Semaphore.makeUnsafe(1);
     let current: OAuthTokens | undefined;
     let closed = false;
-    Effect.runSync(
-        Scope.addFinalizer(
-            owner,
-            Effect.sync(() => {
-                closed = true;
-                current = undefined;
-            })
-        )
+    yield* Scope.addFinalizer(
+        owner,
+        Effect.sync(() => {
+            closed = true;
+            current = undefined;
+        })
     );
     const provider = makeOAuthProvider({
         issuer: new URL(options.tokenEndpoint).origin,
@@ -110,5 +108,12 @@ export function createClientCredentialsOAuthClient(
             current = undefined;
             return Effect.runPromise(Scope.close(owner, Exit.void));
         },
-    };
+    } satisfies ClientCredentialsOAuthClient;
+});
+
+export function createClientCredentialsOAuthClient(
+    options: CreateClientCredentialsOAuthClientOptions
+): ClientCredentialsOAuthClient {
+    const owner = options.scope ?? Scope.makeUnsafe();
+    return Effect.runSync(Scope.provide(makeClientCredentialsOAuthClient(options), owner));
 }

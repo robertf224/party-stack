@@ -1,10 +1,10 @@
 import type { OntologyBackendInstallation } from "./installation/types.js";
 import type { Connection } from "@party-stack/connect";
 import type { OntologyIR } from "@party-stack/ontology-spec";
-import type { RuntimeAdapterProvider } from "@party-stack/runtime";
+import type { RuntimeLayer } from "@party-stack/runtime";
 
 export interface OntologyPullContext {
-    runtime: RuntimeAdapterProvider;
+    runtime: RuntimeLayer;
 }
 
 export interface OntologyPullSource<AuthenticationClient extends object = object> {

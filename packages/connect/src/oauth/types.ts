@@ -1,4 +1,4 @@
-import type { BrowserAuthenticationPresentation, RuntimeAdapter } from "@party-stack/runtime";
+import type { BrowserAuthenticationPresentation, RuntimeService } from "@party-stack/runtime";
 import type { Scope } from "effect";
 
 export interface OAuthAuthorizationServer {
@@ -20,18 +20,22 @@ export interface PublicOAuthSignInOptions {
     browserPresentation?: BrowserAuthenticationPresentation;
 }
 
-export interface CreatePublicOAuthClientOptions {
+export interface PublicOAuthClientOptions {
     clientId: string;
     redirectUrl: string;
     scopes: readonly string[];
     authorizationServer: OAuthAuthorizationServer;
-    runtime: RuntimeAdapter;
-    scope?: Scope.Scope;
     resolveUserId(accessToken: string): string | Promise<string>;
     fetch?: typeof globalThis.fetch;
 }
 
+export interface CreatePublicOAuthClientOptions extends PublicOAuthClientOptions {
+    runtime: RuntimeService;
+    scope: Scope.Scope;
+}
+
 export interface PublicOAuthClient {
+    beginAuthorization(): Promise<{ authorizationUrl: string; redirectUrl: string }>;
     signIn(options?: PublicOAuthSignInOptions): Promise<OAuthSession>;
     completeRedirect(url: string): Promise<OAuthSession | undefined>;
     restoreSessions(): Promise<readonly OAuthSession[]>;

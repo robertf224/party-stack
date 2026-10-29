@@ -1,17 +1,18 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { MemoryBlobBytesStore, type RuntimeAdapter } from "@party-stack/runtime";
+import { MemoryBlobBytesStore } from "@party-stack/runtime";
 import { runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { closeRuntimeFixture } from "@party-stack/runtime/testing";
 import { Deferred, Effect, Stream } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { createBlobManager } from "./createBlobManager.js";
+import type { RuntimeFixtureOptions } from "@party-stack/runtime/testing";
 
 test("native blob facade loads metadata on demand and preserves remote aliases after eviction", async () => {
     const tables = await Effect.runPromise(Memory.make());
     const bytes = new MemoryBlobBytesStore();
-    const runtime: RuntimeAdapter = {
+    const runtime: RuntimeFixtureOptions = {
         owner: "user",
         namespace: "native",
         tables: Effect.succeed(tables),
@@ -20,7 +21,12 @@ test("native blob facade loads metadata on demand and preserves remote aliases a
     };
     runtimeFixtureContext(runtime);
     const read = vi.fn(() => Promise.resolve(new Blob(["refetched"], { type: "text/plain" })));
-    const manager = createBlobManager({ runtime, remote: { read }, gcTime: Infinity });
+    const manager = createBlobManager({
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
+        remote: { read },
+        gcTime: Infinity,
+    });
     try {
         await manager.ready;
         await manager.stage("local", new File(["staged"], "file.txt", { type: "text/plain" }));
@@ -49,7 +55,7 @@ test("native blob facade loads metadata on demand and preserves remote aliases a
 test("native blob cleanup aborts remote work and fences a late non-cancelable response", async () => {
     const tables = await Effect.runPromise(Memory.make());
     const bytes = new MemoryBlobBytesStore();
-    const runtime: RuntimeAdapter = {
+    const runtime: RuntimeFixtureOptions = {
         owner: "user",
         namespace: "cancel",
         tables: Effect.succeed(tables),
@@ -63,7 +69,8 @@ test("native blob cleanup aborts remote work and fences a late non-cancelable re
         finish = resolve;
     });
     const manager = createBlobManager({
-        runtime,
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
         gcTime: Infinity,
         remote: {
             read: (_id, options) => {
@@ -89,7 +96,7 @@ test("native blob cleanup aborts remote work and fences a late non-cancelable re
 });
 
 test("a cold read delivers its first bytes before EOF and commits the cache before completion", async () => {
-    const runtime: RuntimeAdapter = {
+    const runtime: RuntimeFixtureOptions = {
         owner: "user",
         namespace: "progressive",
         tables: Memory.make(),
@@ -113,7 +120,12 @@ test("a cold read delivers its first bytes before EOF and commits the cache befo
             )
         ),
     }));
-    const manager = createBlobManager({ runtime, remote: { read }, gcTime: Infinity });
+    const manager = createBlobManager({
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
+        remote: { read },
+        gcTime: Infinity,
+    });
     try {
         const source = await manager.source("remote");
         expect(finished).toBe(false);
@@ -143,7 +155,7 @@ test("a cold read delivers its first bytes before EOF and commits the cache befo
 
 test("canceling a progressive reader settles its partial write before another reader retries", async () => {
     const bytes = new MemoryBlobBytesStore();
-    const runtime: RuntimeAdapter = {
+    const runtime: RuntimeFixtureOptions = {
         owner: "user",
         namespace: "progressive-cancel",
         tables: Memory.make(),
@@ -158,7 +170,12 @@ test("canceling a progressive reader settles its partial write before another re
             Stream.fromEffect(Deferred.await(release).pipe(Effect.as(new Uint8Array([2]))))
         ),
     }));
-    const manager = createBlobManager({ runtime, remote: { read }, gcTime: Infinity });
+    const manager = createBlobManager({
+        runtime: runtimeFixtureContext(runtime).service,
+        scope: runtimeFixtureContext(runtime).scope,
+        remote: { read },
+        gcTime: Infinity,
+    });
     try {
         const source = await manager.source("remote");
         expect(await Effect.runPromise(Stream.runCollect(Stream.take(source.stream, 1)))).toEqual([
@@ -183,7 +200,7 @@ test("canceling a progressive reader settles its partial write before another re
 test.each(["Forbidden", "Unauthenticated", "Unavailable", "InvalidResponse"] as const)(
     "metadata propagates %s without downloading attachment bytes",
     async (kind) => {
-        const runtime: RuntimeAdapter = {
+        const runtime: RuntimeFixtureOptions = {
             owner: "user",
             namespace: `metadata-${kind}`,
             tables: Memory.make(),
@@ -193,7 +210,8 @@ test.each(["Forbidden", "Unauthenticated", "Unavailable", "InvalidResponse"] as 
         const error = new BackendError({ operation: "metadata", kind, message: "Failed", retryable: false });
         const read = vi.fn(async () => new Blob(["private"]));
         const manager = createBlobManager({
-            runtime,
+            runtime: runtimeFixtureContext(runtime).service,
+            scope: runtimeFixtureContext(runtime).scope,
             remote: {
                 read,
                 metadata: async () => {
@@ -215,23 +233,26 @@ test.each(["unconsumed", "consuming"])(
     "aborting a %s source after headers releases its partial cache write",
     async (mode) => {
         const bytes = new MemoryBlobBytesStore();
-        const runtime: RuntimeAdapter = {
+        const runtime: RuntimeFixtureOptions = {
             owner: "user",
             namespace: "abort-source",
             tables: Memory.make(),
             blobBytes: bytes,
         };
         runtimeFixtureContext(runtime);
+        const started = Effect.runSync(Deferred.make<void>());
         const stopped = Effect.runSync(Deferred.make<void>());
         let attempts = 0;
         const manager = createBlobManager({
-            runtime,
+            runtime: runtimeFixtureContext(runtime).service,
+            scope: runtimeFixtureContext(runtime).scope,
             remote: {
                 read: async () => ({
                     type: "text/plain",
                     stream:
                         ++attempts === 1
                             ? Stream.concat(Stream.make(new Uint8Array([1])), Stream.never).pipe(
+                                  Stream.tap(() => Deferred.succeed(started, undefined)),
                                   Stream.ensuring(Deferred.succeed(stopped, undefined))
                               )
                             : Stream.make(new Uint8Array([2])),
@@ -241,7 +262,12 @@ test.each(["unconsumed", "consuming"])(
         try {
             const abort = new AbortController();
             const source = await manager.source("remote", { signal: abort.signal });
-            if (mode === "unconsumed") abort.abort();
+            if (mode === "unconsumed") {
+                // Exercise cancellation of an acquired producer, rather than one
+                // aborted before its stream/finalizer ever starts.
+                await Effect.runPromise(Deferred.await(started).pipe(Effect.timeout("2 seconds")));
+                abort.abort();
+            }
             const content =
                 mode === "consuming"
                     ? {
