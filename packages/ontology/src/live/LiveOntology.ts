@@ -129,6 +129,8 @@ export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> 
     backend: OntologyBackendAdapterProvider<NoInfer<Context>>;
     runtime?: RuntimeAdapterProvider;
     persistObjects?: boolean;
+    demand?: import("@party-stack/ontology-replica").DemandPolicy;
+    gc?: import("@party-stack/ontology-replica").ReplicaOptions["gc"];
     writes?: LiveOntologyWrites;
     context?: Context;
     connection?: ConnectionMonitor;
@@ -187,6 +189,8 @@ export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
                     runtime: platform,
                     backendAdapter,
                     writes: opts.writes,
+                    demand: opts.demand,
+                    gc: opts.gc,
                     connection: opts.connection,
                 }).pipe(Effect.provide(runtime.context));
                 let closing: Promise<void> | undefined;

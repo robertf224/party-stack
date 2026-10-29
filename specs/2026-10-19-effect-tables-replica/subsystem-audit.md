@@ -107,28 +107,20 @@ from disclosure policy. Custom disclosure cannot change execution/retry facts.
   lack of a metadata capability also permits fallback. Regression tests cover
   four error kinds without calling byte download.
 
-### Remaining error follow-ups
+### Error follow-ups completed October 29
 
-- Adapter sync loops record failed loads in diagnostics but retry on the next
-  wake/poll even for some nonretryable errors. They do not yet have the same
-  comprehensive controller/recovery decisions as protocol delivery. Separating
-  one forbidden demand from global transport/auth failure needs explicit design;
-  stopping every demand on one query failure would also be wrong.
-- An adapter-level watch stream that terminates with an error can leave polling
-  as the repair path rather than being reacquired by a common supervisor. The
-  native Foundry physical watcher has its own reconnect loop, but that is not a
-  universal adapter guarantee.
-- Some installation lifecycle/configuration failures still use a broad
-  Unavailable wrapper. Blob/collection SDK lifecycle misuse can still reject
-  with an ordinary Error. These should not be confused with action validation.
-- Full CI passes, but the workerd transport tests still log disconnect-related
-  unhandled-promise exceptions and NDJSON body warnings. Their origin and whether
-  they represent avoidable transport noise need separate triage; passing tests
-  do not establish that these messages are harmless.
-- Maintenance catches intentionally preserve successful action outcomes, but
-  reporting is inconsistent: some log warnings, others only expose a failed
-  span or silently wait for later maintenance. A common maintenance health view
-  would make failures actionable without turning a committed write into failure.
+Adapter watches now share a scoped supervisor with retry backoff, offline suspension,
+and terminal-error reporting. Nonretryable load failures are isolated to their
+individual demand until explicit invalidation; journal failures stop or defer source
+IO according to their classification. A forbidden query does not stop unrelated
+queries or outbox processing. Replica diagnostics expose load/watch failures.
+
+Installation configuration/lifecycle failures now use InvalidConfiguration,
+InvalidRequest or Unauthenticated where those reasons are known. Native BlobManager
+operations use the typed error channel. Maintenance failures in owned commits,
+HTTP maintenance and cached-proxy invalidation log warnings while preserving
+successful write receipts. A common maintenance health view remains future work.
+The workerd disconnect/NDJSON warning triage below remains outstanding.
 
 ## Cancellation and demand ownership
 
@@ -259,10 +251,9 @@ scope. Similarly, a TTL is not a total space budget. These are separate concerns
   a serverless job/alarm calling `collectExpired`. Merely defining a TTL does not
   run maintenance. Owned HTTP servers have periodic maintenance; direct owned
   services also do cleanup proportional to writes and expose maintenance.
-- Generic standalone SalesforceClient still exposes the older callback/Promise
-  CometD CDC loop. It is not used by the native Salesforce ontology adapter and
-  is not scope-joined Effect code; terminal re-handshake errors are swallowed.
-  Remove that unused API or port it before advertising native CDC support.
+- Workerd transport tests have logged disconnect-related unhandled-promise
+  exceptions and NDJSON body warnings. Passing tests do not establish that these
+  messages are harmless; their origin still needs transport-specific triage.
 - Query evaluation and provider pagination have no universal maximum work/rows
   budget. Delivery's record/byte bounds do not bound every finite query request.
 - Infinite history/result retention is an explicit unbounded configuration,
@@ -289,12 +280,24 @@ The Foundry callback watcher facade is explicitly isolated as requested, with
 its native implementation used by our adapter. No Effection/coordination-package
 runtime dependency remains in workspace package manifests.
 
-Potential further simplification: make the internal BlobManager acquisition
-Effect-native and retain only the public attachment Promise facade. It currently
-bridges to the already Effect-native BlobStorage and owns a child scope correctly,
-but has more manual Promise/Scope plumbing than the rest of the engine. Similarly,
+The internal BlobManager is now acquired as a scoped Effect with native storage,
+provider hooks, maintenance and streaming lifetimes. Promise conversion lives at
+the application attachment facade. The unused Salesforce callback CDC implementation
+and configuration were removed; this does not add native Salesforce CDC support.
 TanStack's transaction query bridge remains deliberate implementation machinery;
 it is not a second persistence or outbox executor.
+
+### Independent state and outbox lifetimes
+
+Subset readiness previously called the combined `syncOnce` checkpoint. That was
+leftover coupling: canceling a read could interrupt action submission. State refresh
+and outbox processing now run in separate replica-owned fibers. `syncSubset` never
+submits actions, including parent-source demand and cached-proxy eager reads.
+The fallback parent connection also separates read refresh from action forwarding.
+They still coordinate publication and reconciliation through the replica gate.
+`syncOnce` remains an explicit full checkpoint for manual execution/tests; UI demand
+does not call it. Tests check that adapter and protocol reads leave queued actions
+untouched, while canceling a UI query cannot cancel the background outbox worker.
 
 ## Validation
 

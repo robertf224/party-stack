@@ -176,15 +176,11 @@ describe("createSalesforceOntologyBackendAdapter", () => {
     function createAdapter(
         options: {
             client?: Partial<SalesforceClient>;
-            subscribeToChangeEvents?: Parameters<
-                typeof createSalesforceOntologyBackendAdapter
-            >[0]["subscribeToChangeEvents"];
         } = {}
     ) {
         return createSalesforceOntologyBackendAdapter({
             ir,
 
-            subscribeToChangeEvents: options.subscribeToChangeEvents,
             client: {
                 instanceUrl: "https://example.my.salesforce.com",
                 apiVersion: "61.0",
@@ -198,7 +194,6 @@ describe("createSalesforceOntologyBackendAdapter", () => {
                 createRecord,
                 updateRecord,
                 deleteRecord,
-                subscribeToChangeEvents: vi.fn(),
                 listFlowActions: vi.fn(),
                 describeInvocableActions: vi.fn(),
                 describeFlowAction: vi.fn(),
@@ -239,17 +234,14 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         expect(invalidate).not.toHaveBeenCalled();
     });
 
-    it("does not subscribe or reconcile actions when live is false", async () => {
-        const subscribeToChangeEvents = vi.fn();
+    it("does not trigger collection invalidation during native action execution", async () => {
         invokeFlowAction.mockResolvedValue([
             {
                 isSuccess: true,
                 outputValues: { Flow__InterviewStatus: "Finished" },
             },
         ]);
-        const adapter = createAdapter({
-            subscribeToChangeEvents,
-        });
+        const adapter = createAdapter();
         await applyNative(
             adapter,
             "Create_Account",
@@ -263,11 +255,10 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             }
         );
 
-        expect(subscribeToChangeEvents).not.toHaveBeenCalled();
         expect(invalidate).not.toHaveBeenCalled();
     });
 
-    it("maps validation failures to NonRetryableError", async () => {
+    it("normalizes provider validation failures", async () => {
         invokeFlowAction.mockRejectedValue(
             new SalesforceApiError("Required fields are missing", {
                 statusCode: 400,
@@ -377,7 +368,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         });
     });
 
-    it("maps unsuccessful Flow results to NonRetryableError", async () => {
+    it("normalizes unsuccessful Flow results", async () => {
         invokeFlowAction.mockResolvedValue([
             {
                 isSuccess: false,
@@ -420,7 +411,6 @@ describe("createSalesforceOntologyBackendAdapter", () => {
                     createRecord: vi.fn(),
                     updateRecord: vi.fn(),
                     deleteRecord: vi.fn(),
-                    subscribeToChangeEvents: vi.fn(),
                     listFlowActions: vi.fn(),
                     describeFlowAction: vi.fn(),
                     invokeFlowAction,
@@ -452,8 +442,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         createRecord.mockResolvedValue({ success: true, id: "new", errors: [] });
         updateRecord.mockResolvedValue({ success: true, errors: [] });
         deleteRecord.mockResolvedValue({ success: true, errors: [] });
-        const subscribeToChangeEvents = vi.fn();
-        const adapter = createAdapter({ subscribeToChangeEvents });
+        const adapter = createAdapter();
         await runNative(adapter, (backend) =>
             Effect.gen(function* () {
                 expect(backend.supportsIdempotency).toBe(false);
@@ -476,7 +465,6 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         expect(updateRecord).toHaveBeenCalledExactlyOnceWith("Account", "existing", { Name: "Changed" });
         expect(deleteRecord).toHaveBeenCalledExactlyOnceWith("Account", "existing");
         expect(query).not.toHaveBeenCalled();
-        expect(subscribeToChangeEvents).not.toHaveBeenCalled();
         expect(invalidate).not.toHaveBeenCalled();
     });
 

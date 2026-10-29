@@ -1,70 +1,21 @@
-import { BackendError } from "@party-stack/ontology-backend";
-import { Table } from "@party-stack/ontology-storage/tables";
-import { Effect, RcMap, Scope, Semaphore } from "effect";
+import { Effect } from "effect";
 import type { ReplicaService } from "./index.js";
+import type { BackendError } from "@party-stack/ontology-backend";
 import type { BackendSubset, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { Scope } from "effect";
 
 /** Read cache only: upstream writes never enter this replica's outbox. Each
- * request retains shared demand until it finishes; idle subsets have bounded leases.
+ * request acquires the replica's shared demand; the replica config owns idle retention.
  * Bind one instance to a trusted upstream identity, then authorize/project each read.
  */
 export const makeCachedProxy = Effect.fn("OntologyProxy.make")(function* (options: {
     readonly replica: ReplicaService;
     readonly backend: OntologyBackendService;
-    readonly idleDemandMs?: number;
-    readonly maxSubsets?: number;
     readonly eager?: readonly BackendSubset[];
     readonly confirmed?: boolean;
 }): Effect.fn.Return<OntologyBackendService, BackendError, Scope.Scope> {
-    const idle = options.idleDemandMs ?? 60_000;
-    const capacity = options.maxSubsets ?? 1_024;
-    if (!Number.isFinite(idle) || idle < 0 || !Number.isSafeInteger(capacity) || capacity < 1)
-        return yield* new BackendError({
-            operation: "proxy.configure",
-            kind: "InvalidConfiguration",
-            message: "Invalid cache demand bounds.",
-            retryable: false,
-        });
-    const codec = Table.make<BackendSubset>({ name: "proxy-subset" });
-    const demands = yield* RcMap.make({
-        lookup: (key: string) => options.replica.demand(codec.decode(key)),
-        capacity,
-        idleTimeToLive: idle,
-    });
-    const admission = yield* Semaphore.make(1);
-    const full = () =>
-        new BackendError({
-            operation: "proxy.loadSubset",
-            kind: "RateLimited",
-            message: "Cache demand capacity reached; all subsets are in use.",
-            retryable: true,
-            actionOutcome: "not-committed",
-        });
-    const retain = (key: string) =>
-        admission.withPermits(1)(
-            RcMap.get(demands, key).pipe(
-                Effect.catchTag("ExceededCapacityError", () =>
-                    Effect.gen(function* () {
-                        // RcMap owns scopes and TTLs. Inspect its documented entry state
-                        // to replace the oldest idle lease without dropping an active read.
-                        const idleEntries =
-                            demands.state._tag === "Open"
-                                ? [...demands.state.map].filter(([, entry]) => entry.refCount === 0)
-                                : [];
-                        idleEntries.sort((a, b) => a[1].expiresAt - b[1].expiresAt);
-                        const oldest = idleEntries[0];
-                        if (oldest) {
-                            yield* RcMap.invalidate(demands, oldest[0]);
-                            return yield* RcMap.get(demands, key);
-                        }
-                        return yield* full();
-                    })
-                ),
-                Effect.catchTag("ExceededCapacityError", () => full())
-            )
-        );
     for (const subset of options.eager ?? []) yield* options.replica.demand(subset);
-    if (options.eager?.length) yield* options.replica.syncOnce;
+    for (const subset of options.eager ?? []) yield* options.replica.syncSubset(subset);
     let writeGeneration = 0;
     let invalidatedGeneration = 0;
     let dirtyTypes: readonly string[] | undefined = [];
@@ -83,11 +34,11 @@ export const makeCachedProxy = Effect.fn("OntologyProxy.make")(function* (option
         loadSubset: Effect.fn("OntologyProxy.loadSubset")((subset) =>
             Effect.scoped(
                 Effect.gen(function* () {
-                    yield* retain(codec.encode({ ...subset, query: subset.query ?? {} }));
-                    // syncOnce coordinates with the replica's existing loop and repairs demand
+                    yield* options.replica.demand(subset);
+                    // Refresh coordinates with the replica's existing loop and repairs demand
                     // before serving. Reads use confirmed rows, never a proxy prediction.
                     yield* repairInvalidation();
-                    yield* options.replica.syncOnce;
+                    yield* options.replica.syncSubset(subset);
                     return yield* options.replica.snapshotSubset(
                         { ...subset, query: subset.query ?? {} },
                         options.confirmed ?? true
@@ -108,7 +59,9 @@ export const makeCachedProxy = Effect.fn("OntologyProxy.make")(function* (option
             writeGeneration++;
             // Preserve the successful outcome even if cache IO fails. A dirty generation
             // forces the next read to retry invalidation before serving retained coverage.
-            yield* repairInvalidation().pipe(Effect.catch(() => Effect.void));
+            yield* repairInvalidation().pipe(
+                Effect.catch((error) => Effect.logWarning("Proxy cache repair failed", { kind: error.kind }))
+            );
             return receipt;
         }),
     };

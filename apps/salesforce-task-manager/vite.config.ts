@@ -86,7 +86,6 @@ function salesforceDevSessionPlugin(env: Record<string, string>): Plugin {
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, process.cwd(), ["VITE_", "SALESFORCE_"]);
-    const salesforceInstanceUrl = env.VITE_SALESFORCE_INSTANCE_URL ?? env.SALESFORCE_INSTANCE_URL;
     const browserEnv = (name: string) => JSON.stringify(env[`VITE_${name}`] ?? env[name]);
     return defineAppConfig({
         define: {
@@ -95,19 +94,6 @@ export default defineConfig(({ mode }) => {
             "import.meta.env.VITE_SALESFORCE_DEV_CREDENTIALS": JSON.stringify(
                 Boolean(env.SALESFORCE_CLIENT_SECRET)
             ),
-        },
-        server: {
-            proxy: salesforceInstanceUrl
-                ? {
-                      "/__salesforce/cometd": {
-                          target: salesforceInstanceUrl,
-                          changeOrigin: true,
-                          cookieDomainRewrite: "",
-                          cookiePathRewrite: "/",
-                          rewrite: (path) => path.replace(/^\/__salesforce/, ""),
-                      },
-                  }
-                : undefined,
         },
         plugins: [salesforceDevSessionPlugin(env)],
     });

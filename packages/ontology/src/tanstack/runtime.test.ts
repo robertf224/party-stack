@@ -2,7 +2,7 @@ import { Runtime } from "@party-stack/runtime";
 import { runtimeFixtureContext, memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { queryOnce } from "@tanstack/db";
 import { Effect, Scope, Exit, Stream } from "effect";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { makeLocalCollection, makeReplicatedCollection } from "./collections.js";
 import type { ReplicaService } from "@party-stack/ontology-replica";
 
@@ -154,4 +154,59 @@ test("creating an on-demand collection performs no storage reads until a query r
             })
         )
     );
+});
+
+test("a retained live query keeps replica demand warm until TanStack's query GC runs", async () => {
+    const { createLiveQueryCollection } = await import("@tanstack/db");
+    const { persistedCollectionOptions, scopedCollection } = await import("./collections.js");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"] });
+    let roots = 0;
+    try {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const source = yield* scopedCollection(
+                        yield* persistedCollectionOptions({
+                            id: "query-gc-source",
+                            getKey: (row: { id: string }) => row.id,
+                            changes: Stream.never,
+                            load: Effect.succeed([{ key: "one", value: { id: "one" } }]),
+                            acquireDemand: Effect.acquireRelease(
+                                Effect.sync(() => {
+                                    roots++;
+                                }),
+                                () =>
+                                    Effect.sync(() => {
+                                        roots--;
+                                    })
+                            ),
+                        })
+                    );
+                    const query = createLiveQueryCollection({
+                        query: (q) => q.from({ row: source }),
+                        gcTime: 30_000,
+                    });
+                    yield* Effect.addFinalizer(() => Effect.promise(() => query.cleanup()));
+                    const first = query.subscribeChanges(() => {});
+                    const loading = query.preload();
+                    yield* Effect.promise(async () => {
+                        await vi.waitFor(() => expect(query.status).toBe("ready"));
+                        await loading;
+                    });
+                    expect(roots).toBe(1);
+                    first.unsubscribe();
+                    yield* Effect.promise(() => vi.advanceTimersByTimeAsync(20_000));
+                    expect(roots).toBe(1);
+                    const second = query.subscribeChanges(() => {});
+                    yield* Effect.promise(() => vi.advanceTimersByTimeAsync(20_000));
+                    expect(roots).toBe(1);
+                    second.unsubscribe();
+                    yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30_100));
+                    expect(roots).toBe(0);
+                })
+            )
+        );
+    } finally {
+        vi.useRealTimers();
+    }
 });

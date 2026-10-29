@@ -362,7 +362,14 @@ export const replicatedCollectionOptions = Effect.fnUntraced(function* <A extend
                           objectType: options.objectType,
                           query: storageSubset(subset, options.replica.ir, options.objectType),
                       })
-                      .pipe(Effect.andThen(options.replica.syncOnce)),
+                      .pipe(
+                          Effect.andThen(
+                              options.replica.syncSubset({
+                                  objectType: options.objectType,
+                                  query: storageSubset(subset, options.replica.ir, options.objectType),
+                              })
+                          )
+                      ),
     });
 });
 export const scopedCollection = <A extends object, K extends Key>(

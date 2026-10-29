@@ -26,7 +26,6 @@ export type OntologyServerOptions<R = never> = Common<R> &
               readonly kind: "cached-proxy";
               readonly backend: OntologyBackendService;
               readonly cache: ReplicaService;
-              readonly demand?: { readonly idleDemandMs?: number; readonly maxSubsets?: number };
           }
         | {
               readonly kind: "replica";
@@ -45,7 +44,7 @@ export const makeOntologyServer = Effect.fn("OntologyServer.make")(function* <R 
     let backend: OntologyBackendService = options.backend;
     let source: OntologySource | undefined;
     if (options.kind === "cached-proxy") {
-        backend = yield* makeCachedProxy({ replica: options.cache, backend, ...options.demand });
+        backend = yield* makeCachedProxy({ replica: options.cache, backend });
     } else if (options.kind === "replica") {
         const replica = options.replica;
         source = replicaStateSource(replica);

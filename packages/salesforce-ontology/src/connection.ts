@@ -17,12 +17,6 @@ import {
     type PublicOAuthClient,
 } from "@party-stack/connect";
 import { unauthenticated } from "@party-stack/ontology-backend";
-import {
-    createSalesforceClient,
-    type SalesforceChangeEvent,
-    type SalesforceChangeEventSubscription,
-    type SalesforceChangeEventSubscriptionOptions,
-} from "@party-stack/salesforce-client";
 import { Effect } from "effect";
 import type { BrowserAuthenticationPresentation } from "@party-stack/runtime";
 
@@ -45,8 +39,6 @@ export interface SalesforceClientCredentialsConnectionOptions {
 
 export interface CreateSalesforceConnectionAdapterOptions {
     instanceUrl: string;
-    apiVersion?: string;
-    cometdUrl?: string;
     oauth?: SalesforceOAuthConnectionOptions;
     clientCredentials?: SalesforceClientCredentialsConnectionOptions;
     token?: string;
@@ -55,12 +47,6 @@ export interface CreateSalesforceConnectionAdapterOptions {
 
 export interface SalesforceAuthenticationClient {
     completeOAuthRedirect(url: string): Promise<Connection<"active"> | undefined>;
-    subscribeToChangeEvents(
-        userId: string,
-        sObjectName: string,
-        listener: (event: SalesforceChangeEvent) => void,
-        options?: SalesforceChangeEventSubscriptionOptions
-    ): Promise<SalesforceChangeEventSubscription>;
     signIn: {
         oauth(options?: {
             browserPresentation?: BrowserAuthenticationPresentation;
@@ -169,7 +155,6 @@ const createSalesforceConnectionAdapterInstance = Effect.fn("Salesforce.connecti
     const oauthOptions = options.oauth;
     const clientCredentialsOptions = options.clientCredentials;
     const instanceUrl = normalizeUrl(options.instanceUrl);
-    const apiVersion = options.apiVersion ?? "65.0";
     const loginUrl = normalizeUrl(
         oauthOptions?.loginUrl ?? clientCredentialsOptions?.loginUrl ?? instanceUrl
     );
@@ -346,19 +331,6 @@ const createSalesforceConnectionAdapterInstance = Effect.fn("Salesforce.connecti
         name: "salesforce",
         createAuthenticationClient(controller) {
             return {
-                async subscribeToChangeEvents(userId, sObjectName, listener, subscriptionOptions) {
-                    const tokenProvider = tokenProviders.get(userId);
-                    if (!tokenProvider) {
-                        throw unauthenticated(`Salesforce connection for user "${userId}" is unavailable.`);
-                    }
-                    const client = createSalesforceClient({
-                        instanceUrl,
-                        apiVersion,
-                        cometdUrl: options.cometdUrl,
-                        tokenProvider,
-                    });
-                    return client.subscribeToChangeEvents(sObjectName, listener, subscriptionOptions);
-                },
                 async completeOAuthRedirect(url) {
                     if (!publicOauth) return;
                     const session = await publicOauth.completeRedirect(url);

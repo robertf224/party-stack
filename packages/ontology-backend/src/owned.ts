@@ -747,7 +747,11 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 )
             );
             if (!admission.duplicate) yield* PubSub.publish(wakes, undefined);
-            yield* collectGarbage.pipe(Effect.catch(() => Effect.void));
+            yield* collectGarbage.pipe(
+                Effect.catch((error) =>
+                    Effect.logWarning("Ontology maintenance failed", { kind: error.kind })
+                )
+            );
             return yield* protocol.read(request.session, request.view);
         }),
         acknowledge: Effect.fn("OwnedBackend.acknowledgeClient")(
@@ -833,7 +837,11 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             if (result.changed) yield* PubSub.publish(wakes, undefined);
             // Keep cleanup throughput proportional to writes, in addition to idle maintenance.
             // A maintenance failure cannot overwrite a successful commit outcome.
-            yield* collectGarbage.pipe(Effect.catch(() => Effect.void));
+            yield* collectGarbage.pipe(
+                Effect.catch((error) =>
+                    Effect.logWarning("Ontology maintenance failed", { kind: error.kind })
+                )
+            );
             return result.receipt;
         }),
         validateAction: (name, parameters, settings) =>

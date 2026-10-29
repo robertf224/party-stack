@@ -4,9 +4,6 @@ import type {
     DescribeGlobalResult,
     DescribeSObjectResult,
     QueryResult,
-    SalesforceChangeEvent,
-    SalesforceChangeEventSubscription,
-    SalesforceChangeEventSubscriptionOptions,
     SalesforceFetch,
     SalesforceInvocableActionDescribe,
     SalesforceInvocableActionDescribeRequest,
@@ -45,11 +42,6 @@ export interface SalesforceClient {
         record: Record<string, unknown>
     ) => Promise<SalesforceSaveResult>;
     deleteRecord: (sObjectName: string, id: string) => Promise<SalesforceSaveResult>;
-    subscribeToChangeEvents: (
-        sObjectName: string,
-        listener: (event: SalesforceChangeEvent) => void,
-        options?: SalesforceChangeEventSubscriptionOptions
-    ) => Promise<SalesforceChangeEventSubscription>;
     listFlowActions: () => Promise<SalesforceInvocableActionListResponse>;
     describeInvocableActions: (
         actions: readonly SalesforceInvocableActionDescribeRequest[]
@@ -80,7 +72,6 @@ interface CreateSalesforceClientBaseOptions {
      * Optional full CometD endpoint, typically a same-origin relay for
      * browser clients that cannot retain Salesforce's cross-site Bayeux cookie.
      */
-    cometdUrl?: string;
 }
 
 export type CreateSalesforceClientOptions = CreateSalesforceClientBaseOptions &
@@ -132,24 +123,11 @@ function dataApiPath(apiVersion: string, path: string): string {
 
 const COMPOSITE_REQUEST_LIMIT = 25;
 
-function changeEventChannel(sObjectName: string): string {
-    if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(sObjectName)) {
-        throw new Error(`Invalid Salesforce sObject name "${sObjectName}".`);
-    }
-    const changeEventName = sObjectName.endsWith("__c")
-        ? `${sObjectName.slice(0, -3)}__ChangeEvent`
-        : `${sObjectName}ChangeEvent`;
-    return `/data/${changeEventName}`;
-}
-
 export function createSalesforceClient(options: CreateSalesforceClientOptions): SalesforceClient {
     const instanceUrl = normalizeInstanceUrl(options.instanceUrl);
     const apiVersion = normalizeApiVersion(options.apiVersion);
     const fetchImpl = options.fetch ?? fetch;
     const tokenProvider = options.tokenProvider;
-    const cometdUrl = options.cometdUrl
-        ? new URL(options.cometdUrl)
-        : resolveUrl(instanceUrl, `/cometd/${apiVersion}`);
 
     invariant(instanceUrl.length > 0, "Salesforce instanceUrl is required.");
     invariant(
@@ -256,137 +234,6 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
         return describes;
     };
 
-    const subscribeToChangeEvents = async (
-        sObjectName: string,
-        listener: (event: SalesforceChangeEvent) => void,
-        subscriptionOptions?: SalesforceChangeEventSubscriptionOptions
-    ): Promise<SalesforceChangeEventSubscription> => {
-        if (!tokenProvider) {
-            throw new Error("Salesforce Change Data Capture requires a tokenProvider.");
-        }
-        const channel = changeEventChannel(sObjectName);
-        const controller = new AbortController();
-        let messageId = 0;
-        let replayId = subscriptionOptions?.replayId ?? -1;
-        type CometdMessage = {
-            advice?: {
-                interval?: number;
-                reconnect?: string;
-            };
-            channel: string;
-            clientId?: string;
-            data?: SalesforceChangeEvent;
-            error?: string;
-            successful?: boolean;
-        };
-        const send = async (messages: Record<string, unknown>[]): Promise<CometdMessage[]> => {
-            const token = await tokenProvider();
-            invariant(token.length > 0, "Salesforce tokenProvider returned an empty token.");
-            const response = await fetchImpl(cometdUrl, {
-                method: "POST",
-                credentials: "include",
-                headers: {
-                    Accept: "application/json",
-                    Authorization: `Bearer ${token}`,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify(messages),
-                signal: controller.signal,
-            });
-            if (!response.ok) {
-                throw new SalesforceApiError(
-                    `Salesforce CometD request failed with status ${response.status}.`,
-                    { statusCode: response.status }
-                );
-            }
-            return (await response.json()) as CometdMessage[];
-        };
-        const nextId = () => String(++messageId);
-        const establish = async (): Promise<string> => {
-            const handshake = (
-                await send([
-                    {
-                        id: nextId(),
-                        channel: "/meta/handshake",
-                        version: "1.0",
-                        minimumVersion: "1.0",
-                        supportedConnectionTypes: ["long-polling"],
-                        ext: { replay: true },
-                    },
-                ])
-            )[0];
-            if (!handshake?.successful || !handshake.clientId) {
-                throw new Error(handshake?.error ?? "Salesforce CometD handshake failed.");
-            }
-            const subscription = (
-                await send([
-                    {
-                        id: nextId(),
-                        channel: "/meta/subscribe",
-                        clientId: handshake.clientId,
-                        subscription: channel,
-                        ext: {
-                            replay: {
-                                [channel]: replayId,
-                            },
-                        },
-                    },
-                ])
-            )[0];
-            if (!subscription?.successful) {
-                throw new Error(subscription?.error ?? `Salesforce CDC subscription to "${channel}" failed.`);
-            }
-            return handshake.clientId;
-        };
-        let clientId = await establish();
-        const connect = async () => {
-            while (!controller.signal.aborted) {
-                try {
-                    const messages = await send([
-                        {
-                            id: nextId(),
-                            channel: "/meta/connect",
-                            clientId,
-                            connectionType: "long-polling",
-                        },
-                    ]);
-                    for (const message of messages) {
-                        if (message.channel !== channel || !message.data) {
-                            continue;
-                        }
-                        const nextReplayId = message.data.event?.replayId;
-                        if (nextReplayId !== undefined) {
-                            replayId = nextReplayId;
-                        }
-                        listener(message.data);
-                    }
-                    const connectMessage = messages.find((message) => message.channel === "/meta/connect");
-                    if (connectMessage?.advice?.reconnect === "none") {
-                        break;
-                    }
-                    if (connectMessage?.advice?.reconnect === "handshake") {
-                        clientId = await establish();
-                    }
-                    const interval = connectMessage?.advice?.interval ?? 0;
-                    if (interval > 0) {
-                        await new Promise((resolve) => setTimeout(resolve, interval));
-                    }
-                } catch {
-                    if (controller.signal.aborted) {
-                        break;
-                    }
-                    await new Promise((resolve) => setTimeout(resolve, 1_000));
-                    clientId = await establish();
-                }
-            }
-        };
-        void connect().catch(() => undefined);
-        return {
-            channel,
-            unsubscribe: () => controller.abort(),
-        };
-    };
-
     return {
         instanceUrl,
         apiVersion,
@@ -451,7 +298,6 @@ export function createSalesforceClient(options: CreateSalesforceClientOptions): 
                 errors: [],
             };
         },
-        subscribeToChangeEvents,
         listFlowActions: () =>
             request<SalesforceInvocableActionListResponse>(dataApiPath(apiVersion, "/actions/custom/flow")),
         describeInvocableActions,

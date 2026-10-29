@@ -142,6 +142,39 @@ const until = Effect.fnUntraced(function* (condition: Effect.Effect<boolean, Bac
     throw new Error("Parent connection did not converge.");
 });
 
+test("subset readiness never forwards child actions or drains the parent's outbox", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const source = replicaStateSource(f.parent);
+                yield* f.parent.enqueue(invocation("parent-write", 1));
+                const child = yield* makeReplica({
+                    namespace: "read-only-readiness",
+                    ir,
+                    tables: yield* Memory.make(),
+                    source,
+                    execute,
+                    startSync: false,
+                    gc: false,
+                });
+                const subset = { objectType: "Counter" };
+                yield* child.demand(subset);
+                yield* child.enqueue(invocation("child-write", 2));
+                yield* child.syncSubset(subset);
+                expect(f.submitted).toEqual([]);
+                expect((yield* f.parent.pending).map((entry) => entry.invocation.id)).toEqual([
+                    "parent-write",
+                ]);
+                expect(
+                    (yield* child.pending).find((entry) => entry.invocation.id === "child-write")
+                ).toMatchObject({ state: "queued", attempts: 0 });
+                expect(yield* count(child)).toBe(13);
+            })
+        )
+    );
+});
+
 test("a protocol source starts automatically without a backend adapter or mode flag", async () => {
     await Effect.runPromise(
         Effect.scoped(

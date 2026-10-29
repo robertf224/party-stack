@@ -39,9 +39,6 @@ const installation = await createSalesforceBackendInstallation({
     apiVersion,
     runtime: createWebRuntime,
     connections: {
-        cometdUrl: import.meta.env.DEV
-            ? `${window.location.origin}/__salesforce/cometd/${apiVersion}`
-            : undefined,
         oauth: {
             clientId,
             redirectUrl,

@@ -1,7 +1,7 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { collectActionAttachments } from "@party-stack/ontology-storage/blobs";
 import { Effect } from "effect";
-import type { BlobManager } from "../../runtime/blobs/types.js";
+import type { BlobManagerService } from "../../runtime/blobs/BlobManager.js";
 import type { OntologyAttachmentUpload } from "../OntologyBackendAdapter.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
@@ -22,7 +22,7 @@ export const prepareActionParameters = Effect.fn("Ontology.prepareActionParamete
     ir: OntologyIR;
     actionTypeName: string;
     parameters: Record<string, unknown>;
-    blobManager?: BlobManager;
+    blobManager?: Pick<BlobManagerService, "storage" | "source">;
 }) {
     const attachments = collectActionAttachments(opts.ir, opts.actionTypeName, opts.parameters);
     if (!attachments.length) return { parameters: opts.parameters, attachmentUploads: [] };
@@ -35,15 +35,12 @@ export const prepareActionParameters = Effect.fn("Ontology.prepareActionParamete
             retryable: false,
             actionOutcome: "not-committed",
         });
-    const storage = yield* Effect.tryPromise({ try: () => manager.storage, catch: failure });
+    const storage = manager.storage;
     const uploads: OntologyAttachmentUpload[] = [];
     for (const entry of attachments) {
         const record = yield* storage.metadata(entry.attachment.id).pipe(Effect.mapError(failure));
         if (record?.state !== "staged" || record.remoteId) continue;
-        const blob = yield* Effect.tryPromise({
-            try: (signal) => manager.source(entry.attachment.id, { signal }),
-            catch: failure,
-        });
+        const blob = yield* manager.source(entry.attachment.id).pipe(Effect.mapError(failure));
         uploads.push({ ...entry, blob });
     }
     return { parameters: opts.parameters, attachmentUploads: uploads };

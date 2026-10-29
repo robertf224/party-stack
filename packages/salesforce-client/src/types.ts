@@ -142,38 +142,4 @@ export interface SalesforceInvocableActionResult {
     outputValues?: Record<string, unknown> | null;
 }
 
-export interface SalesforceChangeEventHeader {
-    entityName: string;
-    changeType: "CREATE" | "UPDATE" | "DELETE" | "UNDELETE" | "GAP_OVERFLOW";
-    changedFields?: string[];
-    recordIds: string[];
-    commitTimestamp?: number;
-    commitUser?: string;
-    sequenceNumber?: number;
-    transactionKey?: string;
-}
-
-export interface SalesforceChangeEvent<Payload extends Record<string, unknown> = Record<string, unknown>> {
-    event?: {
-        replayId?: number;
-    };
-    schema?: string;
-    payload: Payload & {
-        ChangeEventHeader: SalesforceChangeEventHeader;
-    };
-}
-
-export interface SalesforceChangeEventSubscription {
-    channel: string;
-    unsubscribe: () => void;
-}
-
-export interface SalesforceChangeEventSubscriptionOptions {
-    /**
-     * Resume after this opaque Salesforce replay ID. Use -1 for new events
-     * only or -2 for the earliest retained event.
-     */
-    replayId?: number;
-}
-
 export type SalesforceFetch = typeof fetch;

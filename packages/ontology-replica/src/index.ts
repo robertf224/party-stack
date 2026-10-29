@@ -55,9 +55,12 @@ import type { ReplicaLoad, ReplicaStatus } from "./status.js";
 import type { Encrypted } from "@party-stack/ontology-spec/values";
 export { ReplicaStatusSchema, makeReplicaMonitor } from "./status.js";
 export type { ReplicaStatus, ReplicaLoad, ReplicaMonitor } from "./status.js";
+import { makeDemandCache, type DemandPolicy } from "./demandCache.js";
 import { putIncomingRow } from "./incoming.js";
 import { connectReplicaParent, connectReplicaDelivery } from "./parent.js";
 import { deliveryRecovery } from "./recovery.js";
+import { superviseWatch } from "./watch.js";
+export type { DemandPolicy } from "./demandCache.js";
 import { affectsCoverage, markQuery, retentionQuery } from "./retention.js";
 import { trackVisible, observeRows, type VisibleCommit, type ReplicaRowsBatch } from "./visible.js";
 import type {
@@ -276,7 +279,10 @@ export interface ReplicaService extends OwnedReadTransaction {
         ids?: readonly string[]
     ) => Effect.Effect<void, BackendError, import("effect").Scope.Scope>;
     readonly pin: (objectType: string, key: Key, pinned: boolean) => Effect.Effect<void, BackendError>;
+    /** Explicit full checkpoint: refresh state and process pending actions. Not a read-readiness API. */
     readonly syncOnce: Effect.Effect<void, BackendError>;
+    /** Refresh state only, reporting this subset's load failure. Never submits actions. */
+    readonly syncSubset: (subset: BackendSubset) => Effect.Effect<void, BackendError>;
     readonly invalidate: (objectTypes?: readonly string[]) => Effect.Effect<void, BackendError>;
     readonly ensureIndex: (objectType: string, index: Index) => Effect.Effect<void, BackendError>;
     readonly collectGarbage: (options?: {
@@ -308,6 +314,7 @@ interface ReplicaCommonOptions {
     readonly clients?: ClientPolicy;
     readonly resultRetentionMs?: number;
     readonly pollIntervalMs?: number;
+    readonly demand?: DemandPolicy;
     readonly outbox?: ReplicaOutboxPolicy;
     /** Replica cache eviction only; owned storage is never collected by this policy. */
     readonly gc?:
@@ -566,8 +573,10 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         options.startSync !== false && Boolean(options.source?.subscribe || adapter?.subscribeSelection);
     const events = yield* PubSub.sliding<void>(1);
     const queue = yield* Queue.sliding<void>(1);
+    const outboxWake = yield* Queue.sliding<void>(1);
     yield* Effect.addFinalizer(() => PubSub.shutdown(events));
     yield* Effect.addFinalizer(() => Queue.shutdown(queue).pipe(Effect.asVoid));
+    yield* Effect.addFinalizer(() => Queue.shutdown(outboxWake).pipe(Effect.asVoid));
     const gate = yield* Semaphore.make(1);
     const demands = new Map<
         string,
@@ -578,6 +587,8 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             revision: number;
             installed: number;
             watchers: number;
+            loadFailure?: { readonly revision: number; readonly error: BackendError };
+            watchFailure?: BackendError;
             coveredBy?: BackendSubset;
             pollIntervalMs?: number;
             pollDisabled?: boolean;
@@ -615,13 +626,20 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     });
     const diagnostics = yield* makeReplicaDiagnostics();
     let replicationError: ReplicaStatus["replicationError"];
+    let changeWatchFailure: BackendError | undefined;
+    let syncRetry: { readonly error: BackendError; readonly at: number } | undefined;
     const localNotify = PubSub.publish(events, undefined).pipe(
         Effect.andThen(diagnostics.changed),
         Effect.asVoid
     );
     const notify = options.publish ? localNotify.pipe(Effect.andThen(options.publish)) : localNotify;
     const wake = Effect.suspend(() =>
-        closed ? Effect.void : Queue.offer(queue, undefined).pipe(Effect.asVoid)
+        closed
+            ? Effect.void
+            : Queue.offer(queue, undefined).pipe(
+                  Effect.andThen(Queue.offer(outboxWake, undefined)),
+                  Effect.asVoid
+              )
     );
     const access = <A, E, R>(work: Effect.Effect<A, E, R>) => open.pipe(Effect.andThen(boundary(work)));
     const retain = (objectType: string, kind: "remote" | "reader", key: string, subset?: BackendSubset) =>
@@ -1349,6 +1367,24 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             ? pullJournal().pipe(
                   Effect.catch((error) =>
                       error.kind === "HistoryExpired" ? recoverHistory() : Effect.fail(error)
+                  ),
+                  Effect.tapError((error) =>
+                      Effect.gen(function* () {
+                          if (error.retryable && syncRetry?.error !== error)
+                              syncRetry = {
+                                  error,
+                                  at:
+                                      (yield* Clock.currentTimeMillis) +
+                                      Math.max(options.pollIntervalMs ?? 5_000, error.retryAfterMs ?? 0),
+                              };
+                          yield* service.reportReplicationFailure(error);
+                      })
+                  ),
+                  Effect.tap(() =>
+                      Effect.gen(function* () {
+                          syncRetry = undefined;
+                          yield* service.reportReplicationFailure(undefined);
+                      })
                   )
               )
             : Effect.void;
@@ -1473,16 +1509,10 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 if (bindings) yield* bindReceiptBlobs(tx, receipt, entry.invocation);
             })
         );
-    const sync = Effect.fn("Replica.sync", { root: true })(function* () {
+    const recoverOutbox = Effect.fnUntraced(function* () {
         yield* open;
-        if (replicationError?.recovery === "stop")
-            return yield* fault(replicationError.kind, replicationError.message);
-        yield* service.collectClientGarbage;
-        yield* collectResults;
         const backend = yield* backendEffect;
-        const online = yield* options.online ?? Effect.succeed(true);
-        yield* diagnostics.setOnline(online);
-        if (!online) return;
+        if (!(yield* options.online ?? Effect.succeed(true))) return;
         // Recover only while holding the source leader lease.
         yield* boundary(
             tables.transaction((tx) =>
@@ -1512,7 +1542,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 );
                 yield* options.onReceipt?.(entry.receipt) ?? Effect.void;
             }
-        yield* pull();
+        if ((yield* boundary(tables.read(pendingIn))).some((entry) => entry.receipt?.cursor)) yield* pull();
         // On restart, settle known remote commits before refreshing source snapshots.
         // Otherwise those snapshots can contain our edit while its optimistic
         // mutator is still pending, briefly applying the same edit twice.
@@ -1526,84 +1556,14 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 break;
             yield* confirmReceipt(entry, entry.receipt);
         }
-        const head = yield* boundary(tables.read(position));
-        const covered = Effect.fnUntraced(function* (subset: BackendSubset) {
-            const records = yield* boundary(
-                tables.loadSubset(coverage, {
-                    where: eq(field("subset", "objectType"), subset.objectType),
-                })
-            );
-            const key = primaryKeyLookup(subset.query, definitions.get(subset.objectType)!.primaryKey);
-            const present =
-                key !== undefined &&
-                (yield* boundary(tables.get((yield* view(subset.objectType)).base, key))) !== undefined;
-            for (const { value: record } of records) {
-                const live = demands.get(subsetKey(record.subset));
-                const maintained = backend.changes
-                    ? record.snapshotCursor !== undefined && record.barrierCursor === undefined
-                    : live && live.watchers > 0 && live.installed === live.revision;
-                if (!maintained) continue;
-                const proof = (reason: "collection" | "query" | "primary-key") => ({
-                    subset: record.subset,
-                    proof: {
-                        reason,
-                        maintainedBy: backend.changes
-                            ? ("journal" as const)
-                            : live?.pollIntervalMs !== undefined
-                              ? ("poll" as const)
-                              : ("watch" as const),
-                        pollIntervalMs: backend.changes ? undefined : live?.pollIntervalMs,
-                    },
-                });
-                if (record.complete && isWholeCollection(record.subset.query)) return proof("collection");
-                if (
-                    record.complete &&
-                    subsetKey(record.subset) === subsetKey(subset) &&
-                    (!backend.changes || !hasWindow(subset.query) || record.snapshotCursor === head.cursor)
-                )
-                    return proof("query");
-                if (
-                    record.complete &&
-                    key !== undefined &&
-                    primaryKeyLookup(record.subset.query, definitions.get(subset.objectType)!.primaryKey) ===
-                        key
-                )
-                    return proof("query");
-                if (key !== undefined && present && record.rowKeys?.includes(key))
-                    return proof("primary-key");
-            }
-            return undefined;
-        });
-        // Snapshot refresh follows journal catch-up, so historical commits cannot replace newer snapshots.
-        for (const demand of demands.values()) {
-            if (deliveryActive) continue;
-            const cached = yield* boundary(tables.get(coverage, subsetKey(demand.subset)));
-            const coveringSubset = yield* covered(demand.subset);
-            if (coveringSubset) {
-                demand.installed = demand.revision;
-                demand.coveredBy = coveringSubset.subset;
-                demand.coverageProof = coveringSubset.proof;
-                continue;
-            }
-            demand.coveredBy = undefined;
-            demand.coverageProof = undefined;
-            if (
-                (demand.watchers || demand.pollDisabled) &&
-                cached?.complete &&
-                demand.installed === demand.revision
-            )
-                continue;
-            const revision = demand.revision;
-            // Demand refresh belongs to the aggregate lease, not its first UI caller.
-            // Releasing the last consumer cancels its IO without interrupting outbox work.
-            const installed = yield* Effect.raceFirst(
-                installSnapshot(demand.subset, demand.installed === 0 ? "demand" : "refresh").pipe(
-                    Effect.as(true)
-                ),
-                Deferred.await(demand.released).pipe(Effect.as(false))
-            );
-            if (installed) demand.installed = revision;
-        }
+    });
+    const drainOutbox = Effect.fn("Replica.drainOutbox", { root: true })(function* (recover = true) {
+        yield* open;
+        if (replicationError?.recovery === "stop")
+            return yield* fault(replicationError.kind, replicationError.message);
+        const backend = yield* backendEffect;
+        if (!(yield* options.online ?? Effect.succeed(true))) return;
+        if (recover) yield* recoverOutbox();
         for (;;) {
             const entries = yield* boundary(tables.read(pendingIn));
             const first = entries[0];
@@ -1707,6 +1667,121 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 yield* confirmReceipt(head, receipt);
             } else return; // Keep accepted operations durable until an authoritative acknowledgement arrives.
         }
+    });
+    const sync = Effect.fn("Replica.sync", { root: true })(function* (requested?: string) {
+        yield* open;
+        if (replicationError?.recovery === "stop")
+            return yield* fault(replicationError.kind, replicationError.message);
+        if (syncRetry && syncRetry.at > (yield* Clock.currentTimeMillis)) return yield* syncRetry.error;
+        yield* service.collectClientGarbage;
+        yield* collectResults;
+        const backend = yield* backendEffect;
+        const online = yield* options.online ?? Effect.succeed(true);
+        yield* diagnostics.setOnline(online);
+        if (!online) return;
+        // A committed receipt must settle its overlay before a new source snapshot.
+        // Recovery belongs to the outbox worker, never to a query acquisition.
+        if (
+            (yield* boundary(tables.read(pendingIn))).some(
+                (entry) => entry.state === "sending" || entry.receipt?.outcome === "committed"
+            )
+        )
+            return;
+        yield* pull();
+        const head = yield* boundary(tables.read(position));
+        const covered = Effect.fnUntraced(function* (subset: BackendSubset) {
+            const records = yield* boundary(
+                tables.loadSubset(coverage, {
+                    where: eq(field("subset", "objectType"), subset.objectType),
+                })
+            );
+            const key = primaryKeyLookup(subset.query, definitions.get(subset.objectType)!.primaryKey);
+            const present =
+                key !== undefined &&
+                (yield* boundary(tables.get((yield* view(subset.objectType)).base, key))) !== undefined;
+            for (const { value: record } of records) {
+                const live = demands.get(subsetKey(record.subset));
+                const maintained = backend.changes
+                    ? record.snapshotCursor !== undefined && record.barrierCursor === undefined
+                    : live && live.watchers > 0 && live.installed === live.revision;
+                if (!maintained) continue;
+                const proof = (reason: "collection" | "query" | "primary-key") => ({
+                    subset: record.subset,
+                    proof: {
+                        reason,
+                        maintainedBy: backend.changes
+                            ? ("journal" as const)
+                            : live?.pollIntervalMs !== undefined
+                              ? ("poll" as const)
+                              : ("watch" as const),
+                        pollIntervalMs: backend.changes ? undefined : live?.pollIntervalMs,
+                    },
+                });
+                if (record.complete && isWholeCollection(record.subset.query)) return proof("collection");
+                if (
+                    record.complete &&
+                    subsetKey(record.subset) === subsetKey(subset) &&
+                    (!backend.changes || !hasWindow(subset.query) || record.snapshotCursor === head.cursor)
+                )
+                    return proof("query");
+                if (
+                    record.complete &&
+                    key !== undefined &&
+                    primaryKeyLookup(record.subset.query, definitions.get(subset.objectType)!.primaryKey) ===
+                        key
+                )
+                    return proof("query");
+                if (key !== undefined && present && record.rowKeys?.includes(key))
+                    return proof("primary-key");
+            }
+            return undefined;
+        });
+        // Snapshot refresh follows journal catch-up, so historical commits cannot replace newer snapshots.
+        let demandFailure: BackendError | undefined;
+        for (const demand of demands.values()) {
+            if (deliveryActive) continue;
+            const relevant = requested === undefined || requested === subsetKey(demand.subset);
+            if (demand.loadFailure?.revision === demand.revision && !demand.loadFailure.error.retryable) {
+                if (relevant) demandFailure ??= demand.loadFailure.error;
+                continue;
+            }
+            const cached = yield* boundary(tables.get(coverage, subsetKey(demand.subset)));
+            const coveringSubset = yield* covered(demand.subset);
+            if (coveringSubset) {
+                demand.installed = demand.revision;
+                demand.loadFailure = undefined;
+                demand.coveredBy = coveringSubset.subset;
+                demand.coverageProof = coveringSubset.proof;
+                continue;
+            }
+            demand.coveredBy = undefined;
+            demand.coverageProof = undefined;
+            if (
+                (demand.watchers || demand.pollDisabled) &&
+                cached?.complete &&
+                demand.installed === demand.revision
+            )
+                continue;
+            const revision = demand.revision;
+            // Demand refresh belongs to the aggregate lease, not its first UI caller.
+            // Releasing the last consumer cancels its IO without interrupting outbox work.
+            const installed = yield* Effect.result(
+                Effect.raceFirst(
+                    installSnapshot(demand.subset, demand.installed === 0 ? "demand" : "refresh").pipe(
+                        Effect.as(true)
+                    ),
+                    Deferred.await(demand.released).pipe(Effect.as(false))
+                )
+            );
+            if (installed._tag === "Failure") {
+                demand.loadFailure = { revision, error: installed.failure };
+                if (relevant) demandFailure ??= installed.failure;
+            } else if (installed.success) {
+                demand.installed = revision;
+                demand.loadFailure = undefined;
+            }
+        }
+        if (demandFailure) return yield* demandFailure;
     });
     const parentStateIn = Effect.fnUntraced(function* (tx: ReadTransaction) {
         const head = yield* tx.get(imported, "head");
@@ -1854,9 +1929,19 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         yield* tx.put(metadata, "head", { ...state, sequence: resolved.sequence });
         return resolved;
     });
+    const runStateSync = (requested?: string) => gate.withPermit(diagnostics.sync(sync(requested)));
     const syncOnce = options.source
         ? Effect.suspend(() => service.syncParent(options.source!))
-        : gate.withPermits(1)(diagnostics.sync(sync()));
+        : gate.withPermit(
+              diagnostics.sync(
+                  Effect.gen(function* () {
+                      yield* recoverOutbox();
+                      const state = yield* Effect.result(sync());
+                      yield* drainOutbox(false);
+                      if (state._tag === "Failure") return yield* state.failure;
+                  })
+              )
+          );
     const ownSourceId = (yield* boundary(tables.get(stateHead, "head")))!.sourceId;
     const clients = clientRegistry(options.namespace, ownSourceId, options.clients);
     yield* boundary(options.tables.transaction(clients.initialize));
@@ -2442,6 +2527,119 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 })
             ),
     });
+    const acquireDemand = Effect.fnUntraced(function* (subset: BackendSubset) {
+        yield* view(subset.objectType);
+        const prepared = yield* Effect.try({
+            try: () => {
+                evaluateQuery([], subset.query ?? {});
+                const properties = new Set(
+                    definitions.get(subset.objectType)!.properties.map((property) => property.name)
+                );
+                const codec = Table.make<BackendSubset>({ name: "subset-copy" });
+                return {
+                    indexes: indexesForQuery(subset.query ?? {}, properties),
+                    key: subsetKey(subset),
+                    copy: codec.decode(codec.encode(subset)),
+                };
+            },
+            catch: (cause) => fault("InvalidRequest", "Invalid subset query.", cause),
+        });
+        for (const index of prepared.indexes) yield* service.ensureIndex(subset.objectType, index);
+        const { key, copy } = prepared;
+        yield* retain(subset.objectType, "remote", key, copy);
+        yield* Effect.makeSpanScoped("Replica.demand", {
+            root: true,
+            attributes: { activity: "subscription", objectType: subset.objectType },
+        });
+        if (options.source)
+            return yield* options.source.demand(
+                copy.query ? { ...copy, query: retentionQuery(copy.query) } : copy
+            );
+        if (deliveryActive) {
+            yield* wake;
+            return;
+        }
+        const watched = adapter!.watchSubset?.(copy);
+        const configuredInterval = adapter!.pollIntervalMs?.(copy);
+        const demand = demands.get(key)!;
+        demand.pollDisabled = !watched && configuredInterval === false;
+        const pollIntervalMs =
+            watched || adapter!.changes || configuredInterval === false
+                ? undefined
+                : (configuredInterval ?? options.pollIntervalMs ?? 5_000);
+        if (pollIntervalMs !== undefined && (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 100))
+            return yield* fault("InvalidConfiguration", "Subset poll interval must be at least 100 ms.");
+        const hints =
+            watched ??
+            (pollIntervalMs === undefined
+                ? undefined
+                : Stream.fromEffectRepeat(Effect.sleep(pollIntervalMs)));
+        if (!hints) return;
+        let firstWatch = true;
+        demand.pollIntervalMs = pollIntervalMs;
+        yield* Effect.forkScoped(
+            superviseWatch({
+                stream: () =>
+                    Stream.unwrap(
+                        Effect.gen(function* () {
+                            yield* Effect.acquireRelease(
+                                Effect.sync(() => {
+                                    demand.watchers++;
+                                }).pipe(Effect.andThen(diagnostics.changed)),
+                                () =>
+                                    Effect.sync(() => {
+                                        demand.watchers--;
+                                    }).pipe(Effect.andThen(diagnostics.changed))
+                            );
+                            if (firstWatch) {
+                                firstWatch = false;
+                                return hints;
+                            }
+                            return adapter!.watchSubset?.(copy) ?? hints;
+                        })
+                    ),
+                online: options.online,
+                onValue: () =>
+                    Effect.gen(function* () {
+                        if (!demand.loadFailure || demand.loadFailure.error.retryable) demand.revision++;
+                        yield* diagnostics.changed;
+                        yield* wake;
+                    }),
+                onError: (error) =>
+                    Effect.sync(() => {
+                        demand.watchFailure = error;
+                    }).pipe(Effect.andThen(diagnostics.changed), Effect.andThen(error ? wake : Effect.void)),
+            }).pipe(
+                Effect.withSpan("Replica.watchSubset", {
+                    root: true,
+                    attributes: { activity: "subscription", objectType: copy.objectType },
+                })
+            ),
+            { startImmediately: true }
+        );
+    });
+    const demandCodec = Table.make<BackendSubset>({ name: "demand" });
+    const demandCache = yield* makeDemandCache({
+        policy: options.demand,
+        acquire: (key) => acquireDemand(demandCodec.decode(key)),
+    });
+    const waitForDelivery = Effect.gen(function* () {
+        if (!deliveryActive || !(yield* options.online ?? Effect.succeed(true))) return;
+        for (;;) {
+            if (replicationError?.recovery === "stop")
+                return yield* fault(replicationError.kind, replicationError.message);
+            const selected = yield* requestedView();
+            const installed = yield* receiver.installed;
+            if (installed?.metadata?.generation === selected.generation) return;
+            yield* Effect.sleep(2);
+        }
+    }).pipe(
+        Effect.timeoutOrElse({
+            duration: 10_000,
+            orElse: () =>
+                Effect.fail(fault("Unavailable", "Waiting for the current selected delivery.", undefined)),
+        })
+    );
     const service: ReplicaService = {
         reportReplicationFailure: (error) =>
             Effect.gen(function* () {
@@ -2475,7 +2673,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         subscribeSelection: (selection, policy) =>
             Effect.gen(function* () {
                 for (const subset of selection.subsets) yield* service.demand(subset);
-                yield* service.syncOnce;
+                for (const subset of selection.subsets) yield* service.syncSubset(subset);
                 return yield* makeDelivery({
                     tables: options.tables,
                     namespace: name("committed"),
@@ -2587,11 +2785,26 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 mode: options.source ? ("protocol" as const) : ("adapter" as const),
                 ...diagnostics.snapshot(),
                 replicationError,
+                watchError: changeWatchFailure && {
+                    kind: changeWatchFailure.kind,
+                    message: changeWatchFailure.message,
+                    retryable: changeWatchFailure.retryable,
+                },
                 outbox,
                 demands: [...demands.values()].map((demand) => ({
                     ...demand.subset,
-                    references: demand.count,
+                    ...demandCache.state(subsetKey(demand.subset)),
                     watchers: demand.watchers,
+                    loadError: demand.loadFailure && {
+                        kind: demand.loadFailure.error.kind,
+                        message: demand.loadFailure.error.message,
+                        retryable: demand.loadFailure.error.retryable,
+                    },
+                    watchError: demand.watchFailure && {
+                        kind: demand.watchFailure.kind,
+                        message: demand.watchFailure.message,
+                        retryable: demand.watchFailure.retryable,
+                    },
                     revision: demand.revision,
                     installed: demand.installed,
                     coveredBy: demand.installed === demand.revision ? demand.coveredBy : undefined,
@@ -3215,29 +3428,13 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 Effect.tap(() => wake)
             ),
         wake,
-        syncOnce: syncOnce.pipe(
-            Effect.andThen(
-                Effect.gen(function* () {
-                    if (!deliveryActive || !(yield* options.online ?? Effect.succeed(true))) return;
-                    for (;;) {
-                        if (replicationError?.recovery === "stop")
-                            return yield* fault(replicationError.kind, replicationError.message);
-                        const selected = yield* requestedView();
-                        const installed = yield* receiver.installed;
-                        if (installed?.metadata?.generation === selected.generation) return;
-                        yield* Effect.sleep(2);
-                    }
-                }).pipe(
-                    Effect.timeoutOrElse({
-                        duration: 10_000,
-                        orElse: () =>
-                            Effect.fail(
-                                fault("Unavailable", "Waiting for the current selected delivery.", undefined)
-                            ),
-                    })
-                )
-            )
-        ),
+        syncSubset: (subset) =>
+            deliveryActive
+                ? wake.pipe(Effect.andThen(waitForDelivery))
+                : options.source
+                  ? service.refreshParent(options.source)
+                  : runStateSync(subsetKey(subset)),
+        syncOnce: syncOnce.pipe(Effect.andThen(waitForDelivery)),
         enqueue: Effect.fn("Replica.enqueue", { root: true })(function* (
             invocation: ActionRequest,
             settings?: { optimistic?: boolean }
@@ -3388,95 +3585,15 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     })
                 )
             ).pipe(Effect.andThen(wake)),
-        demand: (subset) =>
-            Effect.gen(function* () {
-                yield* view(subset.objectType);
-                const prepared = yield* Effect.try({
-                    try: () => {
-                        evaluateQuery([], subset.query ?? {});
-                        const properties = new Set(
-                            definitions.get(subset.objectType)!.properties.map((property) => property.name)
-                        );
-                        const codec = Table.make<BackendSubset>({ name: "subset-copy" });
-                        return {
-                            indexes: indexesForQuery(subset.query ?? {}, properties),
-                            key: subsetKey(subset),
-                            copy: codec.decode(codec.encode(subset)),
-                        };
-                    },
-                    catch: (cause) => fault("InvalidRequest", "Invalid subset query.", cause),
-                });
-                for (const index of prepared.indexes) yield* service.ensureIndex(subset.objectType, index);
-                const { key, copy } = prepared;
-                yield* retain(subset.objectType, "remote", key, copy);
-                yield* Effect.makeSpanScoped("Replica.demand", {
-                    root: true,
-                    attributes: { activity: "subscription", objectType: subset.objectType },
-                });
-                if (options.source)
-                    return yield* options.source.demand(
-                        copy.query ? { ...copy, query: retentionQuery(copy.query) } : copy
-                    );
-                if (deliveryActive) {
-                    yield* wake;
-                    return;
-                }
-                const watched = adapter!.watchSubset?.(copy);
-                const configuredInterval = adapter!.pollIntervalMs?.(copy);
-                const demand = demands.get(key)!;
-                demand.pollDisabled = !watched && configuredInterval === false;
-                const pollIntervalMs =
-                    watched || adapter!.changes || configuredInterval === false
-                        ? undefined
-                        : (configuredInterval ?? options.pollIntervalMs ?? 5_000);
-                if (
-                    pollIntervalMs !== undefined &&
-                    (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 100)
-                )
-                    return yield* fault(
-                        "InvalidConfiguration",
-                        "Subset poll interval must be at least 100 ms."
-                    );
-                const hints =
-                    watched ??
-                    (pollIntervalMs === undefined
-                        ? undefined
-                        : Stream.fromEffectRepeat(Effect.sleep(pollIntervalMs)));
-                if (!hints) return;
-                demand.pollIntervalMs = pollIntervalMs;
-                yield* Effect.forkScoped(
-                    Effect.scoped(
-                        Effect.gen(function* () {
-                            yield* Effect.acquireRelease(
-                                Effect.sync(() => {
-                                    demand.watchers++;
-                                }).pipe(Effect.andThen(diagnostics.changed)),
-                                () =>
-                                    Effect.sync(() => {
-                                        demand.watchers--;
-                                    }).pipe(Effect.andThen(diagnostics.changed))
-                            );
-                            const span = yield* Effect.currentSpan;
-                            span.event("replica.subscribed", yield* Clock.currentTimeNanos);
-                            yield* Stream.runForEach(hints, () =>
-                                Effect.gen(function* () {
-                                    span.event("replica.invalidation", yield* Clock.currentTimeNanos);
-                                    demand.revision++;
-                                    yield* diagnostics.changed;
-                                    yield* wake;
-                                })
-                            );
-                        })
-                    ).pipe(
-                        Effect.withSpan("Replica.watchSubset", {
-                            root: true,
-                            attributes: { activity: "subscription", objectType: copy.objectType },
-                        }),
-                        Effect.catch(() => wake)
-                    ),
-                    { startImmediately: true }
-                );
-            }),
+        demand: Effect.fnUntraced(function* (subset) {
+            const key = yield* Effect.try({
+                try: () => subsetKey(subset),
+                catch: (cause) => fault("InvalidRequest", "Invalid subset query.", cause),
+            });
+            yield* Effect.addFinalizer(() => diagnostics.changed);
+            yield* demandCache.acquire(key);
+            yield* diagnostics.changed;
+        }),
         retainLocal: (objectType, query) =>
             Effect.gen(function* () {
                 const subset = { objectType, query };
@@ -3663,36 +3780,69 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         yield* Effect.forkScoped(
             Effect.forever(
                 Effect.gen(function* () {
-                    yield* syncOnce.pipe(Effect.catch(() => Effect.void));
+                    yield* runStateSync().pipe(Effect.catch(() => Effect.void));
+                    yield* Effect.raceFirst(Queue.take(queue), Effect.sleep(poll));
+                })
+            )
+        );
+        yield* Effect.forkScoped(
+            Effect.forever(
+                Effect.gen(function* () {
+                    yield* gate.withPermit(drainOutbox()).pipe(
+                        Effect.catch((error) =>
+                            Effect.logWarning("Outbox processing failed", {
+                                kind: error.kind,
+                                retryable: error.retryable,
+                            })
+                        )
+                    );
                     const first = (yield* boundary(tables.read(pendingIn)))[0];
                     const now = yield* Clock.currentTimeMillis;
                     const delay =
                         first?.state === "queued" && first.nextAttemptAt !== undefined
                             ? Math.min(poll, Math.max(1, first.nextAttemptAt - now))
                             : poll;
-                    yield* Effect.raceFirst(Queue.take(queue), Effect.sleep(delay));
+                    yield* Effect.raceFirst(Queue.take(outboxWake), Effect.sleep(delay));
                 })
             )
         );
         if (options.connectivity)
-            yield* Effect.forkScoped(Stream.runForEach(options.connectivity, () => wake));
+            yield* Effect.forkScoped(
+                Stream.runForEach(options.connectivity, (online) =>
+                    Effect.gen(function* () {
+                        if (online && replicationError?.kind === "Unauthenticated") {
+                            syncRetry = undefined;
+                            yield* service.reportReplicationFailure(undefined);
+                        }
+                        yield* wake;
+                    })
+                )
+            );
         if (adapter?.changes?.watch)
             yield* Effect.forkScoped(
-                Effect.gen(function* () {
-                    const span = yield* Effect.currentSpan;
-                    span.event("replica.subscribed", yield* Clock.currentTimeNanos);
-                    yield* Stream.runForEach(adapter.changes!.watch!, () =>
-                        Effect.gen(function* () {
-                            span.event("replica.invalidation", yield* Clock.currentTimeNanos);
-                            yield* wake;
-                        })
-                    );
+                superviseWatch({
+                    stream: () => adapter.changes!.watch!,
+                    online: options.online,
+                    onValue: () => wake,
+                    onError: (error) =>
+                        Effect.sync(() => {
+                            changeWatchFailure = error;
+                        }).pipe(
+                            Effect.andThen(diagnostics.changed),
+                            Effect.andThen(
+                                error
+                                    ? Effect.logWarning("Replica change subscription failed", {
+                                          kind: error.kind,
+                                          retryable: error.retryable,
+                                      })
+                                    : Effect.void
+                            )
+                        ),
                 }).pipe(
                     Effect.withSpan("Replica.watchChanges", {
                         root: true,
                         attributes: { activity: "subscription" },
-                    }),
-                    Effect.catch(() => Effect.void)
+                    })
                 )
             );
     }

@@ -24,11 +24,17 @@ export const ReplicaLoadSchema = Schema.Struct({
     error: Schema.optional(Failure),
 });
 export type ReplicaLoad = Schema.Schema.Type<typeof ReplicaLoadSchema>;
+const DemandFailure = Schema.Struct({
+    kind: BackendErrorKindSchema,
+    message: Schema.String,
+    retryable: Schema.Boolean,
+});
 export const ReplicaStatusSchema = Schema.Struct({
     sourceId: Schema.String,
     upstreamId: Schema.String,
     mode: Schema.Literals(["adapter", "protocol"]),
     online: Schema.optional(Schema.Boolean),
+    watchError: Schema.optional(DemandFailure),
     replicationError: Schema.optional(
         Schema.Struct({
             kind: BackendErrorKindSchema,
@@ -49,7 +55,10 @@ export const ReplicaStatusSchema = Schema.Struct({
         Schema.Struct({
             ...BackendSubsetSchema.fields,
             references: Schema.Number,
+            idleUntil: Schema.optional(Schema.Number),
             watchers: Schema.Number,
+            loadError: Schema.optional(DemandFailure),
+            watchError: Schema.optional(DemandFailure),
             revision: Schema.Number,
             installed: Schema.Number,
             /** Coverage reused by the last completed demand check; diagnostic only. */

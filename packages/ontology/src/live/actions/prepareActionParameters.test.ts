@@ -1,3 +1,4 @@
+import { classifyBackendFailure } from "@party-stack/ontology-backend";
 import { o } from "@party-stack/ontology-spec";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { memoryRuntimeFixture } from "@party-stack/runtime/testing";
@@ -47,7 +48,14 @@ describe("prepareActionParameters", () => {
                 parameters: {
                     file: { id: "attachment-1" },
                 },
-                blobManager,
+                blobManager: {
+                    storage: await blobManager.storage,
+                    source: (id) =>
+                        Effect.tryPromise({
+                            try: () => blobManager.source(id),
+                            catch: (cause) => classifyBackendFailure("attachment.read", cause),
+                        }),
+                },
             })
         );
 
@@ -78,7 +86,14 @@ describe("prepareActionParameters", () => {
                     ir,
                     actionTypeName: "uploadDocument",
                     parameters,
-                    blobManager: manager,
+                    blobManager: {
+                        storage: await manager.storage,
+                        source: (id) =>
+                            Effect.tryPromise({
+                                try: () => manager.source(id),
+                                catch: (cause) => classifyBackendFailure("attachment.read", cause),
+                            }),
+                    },
                 })
             );
             expect(prepared.parameters).toEqual(parameters);

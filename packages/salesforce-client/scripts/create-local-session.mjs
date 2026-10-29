@@ -60,8 +60,7 @@ export async function createLocalSalesforceSession() {
             instanceUrl,
             session,
             cleanup() {
-                oauth.cleanup();
-                return Promise.resolve();
+                return oauth.cleanup();
             },
         };
     }

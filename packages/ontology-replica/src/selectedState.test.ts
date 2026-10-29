@@ -107,7 +107,7 @@ test("forwarding an unchanged query preserves its parent demand and coverage ide
                 yield* parent.syncOnce;
                 const parentDemand = (yield* parent.status).demands.find((demand) => demand.query?.where);
                 expect(parentDemand?.query).toEqual(query);
-                expect(parentDemand?.coveredBy).toEqual({ objectType: "Item" });
+                expect(parentDemand?.coveredBy).toEqual({ objectType: "Item", query: {} });
                 expect(parentDemand?.coverageProof?.reason).toBe("collection");
             })
         )

@@ -82,3 +82,27 @@ Local TanStack collections consume composed row changes. Simple predicates apply
 changed keys directly; sorted/limited windows query local storage for their new
 membership. Unchanged rows are not rewritten into the collection. Both upstream
 paths use the same Replica, local BlobStorage and retention machinery.
+
+## Demand retention
+
+A replica can keep unused subsets warm for reuse across requests or navigation:
+
+```ts
+const replica =
+    yield *
+    makeReplica({
+        ...options,
+        demand: { idleMs: 60_000, maxSubsets: 128 },
+    });
+```
+
+The default idle timeout is zero; the default cap is 1,024 distinct subsets.
+The last consumer's release starts the idle timer. Reuse renews it; expiry
+releases the upstream subscription and retention root. At capacity, the oldest
+idle entry is evicted first. Active entries are protected, and excess distinct
+work receives `RateLimited` if every slot is active. Cached-proxy servers use this
+replica policy directly, without a separate server-side demand cache.
+
+This controls demand lifetime, not data size. Row/blob garbage collection has its
+own age and retention rules. TanStack live-query GC can retain UI demand; avoid
+unintentionally stacking that lifetime with a long replica idle timeout.

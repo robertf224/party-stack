@@ -320,6 +320,7 @@ test("a real TanStack query forwards its predicate and numeric window into Repli
                 const replica = {
                     ir,
                     syncOnce: Effect.void,
+                    syncSubset: () => Effect.void,
                     subscribeChanges: Effect.succeed(Stream.never),
                     observeRows: (_type: string, query: import("@party-stack/ontology-storage").Query) =>
                         Stream.succeed({ reset: true, rows: evaluateQuery(rows, query), removed: [] }),
@@ -376,6 +377,7 @@ test("overlapping scoped subsets share materialized rows and unload without clob
                 const replica = {
                     ir,
                     syncOnce: Effect.void,
+                    syncSubset: () => Effect.void,
                     subscribeChanges: PubSub.subscribe(events).pipe(Effect.map(Stream.fromSubscription)),
                     observeRows: (_type: string, query: import("@party-stack/ontology-storage").Query) =>
                         Stream.unwrap(

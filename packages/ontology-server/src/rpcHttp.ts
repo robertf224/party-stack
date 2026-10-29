@@ -48,7 +48,9 @@ export const makeOntologyHttpHandler = Effect.fn("RemoteOntology.httpHandler")(f
             Effect.forever(
                 Effect.sleep(60_000).pipe(
                     Effect.andThen(options.backend.maintenance),
-                    Effect.catch(() => Effect.void)
+                    Effect.catch((error) =>
+                        Effect.logWarning("Ontology maintenance failed", { kind: error.kind })
+                    )
                 )
             )
         );

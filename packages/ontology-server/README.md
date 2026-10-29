@@ -32,6 +32,7 @@ const proxyServer =
     });
 
 // Confirmed read cache; writes still forward directly to upstream.
+// Configure readCache with makeReplica({ ..., demand: { idleMs: 60_000, maxSubsets: 128 } }).
 const cachedServer =
     yield *
     makeOntologyServer({
@@ -39,7 +40,6 @@ const cachedServer =
         backend: upstream,
         cache: readCache,
         authorize,
-        demand: { idleDemandMs: 60_000, maxSubsets: 1_024 },
     });
 
 // Intermediate replica: accepts durable local actions into its own outbox.

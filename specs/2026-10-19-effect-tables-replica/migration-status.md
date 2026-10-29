@@ -1,4 +1,4 @@
-# Migration status — October 28, 2026
+# Migration status — October 29, 2026
 
 Current inventory. The [execution log](./implementation.md) records historical
 checkpoints; this file describes the current implementation. The overall
@@ -21,6 +21,9 @@ covered in [native-actions.md](./native-actions.md).
   persisted-only transactional replay and explicit unknown outcomes. Successful
   receipts survive local mapping/read-back failure and restart without resubmission.
   Confirmed row publication and optimistic settlement are atomic.
+  State refresh and outbox processing have separate scoped workers; subset readiness
+  never submits actions. Per-demand terminal load failures are isolated, and watches
+  have shared retry supervision and visible failure diagnostics.
 - **Native action policy:** persisted retry deadlines/budgets, pause/discard-all,
   manual retry/reconciliation, and cancellable accepted/confirmed waits. Discard-all
   abandons local intent even for an unknown remote outcome, then refreshes base;
@@ -44,6 +47,9 @@ covered in [native-actions.md](./native-actions.md).
   join/include forwarding, and persisted-only inspection. No explicit preloads or
   TanStack persistence coordinator. Initial demand attempts sync before its view
   is ready; offline replay still makes no network queries.
+- **Demand retention:** replica-level `demand.idleMs` and `maxSubsets` control shared
+  active/idle leases, with idle LRU eviction at capacity. Cached proxies use the
+  same policy. Row/blob GC runs independently; hard byte budgets remain future work.
 - **Retention:** precise subset/action dependencies and bounded automatic row GC
   using mark-and-sweep. Blob metadata, aliases, generation intents and reader/outbox
   roots compose transactionally through ontology-storage. Byte IO uses recovery

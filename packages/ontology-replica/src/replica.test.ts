@@ -904,3 +904,262 @@ test("background demand IO survives one consumer's cancellation and stops after 
         )
     );
 });
+
+test("one nonretryable subset cannot starve another subset or the outbox", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { evaluateQuery } = yield* Effect.promise(
+                    () => import("@party-stack/ontology-storage")
+                );
+                const requests: string[] = [];
+                let forbidden = true;
+                const bad = { objectType: "Counter", query: { where: eq(field("id"), "bad") } };
+                const good = { objectType: "Counter", query: { where: eq(field("id"), "good") } };
+                const replica = yield* makeReplica({
+                    namespace: "isolated-errors",
+                    ir,
+                    tables: yield* Memory.make(),
+                    startSync: false,
+                    gc: false,
+                    execute: () => Effect.void,
+                    backend: {
+                        name: "fixture",
+                        sourceId: "fixture",
+                        supportsIdempotency: true,
+                        pollIntervalMs: () => false,
+                        loadSubset: (subset) =>
+                            Effect.suspend(() => {
+                                const key = JSON.stringify(subset.query).includes('"bad"') ? "bad" : "good";
+                                requests.push(key);
+                                if (key === "bad" && forbidden)
+                                    return Effect.fail(
+                                        new BackendError({
+                                            operation: "loadSubset",
+                                            kind: "Forbidden",
+                                            message: "Denied",
+                                            retryable: false,
+                                        })
+                                    );
+                                return Effect.succeed({
+                                    rows: evaluateQuery(
+                                        [{ key, value: { id: key, count: 1 } }],
+                                        subset.query
+                                    ),
+                                    complete: true,
+                                });
+                            }),
+                        applyAction: (request) =>
+                            Effect.succeed({ operationId: request.id, outcome: "committed", affected: [] }),
+                        queryFunction: () => Effect.void,
+                    },
+                });
+                yield* replica.demand(bad);
+                yield* replica.demand(good);
+                yield* replica.enqueue({ id: "write", name: "increment", parameters: {} });
+                yield* replica.syncSubset(good);
+                expect(yield* replica.receipt("write")).toBeUndefined();
+                expect((yield* replica.pending)[0]).toMatchObject({ state: "queued", attempts: 0 });
+                expect(yield* Effect.result(replica.syncOnce)).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "Forbidden" },
+                });
+                expect(yield* replica.receipt("write")).toMatchObject({
+                    operationId: "write",
+                    outcome: "committed",
+                });
+                expect(yield* replica.get("Counter", "good")).toEqual({ id: "good", count: 1 });
+                expect(requests.filter((key) => key === "bad")).toHaveLength(1);
+                expect(yield* Effect.result(replica.syncSubset(bad))).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "Forbidden" },
+                });
+                expect(requests.filter((key) => key === "bad")).toHaveLength(1);
+                expect(
+                    (yield* replica.status).demands.find(
+                        (demand) => demand.query?.where?.op === "eq" && demand.loadError
+                    )?.loadError
+                ).toMatchObject({ kind: "Forbidden", retryable: false });
+                forbidden = false;
+                yield* replica.invalidate(["Counter"]);
+                yield* replica.syncSubset(bad);
+                expect(requests.filter((key) => key === "bad")).toHaveLength(2);
+                expect(
+                    (yield* replica.status).demands.every((demand) => demand.loadError === undefined)
+                ).toBe(true);
+            })
+        )
+    );
+});
+
+test("a fatal journal error stops background source IO until explicitly recovered", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                let pulls = 0,
+                    broken = true;
+                const replica = yield* makeReplica({
+                    namespace: "fatal-journal",
+                    ir,
+                    tables: yield* Memory.make(),
+                    startSync: false,
+                    gc: false,
+                    execute: () => Effect.void,
+                    backend: {
+                        name: "source",
+                        sourceId: "source",
+                        supportsIdempotency: true,
+                        loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                        queryFunction: () => Effect.void,
+                        applyAction: () => Effect.die("Unexpected write"),
+                        changes: {
+                            pull: () =>
+                                Effect.suspend(() => {
+                                    pulls++;
+                                    return broken
+                                        ? Effect.fail(
+                                              new BackendError({
+                                                  operation: "pull",
+                                                  kind: "InvalidResponse",
+                                                  message: "Malformed page",
+                                                  retryable: false,
+                                              })
+                                          )
+                                        : Effect.succeed({ commits: [], cursor: "empty", hasMore: false });
+                                }),
+                        },
+                    },
+                });
+                expect(yield* Effect.result(replica.syncOnce)).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "InvalidResponse" },
+                });
+                expect(yield* Effect.result(replica.syncOnce)).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "InvalidResponse" },
+                });
+                expect(pulls).toBe(1);
+                expect((yield* replica.status).replicationError).toMatchObject({
+                    kind: "InvalidResponse",
+                    recovery: "stop",
+                });
+                broken = false;
+                yield* replica.reportReplicationFailure(undefined);
+                yield* replica.syncOnce;
+                expect(pulls).toBe(2);
+                expect((yield* replica.status).replicationError).toBeUndefined();
+            })
+        )
+    );
+});
+
+test("journal retry deadlines are not extended by intervening callers", async () => {
+    const { TestClock } = await import("effect/testing");
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                let pulls = 0;
+                const replica = yield* makeReplica({
+                    namespace: "journal-backoff",
+                    ir,
+                    tables: yield* Memory.make(),
+                    startSync: false,
+                    gc: false,
+                    execute: () => Effect.void,
+                    backend: {
+                        name: "source",
+                        sourceId: "source",
+                        supportsIdempotency: true,
+                        loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                        queryFunction: () => Effect.void,
+                        applyAction: () => Effect.die("Unexpected write"),
+                        changes: {
+                            pull: () =>
+                                Effect.suspend(() =>
+                                    ++pulls === 1
+                                        ? Effect.fail(
+                                              new BackendError({
+                                                  operation: "pull",
+                                                  kind: "RateLimited",
+                                                  message: "Wait",
+                                                  retryable: true,
+                                                  retryAfterMs: 5_000,
+                                              })
+                                          )
+                                        : Effect.succeed({ commits: [], cursor: "empty", hasMore: false })
+                                ),
+                        },
+                    },
+                });
+                expect((yield* Effect.result(replica.syncOnce))._tag).toBe("Failure");
+                yield* TestClock.adjust(3_000);
+                expect((yield* Effect.result(replica.syncOnce))._tag).toBe("Failure");
+                expect(pulls).toBe(1);
+                yield* TestClock.adjust(2_000);
+                yield* replica.syncOnce;
+                expect(pulls).toBe(2);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
+});
+
+test("canceling a query wait cannot interrupt an already submitting outbox action", async () => {
+    const { Fiber } = await import("effect");
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const entered = yield* Deferred.make<void>();
+                const release = yield* Deferred.make<void>();
+                let submissions = 0;
+                const replica = yield* makeReplica({
+                    namespace: "query-write-isolation",
+                    ir,
+                    tables: yield* Memory.make(),
+                    startSync: true,
+                    gc: false,
+                    execute: () => Effect.void,
+                    backend: {
+                        name: "source",
+                        sourceId: "source",
+                        supportsIdempotency: false,
+                        loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                        queryFunction: () => Effect.void,
+                        applyAction: (request) =>
+                            Effect.gen(function* () {
+                                submissions++;
+                                yield* Deferred.succeed(entered, undefined);
+                                yield* Deferred.await(release);
+                                return {
+                                    operationId: request.id,
+                                    outcome: "committed" as const,
+                                    affected: [],
+                                };
+                            }),
+                    },
+                });
+                yield* replica.enqueue({ id: "write", name: "increment", parameters: {} });
+                const queryScope = yield* Scope.fork(yield* Effect.scope);
+                const query = yield* Effect.forkChild(
+                    Scope.provide(
+                        Effect.gen(function* () {
+                            const subset = { objectType: "Counter" };
+                            yield* replica.demand(subset);
+                            yield* replica.syncSubset(subset);
+                        }),
+                        queryScope
+                    )
+                );
+                yield* Deferred.await(entered).pipe(Effect.timeout("2 seconds"));
+                yield* Scope.close(queryScope, Exit.void);
+                yield* Fiber.interrupt(query);
+                expect((yield* replica.pending)[0]).toMatchObject({ state: "sending", attempts: 1 });
+                yield* Deferred.succeed(release, undefined);
+                expect(yield* replica.awaitAction("write").pipe(Effect.timeout("2 seconds"))).toMatchObject({
+                    outcome: "committed",
+                });
+                expect(submissions).toBe(1);
+                expect(yield* replica.pending).toEqual([]);
+            })
+        )
+    );
+});

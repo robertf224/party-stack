@@ -40,11 +40,15 @@ function isActiveConnection(connection: Connection | undefined): connection is C
 function routeFor(routes: readonly OntologyRoute[], ontologyId: string): OntologyRoute {
     const matching = routes.filter((route) => route.matches(ontologyId));
     if (matching.length !== 1) {
-        throw new Error(
-            matching.length === 0
-                ? `No ontology route matched "${ontologyId}".`
-                : `Multiple ontology routes matched "${ontologyId}".`
-        );
+        throw new BackendError({
+            operation: "installation.route",
+            kind: "InvalidConfiguration",
+            retryable: false,
+            message:
+                matching.length === 0
+                    ? `No ontology route matched "${ontologyId}".`
+                    : `Multiple ontology routes matched "${ontologyId}".`,
+        });
     }
     return matching[0]!;
 }
@@ -99,10 +103,12 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
             .pipe(Effect.mapError((cause) => failure("installation.restore", cause)));
         let disposed = false;
         const closed = () =>
-            failure(
-                "installation.closed",
-                new Error(`Backend installation "${options.installationId}" is closed.`)
-            );
+            new BackendError({
+                operation: "installation.closed",
+                kind: "InvalidRequest",
+                retryable: false,
+                message: `Backend installation "${options.installationId}" is closed.`,
+            });
         const ensureOpen = Effect.suspend(() => (disposed ? Effect.fail(closed()) : Effect.void));
         const locks = yield* RcMap.make({ lookup: () => Semaphore.make(1) });
         const locked = <B, E, R>(userId: string, work: Effect.Effect<B, E, R>) =>
@@ -122,12 +128,12 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                 const current = connectionManager.connections.get(userId);
                 const egress = connectionManager.egress(userId);
                 if (!isActiveConnection(current) || !egress)
-                    return yield* failure(
-                        "installation.open",
-                        new Error(
-                            `User "${userId}" is not connected to backend installation "${options.installationId}".`
-                        )
-                    );
+                    return yield* new BackendError({
+                        operation: "installation.open",
+                        kind: "Unauthenticated",
+                        retryable: false,
+                        message: `User "${userId}" is not connected to backend installation "${options.installationId}".`,
+                    });
                 const route = yield* Effect.try({
                     try: () => routeFor(options.routes, ontologyId),
                     catch: (cause) => failure("installation.route", cause),
@@ -139,9 +145,12 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                         const application = await route.configure(configureOptions);
                         return meta ? createMetaOntologyConfiguration({ ir: application.ir }) : application;
                     }
-                    throw new Error(
-                        `Ontology route for "${ontologyId}" does not support ${meta ? "metadata" : "opening the application ontology"}.`
-                    );
+                    throw new BackendError({
+                        operation: "installation.route",
+                        kind: "InvalidConfiguration",
+                        retryable: false,
+                        message: `Ontology route for "${ontologyId}" does not support ${meta ? "metadata" : "opening the application ontology"}.`,
+                    });
                 });
                 const boundContext = {
                     ...options.createContext?.(userId, ontologyId),

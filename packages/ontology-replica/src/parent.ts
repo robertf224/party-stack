@@ -15,7 +15,7 @@ export const replicaStateSource = (parent: ReplicaService): OntologySource => ({
     subscribe: parent.subscribeClient,
     accept: parent.acceptClient,
     acknowledgeDelivery: parent.acknowledgeDelivery,
-    demand: (subset) => parent.demand(subset).pipe(Effect.andThen(parent.syncOnce)),
+    demand: (subset) => parent.demand(subset).pipe(Effect.andThen(parent.syncSubset(subset))),
     subscribeChanges: parent.subscribeChanges,
     submit: parent.submitClient,
     acknowledge: parent.acknowledgeClient,
@@ -117,7 +117,8 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
         yield* Effect.forkScoped(
             Effect.gen(function* () {
                 for (;;) {
-                    yield* syncOnce.pipe(Effect.catch((failure) => Ref.set(error, failure)));
+                    if ((yield* child.pending).length)
+                        yield* syncOnce.pipe(Effect.catch((failure) => Ref.set(error, failure)));
                     const head = (yield* child.pending)[0];
                     const now = yield* Clock.currentTimeMillis;
                     const delay =
@@ -173,11 +174,12 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
         yield* Ref.set(error, initial.failure);
     }
     const queue = yield* Queue.sliding<void>(1);
+    const actionQueue = yield* Queue.sliding<void>(1);
     let closed = false;
     yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
             closed = true;
-        }).pipe(Effect.andThen(Queue.shutdown(queue)))
+        }).pipe(Effect.andThen(Queue.shutdown(queue)), Effect.andThen(Queue.shutdown(actionQueue)))
     );
     const wake = Queue.offer(queue, undefined).pipe(Effect.asVoid);
     const syncOnce = Effect.suspend(() =>
@@ -237,7 +239,23 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
         { startImmediately: true }
     );
     yield* Effect.forkScoped(
-        Stream.runForEach(childChanges, () => wake),
+        Stream.runForEach(childChanges, () => wake.pipe(Effect.andThen(Queue.offer(actionQueue, undefined)))),
+        { startImmediately: true }
+    );
+    yield* Effect.forkScoped(
+        Effect.gen(function* () {
+            for (;;) {
+                yield* Effect.raceFirst(Queue.take(queue), Effect.sleep(heartbeatIntervalMs));
+                const result = yield* Effect.result(child.refreshParent(source));
+                if (result._tag === "Failure") {
+                    yield* Ref.set(error, result.failure);
+                    if (result.failure.retryable) {
+                        yield* Effect.sleep(retryIntervalMs);
+                        yield* wake;
+                    }
+                }
+            }
+        }),
         { startImmediately: true }
     );
     yield* Effect.forkScoped(
@@ -249,16 +267,18 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
                     head?.state === "queued" && head.nextAttemptAt !== undefined
                         ? Math.min(heartbeatIntervalMs, Math.max(1, head.nextAttemptAt - now))
                         : heartbeatIntervalMs;
-                yield* Effect.raceFirst(Queue.take(queue), Effect.sleep(delay));
+                yield* Effect.raceFirst(Queue.take(actionQueue), Effect.sleep(delay));
+                if (!(yield* child.pending).length) continue;
                 const result = yield* Effect.result(syncOnce);
                 if (result._tag === "Failure" && result.failure.retryable) {
                     yield* Effect.sleep(retryIntervalMs);
-                    yield* wake;
+                    yield* Queue.offer(actionQueue, undefined);
                 }
             }
         }),
         { startImmediately: true }
     );
+    yield* Queue.offer(actionQueue, undefined);
     yield* wake;
     return { syncOnce, lastError: Ref.get(error) } satisfies ParentConnection;
 });

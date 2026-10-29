@@ -8,12 +8,7 @@ import {
     type OntologyIR,
     type OntologyRoute,
 } from "@party-stack/ontology";
-import {
-    createSalesforceClient,
-    type SalesforceChangeEvent,
-    type SalesforceChangeEventSubscription,
-    type SalesforceChangeEventSubscriptionOptions,
-} from "@party-stack/salesforce-client";
+import { createSalesforceClient } from "@party-stack/salesforce-client";
 import { createSalesforceOntologyBackend } from "../adapter/createSalesforceOntologyBackendAdapter.js";
 import {
     createSalesforceConnectionAdapter,
@@ -30,16 +25,7 @@ export type SalesforceConnectionOptions = Omit<
     "instanceUrl" | "apiVersion"
 >;
 
-export type SalesforceOntologyRoute = (options: {
-    instanceUrl: string;
-    apiVersion: string;
-    subscribeToChangeEvents?: (
-        userId: string,
-        objectType: string,
-        listener: (event: SalesforceChangeEvent) => void,
-        subscriptionOptions?: SalesforceChangeEventSubscriptionOptions
-    ) => Promise<SalesforceChangeEventSubscription>;
-}) => OntologyRoute;
+export type SalesforceOntologyRoute = (options: { instanceUrl: string; apiVersion: string }) => OntologyRoute;
 
 export interface CreateSalesforceBackendInstallationOptions<
     AuthenticationClient extends object = SalesforceAuthenticationClient,
@@ -106,13 +92,13 @@ export function createSalesforceOntologyRoute(options: {
     persistObjects?: boolean;
     writes?: LiveOntologyWrites;
 }): SalesforceOntologyRoute {
-    return ({ instanceUrl, apiVersion, subscribeToChangeEvents }) => {
+    return ({ instanceUrl, apiVersion }) => {
         const route: OntologyRoute = {
             matches: (ontologyId) => ontologyId === options.ontologyId,
         };
         const ir = options.ir;
         if (ir) {
-            route.configure = ({ egress, connection }) => {
+            route.configure = ({ egress }) => {
                 const client = createConnectionSalesforceClient({
                     instanceUrl,
                     apiVersion,
@@ -122,16 +108,6 @@ export function createSalesforceOntologyRoute(options: {
                     ir,
                     backend: createSalesforceOntologyBackend({
                         client,
-
-                        subscribeToChangeEvents: subscribeToChangeEvents
-                            ? (objectType, listener, subscriptionOptions) =>
-                                  subscribeToChangeEvents(
-                                      connection.userId,
-                                      objectType,
-                                      listener,
-                                      subscriptionOptions
-                                  )
-                            : undefined,
                     }),
                     persistObjects: options.persistObjects,
                     writes: options.writes,
@@ -158,30 +134,12 @@ export function createSalesforceBackendInstallation<
 >(
     options: CreateSalesforceBackendInstallationOptions<AuthenticationClient>
 ): Promise<OntologyBackendInstallation<AuthenticationClient>> {
-    let installation: OntologyBackendInstallation<AuthenticationClient> | undefined;
-    const subscribeToChangeEvents =
-        typeof options.connections === "function"
-            ? undefined
-            : (
-                  userId: string,
-                  objectType: string,
-                  listener: (event: SalesforceChangeEvent) => void,
-                  subscriptionOptions?: SalesforceChangeEventSubscriptionOptions
-              ) => {
-                  if (!installation) {
-                      throw new Error("Salesforce installation is not ready.");
-                  }
-                  return (
-                      installation.authentication as unknown as SalesforceAuthenticationClient
-                  ).subscribeToChangeEvents(userId, objectType, listener, subscriptionOptions);
-              };
     const connectionAdapter =
         typeof options.connections === "function"
             ? options.connections
             : (createSalesforceConnectionAdapter({
                   ...options.connections,
                   instanceUrl: options.instanceUrl,
-                  apiVersion: options.apiVersion,
               }) as BackendConnectionAdapterProvider<AuthenticationClient>);
     return createOntologyBackendInstallation<AuthenticationClient>({
         installationId: options.installationId ?? `salesforce:${new URL(options.instanceUrl).origin}`,
@@ -191,12 +149,8 @@ export function createSalesforceBackendInstallation<
             route({
                 instanceUrl: options.instanceUrl,
                 apiVersion: options.apiVersion,
-                subscribeToChangeEvents,
             })
         ),
         createContext: options.createContext,
-    }).then((created) => {
-        installation = created;
-        return created;
     });
 }

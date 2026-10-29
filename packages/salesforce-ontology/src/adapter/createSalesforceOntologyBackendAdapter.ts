@@ -10,17 +10,6 @@ import { Effect } from "effect";
 import { getSalesforceActionMetadata } from "../actionMetadata.js";
 import { makeSalesforceBackend } from "./backend.js";
 import { createSalesforceCodec } from "./salesforceCodec.js";
-import type {
-    SalesforceChangeEvent,
-    SalesforceChangeEventSubscription,
-    SalesforceChangeEventSubscriptionOptions,
-} from "@party-stack/salesforce-client";
-
-export type SubscribeToSalesforceChangeEvents = (
-    objectType: string,
-    listener: (event: SalesforceChangeEvent) => void,
-    options?: SalesforceChangeEventSubscriptionOptions
-) => Promise<SalesforceChangeEventSubscription>;
 import type { ActionReceipt } from "@party-stack/ontology-backend";
 
 function isNonRetryableSalesforceError(error: unknown): boolean {
@@ -54,7 +43,6 @@ function assertSaveSucceeded(result: { success: boolean; errors: Array<{ message
 export function createSalesforceOntologyBackendAdapter(opts: {
     client: SalesforceClient;
     ir: OntologyIR;
-    subscribeToChangeEvents?: SubscribeToSalesforceChangeEvents;
 }): OntologyBackendAdapter {
     const codec = createSalesforceCodec(opts.ir);
     const encodeInvocableParameter = (
@@ -218,11 +206,9 @@ export type CreateSalesforceOntologyBackendOptions<
 > = (
     | {
           client: SalesforceClient;
-          subscribeToChangeEvents?: SubscribeToSalesforceChangeEvents;
       }
     | {
           createClient: (ir: OntologyIR, context: Context) => SalesforceClient | Promise<SalesforceClient>;
-          subscribeToChangeEvents?: SubscribeToSalesforceChangeEvents;
       }
 ) & {};
 
@@ -233,6 +219,5 @@ export function createSalesforceOntologyBackend<
         createSalesforceOntologyBackendAdapter({
             ir,
             client: "client" in opts ? opts.client : await opts.createClient(ir, context),
-            subscribeToChangeEvents: opts.subscribeToChangeEvents,
         });
 }

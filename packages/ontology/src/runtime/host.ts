@@ -4,12 +4,13 @@ import { Runtime } from "@party-stack/runtime";
 import { Effect, Fiber, Scope, Stream } from "effect";
 import { prepareActionParameters } from "../live/actions/prepareActionParameters.js";
 import { createLiveOntologyAttachments } from "../live/attachments/createLiveOntologyAttachments.js";
-import { createBlobManager } from "./blobs/createBlobManager.js";
+import { makeBlobManager } from "./blobs/BlobManager.js";
+import { blobManagerClient } from "./blobs/createBlobManager.js";
 import { observeReplicaRows } from "./hostQuery.js";
 import { executeTransactionMutator } from "./transactions.js";
 import type { LiveOntologyWrites } from "../live/LiveOntology.js";
 import type { OntologyBackendAdapter } from "../live/OntologyBackendAdapter.js";
-import type { BlobManager } from "./blobs/types.js";
+import type { BlobManagerService } from "./blobs/BlobManager.js";
 import type { ConnectionMonitor } from "@party-stack/connect";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { attachment } from "@party-stack/ontology-spec/values";
@@ -36,6 +37,7 @@ interface ReplicaHostCommonOptions {
     readonly writes?: LiveOntologyWrites;
     readonly connection?: ConnectionMonitor;
     readonly gc?: ReplicaOptions["gc"];
+    readonly demand?: ReplicaOptions["demand"];
     readonly clients?: ReplicaOptions["clients"];
 }
 /** A native connection can additionally publish speculative parent state. */
@@ -55,7 +57,7 @@ export type ReplicaHostOptions = ReplicaHostCommonOptions &
 export interface ReplicaHostService {
     readonly replica: ReplicaService;
     readonly backend: OntologyBackendService;
-    readonly blobManager: BlobManager;
+    readonly blobManager: BlobManagerService;
     readonly attachments: import("../live/LiveOntology.js").LiveOntology["attachments"];
     readonly stageAttachment?: (
         value: attachment,
@@ -101,37 +103,23 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
               target?: import("@party-stack/ontology-spec").AttachmentTypeDef
           ) => run(backend.attachments!.stage!(value, bytes, { target }))
         : undefined;
-    const blobManager = yield* Effect.acquireRelease(
-        Effect.sync(() =>
-            createBlobManager({
-                runtime,
-                scope,
-                gcTime: 5 * 60_000,
-                remote: {
-                    read: (id, settings) =>
-                        run(
-                            backend.attachments?.read({
-                                ...(settings?.meta?.attachment as attachment | undefined),
-                                id,
-                            }) ?? Effect.fail(unavailableAttachment()),
-                            settings?.signal
-                        ),
-                    metadata: backend.attachments
-                        ? (id, settings) =>
-                              run(
-                                  backend.attachments!.metadata(
-                                      { ...(settings?.meta?.attachment as attachment | undefined), id },
-                                      { select: settings?.select }
-                                  ),
-                                  settings?.signal
-                              )
-                        : undefined,
-                },
-            })
-        ),
-        (manager) => Effect.promise(() => manager.cleanup())
-    );
-    yield* attempt(() => blobManager.ready);
+    const blobManager = yield* makeBlobManager({
+        gcTime: 5 * 60_000,
+        remote: {
+            read: (id, settings) =>
+                backend.attachments?.read({
+                    ...(settings?.meta?.attachment as attachment | undefined),
+                    id,
+                }) ?? Effect.fail(unavailableAttachment()),
+            metadata: backend.attachments
+                ? (id, settings) =>
+                      backend.attachments!.metadata(
+                          { ...(settings?.meta?.attachment as attachment | undefined), id },
+                          { select: settings?.select }
+                      )
+                : undefined,
+        },
+    });
     const withStagedAttachments =
         <A>(
             submit: (
@@ -223,7 +211,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
                           : undefined,
                   },
               }),
-        blobs: yield* attempt(() => blobManager.storage),
+        blobs: blobManager.storage,
         execute: (tx, invocation, settings) =>
             executeTransactionMutator({
                 ir,
@@ -244,6 +232,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         }),
         connectivity: Stream.merge(services.connectivity, connected),
         gc: options.gc,
+        demand: options.demand,
         outbox: options.writes?.outbox,
         externalChanges: services.externalChanges,
         publish: services.notify,
@@ -259,7 +248,11 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         backend,
         blobManager,
         stageAttachment,
-        attachments: createLiveOntologyAttachments({ ir, blobManager, stageAttachment }),
+        attachments: createLiveOntologyAttachments({
+            ir,
+            blobManager: blobManagerClient(blobManager, run),
+            stageAttachment,
+        }),
         observe: (subset, settings) => observeReplicaRows(replica, subset, settings),
     };
 });
