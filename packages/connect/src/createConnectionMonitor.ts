@@ -13,14 +13,18 @@ export function createConnectionMonitor(
             return getState();
         },
         subscribe: (listener) => manager.subscribeConnection(userId, listener),
-        changes: Stream.callback<ConnectionState>((queue) =>
-            Effect.acquireRelease(
-                Effect.sync(() => {
-                    Queue.offerUnsafe(queue, getState());
-                    return manager.subscribeConnection(userId, (state) => Queue.offerUnsafe(queue, state));
-                }),
-                (unsubscribe) => Effect.sync(unsubscribe)
-            )
+        changes: Stream.callback<ConnectionState>(
+            (queue) =>
+                Effect.acquireRelease(
+                    Effect.sync(() => {
+                        Queue.offerUnsafe(queue, getState());
+                        return manager.subscribeConnection(userId, (state) =>
+                            Queue.offerUnsafe(queue, state)
+                        );
+                    }),
+                    (unsubscribe) => Effect.sync(unsubscribe)
+                ),
+            { bufferSize: 1, strategy: "sliding" }
         ),
         reportUnauthenticated: (error) => manager.reportUnauthenticated(userId, error),
     };

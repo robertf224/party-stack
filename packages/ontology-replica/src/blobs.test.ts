@@ -3,7 +3,7 @@ import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { makeBlobStorage, collectByteBlob, BlobStorageError } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Deferred, Fiber, Effect, Result, Scope, Exit } from "effect";
+import { Deferred, Fiber, Effect, Result, Scope, Exit, Stream } from "effect";
 import { expect, test } from "vitest";
 import { replicaStateSource, makeReplica } from "./index.js";
 
@@ -526,6 +526,80 @@ test("staged-copy validation and parent acceptance are atomic, while duplicate s
                 const duplicate = yield* parent.submitClient(request);
                 expect(duplicate.state.completed[0]?.receipt?.outcome).toBe("committed");
                 expect(applications).toBe(1);
+            })
+        )
+    );
+});
+
+test("plain replica reads and observations attach source locators without changing stored rows", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const property = (name: string, type: import("@party-stack/ontology-spec").TypeDef) => ({
+                    name,
+                    displayName: name,
+                    type,
+                });
+                const definition: OntologyIR = {
+                    ...ir,
+                    objectTypes: [
+                        {
+                            name: "Item",
+                            displayName: "Item",
+                            pluralDisplayName: "Items",
+                            primaryKey: "id",
+                            properties: [
+                                property("id", o.string({})),
+                                property("file", o.attachment({})),
+                                property("secret", o.encrypted({ type: o.string({}) })),
+                            ],
+                        },
+                    ],
+                };
+                const tables = yield* Memory.make();
+                const value = { id: "item", file: { id: "bytes" }, secret: { ciphertext: "opaque" } };
+                const replica = yield* makeReplica({
+                    ir: definition,
+                    namespace: "read-sources",
+                    tables,
+                    startSync: false,
+                    gc: false,
+                    execute: () => Effect.void,
+                    backend: {
+                        name: "source",
+                        sourceId: "source",
+                        supportsIdempotency: false,
+                        loadSubset: () => Effect.succeed({ rows: [{ key: "item", value }], complete: true }),
+                        applyAction: () => Effect.die("No writes expected"),
+                        queryFunction: () => Effect.void,
+                    },
+                });
+                yield* replica.demand({ objectType: "Item" });
+                yield* replica.syncOnce;
+                const expected = {
+                    id: "item",
+                    file: {
+                        id: "bytes",
+                        source: { objectType: "Item", primaryKey: "item", property: "file" },
+                    },
+                    secret: {
+                        ciphertext: "opaque",
+                        source: { objectType: "Item", primaryKey: "item", property: "secret" },
+                    },
+                };
+                expect(yield* replica.get("Item", "item")).toEqual(expected);
+                expect(yield* replica.confirmed.get("Item", "item")).toEqual(expected);
+                expect((yield* replica.loadSubset("Item"))[0]?.value).toEqual(expected);
+                expect((yield* replica.snapshotSubset({ objectType: "Item" })).rows[0]?.value).toEqual(
+                    expected
+                );
+                const batches = yield* Stream.runCollect(Stream.take(replica.observeRows("Item"), 1));
+                expect(batches[0]?.rows[0]?.value).toEqual(expected);
+                const raw = Table.make<Record<string, unknown>>({
+                    name: JSON.stringify(["replica", "read-sources", "base:Item"]),
+                });
+                expect(yield* tables.get(raw, "item")).toEqual(value);
+                expect(value.file).toEqual({ id: "bytes" });
             })
         )
     );

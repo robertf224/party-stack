@@ -91,6 +91,15 @@ const projects = [
     { id: "b", title: "B", admins: [] },
 ];
 
+it("invalid policy configuration is a typed failure, not an Effect defect", async () => {
+    const { source } = reader({});
+    const result = await Effect.runPromise(policyView(source, {}).pipe(Effect.result));
+    expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "BackendError", kind: "InvalidConfiguration" },
+    });
+});
+
 describe("finite hierarchical queries", () => {
     it("uses the same explicit null ordering for residual cursor filtering and source pagination", async () => {
         const definition = structuredClone(ir);
@@ -226,9 +235,99 @@ describe("finite hierarchical queries", () => {
             },
             definition
         );
-        const view = policyView(source, { user: "user" });
+        const view = await Effect.runPromise(policyView(source, { user: "user" }));
         const rows = await Effect.runPromise(view.tx.loadSubset("Issue"));
         expect(rows.map((r) => r.value)).toEqual([{ id: "first", title: "First" }]);
         expect(await Effect.runPromise(view.tx.get("Issue", "last"))).toBeUndefined();
     });
+});
+
+it("Query IR aliases retain attachment/encrypted provenance without selecting the primary key", async () => {
+    const definition = structuredClone(ir);
+    definition.objectTypes
+        .find((type) => type.name === "Issue")!
+        .properties.push(p("file", o.attachment({})), p("encrypted", o.encrypted({ type: text })));
+    definition.policy = {
+        read: {
+            select: [
+                sub("issues", {
+                    from: { source: { objectType: "Issue" }, binding: "i" },
+                    select: ["id", "file", "encrypted"].map((name) => selectField(name, field("i", name))),
+                }),
+            ],
+        },
+    };
+    const value = {
+        id: "issue",
+        file: { id: "bytes" },
+        encrypted: { ciphertext: "opaque" },
+        secret: "hidden",
+    };
+    const { source } = reader({ Issue: [value] }, definition);
+    const view = await Effect.runPromise(policyView(source, { user: "user" }));
+    const document: QueryDocument = {
+        select: [
+            sub("issues", {
+                from: { source: { objectType: "Issue" }, binding: "i" },
+                select: [
+                    selectField("download", field("i", "file")),
+                    selectField("secured", field("i", "encrypted")),
+                ],
+            }),
+        ],
+    };
+    const result = await Effect.runPromise(
+        executeQuery(document, { reader: view.reader, canReadProperty: view.canReadProperty })
+    );
+    expect(result.value).toEqual({
+        issues: [
+            {
+                download: {
+                    id: "bytes",
+                    source: { objectType: "Issue", primaryKey: "issue", property: "file" },
+                },
+                secured: {
+                    ciphertext: "opaque",
+                    source: { objectType: "Issue", primaryKey: "issue", property: "encrypted" },
+                },
+            },
+        ],
+    });
+    expect(value).toEqual({
+        id: "issue",
+        file: { id: "bytes" },
+        encrypted: { ciphertext: "opaque" },
+        secret: "hidden",
+    });
+    const forbidden: QueryDocument = {
+        select: [
+            sub("issues", {
+                from: { source: { objectType: "Issue" }, binding: "i" },
+                select: [selectField("leak", field("i", "secret"))],
+            }),
+        ],
+    };
+    expect(
+        (
+            await Effect.runPromise(
+                executeQuery(forbidden, { reader: view.reader, canReadProperty: view.canReadProperty })
+            )
+        ).value
+    ).toEqual({ issues: [{}] });
+    const probe: QueryDocument = {
+        select: [
+            sub("issues", {
+                from: { source: { objectType: "Issue" }, binding: "i" },
+                where: eq(field("i", "secret"), literal("hidden")),
+                select: [selectField("id", field("i", "id"))],
+            }),
+        ],
+    };
+    expect(
+        await Effect.runPromise(
+            executeQuery(probe, { reader: view.reader, canReadProperty: view.canReadProperty }).pipe(
+                Effect.result
+            )
+        )
+    ).toMatchObject({ _tag: "Failure", failure: { kind: "Forbidden" } });
 });

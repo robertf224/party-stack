@@ -55,7 +55,19 @@ export function policyView(
     context: Record<string, unknown>,
     options?: PolicyViewOptions
 ) {
-    return evaluatePolicyView(reader, context, options);
+    return Effect.try({
+        try: () => evaluatePolicyView(reader, context, options),
+        catch: (cause) =>
+            cause instanceof BackendError
+                ? cause
+                : new BackendError({
+                      operation: "policy",
+                      kind: "InvalidConfiguration",
+                      retryable: false,
+                      message: "Invalid ontology policy.",
+                      cause,
+                  }),
+    });
 }
 
 function parameterDependencies(expression: Expression): Set<string> {
@@ -132,10 +144,10 @@ export const authorizeAction = Effect.fn("Policy.authorizeAction")(function* (
         parameters,
         knownInputs,
         check: check as Uncertain<boolean>,
-        read: policyView(reader, context, {
+        read: (yield* policyView(reader, context, {
             extraRead: rule.read,
             inputs: parameters,
             inputDefinitions: action.parameters,
-        }).tx,
+        })).tx,
     };
 });

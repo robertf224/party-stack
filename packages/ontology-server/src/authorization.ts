@@ -180,11 +180,11 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
             inputDefinitions: query.parameters,
         }).evaluate(rule.check);
         if (!permitted(check)) return yield* unavailable("queryFunction");
-        return policyView(source, context, {
+        return (yield* policyView(source, context, {
             extraRead: rule.read,
             inputs: parameters,
             inputDefinitions: query.parameters,
-        }).tx;
+        })).tx;
     });
     const projected: OntologyBackendService = {
         name: backend.name,
@@ -194,9 +194,10 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
             expose(
                 "loadSubset",
                 withRead((source) =>
-                    policyView(source, context)
-                        .tx.loadSubset(subset.objectType, subset.query)
-                        .pipe(Effect.map((rows) => ({ rows, complete: true })))
+                    policyView(source, context).pipe(
+                        Effect.flatMap((view) => view.tx.loadSubset(subset.objectType, subset.query)),
+                        Effect.map((rows) => ({ rows, complete: true }))
+                    )
                 )
             ),
         applyAction: (request) =>
@@ -356,7 +357,7 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
                             name,
                             context: definition.context,
                             parameters: result.parameters,
-                            read: policyView(source, context).tx,
+                            read: (yield* policyView(source, context)).tx,
                         });
                         const visible = new Set(
                             ir.actionTypes.find((a) => a.name === name)!.parameters.map((p) => p.name)
@@ -406,7 +407,9 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
         const property = object?.properties.find((p) => p.name === source?.property);
         if (!source || !object || !property) return yield* unavailable("property.read");
         const value = yield* withRead((reader) =>
-            policyView(reader, context).tx.get(object.name, source.primaryKey)
+            policyView(reader, context).pipe(
+                Effect.flatMap((view) => view.tx.get(object.name, source.primaryKey))
+            )
         );
         if (!value || !Object.hasOwn(value, property.name)) return yield* unavailable("property.read");
         return { value: value[property.name], property };
@@ -503,15 +506,17 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
         query: (document: QueryDocument, inputs?: Record<string, unknown>) =>
             expose(
                 "query",
-                withRead((source) => {
-                    const view = policyView(source, context);
-                    return executeQuery(document, {
-                        reader: { ...view.reader, ir },
-                        context: definition.context,
-                        inputs,
-                        canReadProperty: view.canReadProperty,
-                    }).pipe(Effect.map((result) => result.value));
-                })
+                withRead(
+                    Effect.fnUntraced(function* (source) {
+                        const view = yield* policyView(source, context);
+                        return yield* executeQuery(document, {
+                            reader: { ...view.reader, ir },
+                            context: definition.context,
+                            inputs,
+                            canReadProperty: view.canReadProperty,
+                        }).pipe(Effect.map((result) => result.value));
+                    })
+                )
             ),
     };
 });

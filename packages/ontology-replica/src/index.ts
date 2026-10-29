@@ -22,6 +22,7 @@ import { resolveType } from "@party-stack/ontology-spec/utils";
 import { setAtPath } from "@party-stack/ontology-spec/utils";
 import {
     evaluateQuery,
+    withObjectSources,
     field,
     eq,
     inArray,
@@ -46,7 +47,7 @@ import {
     deleteVisible,
 } from "@party-stack/ontology-storage/overlay";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Clock, Context, Effect, Exit, PubSub, Queue, Schema, Semaphore, Stream } from "effect";
+import { Clock, Context, Deferred, Effect, Exit, PubSub, Queue, Schema, Semaphore, Stream } from "effect";
 import { hasWindow, isWholeCollection, primaryKeyLookup } from "./coverage.js";
 import { cachedCopy, withCachedCopy, encryptedCacheCodec, preserveCachedCopies } from "./encryptedCache.js";
 import { makeReplicaDiagnostics } from "./status.js";
@@ -573,6 +574,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         {
             subset: BackendSubset;
             count: number;
+            released: Deferred.Deferred<void>;
             revision: number;
             installed: number;
             watchers: number;
@@ -650,6 +652,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                 demands.set(key, {
                                     subset,
                                     count: 1,
+                                    released: yield* Deferred.make<void>(),
                                     revision: 1,
                                     installed: 0,
                                     watchers: 0,
@@ -674,7 +677,10 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             if (kind === "remote" && subset) {
                                 const current = demands.get(key);
                                 if (current && current.count > 1) current.count--;
-                                else demands.delete(key);
+                                else {
+                                    demands.delete(key);
+                                    if (current) yield* Deferred.succeed(current.released, undefined);
+                                }
                             }
                             yield* diagnostics.changed;
                             if (options.source || deliveryActive) yield* localNotify;
@@ -1011,19 +1017,34 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             })
         )
     );
+    const publicRow = (type: string, object: ObjectValue, key?: Key) =>
+        withObjectSources({
+            ir: options.ir,
+            objectType: definitions.get(type)!,
+            object,
+            key,
+        });
+    const publicRows = (type: string, rows: readonly { key: Key; value: ObjectValue }[]) =>
+        rows.map((row) => ({ ...row, value: publicRow(type, row.value, row.key) }));
     const readOutside = (confirmed: boolean): OwnedReadTransaction => ({
         get: (type, key) =>
             boundary(
                 Effect.andThen(
                     open,
-                    tables.read((tx) => reader(tx, confirmed).get(type, key))
+                    tables
+                        .read((tx) => reader(tx, confirmed).get(type, key))
+                        .pipe(
+                            Effect.map((row) => (row === undefined ? undefined : publicRow(type, row, key)))
+                        )
                 )
             ),
         loadSubset: (type, query) =>
             boundary(
                 Effect.andThen(
                     open,
-                    tables.read((tx) => reader(tx, confirmed).loadSubset(type, query))
+                    tables
+                        .read((tx) => reader(tx, confirmed).loadSubset(type, query))
+                        .pipe(Effect.map((rows) => publicRows(type, rows)))
                 )
             ),
     });
@@ -1261,7 +1282,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             yield* notify;
             if (!page.hasMore) break;
             if (page.cursor === before.cursor)
-                return yield* fault("HistoryExpired", "Backend returned a non-advancing change page.");
+                return yield* fault("InvalidResponse", "Backend returned a non-advancing change page.");
         }
     });
     const recoverHistory = Effect.fn("Replica.recoverHistory")(function* () {
@@ -1573,8 +1594,15 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             )
                 continue;
             const revision = demand.revision;
-            yield* installSnapshot(demand.subset, demand.installed === 0 ? "demand" : "refresh");
-            demand.installed = revision;
+            // Demand refresh belongs to the aggregate lease, not its first UI caller.
+            // Releasing the last consumer cancels its IO without interrupting outbox work.
+            const installed = yield* Effect.raceFirst(
+                installSnapshot(demand.subset, demand.installed === 0 ? "demand" : "refresh").pipe(
+                    Effect.as(true)
+                ),
+                Deferred.await(demand.released).pipe(Effect.as(false))
+            );
+            if (installed) demand.installed = revision;
         }
         for (;;) {
             const entries = yield* boundary(tables.read(pendingIn));
@@ -2443,7 +2471,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             rows: yield* loadVisible(tx, v, query),
                         };
                     }),
-            }),
+            }).pipe(Stream.map((batch) => ({ ...batch, rows: publicRows(objectType, batch.rows) }))),
         subscribeSelection: (selection, policy) =>
             Effect.gen(function* () {
                 for (const subset of selection.subsets) yield* service.demand(subset);
@@ -2537,7 +2565,10 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         const demand = demands.get(subsetKey(subset));
                         const proof = yield* tx.get(coverage, subsetKey(demand?.coveredBy ?? subset));
                         return {
-                            rows: yield* reader(tx, confirmed).loadSubset(subset.objectType, subset.query),
+                            rows: publicRows(
+                                subset.objectType,
+                                yield* reader(tx, confirmed).loadSubset(subset.objectType, subset.query)
+                            ),
                             complete: proof?.complete === true,
                             cursor: (yield* position(tx)).cursor,
                         };

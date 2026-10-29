@@ -46,3 +46,5 @@ export {
 export { applyQuery as evaluateQuery } from "./query/evaluate.js";
 
 export { ontologyDefinitionSignature } from "./definition.js";
+
+export { withObjectSources } from "./ontology/sources.js";

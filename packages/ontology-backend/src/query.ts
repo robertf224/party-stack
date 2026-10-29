@@ -7,6 +7,7 @@ import {
 } from "@party-stack/ontology-spec/query";
 import { certain, uncertain } from "@party-stack/ontology-spec/utils";
 import { isRelatedFromForeignKeySource, resolveRelatedLink } from "@party-stack/ontology-spec/utils";
+import { withObjectSources } from "@party-stack/ontology-storage";
 import { field, and, eq, ne, not, or, inArray, contains, like, ilike } from "@party-stack/ontology-storage";
 import { compareScalar, readField, scalarKey } from "@party-stack/ontology-storage/query";
 import { Effect, Schema } from "effect";
@@ -77,15 +78,22 @@ export function queryExecutor(options: QueryExecutionOptions) {
     const fetch = Effect.fnUntraced(function* (ref: QuerySource, scan: Scan = {}) {
         const reader = yield* attempt(() => source(ref));
         const rows = yield* reader.loadSubset(ref.objectType, scan);
-        for (const row of rows)
-            rowEntities.set(row.value, {
+        return rows.map((row) => {
+            const value = withObjectSources({
+                ir: reader.ir,
+                objectType: reader.ir.objectTypes.find((type) => type.name === ref.objectType)!,
+                object: row.value,
+                key: row.key,
+            });
+            rowEntities.set(value, {
                 source: ref.ontology,
                 objectType: ref.objectType,
                 key: row.key,
                 value: row.value,
                 properties: new Set(),
             });
-        return rows;
+            return { ...row, value };
+        });
     });
     const resolve = (type: TypeDef | undefined, seen = new Set<string>()): TypeDef | undefined => {
         if (type?.kind === "optional") return resolve(type.value.type, seen);

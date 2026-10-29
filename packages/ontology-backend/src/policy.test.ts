@@ -370,3 +370,104 @@ describe("authorization planning", () => {
         }
     });
 });
+
+it("narrows a token's Post Approval/Bid grant while preserving the final caller window", async () => {
+    const ir: OntologyIR = {
+        types: [],
+        linkTypes: [],
+        actionTypes: [],
+        queryFunctionTypes: [],
+        context: { type: o.struct({ fields: [property("approvalId")] }) },
+        objectTypes: [
+            {
+                name: "PostApproval",
+                displayName: "Post Approval",
+                pluralDisplayName: "Post Approvals",
+                primaryKey: "id",
+                properties: [property("id")],
+            },
+            {
+                name: "Bid",
+                displayName: "Bid",
+                pluralDisplayName: "Bids",
+                primaryKey: "id",
+                properties: [
+                    property("id"),
+                    property("approvalId"),
+                    property("status"),
+                    property("rank", o.integer({})),
+                ],
+            },
+            {
+                name: "Post",
+                displayName: "Post",
+                pluralDisplayName: "Posts",
+                primaryKey: "id",
+                properties: [property("id")],
+            },
+        ],
+        policy: {
+            read: {
+                select: [
+                    sub("approval", {
+                        from: { source: { objectType: "PostApproval" }, binding: "a" },
+                        where: eq(field("a", "id"), context("approvalId")),
+                        select: [
+                            selectField("id", field("a", "id")),
+                            sub("bids", {
+                                from: { source: { objectType: "Bid" }, binding: "b" },
+                                where: eq(field("b", "approvalId"), field("a", "id")),
+                                select: ["id", "approvalId", "status", "rank"].map((name) =>
+                                    selectField(name, field("b", name))
+                                ),
+                            }),
+                        ],
+                    }),
+                    sub("posts", {
+                        from: { source: { objectType: "Post" }, binding: "p" },
+                        select: [selectField("id", field("p", "id"))],
+                    }),
+                ],
+            },
+        },
+    };
+    const data = {
+        PostApproval: [{ id: "approval-42" }, { id: "approval-other" }],
+        Bid: [
+            { id: "bid-a", approvalId: "approval-42", status: "Waiting", rank: 1 },
+            { id: "bid-b", approvalId: "approval-42", status: "Waiting", rank: 2 },
+            { id: "bid-c", approvalId: "approval-other", status: "Waiting", rank: 3 },
+            { id: "bid-d", approvalId: "approval-42", status: "Done", rank: 4 },
+        ],
+        Post: [{ id: "post" }],
+    };
+    const { source, calls } = reader(ir, data);
+    const query = {
+        where: scanEq(scanField("status"), "Waiting"),
+        orderBy: [{ field: scanField("rank"), direction: "desc" as const }],
+        limit: 1,
+    };
+    const planned = await Effect.runPromise(
+        evaluatePolicyView(source, { approvalId: "approval-42" }).tx.loadSubset("Bid", query)
+    );
+    const oracle = await Effect.runPromise(
+        evaluatePolicyView(
+            reader(ir, data).source,
+            { approvalId: "approval-42" },
+            undefined,
+            "eager"
+        ).tx.loadSubset("Bid", query)
+    );
+    expect(planned).toEqual(oracle);
+    expect(planned.map((row) => row.key)).toEqual(["bid-b"]);
+    expect(calls.map((call) => call.objectType)).toEqual(["PostApproval", "Bid"]);
+    expect(calls[0]!.query?.where).toEqual(scanEq(scanField("id"), "approval-42"));
+    expect(calls[1]!.returned).toBe(2);
+    expect(calls[1]!.query?.limit).toBeUndefined();
+    expect(
+        evaluateQuery(
+            data.Bid.map((value) => ({ key: value.id, value })),
+            calls[1]!.query
+        ).map((row) => row.key)
+    ).toEqual(["bid-a", "bid-b"]);
+});

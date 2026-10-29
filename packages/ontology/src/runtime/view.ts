@@ -4,8 +4,6 @@ import { Runtime } from "@party-stack/runtime";
 import { DbClient } from "@tanstack/db";
 import { Effect, Scope, Fiber } from "effect";
 import { createLiveOntologyAction } from "../live/actions/createLiveOntologyAction.js";
-import { decorateObjectAttachmentSources } from "../live/attachments/attachmentSources.js";
-import { decorateObjectEncryptedSources } from "../live/encryptedSources.js";
 import { makeReplicatedCollection, persistedCollectionOptions, scopedCollection } from "../tanstack/index.js";
 import { makeLiveDecryption } from "./encrypted.js";
 import type { LiveOntologyAttachments } from "../live/attachments/createLiveOntologyAttachments.js";
@@ -123,12 +121,6 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         const opts = {
             replica,
             objectType: object.name,
-            map: (row: OntologyObject) =>
-                decorateObjectEncryptedSources(
-                    ir,
-                    object,
-                    decorateObjectAttachmentSources({ ir, objectType: object, object: row })
-                ),
             getKey: (row: OntologyObject) => row[object.primaryKey] as string | number,
         };
         objects[object.name] = yield* makeReplicatedCollection(

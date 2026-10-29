@@ -1,6 +1,5 @@
 import { setAtPath } from "@party-stack/ontology-spec/utils";
 import { resolveType, unwrapValueType } from "@party-stack/ontology-spec/utils";
-import { decorateObjectAttachmentSources } from "../attachments/attachmentSources.js";
 import { evaluateExpression, getObjectReferenceObjectType } from "../expression.js";
 import type { ExpressionReplay } from "../expression.js";
 import type {
@@ -97,11 +96,6 @@ export async function applyActionLogicToMutatorTx(options: {
             })) {
                 object = setAtPath(object, change.path, change.value);
             }
-            decorateObjectAttachmentSources({
-                ir: options.ir,
-                objectType: type,
-                object,
-            });
             if (object[type.primaryKey] === undefined) {
                 const primaryKey = type.properties.find((property) => property.name === type.primaryKey);
                 if (

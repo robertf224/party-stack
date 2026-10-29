@@ -1,6 +1,6 @@
 import type { OntologyDefinition } from "@party-stack/ontology-spec";
 export type { OntologyDefinition } from "@party-stack/ontology-spec";
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { createDefaultRuntime, type RuntimeAdapterProvider } from "@party-stack/runtime";
 import { Effect, Exit, Scope } from "effect";
@@ -169,11 +169,16 @@ export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
             Effect.gen(function* () {
                 const backendAdapter = yield* Effect.tryPromise({
                     try: () => provide(opts.backend, opts.ir, context),
-                    catch: (cause) => cause,
+                    catch: (cause) => classifyBackendFailure("backend.configure", cause),
                 });
                 if (opts.persistObjects && !platform.tables) {
                     return yield* Effect.fail(
-                        new Error("Persisted ontology objects require owned Tables storage.")
+                        new BackendError({
+                            operation: "ontology.make",
+                            kind: "InvalidConfiguration",
+                            retryable: false,
+                            message: "Persisted ontology objects require owned Tables storage.",
+                        })
                     );
                 }
                 const live = yield* makeReplicaLiveOntology({

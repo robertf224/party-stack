@@ -1,3 +1,4 @@
+import { BackendError } from "@party-stack/ontology-backend";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { MemoryBlobBytesStore, type RuntimeAdapter } from "@party-stack/runtime";
@@ -178,3 +179,84 @@ test("canceling a progressive reader settles its partial write before another re
         await closeRuntimeFixture(runtime);
     }
 });
+
+test.each(["Forbidden", "Unauthenticated", "Unavailable", "InvalidResponse"] as const)(
+    "metadata propagates %s without downloading attachment bytes",
+    async (kind) => {
+        const runtime: RuntimeAdapter = {
+            owner: "user",
+            namespace: `metadata-${kind}`,
+            tables: Memory.make(),
+            blobBytes: new MemoryBlobBytesStore(),
+        };
+        runtimeFixtureContext(runtime);
+        const error = new BackendError({ operation: "metadata", kind, message: "Failed", retryable: false });
+        const read = vi.fn(async () => new Blob(["private"]));
+        const manager = createBlobManager({
+            runtime,
+            remote: {
+                read,
+                metadata: async () => {
+                    throw error;
+                },
+            },
+        });
+        try {
+            await expect(manager.metadata("remote")).rejects.toBe(error);
+            expect(read).not.toHaveBeenCalled();
+        } finally {
+            await manager.cleanup();
+            await closeRuntimeFixture(runtime);
+        }
+    }
+);
+
+test.each(["unconsumed", "consuming"])(
+    "aborting a %s source after headers releases its partial cache write",
+    async (mode) => {
+        const bytes = new MemoryBlobBytesStore();
+        const runtime: RuntimeAdapter = {
+            owner: "user",
+            namespace: "abort-source",
+            tables: Memory.make(),
+            blobBytes: bytes,
+        };
+        runtimeFixtureContext(runtime);
+        const stopped = Effect.runSync(Deferred.make<void>());
+        let attempts = 0;
+        const manager = createBlobManager({
+            runtime,
+            remote: {
+                read: async () => ({
+                    type: "text/plain",
+                    stream:
+                        ++attempts === 1
+                            ? Stream.concat(Stream.make(new Uint8Array([1])), Stream.never).pipe(
+                                  Stream.ensuring(Deferred.succeed(stopped, undefined))
+                              )
+                            : Stream.make(new Uint8Array([2])),
+                }),
+            },
+        });
+        try {
+            const abort = new AbortController();
+            const source = await manager.source("remote", { signal: abort.signal });
+            if (mode === "unconsumed") abort.abort();
+            const content =
+                mode === "consuming"
+                    ? {
+                          ...source,
+                          stream: source.stream.pipe(Stream.tap(() => Effect.sync(() => abort.abort()))),
+                      }
+                    : source;
+            await expect(Effect.runPromise(collectByteBlob(content))).rejects.toBeDefined();
+            await Effect.runPromise(Deferred.await(stopped).pipe(Effect.timeout("2 seconds")));
+            const retried = await manager.read("remote");
+            expect(new Uint8Array(await retried.arrayBuffer())).toEqual(new Uint8Array([2]));
+            expect(attempts).toBe(2);
+        } finally {
+            await manager.cleanup();
+            await closeRuntimeFixture(runtime);
+        }
+    }
+);

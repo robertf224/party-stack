@@ -3,7 +3,7 @@ import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, field } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Effect, Scope, Exit, Result } from "effect";
+import { Effect, Deferred, Scope, Exit, Result } from "effect";
 import { expect, test } from "vitest";
 import { makeReplica, type ReplicaService } from "./index.js";
 import type { ActionRequest, OntologyBackendService } from "@party-stack/ontology-backend";
@@ -849,6 +849,57 @@ test("expired journal history rebuilds selected base while preserving and execut
                 expect(yield* replica.pending).toEqual([]);
                 expect((yield* replica.get("Counter", "shared"))?.count).toBe(4);
                 expect((yield* owned.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(4);
+            })
+        )
+    );
+});
+
+test("background demand IO survives one consumer's cancellation and stops after the last lease closes", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const entered = yield* Deferred.make<void>();
+                const stopped = yield* Deferred.make<void>();
+                let canceled = false;
+                const replica = yield* makeReplica({
+                    namespace: "cancel-shared-demand",
+                    ir,
+                    tables: yield* Memory.make(),
+                    gc: false,
+                    execute: () => Effect.void,
+                    backend: {
+                        name: "fixture",
+                        sourceId: "fixture",
+                        supportsIdempotency: false,
+                        applyAction: () => Effect.die("No writes expected"),
+                        queryFunction: () => Effect.void,
+                        loadSubset: () =>
+                            Effect.gen(function* () {
+                                yield* Deferred.succeed(entered, undefined);
+                                return yield* Effect.never;
+                            }).pipe(
+                                Effect.ensuring(
+                                    Effect.sync(() => {
+                                        canceled = true;
+                                    }).pipe(Effect.andThen(Deferred.succeed(stopped, undefined)))
+                                )
+                            ),
+                    },
+                });
+                const first = yield* Scope.fork(yield* Effect.scope);
+                const second = yield* Scope.fork(yield* Effect.scope);
+                yield* Scope.provide(replica.demand({ objectType: "Counter" }), first);
+                yield* Scope.provide(replica.demand({ objectType: "Counter" }), second);
+                yield* Deferred.await(entered).pipe(Effect.timeout("2 seconds"));
+                yield* Scope.close(first, Exit.void);
+                yield* Effect.yieldNow;
+                expect(canceled).toBe(false);
+                expect((yield* replica.status).demands[0]?.references).toBe(1);
+                yield* Scope.close(second, Exit.void);
+                yield* Deferred.await(stopped).pipe(Effect.timeout("2 seconds"));
+                expect(canceled).toBe(true);
+                expect((yield* replica.status).demands).toEqual([]);
+                expect(yield* replica.loadSubset("Counter")).toEqual([]);
             })
         )
     );

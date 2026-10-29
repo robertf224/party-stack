@@ -4,7 +4,7 @@ import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { eq, field } from "@party-stack/ontology-storage";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Runtime } from "@party-stack/runtime";
-import { Context, Effect, Exit, Fiber, Layer, Scope, ScopedCache, Semaphore } from "effect";
+import { Context, Effect, Exit, Fiber, Layer, RcMap, Scope, ScopedCache, Semaphore } from "effect";
 import { makeLiveOntology } from "../live/LiveOntology.js";
 import { createMetaOntologyConfiguration } from "./createMetaOntologyConfiguration.js";
 import type { LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
@@ -104,13 +104,9 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                 new Error(`Backend installation "${options.installationId}" is closed.`)
             );
         const ensureOpen = Effect.suspend(() => (disposed ? Effect.fail(closed()) : Effect.void));
-        const locks = new Map<string, Semaphore.Semaphore>();
+        const locks = yield* RcMap.make({ lookup: () => Semaphore.make(1) });
         const locked = <B, E, R>(userId: string, work: Effect.Effect<B, E, R>) =>
-            Effect.suspend(() => {
-                let lock = locks.get(userId);
-                if (!lock) locks.set(userId, (lock = Semaphore.makeUnsafe(1)));
-                return lock.withPermit(work);
-            });
+            Effect.scoped(Effect.flatMap(RcMap.get(locks, userId), (lock) => lock.withPermit(work)));
         const owned = <B>(work: Effect.Effect<B, BackendError>) =>
             Effect.andThen(ensureOpen, Effect.flatMap(Effect.forkIn(work, owner), Fiber.join));
         const recordPartition = (row: LocalOntologyPartition) =>

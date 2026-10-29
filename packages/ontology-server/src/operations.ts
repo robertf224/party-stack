@@ -14,6 +14,7 @@ import {
 } from "@party-stack/ontology-backend/protocol";
 import { ReplicaStatusSchema, makeReplicaMonitor } from "@party-stack/ontology-replica";
 import { QueryDocumentSchema } from "@party-stack/ontology-spec/effect";
+import { withObjectSources } from "@party-stack/ontology-storage";
 import {
     attachmentByteSource,
     byteChunks,
@@ -332,7 +333,18 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                 yield* options.authorize({ operation: "LoadSubset", subset }, context.headers);
                 yield* options.ready ?? Effect.void;
                 if (!options.backend) return yield* missing("LoadSubset");
-                return yield* options.backend.loadSubset(subset);
+                const snapshot = yield* options.backend.loadSubset(subset);
+                const ir = options.ir ?? options.ontology?.ir;
+                const objectType = ir?.objectTypes.find((type) => type.name === subset.objectType);
+                return !ir || !objectType
+                    ? snapshot
+                    : {
+                          ...snapshot,
+                          rows: snapshot.rows.map((row) => ({
+                              ...row,
+                              value: withObjectSources({ ir, objectType, object: row.value, key: row.key }),
+                          })),
+                      };
             }),
         WatchChanges: (_, context) =>
             Stream.unwrap(

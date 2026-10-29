@@ -1,3 +1,4 @@
+import { BackendError } from "@party-stack/ontology-backend";
 import {
     BlobStorageError,
     byteSource,
@@ -114,6 +115,39 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
         );
     };
     const notify = () => initialized.then(({ notify }) => managed.runPromise(notify));
+    const awaitAbort = (signal: AbortSignal) =>
+        Effect.callback<never>((resume) => {
+            const abort = () => resume(Effect.interrupt);
+            signal.addEventListener("abort", abort, { once: true });
+            if (signal.aborted) abort();
+            return Effect.sync(() => signal.removeEventListener("abort", abort));
+        });
+    const abortable = (stream: Stream.Stream<Uint8Array, unknown>, signal?: AbortSignal) =>
+        signal
+            ? Stream.unwrap(
+                  Effect.suspend(() =>
+                      signal.aborted
+                          ? Effect.interrupt
+                          : Effect.succeed(stream.pipe(Stream.interruptWhen(awaitAbort(signal))))
+                  )
+              )
+            : stream;
+    const bindReadSignal = (scope: Scope.Closeable, signal?: AbortSignal) =>
+        Effect.gen(function* () {
+            if (!signal) return;
+            yield* Effect.acquireRelease(
+                Effect.sync(() => {
+                    const abort = () => {
+                        Effect.runFork(Scope.close(scope, Exit.void));
+                    };
+                    signal.addEventListener("abort", abort, { once: true });
+                    if (signal.aborted) abort();
+                    return () => signal.removeEventListener("abort", abort);
+                }),
+                (remove) => Effect.sync(remove)
+            );
+            if (signal.aborted) return yield* Effect.interrupt;
+        });
     // Queue producers belong to the manager, while the consuming scope releases
     // them at EOF/cancel. Closing the manager therefore joins active byte IO.
     const ownedStream = (stream: Stream.Stream<Uint8Array, unknown>) =>
@@ -131,29 +165,32 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
         settings?: Parameters<BlobManager["source"]>[1]
     ): Promise<ByteSource> => {
         const { storage } = await initialized;
-        const record = await run((storage) => storage.metadata(id));
+        const record = await run((storage) => storage.metadata(id), settings?.signal);
         return {
             size: record?.size,
             type: record?.type ?? "application/octet-stream",
             name: record?.name ?? undefined,
-            stream: ownedStream(
-                Stream.unwrap(
-                    Effect.gen(function* () {
-                        if (closed) return yield* Effect.fail(new Error("Blob manager is closed."));
-                        const local = yield* storage.readScoped(id);
-                        if (local) return local.stream;
-                        if (record?.state === "staged")
-                            return yield* new BlobStorageError({
-                                kind: "NotFound",
-                                message: "Staged attachment bytes are unavailable.",
+            stream: abortable(
+                ownedStream(
+                    Stream.unwrap(
+                        Effect.gen(function* () {
+                            if (closed) return yield* Effect.fail(new Error("Blob manager is closed."));
+                            const local = yield* storage.readScoped(id);
+                            if (local) return local.stream;
+                            if (record?.state === "staged")
+                                return yield* new BlobStorageError({
+                                    kind: "NotFound",
+                                    message: "Staged attachment bytes are unavailable.",
+                                });
+                            const fetched = yield* Effect.tryPromise({
+                                try: (signal) => source(id, { ...settings, signal }),
+                                catch: (cause) => cause,
                             });
-                        const fetched = yield* Effect.tryPromise({
-                            try: (signal) => source(id, { ...settings, signal }),
-                            catch: (cause) => cause,
-                        });
-                        return fetched.stream;
-                    })
-                )
+                            return fetched.stream;
+                        })
+                    )
+                ),
+                settings?.signal
             ),
         };
     };
@@ -174,6 +211,7 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
                     Effect.forkIn(
                         Scope.provide(
                             Effect.gen(function* () {
+                                yield* bindReadSignal(scope, readOptions?.signal);
                                 const lock = yield* RcMap.get(reads, record?.id ?? id);
                                 yield* Effect.acquireRelease(lock.take(1), () => lock.release(1));
                                 const cached = yield* storage.readScoped(id);
@@ -181,7 +219,7 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
                                     const queue = yield* Stream.toQueue(byteChunks(cached), { capacity: 2 });
                                     return {
                                         ...cached,
-                                        stream: Stream.fromQueue(queue).pipe(
+                                        stream: abortable(Stream.fromQueue(queue), readOptions?.signal).pipe(
                                             Stream.ensuring(Scope.close(scope, Exit.void))
                                         ),
                                     };
@@ -225,7 +263,7 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
                                                 )
                                             );
                                         consumed = true;
-                                        return Stream.fromQueue(queue).pipe(
+                                        return abortable(Stream.fromQueue(queue), readOptions?.signal).pipe(
                                             Stream.ensuring(Scope.close(scope, Exit.void))
                                         );
                                     }),
@@ -273,7 +311,12 @@ export function createBlobManager(options: BlobManagerOptions): BlobManager {
                 );
                 record = await run((storage) => storage.updateMetadata(id, remote), settings.signal);
             } catch (cause) {
-                if (settings.signal?.aborted) throw cause;
+                if (
+                    settings.signal?.aborted ||
+                    !(cause instanceof BackendError) ||
+                    cause.kind !== "NotImplemented"
+                )
+                    throw cause;
                 // Bytes can supply metadata when a provider has no usable metadata endpoint.
             }
         }

@@ -57,17 +57,19 @@ export class Runtime extends Context.Service<Runtime, RuntimeService>()("@party-
                 ),
                 (unsubscribe) => Effect.sync(unsubscribe)
             );
-        const connectivity = Stream.callback<boolean>((queue) =>
-            Effect.acquireRelease(
-                Effect.sync(() => {
-                    const unsubscribe = adapter.connectivity?.subscribe((value) => {
-                        Queue.offerUnsafe(queue, value);
-                    });
-                    Queue.offerUnsafe(queue, adapter.connectivity?.isConnected !== false);
-                    return unsubscribe;
-                }),
-                (unsubscribe) => Effect.sync(() => unsubscribe?.())
-            )
+        const connectivity = Stream.callback<boolean>(
+            (queue) =>
+                Effect.acquireRelease(
+                    Effect.sync(() => {
+                        const unsubscribe = adapter.connectivity?.subscribe((value) => {
+                            Queue.offerUnsafe(queue, value);
+                        });
+                        Queue.offerUnsafe(queue, adapter.connectivity?.isConnected !== false);
+                        return unsubscribe;
+                    }),
+                    (unsubscribe) => Effect.sync(() => unsubscribe?.())
+                ),
+            { bufferSize: 1, strategy: "sliding" }
         );
         const captured = yield* Effect.context<never>();
         const traces = createRuntimeTraces();

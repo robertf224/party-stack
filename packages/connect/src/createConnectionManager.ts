@@ -1,7 +1,7 @@
 import { unauthenticated, type UnauthenticatedError } from "@party-stack/ontology-backend";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Runtime, getRuntime } from "@party-stack/runtime";
-import { Clock, Context, Effect, Exit, Fiber, Layer, Queue, Scope, Semaphore, Stream } from "effect";
+import { Clock, Context, Effect, Exit, Fiber, Layer, Queue, RcMap, Scope, Semaphore, Stream } from "effect";
 import { ConnectionError } from "./ConnectionError.js";
 import { createDefaultConnectionEgressHandlers } from "./createDefaultConnectionEgressHandlers.js";
 import type {
@@ -106,17 +106,14 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
     const sessions = new Map<string, ConnectionSession>();
     const sessionStates = new Map<string, string>();
     const sockets = new Map<string, Set<WebSocket>>();
-    const locks = new Map<string, { state: Semaphore.Semaphore; command: Semaphore.Semaphore }>();
+    const locks = yield* RcMap.make({
+        lookup: () =>
+            Effect.gen(function* () {
+                return { state: yield* Semaphore.make(1), command: yield* Semaphore.make(1) };
+            }),
+    });
     const locked = <B, E>(userId: string, work: Effect.Effect<B, E>, mode: "state" | "command" = "state") =>
-        Effect.suspend(() => {
-            let lock = locks.get(userId);
-            if (!lock)
-                locks.set(
-                    userId,
-                    (lock = { state: Semaphore.makeUnsafe(1), command: Semaphore.makeUnsafe(1) })
-                );
-            return lock[mode].withPermit(work);
-        });
+        Effect.scoped(Effect.flatMap(RcMap.get(locks, userId), (lock) => lock[mode].withPermit(work)));
     const wake = yield* Queue.sliding<void>(1);
     yield* Effect.addFinalizer(() => Queue.shutdown(wake));
     const notify = () => {

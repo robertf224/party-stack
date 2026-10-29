@@ -674,3 +674,11 @@ The issue-tracker example uses an explicit `query-ir-v0` replica-cache epoch aft
 the IR/context contract change. Installation credentials retain their namespace; old
 replica stores are left untouched. The one-off link-metadata migration is removed.
 General schema mismatches still require a deliberate migration or namespace reset.
+
+## Subsystem review
+
+The [2026-10-28 audit](./subsystem-audit.md) records authorization planning, error
+channels/recovery, abort propagation, pre-TanStack handle sources, DbClient/SSR
+readiness, state bounds, and remaining Effect/maintenance gaps. It distinguishes
+verified behavior and fixes from follow-up work; SSR and hard cache byte budgets
+are not claimed complete.
