@@ -27,7 +27,7 @@ const check = Effect.fnUntraced(function* (dialect: Dialect) {
         like(field(hostile), hostile),
     ]) {
         assert.deepEqual(
-            (yield* tables.loadSubset(table, { where: predicate })).map((r) => r.key),
+            (yield* tables.query(table, { where: predicate })).map((r) => r.key),
             [hostile]
         );
     }
@@ -40,7 +40,7 @@ const check = Effect.fnUntraced(function* (dialect: Dialect) {
     }));
     assert.strictEqual(compileQuery(dialect, declared, { where: both }).complete, true);
     assert.deepEqual(
-        (yield* tables.loadSubset(table, { where: both })).map((r) => r.key),
+        (yield* tables.query(table, { where: both })).map((r) => r.key),
         [hostile]
     );
     const compiled = compileQuery(dialect, [{ ...index, table: table.name, version: 1 }], {
@@ -66,7 +66,7 @@ const check = Effect.fnUntraced(function* (dialect: Dialect) {
         { limit: "1; DROP TABLE party_tables_rows" },
     ]) {
         assert.strictEqual(
-            yield* tables.loadSubset(table, malformed as unknown as Query).pipe(
+            yield* tables.query(table, malformed as unknown as Query).pipe(
                 Effect.as(false),
                 Effect.catchReason("OntologyStorageError", "QueryError", () => Effect.succeed(true))
             ),

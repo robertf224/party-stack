@@ -1,6 +1,6 @@
 # Effect Tables
 
-Transactional keyed tables with subset queries and secondary indexes. The storage
+Transactional keyed tables with full Query IR execution, indexed single-table queries and secondary indexes. The storage
 service is independent of TanStack DB and replication. It returns Effects; callers
 choose an IndexedDB, SQL, or in-memory layer at their application boundary.
 
@@ -26,7 +26,7 @@ const program = Effect.gen(function* () {
         Effect.gen(function* () {
             yield* tx.put(tasks, "task-1", { title: "Inspect equipment", projectId: "42", rank: 1 });
             // Queries and indexes see earlier writes in this transaction.
-            return yield* tx.loadSubset(tasks, {
+            return yield* tx.query(tasks, {
                 where: eq(field("projectId"), "42"),
                 orderBy: [{ field: field("rank") }],
                 limit: 10,
@@ -36,7 +36,7 @@ const program = Effect.gen(function* () {
 });
 ```
 
-Rows have explicit string or finite-number keys. `loadSubset` returns
+Rows have explicit string or finite-number keys. `query(table, scan)` returns
 `{ key, value }[]`; `get` returns the value or `undefined`. Storing an undefined
 value is supported, so `get` alone cannot distinguish that value from an absent key.
 Keys do not have to be embedded in values.
@@ -63,7 +63,7 @@ handle through every function:
 const changeTask = Effect.gen(function* () {
     const tables = yield* Tables;
     yield* tables.put(tasks, "task-1", { title: "Inspect equipment", projectId: "42", rank: 1 });
-    return yield* tables.loadSubset(tasks, { where: eq(field("projectId"), "42") });
+    return yield* tables.query(tasks, { where: eq(field("projectId"), "42") });
 });
 const atomicChange = Effect.gen(function* () {
     const tables = yield* Tables;
@@ -115,7 +115,19 @@ changes. See the [schema/migration proposal](../../specs/2026-10-19-effect-table
 for future declared SQL schemas; the current SQL layout remains encoded rows plus
 native scalar projections.
 
-## Queries and indexes
+## Full query documents
+
+`tables.query(document, { sources, inputs, context })` executes the same
+`QueryDocument` as OntologyStorage. Bind source names explicitly, for example
+`{ sources: { Task: tasks, Project: projects } }`. Sources are record-valued
+readable table descriptors; their `encode` functions are not needed for querying.
+Multiple roots, explicit correlations, projections, conditional selections and
+nested pagination share one snapshot. Source names and lexical scope are checked;
+row field types remain dynamic. Relationship and typed-reference shortcuts need
+ontology metadata: use OntologyStorage for `related` and `lookup`, or express
+an explicit correlated subquery here. See the [storage README](./README.md#full-queries).
+
+## Single-table queries and indexes
 
 Standalone helpers provide `eq`/`ne`, `lt`/`lte`/`gt`/`gte`, `inArray`,
 `like`, `ilike`, `isNull`/`isUndefined`, and `and`/`or`/`not`. The optional `where`
@@ -135,8 +147,8 @@ Literal `%`/`_` cannot be escaped in this wildcard syntax.
 JavaScript lowercase normalization on both the value and pattern, matching
 TanStack's evaluator. Backslashes and regexp punctuation are literal characters;
 there is no additional escape syntax. Missing/non-string fields do not match.
-This is a portable predicate AST, not the complete TanStack query IR: computed
-expressions, joins, and locale collations are outside this checkpoint. Null and
+This shorthand uses the physical predicate AST. For computations and hierarchical
+correlation, pass a full QueryDocument instead. Locale collations are not exposed. Null and
 undefined use explicit two-valued comparisons (`eq(field, null)` and
 `eq(field, undefined)`); SQL's implicit three-valued null logic is not exposed.
 
@@ -193,9 +205,9 @@ Sorted arrays provide binary-search index lookups; insert/delete maintenance is
 linear, so this is an initial memory backend rather than a specialized B-tree.
 
 A SharedWorker can own one service and expose requests to several tabs. That
-would share state across those tabs while the worker lives. Contents are lost on
-worker termination; the worker RPC/connection lifecycle is a separate integration
-and is not implemented here. Replica can later use the same storage interface.
+shares state across those tabs while the worker lives. Contents are lost on
+worker termination. Installation worker ownership and protocol replicas are
+implemented above this package, in web-runtime and ontology-replica.
 
 `@party-stack/ontology-storage/planner` is a backend-implementor subpath for the shared
 candidate planner and query executor. IndexedDB and memory import it explicitly.
@@ -289,10 +301,8 @@ Internal value-format changes belong to this library; application data changes
 belong above it. The current physical layouts are version 1.
 
 Replication checkpoints, commit streams, global Replica revisions, demand,
-retention, and outbox replay are intentionally left to the next layer. The existing
-TanStack IndexedDB persistence adapter still uses its own implementation. Its
-expression indexes, cache generations, replay history, and storage upgrade path
-make switching its internals a separate integration checkpoint.
+retention, and outbox replay are intentionally left to the next layer. TanStack is a demand/view integration above the replica, rather than the owner
+of this storage layer or its persistence.
 
 ## Validation
 

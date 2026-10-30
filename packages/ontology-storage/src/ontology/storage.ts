@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Exit, Layer, Semaphore } from "effect";
 import { collectObjectAttachments, type BlobStorageService } from "../blobs/index.js";
 import {
     codecError,
@@ -7,20 +7,32 @@ import {
     OntologyStorageError,
     queryError,
 } from "../errors.js";
+import { executeQuery } from "../query/execute.js";
 import { Tables, type TablesService, type Transaction } from "../tables.js";
 import { validateField, validateObjectQuery } from "./fields.js";
 import { compiledModel, type ObjectStore, type StorageModel } from "./model.js";
 import type { Index, Key, Query, Row } from "../model.js";
+import type { QueryDocument } from "@party-stack/ontology-spec";
+import type { Cause } from "effect";
 
+export interface StorageQueryOptions {
+    readonly inputs?: Record<string, unknown>;
+    readonly context?: Record<string, unknown>;
+}
+/** Full ontology projections, or a typed single-object scan without projection. */
+export interface StorageQuery {
+    (
+        document: QueryDocument,
+        options?: StorageQueryOptions
+    ): Effect.Effect<Record<string, unknown>, OntologyStorageError>;
+    <A>(object: ObjectStore<A>, scan?: Query): Effect.Effect<Row<A>[], OntologyStorageError>;
+}
 export interface ReadStorageTransaction {
     readonly get: <A, K extends Key>(
         object: ObjectStore<A, K>,
         key: NoInfer<K>
     ) => Effect.Effect<A | undefined, OntologyStorageError>;
-    readonly loadSubset: <A>(
-        object: ObjectStore<A>,
-        query?: Query
-    ) => Effect.Effect<Row<A>[], OntologyStorageError>;
+    readonly query: StorageQuery;
 }
 export interface StorageTransaction extends ReadStorageTransaction {
     /** Derive the key from the ontology primary-key property. */
@@ -36,6 +48,7 @@ export interface StorageTransaction extends ReadStorageTransaction {
     ) => Effect.Effect<void, OntologyStorageError>;
 }
 export interface OntologyStorageService extends StorageTransaction {
+    /** Any failed object mutation makes this transaction rollback-only, even if caught. */
     readonly transaction: <A, E, R>(
         body: (tx: StorageTransaction) => Effect.Effect<A, E, R>
     ) => Effect.Effect<A, E | OntologyStorageError, R>;
@@ -74,9 +87,25 @@ export function makeOntologyStorage(
 ): OntologyStorageService {
     const compiled = compiledModel(model);
     const identity = Symbol();
-    const wrap = (tx: Transaction, writable: boolean): StorageTransaction => {
+    const wrap = (tx: Transaction, writable: boolean) => {
         let checked = false;
+        let failed: Cause.Cause<OntologyStorageError> | undefined;
+        const gate = Semaphore.makeUnsafe(1);
+        // A multi-step object mutation includes its attachment roots. Without savepoints,
+        // a caught failure must still abort the physical transaction, never commit half a put.
+        const mutation = <A>(effect: Effect.Effect<A, OntologyStorageError>) =>
+            gate.withPermits(1)(
+                Effect.suspend(() => (failed ? Effect.failCause(failed) : effect)).pipe(
+                    Effect.onExit((exit) =>
+                        Effect.sync(() => {
+                            if (Exit.isFailure(exit)) failed ??= exit.cause;
+                        })
+                    )
+                )
+            );
         const guard = Effect.gen(function* () {
+            // Even a literal-only query must reject an escaped transaction handle.
+            yield* tx.query(compiled.stamp, { limit: 0 });
             if (checked) return;
             const stored = yield* tx.get(compiled.stamp, "definition");
             if (stored && stored.signature !== compiled.signature)
@@ -108,7 +137,53 @@ export function makeOntologyStorage(
                 try: () => compiled.stores.get(object)!.key(input),
                 catch: (cause) => queryError(`key:${object.name}`, cause),
             });
-        return {
+        const scan = Effect.fnUntraced(function* <A>(object: ObjectStore<A>, query: Query = {}) {
+            const definition = yield* store(object);
+            yield* checkQuery(() => validateObjectQuery(compiled.ir, object, query));
+            yield* guard;
+            const rows = yield* tx.query(definition.table, query);
+            return yield* convert("decode", () =>
+                rows.map((row) => ({ key: row.key, value: definition.decode(row.value) as A }))
+            );
+        });
+
+        function query(
+            document: QueryDocument,
+            options?: StorageQueryOptions
+        ): Effect.Effect<Record<string, unknown>, OntologyStorageError>;
+        function query<A>(
+            object: ObjectStore<A>,
+            scan?: Query
+        ): Effect.Effect<Row<A>[], OntologyStorageError>;
+        function query<A>(
+            request: QueryDocument | ObjectStore<A>,
+            options: StorageQueryOptions | Query = {}
+        ) {
+            if (!("select" in request)) return scan(request, options as Query);
+            return Effect.gen(function* () {
+                yield* guard;
+                const result = yield* executeQuery(request, {
+                    ...(options as StorageQueryOptions),
+                    error: (failure) => queryError("query", new Error(failure.message, { cause: failure })),
+                    reader: {
+                        ir: compiled.ir,
+                        loadSubset: (name, query) =>
+                            Effect.gen(function* () {
+                                const object = model.objects[name];
+                                if (!object)
+                                    return yield* queryError("query", `Unknown object type: ${name}`);
+                                yield* checkQuery(() =>
+                                    validateObjectQuery(compiled.ir, object, query ?? {})
+                                );
+                                const definition = yield* store(object);
+                                return yield* tx.query(definition.table, query);
+                            }),
+                    },
+                });
+                return result.value;
+            });
+        }
+        const api: StorageTransaction = {
             get: Effect.fnUntraced(function* <A, K extends Key>(object: ObjectStore<A, K>, input: K) {
                 const definition = yield* store(object);
                 yield* guard;
@@ -117,15 +192,7 @@ export function makeOntologyStorage(
                     ? undefined
                     : ((yield* convert("decode", () => definition.decode(value))) as A);
             }),
-            loadSubset: Effect.fnUntraced(function* <A>(object: ObjectStore<A>, query: Query = {}) {
-                const definition = yield* store(object);
-                yield* checkQuery(() => validateObjectQuery(compiled.ir, object, query));
-                yield* guard;
-                const rows = yield* tx.loadSubset(definition.table, query);
-                return yield* convert("decode", () =>
-                    rows.map((row) => ({ key: row.key, value: definition.decode(row.value) as A }))
-                );
-            }),
+            query,
             put: Effect.fnUntraced(function* <A>(object: ObjectStore<A>, value: A) {
                 const definition = yield* store(object);
                 const encoded = yield* convert("encode", () => definition.encode(value));
@@ -148,7 +215,7 @@ export function makeOntologyStorage(
                         )
                         .pipe(Effect.mapError((cause) => codecError("encode", cause)));
                 yield* tx.put(definition.table, input, encoded);
-            }),
+            }, mutation),
             delete: Effect.fnUntraced(function* <A, K extends Key>(object: ObjectStore<A, K>, input: K) {
                 const definition = yield* store(object);
                 yield* guard;
@@ -159,20 +226,22 @@ export function makeOntologyStorage(
                         .release(JSON.stringify(["object", model.namespace, object.name, selected]))
                         .pipe(Effect.mapError((cause) => codecError("encode", cause)));
                 yield* tx.delete(definition.table, selected);
-            }),
+            }, mutation),
             ensureIndex: Effect.fnUntraced(function* <A>(object: ObjectStore<A>, index: Index) {
                 const definition = yield* store(object);
                 yield* checkQuery(() => validateField(compiled.ir, object, index.field, index.multiEntry));
                 yield* guard;
                 yield* tx.ensureIndex(definition.table, index);
-            }),
+            }, mutation),
         };
+        return { tx: api, complete: Effect.suspend(() => (failed ? Effect.failCause(failed) : Effect.void)) };
     };
     const run = <A, E, R>(writable: boolean, body: (tx: StorageTransaction) => Effect.Effect<A, E, R>) => {
         const inside = (raw: Transaction) => {
-            const tx = wrap(raw, writable);
+            const { tx, complete } = wrap(raw, writable);
             return Effect.flatMap(CurrentTransactions, (active) =>
                 body(tx).pipe(
+                    Effect.tap(() => complete),
                     Effect.provideService(CurrentTransactions, new Map([...active, [identity, tx]]))
                 )
             );
@@ -188,9 +257,19 @@ export function makeOntologyStorage(
             const tx = active.get(identity);
             return tx ? body(tx) : run(writable, body);
         });
+    function query(
+        document: QueryDocument,
+        options?: StorageQueryOptions
+    ): Effect.Effect<Record<string, unknown>, OntologyStorageError>;
+    function query<A>(object: ObjectStore<A>, scan?: Query): Effect.Effect<Row<A>[], OntologyStorageError>;
+    function query<A>(request: QueryDocument | ObjectStore<A>, options: StorageQueryOptions | Query = {}) {
+        return "select" in request
+            ? operation(false, (tx) => tx.query(request, options as StorageQueryOptions))
+            : operation(false, (tx) => tx.query(request, options as Query));
+    }
     return {
         get: (object, key) => operation(false, (tx) => tx.get(object, key)),
-        loadSubset: (object, query) => operation(false, (tx) => tx.loadSubset(object, query)),
+        query,
         put: (object, value) => operation(true, (tx) => tx.put(object, value)),
         delete: (object, key) => operation(true, (tx) => tx.delete(object, key)),
         ensureIndex: (object, index) => operation(true, (tx) => tx.ensureIndex(object, index)),

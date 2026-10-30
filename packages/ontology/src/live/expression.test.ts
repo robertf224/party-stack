@@ -87,7 +87,7 @@ describe("evaluateExpression", () => {
                     kind: "getAt",
                     value: {
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",
@@ -134,7 +134,7 @@ describe("evaluateExpression", () => {
                     ir,
                     actionTypeName: "assign",
                     expression: o.Expression.getAt({
-                        source: o.Expression.objectLookup({
+                        source: o.Expression.lookup({
                             reference: o.Expression.inputReference({ name: "user" }),
                         }),
                         path: ["name"],
@@ -262,7 +262,7 @@ describe("evaluateExpression", () => {
                 actionTypeName: "assign",
                 expression: o.Expression.getAt({
                     source: o.Expression.related({
-                        source: o.Expression.objectLookup({
+                        source: o.Expression.lookup({
                             reference: o.Expression.inputReference({
                                 name: "project",
                             }),
@@ -285,7 +285,7 @@ describe("evaluateExpression", () => {
                 ir: linkIr,
                 actionTypeName: "assign",
                 expression: o.Expression.related({
-                    source: o.Expression.objectLookup({
+                    source: o.Expression.lookup({
                         reference: o.Expression.inputReference({ name: "user" }),
                     }),
                     link: "projects",

@@ -454,7 +454,7 @@ export default defineOntology({
                             property: ["projectId"],
                             value: o.Expression.getAt({
                                 source: {
-                                    kind: "objectLookup",
+                                    kind: "lookup",
                                     value: {
                                         reference: {
                                             kind: "inputReference",
@@ -631,7 +631,7 @@ export default defineOntology({
                     description: "Completion timestamp; clear this value when the issue is not completed.",
                     defaultValue: o.Expression.getAt({
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",
@@ -669,7 +669,7 @@ export default defineOntology({
                     description: "Files that support or explain the issue.",
                     defaultValue: o.Expression.getAt({
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",
@@ -700,7 +700,7 @@ export default defineOntology({
                     }),
                     defaultValue: o.Expression.getAt({
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",
@@ -722,7 +722,7 @@ export default defineOntology({
                     description: "Detailed context or requirements for the issue.",
                     defaultValue: o.Expression.getAt({
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",
@@ -746,7 +746,7 @@ export default defineOntology({
                     description: "Optional project used to group the issue.",
                     defaultValue: o.Expression.getAt({
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",
@@ -767,7 +767,7 @@ export default defineOntology({
                     }),
                     defaultValue: o.Expression.getAt({
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",
@@ -787,7 +787,7 @@ export default defineOntology({
                     description: "Short summary of the issue.",
                     defaultValue: o.Expression.getAt({
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",
@@ -828,7 +828,7 @@ export default defineOntology({
                     description: "New workflow state for the issue.",
                     defaultValue: o.Expression.getAt({
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",
@@ -900,7 +900,7 @@ export default defineOntology({
                             property: ["projectId"],
                             value: o.Expression.getAt({
                                 source: {
-                                    kind: "objectLookup",
+                                    kind: "lookup",
                                     value: {
                                         reference: {
                                             kind: "inputReference",
@@ -942,7 +942,7 @@ export default defineOntology({
                     description: "Optional hexadecimal display color, such as #2D72D2.",
                     defaultValue: o.Expression.getAt({
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",
@@ -972,7 +972,7 @@ export default defineOntology({
                     description: "Summary of the project's purpose and scope.",
                     defaultValue: o.Expression.getAt({
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",
@@ -992,7 +992,7 @@ export default defineOntology({
                     description: "Human-readable project name.",
                     defaultValue: o.Expression.getAt({
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",

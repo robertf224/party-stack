@@ -640,7 +640,7 @@ describe("Ontology Validation", () => {
                                 displayName: "Name",
                                 type: o.string({}),
                                 defaultValue: o.Expression.getAt({
-                                    source: o.Expression.objectLookup({
+                                    source: o.Expression.lookup({
                                         reference: o.Expression.inputReference({
                                             name: "employee",
                                         }),
@@ -676,7 +676,7 @@ describe("Ontology Validation", () => {
                                 displayName: "Count",
                                 type: o.integer({}),
                                 defaultValue: o.Expression.getAt({
-                                    source: o.Expression.objectLookup({
+                                    source: o.Expression.lookup({
                                         reference: o.Expression.inputReference({
                                             name: "employee",
                                         }),

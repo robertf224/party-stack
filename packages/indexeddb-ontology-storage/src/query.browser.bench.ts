@@ -74,8 +74,8 @@ beforeAll(async () => {
     );
     for (const [, query] of cases) {
         const expected = applyQuery(all, query).map((r) => r.key);
-        const actual = (await Effect.runPromise(tables.loadSubset(table, query))).map((r) => r.key);
-        const ephemeral = (await Effect.runPromise(memory.loadSubset(table, query))).map((r) => r.key);
+        const actual = (await Effect.runPromise(tables.query(table, query))).map((r) => r.key);
+        const ephemeral = (await Effect.runPromise(memory.query(table, query))).map((r) => r.key);
         if (!query.orderBy?.length) {
             ephemeral.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
             actual.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
@@ -90,15 +90,13 @@ beforeAll(async () => {
 }, 120000);
 describe.each(cases)("%s", (_name, query) => {
     test("memory indexed", async ({ bench }) => {
-        await bench("memory indexed", () => Effect.runPromise(memory.loadSubset(table, query))).run(options);
+        await bench("memory indexed", () => Effect.runPromise(memory.query(table, query))).run(options);
     });
     test("tables indexed", async ({ bench }) => {
-        await bench("tables indexed", () => Effect.runPromise(tables.loadSubset(table, query))).run(options);
+        await bench("tables indexed", () => Effect.runPromise(tables.query(table, query))).run(options);
     });
     test("tables full scan", async ({ bench }) => {
-        await bench("tables full scan", () => Effect.runPromise(tables.loadSubset(scanTable, query))).run(
-            options
-        );
+        await bench("tables full scan", () => Effect.runPromise(tables.query(scanTable, query))).run(options);
     });
 });
 afterAll(async () => {

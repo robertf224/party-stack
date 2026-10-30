@@ -46,10 +46,9 @@ const loadLayers = Effect.fnUntraced(function* <A>(
     layers: readonly Table<Override<A>>[],
     query: Query = {}
 ): Effect.fn.Return<Row<A>[], OntologyStorageError> {
-    if (!layers.length) return yield* tx.loadSubset(baseTable, query);
+    if (!layers.length) return yield* tx.query(baseTable, query);
     const keyed = new Map<string, Row<Override<A>>>();
-    for (const layer of layers)
-        for (const row of yield* tx.loadSubset(layer)) keyed.set(keyCode(row.key), row);
+    for (const layer of layers) for (const row of yield* tx.query(layer)) keyed.set(keyCode(row.key), row);
     const overrides = [...keyed.values()];
     const shadowed = new Set(overrides.map((row) => keyCode(row.key)));
     const baseQuery: Query = {
@@ -57,7 +56,7 @@ const loadLayers = Effect.fnUntraced(function* <A>(
         offset: 0,
         limit: query.limit === undefined ? undefined : (query.offset ?? 0) + query.limit + shadowed.size,
     };
-    const base = yield* tx.loadSubset(baseTable, baseQuery);
+    const base = yield* tx.query(baseTable, baseQuery);
     const merged: Row<A>[] = base.filter((row) => !shadowed.has(keyCode(row.key)));
     for (const row of overrides)
         if (!row.value.deleted) merged.push({ key: row.key, value: row.value.value });

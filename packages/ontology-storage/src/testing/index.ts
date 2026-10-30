@@ -29,7 +29,7 @@ export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
     ] as const)
         yield* tables.put(arrays, key, value);
     assert(
-        (yield* tables.loadSubset(arrays, { where: where.contains(field("tags"), "urgent") }))
+        (yield* tables.query(arrays, { where: where.contains(field("tags"), "urgent") }))
             .map((row) => row.key)
             .join() === "a",
         "Unindexed array membership"
@@ -38,7 +38,7 @@ export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
     yield* tables.ensureIndex(arrays, { name: "title", field: field("title") });
     for (const needle of ["urgent", "1", 1, true, null, undefined, "'); DROP TABLE rows; --"] as const) {
         const query = { where: where.contains(field("tags"), needle) };
-        const actual = yield* tables.loadSubset(arrays, query);
+        const actual = yield* tables.query(arrays, query);
         assert(
             actual.map((row) => row.key).join() === (needle === "urgent" ? "a" : "e"),
             "Typed array membership and hostile literal safety"
@@ -46,23 +46,22 @@ export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
     }
     const search = where.or(where.ilike(field("title"), "urgent%"), where.contains(field("tags"), "urgent"));
     assert(
-        (yield* tables.loadSubset(arrays, { where: search })).map((row) => row.key).join() === "a,b",
+        (yield* tables.query(arrays, { where: search })).map((row) => row.key).join() === "a,b",
         "Search retains title-only and label-only matches"
     );
     assert(
-        (yield* tables.loadSubset(arrays, { where: search, offset: 1, limit: 1 }))
-            .map((row) => row.key)
-            .join() === "b",
+        (yield* tables.query(arrays, { where: search, offset: 1, limit: 1 })).map((row) => row.key).join() ===
+            "b",
         "Array search pagination follows the whole OR"
     );
     yield* tables.put(arrays, "a", { title: "unrelated", tags: [] });
     assert(
-        (yield* tables.loadSubset(arrays, { where: where.contains(field("tags"), "urgent") })).length === 0,
+        (yield* tables.query(arrays, { where: where.contains(field("tags"), "urgent") })).length === 0,
         "Empty replacement releases prior array index entries"
     );
     yield* tables.delete(arrays, "e");
     assert(
-        (yield* tables.loadSubset(arrays, { where: where.contains(field("tags"), 1) })).length === 0,
+        (yield* tables.query(arrays, { where: where.contains(field("tags"), 1) })).length === 0,
         "Deleting rows releases array index entries"
     );
     assert(
@@ -88,13 +87,13 @@ export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
         ["desc", "last", "d,e,a,b,c"],
     ] as const) {
         const orderBy = [{ field: field("rank"), direction, nulls }];
-        const rows = yield* tables.loadSubset(nullable, { orderBy });
+        const rows = yield* tables.query(nullable, { orderBy });
         assert(
             rows.map((row) => row.key).join(",") === expected,
             "Explicit nullish placement and stable key ties"
         );
         const first = rows[0]!;
-        const page = yield* tables.loadSubset(nullable, {
+        const page = yield* tables.query(nullable, {
             orderBy,
             after: { values: [first.value.rank], key: first.key },
             limit: 2,
@@ -127,7 +126,7 @@ export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
             yield* tx.ensureIndex(tasks, { name: "title", field: field("title") });
             yield* tx.ensureIndex(tasks, { name: "email", field: field("email"), unique: true });
             assert(
-                (yield* tx.loadSubset(tasks, { where: where.eq(field("project"), 2) })).length === 35,
+                (yield* tx.query(tasks, { where: where.eq(field("project"), 2) })).length === 35,
                 "Index build inside transaction"
             );
             yield* tx.put(meta, "cursor", 123n);
@@ -200,7 +199,7 @@ export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
         { limit: 0 },
     ];
     for (const query of queries) {
-        const result = yield* tables.loadSubset(tasks, query);
+        const result = yield* tables.query(tasks, query);
         assert(
             Table.make<unknown>({ name: "oracle" }).encode(result) ===
                 Table.make<unknown>({ name: "oracle" }).encode(applyQuery(all, query)),
@@ -226,7 +225,7 @@ export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
             )
         );
     assert(conflict === "tasks/email", "Unique constraints expose typed table/index details");
-    const invalidQuery = yield* tables.loadSubset(tasks, { limit: -1 }).pipe(
+    const invalidQuery = yield* tables.query(tasks, { limit: -1 }).pipe(
         Effect.as(false),
         Effect.catchReason("OntologyStorageError", "QueryError", () => Effect.succeed(true))
     );
@@ -234,19 +233,19 @@ export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
     assert((yield* tables.get(tasks, 0))?.email === "0@test", "Row deletion rolled back");
     assert((yield* tables.get(meta, "cursor")) === 123n, "Cross-table rollback");
     assert(
-        (yield* tables.loadSubset(tasks, { where: where.eq(field("email"), "1@test") })).length === 1,
+        (yield* tables.query(tasks, { where: where.eq(field("email"), "1@test") })).length === 1,
         "Indexes rolled back"
     );
     yield* tables.transaction((tx) =>
         Effect.gen(function* () {
             yield* tx.put(tasks, 0, { ...all[0]!.value, project: 8, rank: -1 });
             assert(
-                (yield* tx.loadSubset(tasks, { where: where.eq(field("project"), 8) }))[0]?.key === 0,
+                (yield* tx.query(tasks, { where: where.eq(field("project"), 8) }))[0]?.key === 0,
                 "Indexes see transaction writes"
             );
             yield* tx.delete(tasks, 0);
             assert(
-                (yield* tx.loadSubset(tasks, { where: where.eq(field("project"), 8) })).length === 0,
+                (yield* tx.query(tasks, { where: where.eq(field("project"), 8) })).length === 0,
                 "Index entries removed"
             );
             yield* tx.put(tasks, 0, all[0]!.value);
@@ -352,7 +351,7 @@ export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
             yield* tx.ensureIndex(scalars, { name: "value", field: field("value") });
         })
     );
-    const ordered = yield* tables.loadSubset(scalars, {
+    const ordered = yield* tables.query(scalars, {
         orderBy: [{ field: field("value") }],
         limit: 100,
     });
@@ -397,26 +396,26 @@ export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
             // A caught validation error must not damage existing rows or indexes.
             yield* Effect.exit(tx.put(tasks, 1, { ...all[1]!.value, email: "2@test" }));
             assert(
-                (yield* tx.loadSubset(tasks, { where: where.eq(field("email"), "1@test") }))[0]?.key === 1,
+                (yield* tx.query(tasks, { where: where.eq(field("email"), "1@test") }))[0]?.key === 1,
                 "Caught uniqueness error preserves indexes"
             );
             yield* Effect.exit(
                 tx.ensureIndex(tasks, { name: "bad_unique", field: field("project"), unique: true })
             );
-            assert((yield* tx.loadSubset(tasks)).length === 140, "Caught index build error preserves rows");
+            assert((yield* tx.query(tasks)).length === 140, "Caught index build error preserves rows");
             yield* tx.put(meta, "undefined", undefined);
             yield* tx.ensureIndex(meta, { name: "missing", field: field("missing") });
             assert(
-                (yield* tx.loadSubset(meta, { orderBy: [{ field: field("missing") }], limit: 20 })).some(
+                (yield* tx.query(meta, { orderBy: [{ field: field("missing") }], limit: 20 })).some(
                     (row) => row.key === "undefined"
                 ),
                 "Ordered indexes include undefined row values"
             );
             yield* tx.clear(scalars);
-            assert((yield* tx.loadSubset(scalars)).length === 0, "Clear removes all rows and entries");
+            assert((yield* tx.query(scalars)).length === 0, "Clear removes all rows and entries");
             yield* tx.put(scalars, "new", { value: 2n });
             assert(
-                (yield* tx.loadSubset(scalars, { where: where.eq(field("value"), 2n) }))[0]?.key === "new",
+                (yield* tx.query(scalars, { where: where.eq(field("value"), 2n) }))[0]?.key === "new",
                 "Clear preserves index definitions"
             );
         })

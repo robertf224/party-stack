@@ -56,7 +56,7 @@ export function trackVisible(tx: Transaction, views: ReadonlyMap<string, Overlay
             Effect.gen(function* () {
                 if (tableTypes.has(table.name) && !reset) {
                     // Only sparse overlays normally use clear. Bound this read as well.
-                    const rows = yield* tx.loadSubset(table, { limit: 4097 });
+                    const rows = yield* tx.query(table, { limit: 4097 });
                     if (rows.length > 4096) {
                         reset = true;
                         before.clear();

@@ -272,7 +272,7 @@ test("owner restart discards abandoned query leases while retaining pins and pen
                     query: {},
                 });
                 const reopened = yield* makeReplica(options);
-                expect(yield* tables.loadSubset(roots)).toEqual([]);
+                expect(yield* tables.query(roots)).toEqual([]);
                 expect(yield* reopened.collectGarbage({ olderThanMs: 0 })).toBe(3);
                 expect((yield* reopened.loadSubset("Row")).map((row) => row.key)).toEqual(["row0", "row1"]);
                 expect((yield* reopened.pending).map((entry) => entry.invocation.id)).toEqual(["pending"]);

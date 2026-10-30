@@ -72,7 +72,7 @@ export function createBetterAuthConnectionAdapter<Client extends BetterAuthConne
                 decode: Schema.decodeUnknownSync(CachedSessionSchema),
             },
         });
-        const cached = service.tables.loadSubset(table).pipe(
+        const cached = service.tables.query(table).pipe(
             Effect.map((rows) => rows.map((row) => row.value)),
             Effect.mapError((cause) => ConnectionError.from("restore", cause))
         );

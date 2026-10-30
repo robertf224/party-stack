@@ -546,7 +546,7 @@ export type GetAtExpression = {
 };
 
 /** Resolves an object reference to its ontology object. */
-export type ObjectLookupExpression = {
+export type LookupExpression = {
     reference: Expression;
 };
 
@@ -592,7 +592,7 @@ export type Expression = v.Union<{
     contextReference: ContextReferenceExpression;
     localReference: LocalReferenceExpression;
     getAt: GetAtExpression;
-    objectLookup: ObjectLookupExpression;
+    lookup: LookupExpression;
     related: RelatedExpression;
     struct: StructExpression;
     map: MapExpression;

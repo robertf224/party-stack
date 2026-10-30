@@ -129,9 +129,10 @@ export const Expression = {
         kind: "getAt" as const,
         value,
     }),
-    objectLookup: <const Value extends Extract<t.Expression, { kind: "objectLookup" }>["value"]>(
-        value: Value
-    ) => ({ kind: "objectLookup" as const, value }),
+    lookup: <const Value extends Extract<t.Expression, { kind: "lookup" }>["value"]>(value: Value) => ({
+        kind: "lookup" as const,
+        value,
+    }),
     related: <const Value extends Extract<t.Expression, { kind: "related" }>["value"]>(value: Value) => ({
         kind: "related" as const,
         value,

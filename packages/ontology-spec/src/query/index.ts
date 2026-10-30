@@ -77,6 +77,7 @@ export const concat = (...expressions: Expression[]): Expression => o.Expression
 export const coalesce = (...expressions: Expression[]): Expression => o.Expression.coalesce({ expressions });
 export const not = (expression: Expression): Expression => o.Expression.not({ expression });
 export const caseExpression = (options: CaseExpression): Expression => o.Expression.case(options);
+export const lookup = (reference: Expression): Expression => o.Expression.lookup({ reference });
 export const exists = (query: Query): Expression => o.Expression.exists({ query });
 
 export const selectField = (name: string, expression: Expression): QuerySelection =>

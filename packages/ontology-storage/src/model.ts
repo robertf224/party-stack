@@ -57,12 +57,14 @@ export interface Query {
     /** Exclusive keyset cursor in the query's complete sort order. */
     readonly after?: Cursor;
 }
-export interface Table<A> {
+export interface ReadTable<A> {
     readonly name: string;
     /** Version this when the persisted representation or index meaning changes. */
     readonly version: number;
-    readonly encode: (value: A) => string;
     readonly decode: (encoded: string) => A;
+}
+export interface Table<A> extends ReadTable<A> {
+    readonly encode: (value: A) => string;
 }
 export interface ValueCodec<A> {
     readonly encode: (value: A) => unknown;

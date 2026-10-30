@@ -108,7 +108,7 @@ const action: OntologyIR["actionTypes"][number] = {
             displayName: "User name",
             type: o.string({}),
             defaultValue: o.Expression.getAt({
-                source: o.Expression.objectLookup({
+                source: o.Expression.lookup({
                     reference: o.Expression.inputReference({
                         name: "user",
                     }),

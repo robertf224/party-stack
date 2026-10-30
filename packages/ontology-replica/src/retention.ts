@@ -37,7 +37,7 @@ export const markQuery = Effect.fnUntraced(function* (
             (baseline !== undefined && evaluateQuery([baseline], prefix).length > 0) ||
             (visible !== undefined && evaluateQuery([visible], prefix).length > 0);
     const keys = new Set<Key>();
-    for (const row of yield* tx.loadSubset(view.base, prefix)) keys.add(row.key);
+    for (const row of yield* tx.query(view.base, prefix)) keys.add(row.key);
     for (const row of yield* loadBaseline(tx, view, prefix)) keys.add(row.key);
     for (const row of yield* loadVisible(tx, view, prefix)) keys.add(row.key);
     return (base: Row<Record<string, unknown>>) => keys.has(base.key);

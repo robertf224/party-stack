@@ -60,11 +60,11 @@ test("acknowledgment compacts details while the watermark prevents old execution
                     yield* f.tables.transaction((tx) =>
                         f.registry.acknowledge(tx, f.session, sequence, sequence)
                     );
-                    expect(yield* f.tables.loadSubset(f.registry.submissions)).toEqual([]);
+                    expect(yield* f.tables.query(f.registry.submissions)).toEqual([]);
                 }
                 expect((yield* Effect.result(f.admit(1)))._tag).toBe("Failure");
                 expect((yield* f.tables.get(f.state, "one"))?.count).toBe(50);
-                expect((yield* f.tables.loadSubset(f.registry.clients)).length).toBe(1);
+                expect((yield* f.tables.query(f.registry.clients)).length).toBe(1);
             })
         )
     );
@@ -103,8 +103,8 @@ test("expired clients and their details are bounded without deleting accepted ap
                 yield* TestClock.adjust(101);
                 const fresh = yield* f.tables.transaction((tx) => f.registry.open(tx));
                 expect(fresh.client.clientId).not.toBe(f.session.client.clientId);
-                expect((yield* f.tables.loadSubset(f.registry.clients)).length).toBe(1);
-                expect(yield* f.tables.loadSubset(f.registry.submissions)).toEqual([]);
+                expect((yield* f.tables.query(f.registry.clients)).length).toBe(1);
+                expect(yield* f.tables.query(f.registry.submissions)).toEqual([]);
                 expect((yield* f.tables.get(f.state, "one"))?.count).toBe(1);
                 expect(
                     (yield* Effect.result(
@@ -131,7 +131,7 @@ test("future and stale acknowledgments cannot prune undelivered actions", async 
                 ).toBe("Failure");
                 yield* f.tables.transaction((tx) => f.registry.deliver(tx, f.session, 2));
                 yield* f.tables.transaction((tx) => f.registry.acknowledge(tx, f.session, 1, 1));
-                expect((yield* f.tables.loadSubset(f.registry.submissions)).length).toBe(1);
+                expect((yield* f.tables.query(f.registry.submissions)).length).toBe(1);
                 yield* f.tables.transaction((tx) => f.registry.acknowledge(tx, f.session, 2, 1));
                 yield* f.admit(2);
                 expect((yield* f.tables.get(f.state, "one"))?.count).toBe(2);
@@ -162,7 +162,7 @@ test("view generations fence reordered membership and acknowledgments even at th
                     f.tables.transaction((tx) => f.registry.acknowledge(tx, f.session, 10, 1, 1))
                 ))._tag
             ).toBe("Failure");
-            expect(yield* f.tables.loadSubset(f.registry.submissions)).toHaveLength(1);
+            expect(yield* f.tables.query(f.registry.submissions)).toHaveLength(1);
             expect(
                 (yield* Effect.result(f.tables.transaction((tx) => f.registry.select(tx, f.session, first))))
                     ._tag
@@ -175,7 +175,7 @@ test("view generations fence reordered membership and acknowledgments even at th
                 ))._tag
             ).toBe("Failure");
             yield* f.tables.transaction((tx) => f.registry.acknowledge(tx, f.session, 10, 1, 2));
-            expect(yield* f.tables.loadSubset(f.registry.submissions)).toEqual([]);
+            expect(yield* f.tables.query(f.registry.submissions)).toEqual([]);
         })
     );
 });

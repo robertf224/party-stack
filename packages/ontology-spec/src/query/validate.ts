@@ -19,6 +19,9 @@ export interface QueryValidationOptions {
     mode?: "projection" | "entity";
     sources?: Readonly<Record<string, OntologyIR>>;
     inputs?: readonly FieldDef[];
+    /** Schema-free table sources still validate names, lexical scope and query structure. */
+    untypedSources?: ReadonlySet<string>;
+    untypedContext?: boolean;
     maxNodes?: number;
     maxDepth?: number;
 }
@@ -86,6 +89,7 @@ export function validateQueryDocument(
         let value = type;
         for (const key of path) {
             const t = resolve(value);
+            if (t.kind === "unknown" && options.untypedSources) return unknown;
             if (t.kind !== "struct") return undefined;
             const field = t.value.fields.find((f) => f.name === key);
             if (!field) return undefined;
@@ -140,6 +144,7 @@ export function validateQueryDocument(
                 return type ?? unknown;
             }
             case "contextReference": {
+                if (options.untypedContext) return unknown;
                 const type = ir.context?.type && at(ir.context.type, [e.value.name]);
                 if (!type) issue(`Unknown context field ${JSON.stringify(e.value.name)}.`, path);
                 return type ?? unknown;
@@ -155,7 +160,7 @@ export function validateQueryDocument(
                 if (!type) issue(`Unknown structural property path ${JSON.stringify(e.value.path)}.`, path);
                 return type ?? unknown;
             }
-            case "objectLookup": {
+            case "lookup": {
                 const source = resolve(child(e.value.reference, "reference"));
                 if (source.kind !== "objectReference") {
                     issue("Object lookup requires an object reference.", path);
@@ -195,7 +200,7 @@ export function validateQueryDocument(
                 });
             case "map": {
                 const source = resolve(child(e.value.source, "source"));
-                if (source.kind !== "list") {
+                if (source.kind !== "list" && !(source.kind === "unknown" && options.untypedSources)) {
                     issue("Map source must be a list.", path);
                     return unknown;
                 }
@@ -204,7 +209,10 @@ export function validateQueryDocument(
                 return o.list({
                     elementType: expression(
                         e.value.body,
-                        new Map([...scope, [e.value.binding, source.value.elementType]]),
+                        new Map([
+                            ...scope,
+                            [e.value.binding, source.kind === "list" ? source.value.elementType : unknown],
+                        ]),
                         [...path, "value", "body"]
                     ),
                 });
@@ -351,13 +359,18 @@ export function validateQueryDocument(
         if (!admit(path)) return;
         const source = value.from.source.ontology ? options.sources?.[value.from.source.ontology] : ir;
         const object = source && objectType(value.from.source.objectType, source);
-        if (!object) {
+        const untyped =
+            !value.from.source.ontology && options.untypedSources?.has(value.from.source.objectType);
+        if (!object && !untyped) {
             issue("Unknown query source/object type.", [...path, "from"]);
             return;
         }
         if (!value.from.binding || parent.has(value.from.binding))
             issue("Query binding is empty or shadows an ancestor binding.", [...path, "from", "binding"]);
-        const scope = new Map([...parent, [value.from.binding, objectValue(object, source)]]);
+        const scope = new Map([
+            ...parent,
+            [value.from.binding, object ? objectValue(object, source) : unknown],
+        ]);
         subset(value, scope, path);
         selections(value.select, scope, [...path, "select"]);
     }

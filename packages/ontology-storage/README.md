@@ -26,7 +26,7 @@ const program = Effect.gen(function* () {
     const work = Effect.gen(function* () {
         const storage = yield* OntologyStorage;
         yield* storage.ensureIndex(tasks, { name: "project", field: field("projectId") });
-        return yield* storage.loadSubset(tasks, {
+        return yield* storage.query(tasks, {
             where: eq(field("projectId"), "project-1"),
             limit: 20,
         });
@@ -51,10 +51,10 @@ an Effect SqlClient layer; IndexedDB requires the platform IndexedDb layer.
 
 `get(object, key)` returns an object or undefined. `put(object, value)` derives
 its key from the ontology primary-key property and validates both the object and
-key. `loadSubset(object, query)` returns keyed rows; `ensureIndex(object, index)`
+key. `query(object, scan)` returns keyed rows; `ensureIndex(object, index)`
 validates the scalar field path against the ontology. Object-reference keys are
 validated, while reference existence is an execution concern. Attachment handles
-round-trip as object values; this checkpoint does not store their bytes.
+round-trip as object values. Optional blob storage integrates their retention metadata into the same transaction; physical byte IO is handled separately.
 
 Indexes and query field paths use the portable ontology representation, including
 `outcome.kind` for result values. The service converts Effect Result values at
@@ -68,6 +68,51 @@ It stores each distinct element once per row and updates atomically with the row
 Unique array-element indexes are not supported. Owned backends and replicas lazily
 ensure query indexes for declared top-level fields; dynamic paths do not create
 unbounded index definitions from query input.
+
+## Full queries
+
+Both storage services execute the Query IR from `@party-stack/ontology-spec`.
+Use the same helper-built documents for multiple roots, correlated subqueries,
+computed fields, conditional selections and pagination:
+
+```ts
+import { o } from "@party-stack/ontology-spec";
+import { eq, field, input, selectField, sub } from "@party-stack/ontology-spec/query";
+
+const document = {
+    inputs: [{ name: "projectId", displayName: "Project", type: o.string({}) }],
+    select: [
+        sub("tasks", {
+            from: { source: { objectType: "Task" }, binding: "task" },
+            where: eq(field("task", "projectId"), input("projectId")),
+            page: { limit: 20 },
+            select: [selectField("id", field("task", "id"))],
+        }),
+    ],
+};
+const result = yield * storage.query(document, { inputs: { projectId: "project-1" } });
+// result.tasks contains the selected projections.
+```
+
+OntologyStorage supplies object definitions, relationships and source bindings.
+Raw Tables instead takes explicit bindings to record-valued tables:
+`tables.query(document, { sources: { Task: taskTable }, inputs })`. It validates
+source names, lexical scope, inputs and query structure, while row field types
+remain dynamic. `related` and typed `lookup` require ontology metadata and are
+rejected on raw Tables; explicit correlated subqueries work at either layer.
+
+A full query uses one read transaction, or reuses the active transaction for
+read-your-writes. Projections use portable ontology values, including Result
+`{ kind: "ok" | "err", value }`; typed whole-object `get` and
+`query(objectStore, scan)` decode through the model's Effect codecs. The latter
+and `tables.query(table, scan)` remain typed single-source shorthands returning
+keyed rows. Neither service exposes `loadSubset`; backend adapters retain that
+capability for replication.
+
+The shared executor lowers supported filters, ordering and windows into each
+source's indexed query path and evaluates residual expressions before pagination.
+This is finite execution, not query watching/IVM. SQL currently plans the lowered
+source queries; a hierarchical document is not compiled into one native SQL join.
 
 ## Transactions and schema identity
 
@@ -85,7 +130,7 @@ yield *
 Both callback transactions and `effect.pipe(storage.withTransaction)` share the
 native transaction with service calls. Read transactions reject writes; failures,
 defects, and interruption roll back. Keys, object values, index entries, and the
-namespace definition stamp commit together. Handles expire at commit/abort;
+namespace definition stamp commit together. A failed object mutation makes the transaction rollback-only, even when its failure is caught inside the callback. Catch outside `storage.transaction(...)` to inspect the error after rollback. Complete object mutations are serialized within a transaction, including attachment-root updates. Handles expire at commit/abort;
 nested transaction boundaries are rejected. Keep network and blob I/O outside
 transaction callbacks.
 
@@ -103,16 +148,18 @@ and new rows on writes. Codec and query failures remain typed storage errors.
 
 ## Attachments and retention
 
-Owned rows and sole copies of attachment bytes must not be cache-evicted. Replica
-rows and remotely recoverable blob bytes can have independent policies. This
-checkpoint has no automatic collector, retention timer, reference cascade, or
-remote deletion side effect. `delete` is an explicit physical object operation;
-the backend/Replica engine will distinguish authoritative deletion from eviction
-and update its own change log, coverage, and retention records accordingly.
+`makeOntologyStorage(model, tables, { blobs })` updates object attachment roots
+transactionally with object writes and deletes. Construct the blob service with
+`makeBlobStorage` from `/blobs`, using the same Tables service and a platform byte
+store. Authoritative mode protects referenced identities and bytes; replica mode
+permits recoverable byte eviction independently of retained identities. Staging,
+byte caching, alias mappings and GC use durable metadata and write/delete intents
+so external byte IO does not hold a row transaction open.
 
-See the [attachment and GC design](../../specs/2026-10-19-effect-tables-replica/attachments-gc.md)
-for staged uploads, operation fencing, independent byte/row eviction, and subset
-coverage invalidation. No blob-byte or migration API is promised by this port.
+`delete` explicitly deletes the local object. It does not infer a remote deletion
+or schedule row eviction. The backend/replica owns journaling, demand, row
+retention and GC scheduling; the blob service provides its own collection
+operation for that lifecycle to call.
 
 ## Engine entry points
 

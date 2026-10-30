@@ -3,7 +3,7 @@ import { o } from "./generated/builders.js";
 import { validate } from "./validate.js";
 import type { Expression, OntologyIR, TypeDef } from "./generated/types.js";
 
-const person = o.Expression.objectLookup({
+const person = o.Expression.lookup({
     reference: o.Expression.inputReference({ name: "person" }),
 });
 const related = (link: string, source: Expression = person) => o.Expression.related({ source, link });

@@ -125,7 +125,7 @@ async function evaluateExpressionWithLocals(
                 expression.value.path
             );
         }
-        case "objectLookup": {
+        case "lookup": {
             const reference = await evaluateExpressionWithLocals(
                 {
                     ...options,

@@ -296,7 +296,7 @@ export default {
                         {
                             property: ["authorId"],
                             value: o.Expression.getAt({
-                                source: o.Expression.objectLookup({
+                                source: o.Expression.lookup({
                                     reference: o.Expression.inputReference({
                                         name: "author",
                                     }),

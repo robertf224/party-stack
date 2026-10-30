@@ -84,7 +84,7 @@ export const makeConnectStore = Effect.fn("Connect.store")(function* (options: {
         put: (name, value) => protect(storage.put(object(name), value)),
         delete: (name, id) => protect(storage.delete(object(name), id)),
         load: (name, query) =>
-            protect(storage.loadSubset(object(name), query)).pipe(
+            protect(storage.query(object(name), query)).pipe(
                 Effect.map((rows) => rows.map((row) => row.value))
             ),
         transaction: (body) =>

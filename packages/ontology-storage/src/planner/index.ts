@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { queryError, codecError } from "../errors.js";
-import { OntologyStorageError, type Key, type Query, type Row, type Table } from "../model.js";
+import { OntologyStorageError, type Key, type Query, type Row, type ReadTable } from "../model.js";
 import {
     afterCursor,
     applyQuery,
@@ -19,7 +19,7 @@ const codec = <A>(direction: "encode" | "decode", body: () => A): Effect.Effect<
 /** Candidate planning for stores with ordered index entry access. SQL uses its engine planner. */
 export const queryRows = Effect.fnUntraced(function* <A>(
     raw: DriverTransaction,
-    table: Table<A>,
+    table: ReadTable<A>,
     indexes: readonly StoredIndex[],
     query: Query
 ): Effect.fn.Return<readonly StoredRow[], OntologyStorageError> {

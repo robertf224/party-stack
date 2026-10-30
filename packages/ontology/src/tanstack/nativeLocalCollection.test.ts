@@ -63,7 +63,7 @@ test("untyped local predicates keep filtering and limiting in TanStack when sema
     const table = Table.make<Item>({ name: JSON.stringify(["local", "owner", "subset", "items"]) });
     await Effect.runPromise(tables.put(table, "one", { id: "one", title: "Selected" }));
     await Effect.runPromise(tables.put(table, "two", { id: "two", title: "Unrelated" }));
-    const load = vi.spyOn(tables, "loadSubset");
+    const load = vi.spyOn(tables, "query");
     const runtime = provider(tables)("owner", "subset");
     const collection = open(runtime);
     try {

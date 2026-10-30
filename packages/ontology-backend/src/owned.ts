@@ -258,7 +258,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     const read = (native: ReadStorageTransaction): OwnedReadTransaction => ({
         get: (name, key) => boundary(Effect.flatMap(object(name), (store) => native.get(store, key))),
         loadSubset: (name, query) =>
-            boundary(Effect.flatMap(object(name), (store) => native.loadSubset(store, query))),
+            boundary(Effect.flatMap(object(name), (store) => native.query(store, query))),
     });
     const mutation = (native: StorageTransaction) => {
         const changes = new Map<string, ObjectChange>();
@@ -341,7 +341,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             (yield* tables.get(metadata, "head"))?.journalFloor ?? 0,
             Number.isFinite(maxCommits) ? revision - maxCommits : 0
         );
-        for (const row of yield* tables.loadSubset(journal, { where: lte(field("revision"), journalFloor) }))
+        for (const row of yield* tables.query(journal, { where: lte(field("revision"), journalFloor) }))
             yield* tables.delete(journal, row.key);
         yield* tables.put(metadata, "head", { revision, source, journalFloor });
         return encodedCursor;
@@ -528,7 +528,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     });
     const clients = clientRegistry(clientNamespace, source, options.clients, {
         onExpire: Effect.fnUntraced(function* (tx, clientId) {
-            const expired = yield* tx.loadSubset(results, { where: eq(field("clientId"), clientId) });
+            const expired = yield* tx.query(results, { where: eq(field("clientId"), clientId) });
             for (const row of expired) yield* tx.delete(results, row.key);
             if (expired.length) yield* bumpControl;
         }),
@@ -564,19 +564,19 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 yield* clients.expire(tx);
                 const now = yield* Clock.currentTimeMillis;
                 if (Number.isFinite(resultRetentionMs)) {
-                    for (const row of yield* tx.loadSubset(receipts, {
+                    for (const row of yield* tx.query(receipts, {
                         where: lte(field("completedAt"), now - resultRetentionMs),
                         limit: 100,
                     }))
                         yield* tx.delete(receipts, row.key);
-                    for (const row of yield* tx.loadSubset(results, {
+                    for (const row of yield* tx.query(results, {
                         where: lte(field("entry", "completedAt"), now - resultRetentionMs),
                         limit: 100,
                     }))
                         yield* tx.delete(results, row.key);
                 }
                 if (options.history?.maxAgeMs !== undefined && Number.isFinite(options.history.maxAgeMs)) {
-                    const expired = yield* tx.loadSubset(journal, {
+                    const expired = yield* tx.query(journal, {
                         where: lte(field("committedAt"), now - options.history.maxAgeMs),
                         orderBy: [{ field: field("revision") }],
                         limit: 100,
@@ -610,7 +610,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                         for (const subset of selection.subsets) {
                             const store = yield* object(subset.objectType);
                             yield* scanSelectedRows(
-                                (query) => boundary(storage.loadSubset(store, query)),
+                                (query) => boundary(storage.query(store, query)),
                                 subset.query,
                                 (row) => emit({ kind: "base", objectType: subset.objectType, ...row })
                             );
@@ -655,17 +655,17 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                                 ? view.selection.subsets.filter((subset) => subset.objectType === objectType)
                                 : [{ objectType, query: undefined }];
                             for (const subset of subsets)
-                                for (const row of yield* native.loadSubset(store, subset.query))
+                                for (const row of yield* native.query(store, subset.query))
                                     rows.set(row.key, row);
                             objects.push({ objectType, base: [...rows.values()], overrides: [] });
                         }
                         const selectedResults = new Map<string, PendingAction>();
                         if (!view || view.selection.inspectActions)
-                            for (const row of yield* tables.loadSubset(results))
+                            for (const row of yield* tables.query(results))
                                 selectedResults.set(row.value.entry.invocation.id, row.value.entry);
                         else
                             for (const id of view.selection.actionIds)
-                                for (const row of yield* tables.loadSubset(results, {
+                                for (const row of yield* tables.query(results, {
                                     where: eq(field("entry", "invocation", "id"), id),
                                 }))
                                     selectedResults.set(id, row.value.entry);
@@ -766,7 +766,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                                 through,
                                 viewGeneration
                             );
-                            const settled = yield* tx.loadSubset(results, {
+                            const settled = yield* tx.query(results, {
                                 where: and(
                                     eq(field("clientId"), record.client.clientId),
                                     lte(field("sequence"), record.acknowledgedThrough)
@@ -946,7 +946,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                                     "InvalidRequest",
                                     "Change page limit must be between 1 and 1000."
                                 );
-                            const rows = yield* tables.loadSubset(journal, {
+                            const rows = yield* tables.query(journal, {
                                 where: {
                                     op: "gt",
                                     left: { _tag: "Field", path: ["revision"] },

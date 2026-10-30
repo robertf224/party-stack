@@ -15,6 +15,7 @@ import {
     type Query,
     type Row,
     type Table,
+    type ReadTable,
 } from "./model.js";
 import {
     caseInsensitiveIndex,
@@ -26,13 +27,34 @@ import {
     scalarKey,
     validateQuery,
 } from "./query/evaluate.js";
+import { executeQuery } from "./query/execute.js";
 import { IndexSchema } from "./query/schema.js";
 import { StoredIndexSchema } from "./storage/schema.js";
 import type { Driver, DriverTransaction, Entry, StoredIndex } from "./driver/index.js";
+import type { QueryDocument, OntologyIR } from "@party-stack/ontology-spec";
 
+export interface TableQueryOptions {
+    readonly sources: Readonly<Record<string, ReadTable<Record<string, unknown>>>>;
+    readonly inputs?: Record<string, unknown>;
+    readonly context?: Record<string, unknown>;
+}
+export interface TableQuery {
+    (
+        document: QueryDocument,
+        options: TableQueryOptions
+    ): Effect.Effect<Record<string, unknown>, OntologyStorageError>;
+    <A>(table: ReadTable<A>, scan?: Query): Effect.Effect<Row<A>[], OntologyStorageError>;
+}
+const untypedIR: OntologyIR = {
+    types: [],
+    objectTypes: [],
+    linkTypes: [],
+    actionTypes: [],
+    queryFunctionTypes: [],
+};
 export interface ReadTransaction {
     readonly get: <A>(table: Table<A>, key: Key) => Effect.Effect<A | undefined, OntologyStorageError>;
-    readonly loadSubset: <A>(table: Table<A>, query?: Query) => Effect.Effect<Row<A>[], OntologyStorageError>;
+    readonly query: TableQuery;
 }
 export interface Transaction extends ReadTransaction {
     readonly put: <A>(
@@ -66,8 +88,14 @@ const attempt = <A>(operation: string, body: () => A): Effect.Effect<A, Ontology
     Effect.try({ try: body, catch: (cause) => queryError(operation, cause) });
 const codec = <A>(direction: "encode" | "decode", body: () => A): Effect.Effect<A, OntologyStorageError> =>
     Effect.try({ try: body, catch: (cause) => codecError(direction, cause) });
-function transaction(raw: DriverTransaction, writable: boolean): Transaction {
+function transaction(raw: DriverTransaction, writable: boolean, isOpen: () => boolean): Transaction {
     const gate = Semaphore.makeUnsafe(1);
+    const guarded = <A>(effect: Effect.Effect<A, OntologyStorageError>) =>
+        gate.withPermits(1)(
+            Effect.suspend(() =>
+                isOpen() ? effect : Effect.fail(transactionError("Closed", "Transaction is closed."))
+            )
+        );
     const decodeIndexes = Schema.decodeUnknownSync(Schema.Array(StoredIndexSchema));
     const knownDefinitions = new Map<string, readonly StoredIndex[]>();
     const schemaIndex = "__party_tables_schema__";
@@ -77,7 +105,7 @@ function transaction(raw: DriverTransaction, writable: boolean): Transaction {
         const row = yield* raw.get(table.name, encoded);
         return row ? yield* codec("decode", () => table.decode(row.data)) : undefined;
     });
-    const definitions = Effect.fnUntraced(function* <A>(table: Table<A>) {
+    const definitions = Effect.fnUntraced(function* <A>(table: ReadTable<A>) {
         const cached = knownDefinitions.get(table.name);
         const stored = cached ?? (yield* raw.indexes(table.name));
         const indexes =
@@ -112,7 +140,7 @@ function transaction(raw: DriverTransaction, writable: boolean): Transaction {
         }
         return indexes.filter((index) => index.name !== schemaIndex);
     });
-    const loadSubset = Effect.fnUntraced(function* <A>(table: Table<A>, query: Query = {}) {
+    const scan = Effect.fnUntraced(function* <A>(table: ReadTable<A>, query: Query = {}) {
         yield* attempt("query", () => validateQuery(query));
         if (query.limit === 0) return [];
         const indexes = yield* definitions(table);
@@ -122,6 +150,37 @@ function transaction(raw: DriverTransaction, writable: boolean): Transaction {
         );
         return result.complete ? decoded : yield* attempt("query", () => applyQuery(decoded, query));
     });
+    function query(
+        document: QueryDocument,
+        options: TableQueryOptions
+    ): Effect.Effect<Record<string, unknown>, OntologyStorageError>;
+    function query<A>(table: ReadTable<A>, scan?: Query): Effect.Effect<Row<A>[], OntologyStorageError>;
+    function query<A>(request: QueryDocument | ReadTable<A>, options: TableQueryOptions | Query = {}) {
+        if (!("select" in request)) return scan(request, options as Query);
+        const bindings = options as TableQueryOptions;
+        return Effect.gen(function* () {
+            if (!bindings.sources)
+                return yield* queryError("query", "Table queries require source bindings.");
+            const result = yield* executeQuery(request, {
+                inputs: bindings.inputs,
+                context: bindings.context,
+                error: (failure) => queryError("query", new Error(failure.message, { cause: failure })),
+                reader: {
+                    ir: untypedIR,
+                    untypedSources: new Set(Object.keys(bindings.sources)),
+                    loadSubset: (name, query) => {
+                        const table = Object.hasOwn(bindings.sources, name)
+                            ? bindings.sources[name]
+                            : undefined;
+                        return table
+                            ? scan(table, query)
+                            : Effect.fail(queryError("query", `Unknown table source: ${name}`));
+                    },
+                },
+            });
+            return result.value;
+        });
+    }
     const assertWrite = () =>
         writable ? Effect.void : Effect.fail(transactionError("ReadOnly", "Read-only transaction"));
     const deleteRow = Effect.fnUntraced(function* <A>(table: Table<A>, key: Key) {
@@ -179,7 +238,7 @@ function transaction(raw: DriverTransaction, writable: boolean): Transaction {
     };
     const api: Transaction = {
         get,
-        loadSubset,
+        query,
         put: Effect.fnUntraced(function* <A>(table: Table<A>, key: Key, value: A) {
             yield* assertWrite();
             const code = yield* attempt("key", () => keyCode(key));
@@ -287,13 +346,26 @@ function transaction(raw: DriverTransaction, writable: boolean): Transaction {
             knownDefinitions.delete(table.name);
         }),
     };
+    function guardedQuery(
+        document: QueryDocument,
+        options: TableQueryOptions
+    ): Effect.Effect<Record<string, unknown>, OntologyStorageError>;
+    function guardedQuery<A>(
+        table: ReadTable<A>,
+        scan?: Query
+    ): Effect.Effect<Row<A>[], OntologyStorageError>;
+    function guardedQuery<A>(request: QueryDocument | ReadTable<A>, options: TableQueryOptions | Query = {}) {
+        return "select" in request
+            ? guarded(query(request, options as TableQueryOptions))
+            : guarded(query(request, options as Query));
+    }
     return {
-        get: (table, key) => gate.withPermits(1)(api.get(table, key)),
-        loadSubset: (table, query) => gate.withPermits(1)(api.loadSubset(table, query)),
-        put: (table, key, value) => gate.withPermits(1)(api.put(table, key, value)),
-        delete: (table, key) => gate.withPermits(1)(api.delete(table, key)),
-        clear: (table) => gate.withPermits(1)(api.clear(table)),
-        ensureIndex: (table, index) => gate.withPermits(1)(api.ensureIndex(table, index)),
+        get: (table, key) => guarded(api.get(table, key)),
+        query: guardedQuery,
+        put: (table, key, value) => guarded(api.put(table, key, value)),
+        delete: (table, key) => guarded(api.delete(table, key)),
+        clear: (table) => guarded(api.clear(table)),
+        ensureIndex: (table, index) => guarded(api.ensureIndex(table, index)),
     };
 }
 const CurrentTransactions = Context.Reference<ReadonlyMap<symbol, Transaction>>(
@@ -316,8 +388,14 @@ export function makeTables(driver: Driver): TablesService {
             );
         return yield* driver.transaction(mode, (raw) =>
             Effect.suspend(() => {
-                const tx = transaction(raw, mode === "readwrite");
+                let open = true;
+                const tx = transaction(raw, mode === "readwrite", () => open);
                 return body(tx).pipe(
+                    Effect.onExit(() =>
+                        Effect.sync(() => {
+                            open = false;
+                        })
+                    ),
                     Effect.provideService(CurrentTransactions, new Map([...active, [identity, tx]]))
                 );
             })
@@ -331,13 +409,23 @@ export function makeTables(driver: Driver): TablesService {
             const tx = active.get(identity);
             return tx ? body(tx) : run(mode, body);
         });
+    function query(
+        document: QueryDocument,
+        options: TableQueryOptions
+    ): Effect.Effect<Record<string, unknown>, OntologyStorageError>;
+    function query<A>(table: ReadTable<A>, scan?: Query): Effect.Effect<Row<A>[], OntologyStorageError>;
+    function query<A>(request: QueryDocument | ReadTable<A>, options: TableQueryOptions | Query = {}) {
+        return "select" in request
+            ? operation("readonly", (tx) => tx.query(request, options as TableQueryOptions))
+            : operation("readonly", (tx) => tx.query(request, options as Query));
+    }
     return {
         transaction: (body) => run("readwrite", body),
         read: (body) => run("readonly", body),
         withTransaction: (effect) => run("readwrite", () => effect),
         withReadTransaction: (effect) => run("readonly", () => effect),
         get: (table, key) => operation("readonly", (tx) => tx.get(table, key)),
-        loadSubset: (table, query) => operation("readonly", (tx) => tx.loadSubset(table, query)),
+        query,
         put: (table, key, value) => operation("readwrite", (tx) => tx.put(table, key, value)),
         delete: (table, key) => operation("readwrite", (tx) => tx.delete(table, key)),
         clear: (table) => operation("readwrite", (tx) => tx.clear(table)),

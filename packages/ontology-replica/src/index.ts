@@ -509,7 +509,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     const publicAction = ({ includedInBase: _included, ...entry }: LocalAction): PendingAction => entry;
     const outbox = Table.make<LocalAction>({ name: name("outbox") });
     const acceptedIn = (tx: ReadTransaction) =>
-        tx.loadSubset(outbox, {
+        tx.query(outbox, {
             where: eq(field("includedInBase"), true),
         });
     const completed = Table.make<PendingAction>({ name: name("completed") });
@@ -691,7 +691,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
 
     const pendingIn = (tx: ReadTransaction) =>
         tx
-            .loadSubset(outbox, { orderBy: [{ field: field("sequence") }] })
+            .query(outbox, { orderBy: [{ field: field("sequence") }] })
             .pipe(
                 Effect.map((rows) =>
                     rows.filter((row) => !row.value.includedInBase).map((row) => publicAction(row.value))
@@ -734,14 +734,14 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             boundary(
                 Effect.gen(function* () {
                     const v = yield* view(type);
-                    return yield* confirmed ? tx.loadSubset(v.base, query) : loadVisible(tx, v, query);
+                    return yield* confirmed ? tx.query(v.base, query) : loadVisible(tx, v, query);
                 })
             ),
     });
     const clearActionRoots = Effect.fnUntraced(function* (tx: Transaction, id: string) {
-        for (const row of yield* tx.loadSubset(actionRows, { where: eq(field("action"), id) }))
+        for (const row of yield* tx.query(actionRows, { where: eq(field("action"), id) }))
             yield* tx.delete(actionRows, row.key);
-        for (const row of yield* tx.loadSubset(actionQueries, { where: eq(field("action"), id) }))
+        for (const row of yield* tx.query(actionQueries, { where: eq(field("action"), id) }))
             yield* tx.delete(actionQueries, row.key);
     });
     const blobOwner = (id: string) => JSON.stringify(["replica", options.namespace, "outbox", id]);
@@ -908,7 +908,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             yield* deletePending(tx, candidate.invocation.id);
         }
         // A subsequent demand must obtain confirmed data again after abandoning local intent.
-        for (const row of yield* tx.loadSubset(coverage)) yield* tx.delete(coverage, row.key);
+        for (const row of yield* tx.query(coverage)) yield* tx.delete(coverage, row.key);
     });
     const recordFailure = Effect.fnUntraced(function* (
         tx: Transaction,
@@ -1087,7 +1087,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             }
         } else if (!backend.changes && snapshot.complete && !isWholeCollection(subset.query)) {
             const returned = new Set(snapshot.rows.map((row) => row.key));
-            const candidates = yield* boundary(tables.loadSubset(v.base, { where: subset.query?.where }));
+            const candidates = yield* boundary(tables.query(v.base, { where: subset.query?.where }));
             const missing = candidates.filter((row) => !returned.has(row.key)).map((row) => row.key);
             for (let offset = 0; offset < missing.length; offset += 128) {
                 const keys = missing.slice(offset, offset + 128);
@@ -1189,7 +1189,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         const current = yield* position(tx);
                         // Another leader already advanced this source. Never regress its cursor.
                         if (current.cursor !== before.cursor) return;
-                        const barriers = (yield* tx.loadSubset(coverage)).filter(
+                        const barriers = (yield* tx.query(coverage)).filter(
                             (row) => row.value.barrierCursor !== undefined
                         );
                         const clearBarrier = (cursor: string | undefined) =>
@@ -1300,7 +1300,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         const requests = new Map<string, BackendSubset>();
         for (const demand of demands.values()) requests.set(subsetKey(demand.subset), demand.subset);
         for (const [type, store] of views) {
-            const keys = (yield* boundary(tables.loadSubset(store.base))).map((row) => row.key);
+            const keys = (yield* boundary(tables.query(store.base))).map((row) => row.key);
             for (let offset = 0; offset < keys.length; offset += 128) {
                 const subset = {
                     objectType: type,
@@ -1449,7 +1449,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 const age = options.resultRetentionMs ?? 7 * 24 * 60 * 60 * 1000;
                 if (!Number.isFinite(age)) return;
                 const now = yield* Clock.currentTimeMillis;
-                for (const row of yield* tx.loadSubset(completed, {
+                for (const row of yield* tx.query(completed, {
                     where: lte(field("completedAt"), now - age),
                     limit: 100,
                 })) {
@@ -1457,14 +1457,14 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     // is finite; never remove the parent's own unresolved outbox.
                     yield* tx.delete(completed, row.key);
                 }
-                const protectedHints = (yield* tx.loadSubset(outbox)).length;
-                for (const row of yield* tx.loadSubset(journalReceipts, {
+                const protectedHints = (yield* tx.query(outbox)).length;
+                for (const row of yield* tx.query(journalReceipts, {
                     where: lte(field("observedAt"), now - age),
                     limit: 100 + protectedHints,
                 }))
                     if (!(yield* tx.get(outbox, row.value.operationId)))
                         yield* tx.delete(journalReceipts, row.key);
-                for (const row of yield* tx.loadSubset(coverage, {
+                for (const row of yield* tx.query(coverage, {
                     where: lte(field("updatedAt"), now - age),
                     // Active coverage may be old when auto-refresh is disabled. Scan past
                     // at most one protected record per active demand to avoid starving eviction.
@@ -1676,7 +1676,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         const head = yield* boundary(tables.read(position));
         const covered = Effect.fnUntraced(function* (subset: BackendSubset) {
             const records = yield* boundary(
-                tables.loadSubset(coverage, {
+                tables.query(coverage, {
                     where: eq(field("subset", "objectType"), subset.objectType),
                 })
             );
@@ -1775,15 +1775,15 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         for (const [objectType, v] of views)
             objects.push({
                 objectType,
-                base: yield* tx.loadSubset(v.base),
-                overrides: v.inherited ? yield* tx.loadSubset(v.inherited) : [],
+                base: yield* tx.query(v.base),
+                overrides: v.inherited ? yield* tx.query(v.inherited) : [],
             });
         const { digest: _digest, resident: _resident, ...publicHead } = head;
         return {
             ...publicHead,
             objects,
-            pending: (yield* tx.loadSubset(importedPending)).map((row) => row.value),
-            completed: (yield* tx.loadSubset(importedCompleted)).map((row) => row.value),
+            pending: (yield* tx.query(importedPending)).map((row) => row.value),
+            completed: (yield* tx.query(importedCompleted)).map((row) => row.value),
         };
     });
     const snapshotStateIn = Effect.fnUntraced(function* (tx: ReadTransaction, selected?: ClientView) {
@@ -1816,9 +1816,9 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 objects.push({ objectType, base, overrides });
                 continue;
             }
-            const base = yield* tx.loadSubset(baseline);
+            const base = yield* tx.query(baseline);
             let overrides: readonly Row<Override<ObjectValue>>[];
-            if (!parent) overrides = yield* tx.loadSubset(v.overrides);
+            if (!parent) overrides = yield* tx.query(v.overrides);
             else {
                 const visible = new Map((yield* loadVisible(tx, v)).map((row) => [row.key, row.value]));
                 const original = new Map(base.map((row) => [row.key, row.value]));
@@ -1841,7 +1841,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             table: import("@party-stack/ontology-storage/tables").Table<PendingAction>
         ) {
             if (!selected || selected.selection.inspectActions)
-                return (yield* tx.loadSubset(table)).map((row) => row.value);
+                return (yield* tx.query(table)).map((row) => row.value);
             const entries: PendingAction[] = [];
             for (const id of selected.selection.actionIds) {
                 const entry = yield* tx.get(table, id);
@@ -2011,13 +2011,13 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 Effect.gen(function* () {
                     const subsets = new Map<string, BackendSubset>();
                     const include = (subset: BackendSubset) => subsets.set(subsetKey(subset), subset);
-                    for (const row of yield* tx.loadSubset(roots, { where: eq(field("owner"), rootOwner) }))
+                    for (const row of yield* tx.query(roots, { where: eq(field("owner"), rootOwner) }))
                         if (options.source || row.value.kind === "remote")
                             include({
                                 objectType: row.value.objectType,
                                 query: retentionQuery(row.value.query),
                             });
-                    for (const row of yield* tx.loadSubset(pins))
+                    for (const row of yield* tx.query(pins))
                         include({
                             objectType: row.value.objectType,
                             query: {
@@ -2032,7 +2032,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         ...(yield* acceptedIn(tx)).map((row) => row.value),
                     ];
                     for (const entry of pending) {
-                        for (const row of yield* tx.loadSubset(actionRows, {
+                        for (const row of yield* tx.query(actionRows, {
                             where: eq(field("action"), entry.invocation.id),
                         }))
                             include({
@@ -2044,7 +2044,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                     ),
                                 },
                             });
-                        for (const row of yield* tx.loadSubset(actionQueries, {
+                        for (const row of yield* tx.query(actionQueries, {
                             where: eq(field("action"), entry.invocation.id),
                         }))
                             include({ ...row.value.subset, query: retentionQuery(row.value.subset.query) });
@@ -2111,7 +2111,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         const terminal = new Map(results.map((entry) => [entry.invocation.id, entry]));
         // The parent's result window may expire after a mapping failure. A
         // locally saved committed receipt still proves the action outcome.
-        for (const { value: entry } of yield* tx.loadSubset(outbox))
+        for (const { value: entry } of yield* tx.query(outbox))
             if (entry.receipt?.outcome === "committed" && !terminal.has(entry.invocation.id))
                 terminal.set(entry.invocation.id, publicAction(entry));
         const known = new Map(
@@ -2182,7 +2182,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         for (const subset of selected.selection.subsets) {
             const v = yield* view(subset.objectType);
             yield* scanSelectedRows(
-                (query) => boundary(speculative ? loadVisible(tx, v, query) : tx.loadSubset(v.base, query)),
+                (query) => boundary(speculative ? loadVisible(tx, v, query) : tx.query(v.base, query)),
                 subset.query,
                 (row) =>
                     Effect.gen(function* () {
@@ -2496,8 +2496,8 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             : undefined;
                         yield* settleParentActions(
                             tx,
-                            (yield* tx.loadSubset(importedPending)).map((row) => row.value),
-                            (yield* tx.loadSubset(importedCompleted)).map((row) => row.value),
+                            (yield* tx.query(importedPending)).map((row) => row.value),
+                            (yield* tx.query(importedCompleted)).map((row) => row.value),
                             selected?.actionIds
                         );
                         yield* tx.put(imported, "head", {
@@ -2859,7 +2859,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             tables.read((tx) =>
                 Effect.gen(function* () {
                     const entries = new Map(
-                        (yield* tx.loadSubset(importedPending)).map((row) => [
+                        (yield* tx.query(importedPending)).map((row) => [
                             row.key,
                             { ...row.value, forwarding: false },
                         ])
@@ -3561,7 +3561,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             access(
                 tables.transaction((tx) =>
                     Effect.gen(function* () {
-                        for (const row of yield* tx.loadSubset(coverage))
+                        for (const row of yield* tx.query(coverage))
                             if (!objectTypes || objectTypes.includes(row.value.subset.objectType))
                                 yield* tx.delete(coverage, row.key);
                         for (const demand of demands.values())
@@ -3642,7 +3642,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         // Client demand is owned here through RPC scopes/session leases.
                         // Acquisition and collection share the metadata transaction.
                         const cursor = (yield* tx.get(sweep, "position"))?.after;
-                        const candidates = yield* tx.loadSubset(retention, {
+                        const candidates = yield* tx.query(retention, {
                             where: lte(field("accessedAt"), now - age),
                             orderBy: [{ field: field("accessedAt") }],
                             limit,
@@ -3655,12 +3655,12 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                         const markers = Effect.fnUntraced(function* (objectType: string) {
                             const v = views.get(objectType)!;
                             const queries: Query[] = [];
-                            for (const root of yield* tx.loadSubset(roots, {
+                            for (const root of yield* tx.query(roots, {
                                 where: eq(field("objectType"), objectType),
                             })) {
                                 queries.push(root.value.query ?? {});
                             }
-                            for (const root of yield* tx.loadSubset(actionQueries, {
+                            for (const root of yield* tx.query(actionQueries, {
                                 where: eq(field("subset", "objectType"), objectType),
                             })) {
                                 if (pending.has(root.value.action))
@@ -3705,7 +3705,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                             : { key: record.key, value: baseline }
                                     )
                                 );
-                            const actionProtected = (yield* tx.loadSubset(actionRows, {
+                            const actionProtected = (yield* tx.query(actionRows, {
                                 where: eq(field("identity"), identity(record.objectType, record.key)),
                             })).some((root) => pending.has(root.value.action));
                             if (
@@ -3721,7 +3721,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             const head = yield* tx.get(imported, "head");
                             if (head) yield* tx.put(imported, "head", { ...head, resident: false });
                             yield* tx.delete(retention, row.key);
-                            for (const cached of yield* tx.loadSubset(coverage, {
+                            for (const cached of yield* tx.query(coverage, {
                                 where: eq(field("subset", "objectType"), record.objectType),
                             }))
                                 if (

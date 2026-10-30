@@ -44,7 +44,7 @@ const open = Effect.gen(function* () {
                         ),
                 }),
                 restoreConnections: () =>
-                    runtime.tables.loadSubset(table).pipe(
+                    runtime.tables.query(table).pipe(
                         Effect.map((rows) => rows.map(({ value }) => entry(value.userId))),
                         Effect.orDie
                     ),

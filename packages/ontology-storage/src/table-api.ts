@@ -19,6 +19,7 @@ export {
     not,
 } from "./model.js";
 export type {
+    ReadTable,
     ValueCodec,
     Key,
     Scalar,
@@ -32,7 +33,7 @@ export type {
     Query,
 } from "./model.js";
 export { Tables } from "./tables.js";
-export type { TablesService, Transaction, ReadTransaction } from "./tables.js";
+export type { TablesService, Transaction, ReadTransaction, TableQuery, TableQueryOptions } from "./tables.js";
 export { applyQuery, cursorOf, compareRows } from "./query/evaluate.js";
 
 export {

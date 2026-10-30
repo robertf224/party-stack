@@ -389,7 +389,7 @@ function resolveExpressionType(
                 ? undefined
                 : resolveFieldType(sourceType, expression.value.path, valueTypes);
         }
-        case "objectLookup": {
+        case "lookup": {
             const referenceType = resolveExpressionType(
                 expression.value.reference,
                 parameters,
@@ -578,11 +578,10 @@ function validateExpression(
             return [];
         }
         case "getAt":
-        case "objectLookup":
+        case "lookup":
         case "related": {
-            const childKey = expression.kind === "objectLookup" ? "reference" : "source";
-            const child =
-                expression.kind === "objectLookup" ? expression.value.reference : expression.value.source;
+            const childKey = expression.kind === "lookup" ? "reference" : "source";
+            const child = expression.kind === "lookup" ? expression.value.reference : expression.value.source;
             const errors = validateExpression(
                 child,
                 parameters,
@@ -613,7 +612,7 @@ function validateExpression(
                     message:
                         expression.kind === "getAt"
                             ? "Get-at expression source and path must resolve structurally."
-                            : expression.kind === "objectLookup"
+                            : expression.kind === "lookup"
                               ? "Object lookup references must resolve to an object reference."
                               : "Related expression must resolve to a named ontology link.",
                     path,

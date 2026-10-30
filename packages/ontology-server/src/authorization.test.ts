@@ -270,7 +270,7 @@ test("parameter resolution uses projected defaults and authorized row/property r
                         displayName: "Title",
                         type: o.string({}),
                         defaultValue: o.Expression.getAt({
-                            source: o.Expression.objectLookup({
+                            source: o.Expression.lookup({
                                 reference: o.Expression.inputReference({ name: "item" }),
                             }),
                             path: ["owner"],
@@ -281,7 +281,7 @@ test("parameter resolution uses projected defaults and authorized row/property r
                         displayName: "Private",
                         type: o.optional({ type: o.string({}) }),
                         defaultValue: o.Expression.getAt({
-                            source: o.Expression.objectLookup({
+                            source: o.Expression.lookup({
                                 reference: o.Expression.inputReference({ name: "item" }),
                             }),
                             path: ["private"],

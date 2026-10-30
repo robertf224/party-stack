@@ -2,6 +2,8 @@ export { makeStorageModel } from "./ontology/model.js";
 export type { StorageModel, ObjectStore, ObjectCodecs } from "./ontology/model.js";
 export { OntologyStorage, makeOntologyStorage } from "./ontology/storage.js";
 export type {
+    StorageQuery,
+    StorageQueryOptions,
     OntologyStorageService,
     StorageTransaction,
     ReadStorageTransaction,

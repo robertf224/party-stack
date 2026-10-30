@@ -57,7 +57,7 @@ export const checkPlanner = () =>
                     counts.mockClear();
                     indexScans.mockClear();
                     cursors.mockClear();
-                    expect(yield* tables.loadSubset(table, query)).toEqual(applyQuery(all, query));
+                    expect(yield* tables.query(table, query)).toEqual(applyQuery(all, query));
                     const hydrated = gets.mock.calls.filter(
                         ([key]) => Array.isArray(key) && key[0] === table.name
                     ).length;
@@ -106,12 +106,10 @@ export const checkPlanner = () =>
                     indexScans.mock.contexts.some((index) => (index as IDBIndex).objectStore.name === "rows")
                 ).toBe(true);
                 yield* tables.put(table, 999, { n: 333, category: 99, name: "Renamed" });
-                expect(
-                    yield* tables.loadSubset(table, { where: ilike(field("name"), "prefix-999") })
-                ).toEqual([]);
+                expect(yield* tables.query(table, { where: ilike(field("name"), "prefix-999") })).toEqual([]);
                 yield* tables.delete(table, 990);
                 expect(
-                    (yield* tables.loadSubset(table, { where: ilike(field("name"), "prefix-99%") })).length
+                    (yield* tables.query(table, { where: ilike(field("name"), "prefix-99%") })).length
                 ).toBe(9);
             } finally {
                 gets.mockRestore();

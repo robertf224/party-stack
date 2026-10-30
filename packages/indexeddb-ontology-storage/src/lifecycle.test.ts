@@ -22,7 +22,7 @@ test("Rows, definitions, and versions survive reopening the database", async () 
         Effect.scoped(
             Effect.gen(function* () {
                 const tables = yield* make({ databaseName });
-                expect(yield* tables.loadSubset(rows, { where: where.eq(field("n"), 3) })).toEqual([
+                expect(yield* tables.query(rows, { where: where.eq(field("n"), 3) })).toEqual([
                     { key: "key", value: { n: 3 } },
                 ]);
                 const changed = Table.make<{ n: number }>({ name: "rows", version: 2 });
@@ -68,8 +68,7 @@ test("An indexed finite ordered query hydrates a bounded page of rows", async ()
                 const reads = vi.spyOn(IDBObjectStore.prototype, "get");
                 try {
                     expect(
-                        (yield* tables.loadSubset(table, { orderBy: [{ field: field("n") }], limit: 10 }))
-                            .length
+                        (yield* tables.query(table, { orderBy: [{ field: field("n") }], limit: 10 })).length
                     ).toBe(10);
                     // Exclude the transaction-lifetime sentinel requests.
                     expect(

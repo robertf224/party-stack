@@ -114,7 +114,7 @@ it.effect("Candidate decoding fails with CodecError rather than QueryError", () 
         });
         yield* tables.put(table, "key", 1);
         reject = true;
-        const reason = yield* tables.loadSubset(table).pipe(
+        const reason = yield* tables.query(table).pipe(
             Effect.as(undefined),
             Effect.catchReason("OntologyStorageError", "CodecError", (error) => Effect.succeed(error))
         );

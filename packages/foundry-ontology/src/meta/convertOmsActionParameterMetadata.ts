@@ -91,7 +91,7 @@ function convertDefaultValue(
             kind: "getAt",
             value: {
                 source: {
-                    kind: "objectLookup",
+                    kind: "lookup",
                     value: {
                         reference: {
                             kind: "inputReference",

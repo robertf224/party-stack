@@ -132,7 +132,7 @@ test.prop(
                         const expected = new Map(selected);
                         if (oracle.has(0)) expected.set(0, oracle.get(0)!);
                         expect(
-                            (yield* tables.loadSubset(installedRows))
+                            (yield* tables.query(installedRows))
                                 .map((row) => [row.key, row.value.value])
                                 .sort(([a], [b]) => Number(a) - Number(b))
                         ).toEqual([...expected].sort(([a], [b]) => a - b));
@@ -248,15 +248,15 @@ test("installation is atomic, receipt evidence survives a failed apply, and repl
                         }),
                 });
                 yield* receiver.receive(firstFrame);
-                expect((yield* tables.loadSubset(rows)).map((row) => row.key)).toEqual(["old"]);
+                expect((yield* tables.query(rows)).map((row) => row.key)).toEqual(["old"]);
                 yield* receiver.receive(firstFrame); // identical frame retransmission
                 expect((yield* Effect.result(receiver.receive(finalFrame)))._tag).toBe("Failure");
                 expect(yield* tables.get(evidence, "receipt")).toBe(true);
-                expect((yield* tables.loadSubset(rows)).map((row) => row.key)).toEqual(["old"]);
+                expect((yield* tables.query(rows)).map((row) => row.key)).toEqual(["old"]);
                 expect(yield* receiver.installed).toBeUndefined();
                 fail = false;
                 yield* receiver.receive(finalFrame);
-                expect((yield* tables.loadSubset(rows)).map((row) => row.key)).toEqual(["new"]);
+                expect((yield* tables.query(rows)).map((row) => row.key)).toEqual(["new"]);
                 yield* receiver.receive(firstFrame);
                 expect((yield* receiver.receive(finalFrame))?.duplicate).toBe(true);
                 expect(applies).toBe(1);
@@ -345,8 +345,8 @@ test("acknowledgments from another handler use stored positions; scope cleanup r
                 );
                 const sessions = Table.make({ name: JSON.stringify(["http", "delivery", "sessions"]) });
                 const records = Table.make({ name: JSON.stringify(["http", "delivery", "records"]) });
-                expect(yield* tables.loadSubset(sessions, { where: eq(field("expected"), 2) })).toEqual([]);
-                expect(yield* tables.loadSubset(records)).toEqual([]);
+                expect(yield* tables.query(sessions, { where: eq(field("expected"), 2) })).toEqual([]);
+                expect(yield* tables.query(records)).toEqual([]);
             })
         )
     );

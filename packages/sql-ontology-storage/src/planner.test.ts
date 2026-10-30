@@ -50,10 +50,10 @@ const check = (dialect: Dialect) =>
         expect(JSON.stringify(plan)).toMatch(
             dialect === "sqlite" ? /USING INDEX party_tables_i_/ : /Index (Only )?Scan/
         );
-        expect(yield* tables.loadSubset(table, query)).toEqual(applyQuery(all, query));
+        expect(yield* tables.query(table, query)).toEqual(applyQuery(all, query));
         const ci: Query = { where: ilike(field("name"), "PRÉFIX-99%"), limit: 5 };
         expect(compileQuery(dialect, indexes, ci).complete).toBe(true);
-        expect(yield* tables.loadSubset(table, ci)).toEqual(applyQuery(all, ci));
+        expect(yield* tables.query(table, ci)).toEqual(applyQuery(all, ci));
         // A complex pattern pushes its necessary prefix/range into SQL, then applies
         // pagination after the exact residual. Early SQL LIMIT would return a short page.
         const residual: Query = {
@@ -65,7 +65,7 @@ const check = (dialect: Dialect) =>
         expect(partial.complete).toBe(false);
         expect(partial.condition).toContain("AND");
         expect(partial.pagination).toBe("");
-        expect(yield* tables.loadSubset(table, residual)).toEqual(applyQuery(all, residual));
+        expect(yield* tables.query(table, residual)).toEqual(applyQuery(all, residual));
         const arrays = Table.make<{ title: string; tags: string[] }>({ name: "native_membership" });
         yield* tables.put(arrays, "label", { title: "unrelated", tags: ["urgent"] });
         yield* tables.put(arrays, "title", { title: "Urgent title", tags: [] });
@@ -99,7 +99,7 @@ const check = (dialect: Dialect) =>
         expect(pushed.pagination).toContain("LIMIT");
         expect(pushed.condition).toContain(dialect === "pg" ? "COALESCE" : "json_each");
         expect(pushed.condition).not.toContain("urgent");
-        expect((yield* tables.loadSubset(arrays, membership)).map((row) => row.key)).toEqual(["title"]);
+        expect((yield* tables.query(arrays, membership)).map((row) => row.key)).toEqual(["title"]);
     });
 
 test("SQLite uses native expression indexes and paginates residual queries correctly", async () => {

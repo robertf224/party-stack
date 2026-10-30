@@ -219,9 +219,7 @@ it("restores offline session selectors across adapter recreation without storing
         ).toEqual(["user"]);
         await Effect.runPromise(first.cleanup?.() ?? Effect.void);
         const rows = await Effect.runPromise(
-            tables.loadSubset(
-                Table.make({ name: JSON.stringify(["better-auth", "test", "session-selectors"]) })
-            )
+            tables.query(Table.make({ name: JSON.stringify(["better-auth", "test", "session-selectors"]) }))
         );
         expect(JSON.stringify(rows)).toContain("public-selector");
         expect(JSON.stringify(rows)).not.toContain("private-bearer-token");

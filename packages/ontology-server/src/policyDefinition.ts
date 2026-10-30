@@ -18,7 +18,7 @@ function contextOnly(value: unknown): boolean {
     if ("kind" in value) {
         if (value.kind === "literal") return true;
         if (
-            ["inputReference", "localReference", "exists", "objectLookup", "related", "now", "uuid"].includes(
+            ["inputReference", "localReference", "exists", "lookup", "related", "now", "uuid"].includes(
                 String(value.kind)
             )
         )

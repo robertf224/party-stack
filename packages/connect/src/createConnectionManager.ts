@@ -84,7 +84,7 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
         if (changed.length) for (const listener of connectionListeners) listener();
     });
     const reloadState = stateGate.withPermit(
-        runtime.tables.loadSubset(connectionTable).pipe(
+        runtime.tables.query(connectionTable).pipe(
             Effect.mapError((cause) => ConnectionError.from("restore", cause)),
             Effect.tap(installState)
         )
@@ -96,7 +96,7 @@ export const makeConnectionManager = Effect.fn("Connections.make")(function* <A 
                     .transaction((tx) =>
                         Effect.gen(function* () {
                             yield* body(tx);
-                            return yield* tx.loadSubset(connectionTable);
+                            return yield* tx.query(connectionTable);
                         })
                     )
                     .pipe(Effect.mapError((cause) => ConnectionError.from("persist", cause)));

@@ -104,7 +104,7 @@ function getExpressionObjectType(
     actionName: string,
     expression: Expression
 ): string | undefined {
-    if (expression.kind === "objectLookup") {
+    if (expression.kind === "lookup") {
         const reference = expression.value.reference;
         if (reference.kind !== "inputReference") {
             return undefined;
@@ -183,14 +183,14 @@ function projectExpression(opts: {
                   }
                 : undefined;
         }
-        case "objectLookup": {
+        case "lookup": {
             const reference = projectExpression({
                 ...opts,
                 expression: opts.expression.value.reference,
             });
             return reference
                 ? {
-                      kind: "objectLookup",
+                      kind: "lookup",
                       value: { reference },
                   }
                 : undefined;

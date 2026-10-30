@@ -386,7 +386,7 @@ test("protected pending receipts cannot starve expired journal-hint cleanup", as
                 yield* TestClock.adjust(101);
                 yield* replica.syncOnce;
                 expect(yield* tables.get(hints, "zz-orphan")).toBeUndefined();
-                expect(yield* tables.loadSubset(hints)).toHaveLength(100);
+                expect(yield* tables.query(hints)).toHaveLength(100);
                 expect(yield* replica.pending).toHaveLength(100);
             })
         ).pipe(Effect.provide(TestClock.layer()))

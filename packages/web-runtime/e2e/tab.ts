@@ -68,7 +68,7 @@ Object.assign(window, {
                 name: JSON.stringify(["local", runtime.owner, runtime.namespace, "items"]),
             });
             return {
-                keys: (await app.runPromise(service.tables.loadSubset(table))).map((row) => row.key),
+                keys: (await app.runPromise(service.tables.query(table))).map((row) => row.key),
             };
         },
         rows: () => [...query.values()].map(({ id, title, score }) => ({ id, title, score })),

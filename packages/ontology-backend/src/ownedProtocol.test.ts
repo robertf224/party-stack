@@ -84,7 +84,7 @@ test("owned replay history is bounded and expired cursors require a coordinated 
             const snapshot = yield* f.backend.loadSubset({ objectType: "Counter" });
             expect(snapshot.rows[0]?.value.count).toBe(5);
             expect((yield* f.backend.changes!.pull({ cursor: snapshot.cursor })).commits).toEqual([]);
-            const journal = yield* f.tables.loadSubset(
+            const journal = yield* f.tables.query(
                 Table.make({ name: JSON.stringify(["backend", f.options.namespace, "journal"]) })
             );
             expect(journal).toHaveLength(2);
@@ -115,14 +115,14 @@ test("an owned protocol source commits actions directly, without a Replica outbo
             expect(first.state.objects[0]?.base[0]?.value.count).toBe(1);
             expect((yield* f.backend.changes!.pull({})).commits).toHaveLength(1);
             expect(
-                yield* f.tables.loadSubset(
+                yield* f.tables.query(
                     Table.make({ name: JSON.stringify(["replica", f.options.namespace, "outbox"]) })
                 )
             ).toEqual([]);
             // Ordered client identity protects protocol requests, so it does not also
             // accumulate the legacy arbitrary-invocation receipt table.
             expect(
-                yield* f.tables.loadSubset(
+                yield* f.tables.query(
                     Table.make({ name: JSON.stringify(["backend", f.options.namespace, "receipts"]) })
                 )
             ).toEqual([]);
@@ -285,7 +285,7 @@ test("result and journal retention are independent of committed application rows
             yield* TestClock.adjust(101);
             yield* backend.maintenance!;
             expect(
-                yield* fixture.tables.loadSubset(
+                yield* fixture.tables.query(
                     Table.make({ name: JSON.stringify(["backend", "owned-protocol", "receipts"]) })
                 )
             ).toEqual([]);

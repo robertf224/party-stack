@@ -863,7 +863,7 @@ export default {
             }),
         },
         {
-            name: "ObjectLookupExpression",
+            name: "LookupExpression",
             description: "Resolves an object reference to its ontology object.",
             type: o.struct({
                 fields: [
@@ -1002,8 +1002,8 @@ export default {
                         type: o.ref({ name: "GetAtExpression" }),
                     },
                     {
-                        name: "objectLookup",
-                        type: o.ref({ name: "ObjectLookupExpression" }),
+                        name: "lookup",
+                        type: o.ref({ name: "LookupExpression" }),
                     },
                     {
                         name: "related",

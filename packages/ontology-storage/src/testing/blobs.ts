@@ -2,6 +2,7 @@ import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { Effect, Result } from "effect";
 import { byteSource } from "../blobs/bytes.js";
 import { makeBlobStorage, collectByteBlob, type BlobBytesService } from "../blobs/index.js";
+import { Table, field } from "../model.js";
 import { makeStorageModel } from "../ontology/model.js";
 import { makeOntologyStorage } from "../ontology/storage.js";
 import type { TablesService } from "../tables.js";
@@ -123,10 +124,110 @@ export const runBlobContract = Effect.fnUntraced(function* (tables: TablesServic
             );
             if (!Result.isFailure(unavailable))
                 throw new Error("An expired upload must reject the object transaction");
-            if ((yield* owned.loadSubset(ownedDrafts)).length !== 0)
+            if ((yield* owned.query(ownedDrafts)).length !== 0)
                 throw new Error("Missing authoritative attachments must roll back every object write");
             if (yield* authoritative.metadata("owned-file"))
                 throw new Error("Authoritative references must not recreate a collected placeholder");
+
+            // Catching an object mutation failure must not commit its earlier root changes.
+            const atomicIR: OntologyIR = {
+                ...ir,
+                objectTypes: ir.objectTypes.map((object) => ({
+                    ...object,
+                    properties: [
+                        ...object.properties,
+                        { name: "slug", displayName: "Slug", type: o.string({}) },
+                    ],
+                })),
+            };
+            const atomicModel = yield* makeStorageModel({ namespace: "blob-atomic", ir: atomicIR });
+            const atomic = makeOntologyStorage(atomicModel, tables, { blobs: authoritative });
+            const atomicDrafts = atomicModel.objects.Draft!;
+            const marker = Table.make({ name: "blob-atomic-marker" });
+            yield* atomic.ensureIndex(atomicDrafts, { name: "slug", field: field("slug"), unique: true });
+            yield* authoritative.stage("atomic-old", new Blob(["keep"]));
+            yield* authoritative.stage("atomic-new", new Blob(["orphan"]));
+            yield* atomic.put(atomicDrafts, { id: "one", slug: "old", files: [{ id: "atomic-old" }] });
+            yield* atomic.put(atomicDrafts, { id: "two", slug: "taken", files: [] });
+            for (const caught of [false, true]) {
+                for (const kind of ["unique", "attachment"] as const) {
+                    const failedMutation = atomic.transaction((tx) =>
+                        Effect.gen(function* () {
+                            yield* tables.put(marker, "rolled-back", { caught, kind });
+                            const write = tx.put(atomicDrafts, {
+                                id: "one",
+                                slug: kind === "unique" ? "taken" : "available",
+                                files: [{ id: kind === "unique" ? "atomic-new" : "missing-attachment" }],
+                            });
+                            if (caught) {
+                                const result = yield* Effect.result(write);
+                                if (!Result.isFailure(result))
+                                    throw new Error("Expected object mutation failure");
+                                if (kind === "unique" && result.failure.reason._tag !== "UniqueConstraint")
+                                    throw new Error("Expected original unique constraint failure");
+                            } else yield* write;
+                        })
+                    );
+                    const result = yield* Effect.result(failedMutation);
+                    if (!Result.isFailure(result))
+                        throw new Error("A failed object mutation must prevent commit even when caught");
+                    if (yield* tables.get(marker, "rolled-back"))
+                        throw new Error(
+                            "Object mutation failure must roll back the enclosing physical transaction"
+                        );
+                    const row = (yield* atomic.get(atomicDrafts, "one")) as
+                        | { files: { id: string }[] }
+                        | undefined;
+                    if (row?.files[0]?.id !== "atomic-old")
+                        throw new Error("Failed replacement must preserve the original row");
+                }
+            }
+            if ((yield* authoritative.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })) !== 1)
+                throw new Error("Only the failed replacement's orphaned bytes may be collected");
+            if (!(yield* authoritative.metadata("atomic-old")))
+                throw new Error("Failed replacement must preserve the original attachment root");
+            // Force a yield inside a retention update. Concurrent logical puts may not
+            // enter another retention update until the first row/root mutation finishes.
+            yield* authoritative.stage("serial-a", new Blob(["A"]));
+            yield* authoritative.stage("serial-b", new Blob(["B"]));
+            const operations: string[] = [];
+            const serial = makeOntologyStorage(atomicModel, tables, {
+                blobs: {
+                    ...authoritative,
+                    in: (tx) => {
+                        const retention = authoritative.in(tx);
+                        return {
+                            ...retention,
+                            retain: (owner, ids, settings) =>
+                                Effect.gen(function* () {
+                                    operations.push(`begin:${ids[0]}`);
+                                    yield* Effect.yieldNow;
+                                    yield* retention.retain(owner, ids, settings);
+                                    operations.push(`end:${ids[0]}`);
+                                }),
+                        };
+                    },
+                },
+            });
+            yield* serial.transaction((tx) =>
+                Effect.all(
+                    [
+                        tx.put(atomicDrafts, { id: "one", slug: "serial", files: [{ id: "serial-a" }] }),
+                        tx.put(atomicDrafts, { id: "one", slug: "serial", files: [{ id: "serial-b" }] }),
+                    ],
+                    { concurrency: 2 }
+                )
+            );
+            if (
+                operations.length !== 4 ||
+                operations[1] !== operations[0]!.replace("begin:", "end:") ||
+                operations[3] !== operations[2]!.replace("begin:", "end:")
+            )
+                throw new Error("Complete object mutations must serialize their retention updates");
+            const final = (yield* atomic.get(atomicDrafts, "one")) as { files: { id: string }[] };
+            yield* authoritative.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 });
+            if (!(yield* authoritative.metadata(final.files[0]!.id)))
+                throw new Error("Concurrent puts must retain the attachment from the committed row");
         })
     );
 });

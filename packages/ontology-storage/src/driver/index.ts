@@ -1,4 +1,4 @@
-import type { Index, Query, Table, OntologyStorageError } from "../model.js";
+import type { Index, Query, ReadTable, OntologyStorageError } from "../model.js";
 /** Backend implementor API. Versioned with the core package, not an application API. */
 import type { Effect } from "effect";
 export { makeTables } from "../tables.js";
@@ -42,7 +42,7 @@ export interface DriverTransaction {
     readonly putIndex: (index: StoredIndex) => Effect.Effect<void, OntologyStorageError>;
     /** Return exact rows or a candidate superset requiring the shared residual evaluator. */
     readonly query: <A>(
-        table: Table<A>,
+        table: ReadTable<A>,
         indexes: readonly StoredIndex[],
         query: Query
     ) => Effect.Effect<

@@ -222,7 +222,7 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
         const destroyUser = Effect.fnUntraced(function* (userId: string) {
             yield* closeUser(userId);
             const selected = yield* runtime.tables
-                .loadSubset(partitions, { where: eq(field("userId"), userId) })
+                .query(partitions, { where: eq(field("userId"), userId) })
                 .pipe(Effect.mapError((cause) => failure("installation.partition", cause)));
             for (const { value: partition } of selected) {
                 const namespace = `${liveOntologyNamespace(options.installationId, partition.ontologyId)}${partition.meta ? ":meta" : ""}`;

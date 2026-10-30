@@ -130,19 +130,16 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
     const find = Effect.fnUntraced(function* (tx: ReadTransaction, id: string) {
         return (
             (yield* tx.get(records, id)) ??
-            (yield* tx.loadSubset(records, { where: eq(field("remoteId"), id), limit: 1 }))[0]?.value
+            (yield* tx.query(records, { where: eq(field("remoteId"), id), limit: 1 }))[0]?.value
         );
     });
     const rooted = (tx: ReadTransaction, id: string) =>
-        Effect.map(
-            tx.loadSubset(roots, { where: eq(field("blob"), id), limit: 1 }),
-            (rows) => rows.length > 0
-        );
+        Effect.map(tx.query(roots, { where: eq(field("blob"), id), limit: 1 }), (rows) => rows.length > 0);
     const refreshRetention = Effect.fnUntraced(function* (tx: Transaction, id: string) {
         const record = yield* tx.get(records, id);
         if (!record) return;
-        const references = yield* tx.loadSubset(roots, { where: eq(field("blob"), id), limit: 1 });
-        const byteReferences = yield* tx.loadSubset(roots, {
+        const references = yield* tx.query(roots, { where: eq(field("blob"), id), limit: 1 });
+        const byteReferences = yield* tx.query(roots, {
             where: and(eq(field("blob"), id), eq(field("bytes"), true)),
             limit: 1,
         });
@@ -155,7 +152,7 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
         });
     });
     const release = Effect.fnUntraced(function* (tx: Transaction, rootOwner: string) {
-        const previous = yield* tx.loadSubset(roots, { where: eq(field("owner"), rootOwner) });
+        const previous = yield* tx.query(roots, { where: eq(field("owner"), rootOwner) });
         for (const row of previous) yield* tx.delete(roots, row.key);
         for (const id of new Set(previous.map((row) => row.value.blob))) yield* refreshRetention(tx, id);
     });
@@ -173,7 +170,7 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
             // Merge that placeholder, but never coalesce two independently staged identities.
             if (other.id !== remoteId || other.state === "staged" || other.writing)
                 return yield* blobFailure("Conflict", "Remote blob ID is already bound.");
-            const inherited = yield* tx.loadSubset(roots, { where: eq(field("blob"), other.id) });
+            const inherited = yield* tx.query(roots, { where: eq(field("blob"), other.id) });
             if (record.byteKey && other.byteKey && inherited.some((row) => row.value.process !== undefined))
                 return yield* blobFailure("Busy", "Remote cached bytes are being read.");
             for (const row of inherited) {
@@ -224,7 +221,7 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
         }),
         release: (rootOwner) => release(tx, rootOwner),
         releaseGroup: Effect.fnUntraced(function* (group: string) {
-            const selected = yield* tx.loadSubset(roots, { where: eq(field("group"), group) });
+            const selected = yield* tx.query(roots, { where: eq(field("group"), group) });
             for (const row of selected) yield* tx.delete(roots, row.key);
             for (const id of new Set(selected.map((row) => row.value.blob))) yield* refreshRetention(tx, id);
         }),
@@ -263,7 +260,7 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
         work.pipe(Effect.mapError((cause) => blobFailure("Bytes", "Blob byte storage failed.", cause)));
     const drain = Effect.fn("BlobStorage.deleteDetached")(function* () {
         // The key is never reused. Concurrent collectors may delete it repeatedly.
-        for (const { key, value } of yield* tables.loadSubset(deletions, { limit: 100 })) {
+        for (const { key, value } of yield* tables.query(deletions, { limit: 100 })) {
             yield* io(bytes.delete(value.byteKey));
             yield* tables.delete(deletions, key);
         }
@@ -390,11 +387,11 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
     });
     const recover = Effect.gen(function* () {
         if (options.isOwnerAlive)
-            for (const { key, value } of yield* tables.loadSubset(writes)) {
+            for (const { key, value } of yield* tables.query(writes)) {
                 if (!(yield* options.isOwnerAlive(value.owner))) yield* abandon(String(key));
             }
         if (options.isOwnerAlive)
-            for (const row of yield* tables.loadSubset(roots, { where: ne(field("process"), undefined) })) {
+            for (const row of yield* tables.query(roots, { where: ne(field("process"), undefined) })) {
                 if (row.value.process && !(yield* options.isOwnerAlive(row.value.process)))
                     yield* tables.transaction((tx) => release(tx, row.value.owner));
             }
@@ -405,7 +402,7 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
     const service: BlobStorageService = {
         in: retention,
         metadata: (id) => tables.read((tx) => find(tx, id)),
-        records: (query) => tables.loadSubset(records, query),
+        records: (query) => tables.query(records, query),
         stage: (id, value) => write(id, value, "staged"),
         cache: (id, value) => write(id, value, "cached"),
         readScoped: Effect.fn("BlobStorage.readScoped")(function* (id: string) {
@@ -511,7 +508,7 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
             const count = yield* tables.transaction((tx) =>
                 Effect.gen(function* () {
                     let count = 0;
-                    const orphans = yield* tx.loadSubset(records, {
+                    const orphans = yield* tx.query(records, {
                         where: and(
                             lte(field("unreferencedAt"), now - orphanGraceMs),
                             ne(field("unreferencedAt"), undefined),
@@ -534,7 +531,7 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                         count++;
                     }
                     if (options.mode === "authoritative") return count;
-                    const candidates = yield* tx.loadSubset(records, {
+                    const candidates = yield* tx.query(records, {
                         where: and(
                             lte(field("lastAccessedAt"), cutoff),
                             eq(field("writing"), undefined),
@@ -557,7 +554,7 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                             !record.byteKey ||
                             record.state === "staged" ||
                             !record.remoteId ||
-                            (yield* tx.loadSubset(roots, {
+                            (yield* tx.query(roots, {
                                 where: and(eq(field("blob"), record.id), eq(field("bytes"), true)),
                                 limit: 1,
                             })).length > 0

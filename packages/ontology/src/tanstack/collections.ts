@@ -316,7 +316,7 @@ export const localCollectionOptions = Effect.fnUntraced(function* <A extends obj
     const config = yield* persistedCollectionOptions<A, K>({
         id: `party-stack:${runtime.owner}:${runtime.namespace}:${options.name}`,
         getKey: options.getKey,
-        load: (subset) => runtime.tables.loadSubset(table, storageSubset(subset)),
+        load: (subset) => runtime.tables.query(table, storageSubset(subset)),
         changes: local.changes,
         persist: (mutations) =>
             runtime.tables

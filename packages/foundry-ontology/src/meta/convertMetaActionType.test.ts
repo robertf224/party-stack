@@ -1164,7 +1164,7 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
             kind: "getAt",
             value: {
                 source: {
-                    kind: "objectLookup",
+                    kind: "lookup",
                     value: {
                         reference: {
                             kind: "inputReference",
@@ -1540,7 +1540,7 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                     kind: "getAt",
                     value: {
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",

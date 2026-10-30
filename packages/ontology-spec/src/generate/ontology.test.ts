@@ -138,7 +138,7 @@ describe("generateOntology", () => {
                             displayName: "Name",
                             type: o.string({}),
                             defaultValue: o.Expression.getAt({
-                                source: o.Expression.objectLookup({
+                                source: o.Expression.lookup({
                                     reference: o.Expression.inputReference({
                                         name: "employee",
                                     }),
@@ -155,7 +155,7 @@ describe("generateOntology", () => {
 
         const output = generateOntology(ontology);
         expect(output).toContain("o.Expression.getAt");
-        expect(output).toContain('kind: "objectLookup"');
+        expect(output).toContain('kind: "lookup"');
         expect(output).toContain('objectType: "Employee"');
         expect(output).toContain("meta: {");
         expect(output).toContain("provider: {");

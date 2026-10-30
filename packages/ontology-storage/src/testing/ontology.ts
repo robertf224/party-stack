@@ -10,6 +10,7 @@ import {
     field,
     type StorageTransaction,
 } from "../index.js";
+import { runQueryContract } from "./queries.js";
 import type { TablesService } from "../tables.js";
 
 const assert = (value: unknown, message: string): void => {
@@ -65,6 +66,7 @@ const ir = defineOntology({
 const schemas = { User, Task };
 
 export const runOntologyContract = Effect.fnUntraced(function* (tables: TablesService) {
+    yield* runQueryContract(tables);
     const model = yield* makeStorageModel({ namespace: "ontology_contract", ir, schemas });
     const storage = makeOntologyStorage(model, tables);
     const { User: users, Task: tasks } = model.objects;
@@ -101,7 +103,7 @@ export const runOntologyContract = Effect.fnUntraced(function* (tables: TablesSe
     );
     const loaded = yield* storage.get(tasks, 1);
     assert(
-        (yield* storage.loadSubset(tasks, { where: contains(field("tags"), "urgent") }))
+        (yield* storage.query(tasks, { where: contains(field("tags"), "urgent") }))
             .map((row) => row.key)
             .join() === "1",
         "Declared list fields support membership and element indexes"
@@ -128,7 +130,7 @@ export const runOntologyContract = Effect.fnUntraced(function* (tables: TablesSe
         "Generated codecs could not read runtime-codec writes."
     );
     yield* storage.put(tasks, task);
-    const subset = yield* storage.loadSubset(tasks, {
+    const subset = yield* storage.query(tasks, {
         where: eq(field("outcome", "kind"), "ok"),
         orderBy: [{ field: field("rank") }],
         limit: 2,
@@ -141,9 +143,9 @@ export const runOntologyContract = Effect.fnUntraced(function* (tables: TablesSe
         storage.ensureIndex(tasks, { name: "missing", field: field("missing") }),
         "QueryError"
     );
-    yield* errorReason(storage.loadSubset(tasks, { where: eq(field("missing"), 1) }), "QueryError");
+    yield* errorReason(storage.query(tasks, { where: eq(field("missing"), 1) }), "QueryError");
     yield* errorReason(
-        storage.loadSubset(tasks, { where: eq(field("outcome", "_tag"), "Success") }),
+        storage.query(tasks, { where: eq(field("outcome", "_tag"), "Success") }),
         "QueryError"
     );
     yield* errorReason(storage.put(tasks, { ...task, rank: 1.5 }), "CodecError");

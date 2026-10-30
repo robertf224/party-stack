@@ -119,7 +119,7 @@ export const scanDeliveryRows = Effect.fnUntraced(function* <A>(
     let remaining = query.limit;
     let offset = query.offset;
     for (;;) {
-        const rows = yield* tx.loadSubset(table, {
+        const rows = yield* tx.query(table, {
             ...query,
             offset,
             after,
@@ -276,7 +276,7 @@ export const makeDelivery = Effect.fn("Delivery.open")(function* (options: {
                 yield* tx.ensureIndex(records, { name: "stream", field: field("stream") });
                 yield* tx.ensureIndex(patches, { name: "stream", field: field("stream") });
                 const now = yield* Clock.currentTimeMillis;
-                for (const expired of yield* tx.loadSubset(sessions, {
+                for (const expired of yield* tx.query(sessions, {
                     where: lte(field("expiresAt"), now),
                     limit: limits.maxSubscriptions,
                 })) {
@@ -285,7 +285,7 @@ export const makeDelivery = Effect.fn("Delivery.open")(function* (options: {
                     yield* tx.delete(sessions, expired.key);
                 }
                 if (
-                    (yield* tx.loadSubset(sessions, { limit: limits.maxSubscriptions })).length >=
+                    (yield* tx.query(sessions, { limit: limits.maxSubscriptions })).length >=
                     limits.maxSubscriptions
                 )
                     return yield* failure("Delivery subscription capacity reached.", "RateLimited");

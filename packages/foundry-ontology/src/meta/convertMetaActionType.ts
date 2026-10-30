@@ -537,7 +537,7 @@ function getAtExpression(source: Expression, path: string[]): Expression {
 function objectField(parameterName: string, path: string[]): Expression {
     return getAtExpression(
         {
-            kind: "objectLookup",
+            kind: "lookup",
             value: {
                 reference: inputReference(parameterName),
             },

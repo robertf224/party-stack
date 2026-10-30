@@ -247,7 +247,7 @@ describe("secured ontology projection", () => {
                                 displayName: "Name",
                                 type: o.string({}),
                                 defaultValue: o.Expression.getAt({
-                                    source: o.Expression.objectLookup({
+                                    source: o.Expression.lookup({
                                         reference: o.Expression.inputReference({
                                             name: "employee",
                                         }),

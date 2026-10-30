@@ -212,11 +212,11 @@ test("repeated handoffs compact admission details and reuse one client watermark
                     yield* child.enqueue(invocation(`B-${sequence}`, 1));
                     yield* child.syncParent(source);
                     expect(yield* child.pending).toEqual([]);
-                    expect(yield* f.options.tables.loadSubset(records.submissions)).toEqual([]);
+                    expect(yield* f.options.tables.query(records.submissions)).toEqual([]);
                     yield* f.parent.syncOnce;
                     yield* child.syncParent(source);
                 }
-                const clients = yield* f.options.tables.loadSubset(records.clients);
+                const clients = yield* f.options.tables.query(records.clients);
                 expect(clients.length).toBe(1);
                 expect(clients[0]?.value.acceptedThrough).toBe(25);
                 expect(clients[0]?.value.acknowledgedThrough).toBe(25);

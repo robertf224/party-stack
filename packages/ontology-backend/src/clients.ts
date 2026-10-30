@@ -119,10 +119,10 @@ export const clientRegistry = (
     });
     const expire = Effect.fnUntraced(function* (tx: Transaction, limit = 100) {
         const now = yield* Clock.currentTimeMillis;
-        const expired = yield* tx.loadSubset(clients, { where: lte(field("expiresAt"), now), limit });
+        const expired = yield* tx.query(clients, { where: lte(field("expiresAt"), now), limit });
         for (const { key, value } of expired) {
             if (hooks.onExpire) yield* hooks.onExpire(tx, value.client.clientId);
-            for (const row of yield* tx.loadSubset(submissions, {
+            for (const row of yield* tx.query(submissions, {
                 where: eq(field("clientId"), value.client.clientId),
             }))
                 yield* tx.delete(submissions, row.key);
@@ -149,7 +149,7 @@ export const clientRegistry = (
                 );
         } else {
             yield* expire(tx);
-            if ((yield* tx.loadSubset(clients, { limit: maxClients })).length >= maxClients)
+            if ((yield* tx.query(clients, { limit: maxClients })).length >= maxClients)
                 return yield* error("capacity", "RateLimited", "Active client limit reached.");
         }
         const record: ClientLease = {
@@ -292,7 +292,7 @@ export const clientRegistry = (
         // A delayed acknowledgment of an older snapshot cannot prove which newer
         // admissions that snapshot contained. Leave pruning to the current barrier.
         if (revision < record.deliveredRevision || through < record.acknowledgedThrough) return record;
-        for (const row of yield* tx.loadSubset(submissions, {
+        for (const row of yield* tx.query(submissions, {
             where: and(eq(field("clientId"), record.client.clientId), lte(field("sequence"), through)),
         }))
             yield* tx.delete(submissions, row.key);
