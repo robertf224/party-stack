@@ -1,4 +1,6 @@
 import { Predicate, Schema } from "effect";
+import { BlobStorageError } from "./blobs/model.js";
+export { BlobStorageError } from "./blobs/model.js";
 
 const ReasonFields = { message: Schema.String, cause: Schema.optional(Schema.Defect()) };
 export class QueryError extends Schema.TaggedError<QueryError>()("QueryError", ReasonFields) {}
@@ -42,6 +44,7 @@ export class StorageError extends Schema.TaggedError<StorageError>()("StorageErr
 export const OntologyStorageErrorReason = Schema.Union([
     QueryError,
     CodecError,
+    BlobStorageError,
     UniqueConstraint,
     SchemaMismatch,
     DefinitionMismatch,
@@ -62,6 +65,8 @@ export class OntologyStorageError extends Schema.TaggedError<OntologyStorageErro
         return `Ontology storage ${this.operation} failed: ${this.reason.message}`;
     }
     get isRetryable(): boolean {
+        if (this.reason._tag === "BlobStorageError")
+            return this.reason.kind === "Busy" || this.reason.kind === "Bytes";
         return this.reason._tag === "StorageError"
             ? this.reason.retryable
             : this.reason._tag === "TransactionError" &&
@@ -104,3 +109,7 @@ export const storageError = (
     });
 export const configurationError = (operation: string, message: string) =>
     new OntologyStorageError({ operation, reason: new ConfigurationError({ message }) });
+
+/** Preserve byte/retention semantics and pass existing table failures through unchanged. */
+export const attachmentError = (operation: string, cause: BlobStorageError | OntologyStorageError) =>
+    cause instanceof OntologyStorageError ? cause : new OntologyStorageError({ operation, reason: cause });

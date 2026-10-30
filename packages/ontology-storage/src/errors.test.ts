@@ -4,6 +4,7 @@ import { LockTimeoutError, SqlError } from "effect/sql/SqlError";
 import { codecError, storageError, transactionError } from "./errors.js";
 import { make } from "./memory/tables.js";
 import {
+    BlobStorageError,
     CodecError,
     QueryError,
     Table,
@@ -123,3 +124,19 @@ it.effect("Candidate decoding fails with CodecError rather than QueryError", () 
         assert.strictEqual(reason?.cause, cause);
     })
 );
+
+it("attachment reasons remain catchable and retain their class across schema encoding", () => {
+    const reason = new BlobStorageError({ kind: "NotFound", message: "Missing bytes" });
+    const original = new OntologyStorageError({ operation: "attachment.retain", reason });
+    const decoded = Schema.decodeUnknownSync(OntologyStorageError)(
+        Schema.encodeSync(OntologyStorageError)(original)
+    );
+    assert.instanceOf(decoded.reason, BlobStorageError);
+    assert.strictEqual(decoded.reason._tag, "BlobStorageError");
+    assert.strictEqual(decoded.isRetryable, false);
+    const busy = new OntologyStorageError({
+        operation: "attachment.retain",
+        reason: new BlobStorageError({ kind: "Busy", message: "Uploading" }),
+    });
+    assert.strictEqual(busy.isRetryable, true);
+});

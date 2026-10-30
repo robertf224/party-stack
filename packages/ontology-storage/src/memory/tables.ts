@@ -1,5 +1,6 @@
 /** Optional in-memory backend. Import explicitly; the main/SQL entry points do not load it. */
-import { Effect, Exit, Layer, Semaphore } from "effect";
+import { Effect, Exit, Layer, Semaphore, Stream } from "effect";
+import { INDEX_BACKFILL_BATCH_SIZE } from "../driver/index.js";
 import { transactionError, type OntologyStorageError } from "../errors.js";
 import { queryRows } from "../planner/index.js";
 import { makeTables, Tables } from "../tables.js";
@@ -102,6 +103,14 @@ export const make = () =>
                                         compare(a.key, b.key)
                                     )
                                 ),
+                            scanRows: (table) =>
+                                Stream.unwrap(
+                                    run(false, () =>
+                                        Stream.fromIterable(working.rows.get(table)?.values() ?? [], {
+                                            chunkSize: INDEX_BACKFILL_BATCH_SIZE,
+                                        })
+                                    )
+                                ).pipe(Stream.mapEffect((row) => run(false, () => row))),
                             put: (row) =>
                                 run(true, () => {
                                     rowsForWrite(row.table).set(row.key, row);
@@ -137,13 +146,19 @@ export const make = () =>
                             deleteEntries: (table, index, key) =>
                                 run(true, () => {
                                     const bucket = bucketKey(table, index);
-                                    working.entries.set(
-                                        bucket,
+                                    const remaining =
                                         key === undefined
                                             ? []
-                                            : (working.entries.get(bucket) ?? []).filter((e) => e.key !== key)
-                                    );
-                                    changedEntries.add(bucket);
+                                            : (working.entries.get(bucket) ?? []).filter(
+                                                  (e) => e.key !== key
+                                              );
+                                    if (remaining.length) {
+                                        working.entries.set(bucket, remaining);
+                                        changedEntries.add(bucket);
+                                    } else {
+                                        working.entries.delete(bucket);
+                                        changedEntries.delete(bucket);
+                                    }
                                 }),
                             countEntries: (table, index, range = {}) =>
                                 run(false, () => {

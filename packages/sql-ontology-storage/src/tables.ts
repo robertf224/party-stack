@@ -1,5 +1,6 @@
 import {
     makeTables,
+    INDEX_BACKFILL_BATCH_SIZE,
     configurationError,
     storageError,
     transactionError,
@@ -10,8 +11,8 @@ import {
     type Range,
     type StoredRow,
 } from "@party-stack/ontology-storage/driver";
-import { Tables, type OntologyStorageError } from "@party-stack/ontology-storage/tables";
-import { Effect, Layer } from "effect";
+import { Tables, OntologyStorageError, UniqueConstraint } from "@party-stack/ontology-storage/tables";
+import { Effect, Layer, Option, Stream } from "effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { isSqlError } from "effect/sql/SqlError";
 import { arrayIndexExpression, compileQuery, indexExpression, literal, projectionKey } from "./compiler.js";
@@ -160,6 +161,35 @@ export const make = Effect.fnUntraced(function* (options: { readonly prefix?: st
                                 )
                             )
                         ),
+                    scanRows: (table) =>
+                        Stream.paginate(undefined as string | undefined, (after) => {
+                            const where =
+                                after === undefined
+                                    ? sql`table_name=${table}`
+                                    : sql`table_name=${table} AND row_key>${after}`;
+                            return check(
+                                run(
+                                    sql<{
+                                        row_key: string;
+                                        data: string;
+                                    }>`SELECT row_key,data FROM ${sql(rows)} WHERE ${where} ORDER BY row_key LIMIT ${INDEX_BACKFILL_BATCH_SIZE}`
+                                )
+                            ).pipe(
+                                Effect.map(
+                                    (page) =>
+                                        [
+                                            page.map((row): StoredRow => ({
+                                                table,
+                                                key: row.row_key,
+                                                data: row.data,
+                                            })),
+                                            page.length === INDEX_BACKFILL_BATCH_SIZE
+                                                ? Option.some(page.at(-1)!.row_key)
+                                                : Option.none<string | undefined>(),
+                                        ] as const
+                                )
+                            );
+                        }),
                     put: (row) =>
                         write(
                             run(
@@ -189,35 +219,58 @@ export const make = Effect.fnUntraced(function* (options: { readonly prefix?: st
                             )
                         ),
                     putIndex: (index) =>
-                        write(
-                            Effect.gen(function* () {
-                                if (index.field.path.length) {
-                                    if (index.multiEntry && dialect === "pg") {
-                                        const name = `${prefix.slice(0, 20)}_i_${crypto.randomUUID().replaceAll("-", "")}`;
-                                        yield* run(
-                                            sql.unsafe(
-                                                `CREATE INDEX ${q(name)} ON ${q(rows)} USING GIN ((${arrayIndexExpression(dialect, index.name)})) WHERE table_name=${literal(dialect, index.table)}`
-                                            )
-                                        );
-                                    }
-                                    for (const variant of index.multiEntry
-                                        ? []
-                                        : [index.name, caseInsensitiveIndex(index.name)]) {
-                                        const name = `${prefix.slice(0, 20)}_i_${crypto.randomUUID().replaceAll("-", "")}`;
-                                        const expr = indexExpression(dialect, variant);
-                                        const unique = index.unique && variant === index.name;
-                                        yield* run(
-                                            sql.unsafe(
-                                                `CREATE ${unique ? "UNIQUE " : ""}INDEX ${q(name)} ON ${q(rows)} (table_name, ${expr}${unique ? "" : ",row_key"}) WHERE table_name=${literal(dialect, index.table)}`
-                                            )
-                                        );
-                                    }
-                                }
-                                yield* run(
-                                    sql`INSERT INTO ${sql(definitions)} (table_name,index_name,data) VALUES (${index.table},${index.name},${JSON.stringify(index)})`
+                        Effect.gen(function* () {
+                            if (index.unique && index.field.path.length) {
+                                // Native grouping checks the completed projection without a
+                                // JavaScript Set, before CREATE UNIQUE INDEX could abort PG.
+                                const expression = sql.literal(indexExpression(dialect, index.name));
+                                const duplicates = yield* check(
+                                    run(
+                                        sql<{
+                                            duplicate: number;
+                                        }>`SELECT 1 AS duplicate FROM ${sql(rows)} WHERE table_name=${index.table} GROUP BY ${expression} HAVING COUNT(*) > 1 LIMIT 1`
+                                    )
                                 );
-                            })
-                        ),
+                                if (duplicates.length)
+                                    return yield* new OntologyStorageError({
+                                        operation: "unique",
+                                        reason: new UniqueConstraint({
+                                            table: index.table,
+                                            index: index.name,
+                                            message: `Duplicate value for index ${index.name}`,
+                                        }),
+                                    });
+                            }
+                            yield* write(
+                                Effect.gen(function* () {
+                                    if (index.field.path.length) {
+                                        if (index.multiEntry && dialect === "pg") {
+                                            const name = `${prefix.slice(0, 20)}_i_${crypto.randomUUID().replaceAll("-", "")}`;
+                                            yield* run(
+                                                sql.unsafe(
+                                                    `CREATE INDEX ${q(name)} ON ${q(rows)} USING GIN ((${arrayIndexExpression(dialect, index.name)})) WHERE table_name=${literal(dialect, index.table)}`
+                                                )
+                                            );
+                                        }
+                                        for (const variant of index.multiEntry
+                                            ? []
+                                            : [index.name, caseInsensitiveIndex(index.name)]) {
+                                            const name = `${prefix.slice(0, 20)}_i_${crypto.randomUUID().replaceAll("-", "")}`;
+                                            const expr = indexExpression(dialect, variant);
+                                            const unique = index.unique && variant === index.name;
+                                            yield* run(
+                                                sql.unsafe(
+                                                    `CREATE ${unique ? "UNIQUE " : ""}INDEX ${q(name)} ON ${q(rows)} (table_name, ${expr}${unique ? "" : ",row_key"}) WHERE table_name=${literal(dialect, index.table)}`
+                                                )
+                                            );
+                                        }
+                                    }
+                                    yield* run(
+                                        sql`INSERT INTO ${sql(definitions)} (table_name,index_name,data) VALUES (${index.table},${index.name},${JSON.stringify(index)})`
+                                    );
+                                })
+                            );
+                        }),
                     // Backfill projections before installing native indexes.
                     putEntry: (entry) =>
                         write(
@@ -231,8 +284,22 @@ export const make = Effect.fnUntraced(function* (options: { readonly prefix?: st
                                       : sql`UPDATE ${sql(rows)} SET projection=jsonb_set(projection, ARRAY[${projectionKey(entry.index)}]::text[], to_jsonb(${entry.value}::text)) WHERE table_name=${entry.table} AND row_key=${entry.key}`
                             ).pipe(Effect.asVoid)
                         ),
-                    // Replacements write the complete projection; deletes remove the row.
-                    deleteEntries: () => Effect.void,
+                    // Failed unpublished builds remove partial projections in native SQL.
+                    deleteEntries: (table, index, key) => {
+                        const where =
+                            key === undefined
+                                ? sql`table_name=${table}`
+                                : sql`table_name=${table} AND row_key=${key}`;
+                        const value =
+                            dialect === "sqlite"
+                                ? sql`json_remove(projection, ${`$.${projectionKey(index)}`})`
+                                : sql`projection - ${projectionKey(index)}::text`;
+                        return write(
+                            run(sql`UPDATE ${sql(rows)} SET projection=${value} WHERE ${where}`).pipe(
+                                Effect.asVoid
+                            )
+                        );
+                    },
                     countEntries: (table, index, range = {}) =>
                         check(
                             run(

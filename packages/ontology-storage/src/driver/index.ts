@@ -1,6 +1,7 @@
 import type { Index, Query, ReadTable, OntologyStorageError } from "../model.js";
 /** Backend implementor API. Versioned with the core package, not an application API. */
-import type { Effect } from "effect";
+import type { Effect, Stream } from "effect";
+export const INDEX_BACKFILL_BATCH_SIZE = 128;
 export { makeTables } from "../tables.js";
 // Encoding and native projection naming are part of the driver storage contract.
 export { scalarKey, keyCode, caseInsensitiveIndex } from "../query/evaluate.js";
@@ -36,9 +37,13 @@ export interface DriverTransaction {
     readonly clear: (table: string) => Effect.Effect<void, OntologyStorageError>;
     readonly get: (table: string, key: string) => Effect.Effect<StoredRow | undefined, OntologyStorageError>;
     readonly rows: (table: string) => Effect.Effect<readonly StoredRow[], OntologyStorageError>;
+    /** Bounded batches/iteration within the active transaction; do not buffer the whole table. */
+    readonly scanRows: (table: string) => Stream.Stream<StoredRow, OntologyStorageError>;
     readonly put: (row: StoredRow) => Effect.Effect<void, OntologyStorageError>;
     readonly delete: (table: string, key: string) => Effect.Effect<void, OntologyStorageError>;
     readonly indexes: (table: string) => Effect.Effect<readonly unknown[], OntologyStorageError>;
+    /** Publish only after backfill. Native drivers validate uniqueness before DDL so
+     * expected conflicts can be caught without aborting the native transaction. */
     readonly putIndex: (index: StoredIndex) => Effect.Effect<void, OntologyStorageError>;
     /** Return exact rows or a candidate superset requiring the shared residual evaluator. */
     readonly query: <A>(

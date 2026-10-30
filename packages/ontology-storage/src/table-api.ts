@@ -39,6 +39,7 @@ export { applyQuery, cursorOf, compareRows } from "./query/evaluate.js";
 export {
     OntologyStorageError,
     OntologyStorageErrorReason,
+    BlobStorageError,
     QueryError,
     CodecError,
     UniqueConstraint,

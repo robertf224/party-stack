@@ -10,6 +10,7 @@ import {
     field,
     type StorageTransaction,
 } from "../index.js";
+import { Table } from "../model.js";
 import { runQueryContract } from "./queries.js";
 import type { TablesService } from "../tables.js";
 
@@ -202,6 +203,76 @@ export const runOntologyContract = Effect.fnUntraced(function* (tables: TablesSe
     assert(
         (yield* storage.get(tasks, 1)) === undefined && (yield* storage.get(users, "user"))?.name === "Owner",
         "Explicit deletion crossed object stores."
+    );
+
+    const metadata = Table.make<{ value: string }>({ name: "ontology-composition-metadata" });
+    const decorated = makeOntologyStorage(model, { ...tables });
+    yield* tables.transaction((tx) =>
+        Effect.gen(function* () {
+            yield* storage.put(users, { id: "raw-outer", name: "Joined" });
+            yield* decorated.put(users, { id: "decorated", name: "Shared identity" });
+            yield* tx.put(metadata, "commit", { value: "same transaction" });
+            assert(
+                (yield* storage.get(users, "raw-outer"))?.name === "Joined",
+                "Object service must read its writes within a raw transaction"
+            );
+        })
+    );
+    assert(
+        (yield* storage.get(users, "raw-outer"))?.name === "Joined",
+        "Raw-outer object mutation did not commit"
+    );
+    assert(
+        (yield* tables.get(metadata, "commit"))?.value === "same transaction",
+        "Raw and object writes must commit together"
+    );
+    const rejected = yield* Effect.result(
+        tables.transaction(() =>
+            Effect.gen(function* () {
+                yield* tables.put(metadata, "rollback", { value: "must disappear" });
+                yield* decorated.put(users, { id: "joined-rollback", name: "Must disappear" });
+                return yield* Effect.fail("expected rollback");
+            })
+        )
+    );
+    assert(Result.isFailure(rejected), "Expected mixed transaction rollback");
+    assert(
+        (yield* storage.get(users, "joined-rollback")) === undefined &&
+            (yield* tables.get(metadata, "rollback")) === undefined,
+        "Raw-outer rollback must include object writes"
+    );
+    yield* tables.read(() =>
+        Effect.gen(function* () {
+            assert(
+                (yield* storage.get(users, "raw-outer"))?.name === "Joined",
+                "Object reads must join a raw read transaction"
+            );
+            assert(
+                (yield* decorated.query(users)).some((row) => row.key === "decorated"),
+                "Object queries must join a raw read transaction"
+            );
+        })
+    );
+    const readonly = yield* Effect.result(
+        tables.read(() => storage.put(users, { id: "readonly", name: "Rejected" }))
+    );
+    assert(
+        Result.isFailure(readonly) &&
+            readonly.failure.reason._tag === "TransactionError" &&
+            readonly.failure.reason.kind === "ReadOnly",
+        "Joining a raw read transaction must reject writes as ReadOnly, not Nested"
+    );
+    yield* errorReason(
+        storage.read(() => tables.put(metadata, "readonly", { value: "rejected" })),
+        "TransactionError"
+    );
+    yield* errorReason(
+        tables.transaction(() => storage.transaction(() => Effect.void)),
+        "TransactionError"
+    );
+    yield* errorReason(
+        storage.transaction(() => tables.transaction(() => Effect.void)),
+        "TransactionError"
     );
 
     const typeChecks = () => {

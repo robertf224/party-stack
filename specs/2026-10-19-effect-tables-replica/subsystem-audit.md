@@ -340,8 +340,11 @@ and opportunities to remove duplicate or unused machinery.
 
 1. **Storage and transactions:** table services, SQL/IndexedDB/memory parity,
    codecs, indexes/planning, transaction isolation, journal commits.
-   The [October 29 review](./storage-transactions-review.md) records the API,
-   driver guarantees and a confirmed caught-write/attachment-retention bug.
+   The [storage review](./storage-transactions-review.md), updated October 30,
+   records driver guarantees, the fixed caught-write/retention bug and regression
+   coverage. Ambient raw/object composition and attachment error classification
+   are fixed, and index backfills stream within a transaction. Pure-helper boundary
+   cleanup and broader performance work remain deferred.
 2. **Replica state and actions:** base/inherited predictions/local overlay,
    outbox transitions, receipts, acceptance versus confirmation, rebasing and
    lost-response recovery.

@@ -121,6 +121,11 @@ and composable UI fragments. Delivery resume is recorded separately in
 [incremental-delivery.md](./incremental-delivery.md#future-work-resume-after-a-transport-interruption);
 persisted client sessions do not yet make delivery subscriptions resumable.
 
+Copy-on-write memory storage and versioned overlay/rebase checkpoints are deferred
+performance investigations, not v0 gates. See the
+[structural-sharing follow-up](./storage-transactions-review.md#future-work-structural-sharing-and-rebase-checkpoints)
+for benchmark targets, replay correctness and version-GC requirements.
+
 Native server delivery is now explicitly selectable with deliveryStrategy:
 auto (default), snapshot or incremental. Both committed and speculative clients
 follow the advertised strategy. Snapshot mode keeps invalidation/finite reads and
@@ -184,8 +189,10 @@ tracked in [blob-future-work.md](./blob-future-work.md).
   safe whole-transaction retries and real multi-connection tests. Revisit the
   owned backend's shared journal-head row before claiming concurrent action
   throughput. A plain sequence is not a safe publication cursor: allocation
-  order can differ from commit order. Keep changes in the SQL driver and journal
-  module, rather than adding platform branches throughout the runtime.
+  order can differ from commit order. Compare a narrow publication lock with a
+  WAL-based PostgreSQL feed; see [the concurrency note](./postgres-concurrency.md)
+  for the issue/transaction example and Zero's commit-LSN approach. Keep changes
+  in the SQL driver and journal module, rather than platform branches in runtime.
 
 - Portable query IR/builder with correlated subqueries, relationship helpers,
   cross-ontology references, security/demand interpretation and deeper limit pushdown.

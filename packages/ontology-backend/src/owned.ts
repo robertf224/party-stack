@@ -600,7 +600,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         policy
     ) =>
         makeDelivery({
-            tables: { ...tables, transaction: (body) => storage.transaction(() => body(tables)) },
+            tables,
             namespace: options.namespace,
             policy,
             changes: PubSub.subscribe(wakes).pipe(Effect.map(Stream.fromSubscription)),

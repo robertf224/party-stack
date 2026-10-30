@@ -183,7 +183,12 @@ applies limit/offset before residual checks; fully supported queries paginate in
 the engine. See the backend READMEs for physical layouts and verification.
 
 Logical index creation does not upgrade the IndexedDB database. Creating an index
-scans/backfills the table and should be performed deliberately.
+backfills the table within one transaction and should be performed deliberately.
+The source is consumed incrementally: memory uses bounded iterator chunks;
+IndexedDB/SQL use 128-row pages. Failed builds clean up unpublished entries or
+projections, including when callers catch the error and retry. SQL uniqueness
+checking and physical index creation use native database operations. The portable
+projection preparation still runs in JavaScript; the full table is not buffered.
 
 Index names identify immutable definitions. Repeating the same declaration is
 idempotent; changing its path/uniqueness under the same name fails. Physical SQL
@@ -224,16 +229,17 @@ Call sites construct an explicit reason. No classification is guessed from an
 operation label. `error.cause` is the reason error; `error.reason.cause` retains
 an original codec/backend exception when one exists.
 
-| `reason._tag`        | Meaning                                                        |
-| -------------------- | -------------------------------------------------------------- |
-| `QueryError`         | Invalid pagination, cursor, key, or query scalar               |
-| `CodecError`         | Encode/decode failure, with `direction`                        |
-| `UniqueConstraint`   | A duplicate value, with `table` and `index`                    |
-| `SchemaMismatch`     | Stored version differs, with `table`, `expected`, `actual`     |
-| `IndexError`         | Invalid index or a changed immutable definition                |
-| `TransactionError`   | `Closed`, `Nested`, `ReadOnly`, or backend transaction failure |
-| `ConfigurationError` | Invalid backend configuration                                  |
-| `StorageError`       | Backend failure; inspect the preserved native/Effect SQL cause |
+| `reason._tag`        | Meaning                                                             |
+| -------------------- | ------------------------------------------------------------------- |
+| `QueryError`         | Invalid pagination, cursor, key, or query scalar                    |
+| `BlobStorageError`   | Attachment retention/bytes failure; inspect `kind` and retryability |
+| `CodecError`         | Encode/decode failure, with `direction`                             |
+| `UniqueConstraint`   | A duplicate value, with `table` and `index`                         |
+| `SchemaMismatch`     | Stored version differs, with `table`, `expected`, `actual`          |
+| `IndexError`         | Invalid index or a changed immutable definition                     |
+| `TransactionError`   | `Closed`, `Nested`, `ReadOnly`, or backend transaction failure      |
+| `ConfigurationError` | Invalid backend configuration                                       |
+| `StorageError`       | Backend failure; inspect the preserved native/Effect SQL cause      |
 
 ```ts
 const handled = tables

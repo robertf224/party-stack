@@ -1,6 +1,7 @@
 import * as IndexedDb from "@effect/platform-browser/IndexedDb";
 import {
     makeTables,
+    INDEX_BACKFILL_BATCH_SIZE,
     storageError,
     transactionError,
     type DriverTransaction,
@@ -11,7 +12,7 @@ import {
 } from "@party-stack/ontology-storage/driver";
 import { queryRows } from "@party-stack/ontology-storage/planner";
 import { Tables, OntologyStorageError } from "@party-stack/ontology-storage/tables";
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Exit, Layer, Option, Stream } from "effect";
 
 const stores = ["rows", "definitions", "entries"];
 const error = (operation: string, cause: unknown) => storageError("indexeddb", operation, cause);
@@ -91,8 +92,11 @@ function rawTransaction(
                 ? keyRange.bound([table, index], [table, index, []])
                 : keyRange.only([table, index, key]);
         const source = key === undefined ? tx.objectStore("entries") : tx.objectStore("entries").index("row");
-        const keys = yield* run(() => source.getAllKeys(range));
-        for (const primary of keys) yield* run(() => tx.objectStore("entries").delete(primary));
+        while (true) {
+            const keys = yield* run(() => source.getAllKeys(range, INDEX_BACKFILL_BATCH_SIZE));
+            for (const primary of keys) yield* run(() => tx.objectStore("entries").delete(primary));
+            if (keys.length < INDEX_BACKFILL_BATCH_SIZE) break;
+        }
     });
     const raw: DriverTransaction = {
         query: (table, indexes, query) =>
@@ -106,6 +110,32 @@ function rawTransaction(
             run(() => tx.objectStore("rows").get([table, key]) as IDBRequest<StoredRow | undefined>),
         rows: (table) =>
             run(() => tx.objectStore("rows").index("table").getAll(table) as IDBRequest<StoredRow[]>),
+        scanRows: (table) =>
+            Stream.paginate(undefined as string | undefined, (after) =>
+                run(
+                    () =>
+                        tx
+                            .objectStore("rows")
+                            .getAll(
+                                keyRange.bound(
+                                    after === undefined ? [table] : [table, after],
+                                    [table, []],
+                                    after !== undefined
+                                ),
+                                INDEX_BACKFILL_BATCH_SIZE
+                            ) as IDBRequest<StoredRow[]>
+                ).pipe(
+                    Effect.map(
+                        (rows) =>
+                            [
+                                rows,
+                                rows.length === INDEX_BACKFILL_BATCH_SIZE
+                                    ? Option.some(rows.at(-1)!.key)
+                                    : Option.none<string | undefined>(),
+                            ] as const
+                    )
+                )
+            ),
         put: (row) => run(() => tx.objectStore("rows").put(row)).pipe(Effect.asVoid),
         delete: (table, key) => run(() => tx.objectStore("rows").delete([table, key])),
         indexes: (table) =>

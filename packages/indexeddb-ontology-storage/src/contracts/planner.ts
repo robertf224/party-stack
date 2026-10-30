@@ -33,18 +33,28 @@ export const checkPlanner = () =>
                     tags: i === 42 ? ["urgent", "urgent"] : [],
                 },
             }));
-            yield* tables.withTransaction(
-                Effect.gen(function* () {
-                    for (const row of all) yield* tables.put(table, row.key, row.value);
-                    for (const name of ["n", "category", "name"])
-                        yield* tables.ensureIndex(table, { name, field: field(name) });
-                    yield* tables.ensureIndex(table, {
-                        name: "tags",
-                        field: field("tags"),
-                        multiEntry: true,
-                    });
-                })
-            );
+            const backfillGets = vi.spyOn(IDBObjectStore.prototype, "getAll");
+            try {
+                yield* tables.withTransaction(
+                    Effect.gen(function* () {
+                        for (const row of all) yield* tables.put(table, row.key, row.value);
+                        for (const name of ["n", "category", "name"])
+                            yield* tables.ensureIndex(table, { name, field: field(name) });
+                        yield* tables.ensureIndex(table, {
+                            name: "tags",
+                            field: field("tags"),
+                            multiEntry: true,
+                        });
+                    })
+                );
+                const rowBatches = backfillGets.mock.calls.filter(
+                    (_, i) => (backfillGets.mock.contexts[i] as IDBObjectStore).name === "rows"
+                );
+                expect(rowBatches.length).toBeGreaterThan(1);
+                expect(rowBatches.every(([, limit]) => limit === 128)).toBe(true);
+            } finally {
+                backfillGets.mockRestore();
+            }
             const gets = vi.spyOn(IDBObjectStore.prototype, "get");
             const scans = vi.spyOn(IDBObjectStore.prototype, "getAll");
             const indexScans = vi.spyOn(IDBIndex.prototype, "getAll");

@@ -114,6 +114,14 @@ source's indexed query path and evaluates residual expressions before pagination
 This is finite execution, not query watching/IVM. SQL currently plans the lowered
 source queries; a hierarchical document is not compiled into one native SQL join.
 
+Index creation streams existing rows within one transaction. IndexedDB and SQL
+use 128-row batches; memory iterates its stored rows in bounded chunks. This
+avoids a second table-sized row/entry array. SQL still prepares portable projection
+values before native index creation; native object columns remain deferred with
+schema/data migrations. An index is published only after success, and caught
+failed builds remove partial entries/projections before a retry. The transaction
+still lasts for the full build; this is not an online or resumable migration.
+
 ## Transactions and schema identity
 
 ```ts
@@ -128,7 +136,8 @@ yield *
 ```
 
 Both callback transactions and `effect.pipe(storage.withTransaction)` share the
-native transaction with service calls. Read transactions reject writes; failures,
+native transaction with service calls. Object and raw Tables service calls can
+join in either direction; explicit nested boundaries still reject. Read transactions reject writes; failures,
 defects, and interruption roll back. Keys, object values, index entries, and the
 namespace definition stamp commit together. A failed object mutation makes the transaction rollback-only, even when its failure is caught inside the callback. Catch outside `storage.transaction(...)` to inspect the error after rollback. Complete object mutations are serialized within a transaction, including attachment-root updates. Handles expire at commit/abort;
 nested transaction boundaries are rejected. Keep network and blob I/O outside
@@ -144,7 +153,10 @@ and tokens from another model are rejected.
 When supplying generated codecs, the IR and codecs must come from the same generation. Model setup checks
 object names and primary keys; it does not prove an arbitrary hand-authored Effect
 codec is equivalent to the entire ontology. Existing rows are validated on reads
-and new rows on writes. Codec and query failures remain typed storage errors.
+and new rows on writes. Codec and query failures remain typed storage errors. Attachment-retention
+failures preserve a `BlobStorageError` reason (`NotFound`, `Busy`, `Conflict`,
+`InvalidValue`, `Bytes`) or pass existing storage failures through unchanged;
+they are not serialization failures.
 
 ## Attachments and retention
 

@@ -1,4 +1,4 @@
-import { Context, Effect, Schema, Semaphore } from "effect";
+import { Cause, Context, Effect, Exit, Schema, Semaphore, Stream } from "effect";
 import {
     codecError,
     indexError,
@@ -30,6 +30,7 @@ import {
 import { executeQuery } from "./query/execute.js";
 import { IndexSchema } from "./query/schema.js";
 import { StoredIndexSchema } from "./storage/schema.js";
+import { CurrentTransactions, provideTransaction, TransactionIdentity } from "./transactionContext.js";
 import type { Driver, DriverTransaction, Entry, StoredIndex } from "./driver/index.js";
 import type { QueryDocument, OntologyIR } from "@party-stack/ontology-spec";
 
@@ -67,6 +68,7 @@ export interface Transaction extends ReadTransaction {
     readonly ensureIndex: <A>(table: Table<A>, index: Index) => Effect.Effect<void, OntologyStorageError>;
 }
 export interface TablesService extends Transaction {
+    readonly [TransactionIdentity]?: symbol;
     /** Effect-style transaction combinators. Service operations reuse the contextual transaction. */
     readonly withTransaction: <A, E, R>(
         effect: Effect.Effect<A, E, R>
@@ -88,7 +90,12 @@ const attempt = <A>(operation: string, body: () => A): Effect.Effect<A, Ontology
     Effect.try({ try: body, catch: (cause) => queryError(operation, cause) });
 const codec = <A>(direction: "encode" | "decode", body: () => A): Effect.Effect<A, OntologyStorageError> =>
     Effect.try({ try: body, catch: (cause) => codecError(direction, cause) });
-function transaction(raw: DriverTransaction, writable: boolean, isOpen: () => boolean): Transaction {
+function transaction(
+    raw: DriverTransaction,
+    writable: boolean,
+    isOpen: () => boolean,
+    identity: symbol
+): Transaction {
     const gate = Semaphore.makeUnsafe(1);
     const guarded = <A>(effect: Effect.Effect<A, OntologyStorageError>) =>
         gate.withPermits(1)(
@@ -186,10 +193,12 @@ function transaction(raw: DriverTransaction, writable: boolean, isOpen: () => bo
     const deleteRow = Effect.fnUntraced(function* <A>(table: Table<A>, key: Key) {
         yield* assertWrite();
         const code = yield* attempt("key", () => keyCode(key));
-        for (const index of yield* definitions(table)) {
-            yield* raw.deleteEntries(table.name, index.name, code);
-            yield* raw.deleteEntries(table.name, caseInsensitiveIndex(index.name), code);
-        }
+        const indexes = yield* definitions(table);
+        if (!raw.nativeIndexes)
+            for (const index of indexes) {
+                yield* raw.deleteEntries(table.name, index.name, code);
+                yield* raw.deleteEntries(table.name, caseInsensitiveIndex(index.name), code);
+            }
         yield* raw.delete(table.name, code);
     });
     const makeEntries = Effect.fnUntraced(function* (index: StoredIndex, key: string, value: unknown) {
@@ -205,7 +214,11 @@ function transaction(raw: DriverTransaction, writable: boolean, isOpen: () => bo
         const entries: Entry[] = [];
         for (const code of codes) {
             if (index.unique) {
-                const conflicts = yield* raw.entries(index.table, index.name, { lower: code, upper: code });
+                const conflicts = yield* raw.entries(index.table, index.name, {
+                    lower: code,
+                    upper: code,
+                    limit: 2,
+                });
                 if (conflicts.some((entry) => entry.key !== key))
                     return yield* Effect.fail(
                         new OntologyStorageError({
@@ -317,33 +330,42 @@ function transaction(raw: DriverTransaction, writable: boolean, isOpen: () => bo
                 return;
             }
             const definition: StoredIndex = { ...index, table: table.name, version: table.version };
-            const entries: Entry[] = [];
-            const unique = new Set<string>();
-            for (const row of yield* raw.rows(table.name)) {
-                const value = yield* codec("decode", () => table.decode(row.data));
-                for (const entry of yield* makeEntries({ ...definition, unique: false }, row.key, value)) {
-                    if (index.unique && unique.has(entry.value))
-                        return yield* Effect.fail(
-                            new OntologyStorageError({
-                                operation: "unique",
-                                reason: new UniqueConstraint({
-                                    table: table.name,
-                                    index: index.name,
-                                    message: `Duplicate value for index ${index.name}`,
-                                }),
-                            })
+            const build = Effect.gen(function* () {
+                yield* Stream.runForEach(raw.scanRows(table.name), (row) =>
+                    Effect.gen(function* () {
+                        const value = yield* codec("decode", () => table.decode(row.data));
+                        const entries = yield* makeEntries(
+                            { ...definition, unique: index.unique && !raw.nativeIndexes },
+                            row.key,
+                            value
                         );
-                    unique.add(entry.value);
-                    entries.push(entry);
-                    if (!index.multiEntry) entries.push(foldedEntry(entry, value, index));
-                }
-            }
-            yield* Effect.all(
-                entries.map((entry) => raw.putEntry(entry)),
-                { concurrency: 128, discard: true }
+                        for (const entry of entries) {
+                            yield* raw.putEntry(entry);
+                            if (!index.multiEntry) yield* raw.putEntry(foldedEntry(entry, value, index));
+                        }
+                    })
+                );
+                yield* raw.putIndex(definition);
+                knownDefinitions.delete(table.name);
+            });
+            yield* build.pipe(
+                Effect.onExit((exit) => {
+                    if (Exit.isSuccess(exit)) return Effect.void;
+                    // This unpublished index has no prior entries. Remove partial work so
+                    // callers can catch validation errors and continue the transaction.
+                    return raw.deleteEntries(table.name, index.name).pipe(
+                        Effect.andThen(raw.deleteEntries(table.name, caseInsensitiveIndex(index.name))),
+                        Effect.catchCause((cleanupCause) =>
+                            Effect.flatMap(CurrentTransactions, (active) =>
+                                Effect.sync(() => {
+                                    // Failed cleanup must never allow partial index state to commit.
+                                    active.get(identity)!.invalidate(Cause.combine(exit.cause, cleanupCause));
+                                })
+                            )
+                        )
+                    );
+                })
             );
-            yield* raw.putIndex(definition);
-            knownDefinitions.delete(table.name);
         }),
     };
     function guardedQuery(
@@ -368,10 +390,6 @@ function transaction(raw: DriverTransaction, writable: boolean, isOpen: () => bo
         ensureIndex: (table, index) => guarded(api.ensureIndex(table, index)),
     };
 }
-const CurrentTransactions = Context.Reference<ReadonlyMap<symbol, Transaction>>(
-    "@party-stack/ontology-storage/CurrentTransactions",
-    { defaultValue: () => new Map() }
-);
 export function makeTables(driver: Driver): TablesService {
     const identity = Symbol();
     const run = Effect.fnUntraced(function* <A, E, R>(
@@ -389,14 +407,13 @@ export function makeTables(driver: Driver): TablesService {
         return yield* driver.transaction(mode, (raw) =>
             Effect.suspend(() => {
                 let open = true;
-                const tx = transaction(raw, mode === "readwrite", () => open);
-                return body(tx).pipe(
+                const tx = transaction(raw, mode === "readwrite", () => open, identity);
+                return provideTransaction(identity, tx, mode === "readwrite", () => body(tx)).pipe(
                     Effect.onExit(() =>
                         Effect.sync(() => {
                             open = false;
                         })
-                    ),
-                    Effect.provideService(CurrentTransactions, new Map([...active, [identity, tx]]))
+                    )
                 );
             })
         );
@@ -406,8 +423,8 @@ export function makeTables(driver: Driver): TablesService {
         body: (tx: Transaction) => Effect.Effect<A, OntologyStorageError>
     ) =>
         Effect.flatMap(CurrentTransactions, (active) => {
-            const tx = active.get(identity);
-            return tx ? body(tx) : run(mode, body);
+            const state = active.get(identity);
+            return state ? body(state.tx) : run(mode, body);
         });
     function query(
         document: QueryDocument,
@@ -420,6 +437,7 @@ export function makeTables(driver: Driver): TablesService {
             : operation("readonly", (tx) => tx.query(request, options as Query));
     }
     return {
+        [TransactionIdentity]: identity,
         transaction: (body) => run("readwrite", body),
         read: (body) => run("readonly", body),
         withTransaction: (effect) => run("readwrite", () => effect),

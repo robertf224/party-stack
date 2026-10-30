@@ -1,4 +1,5 @@
 import { OntologyStorageError } from "@party-stack/ontology-storage";
+import { BlobStorageError } from "@party-stack/ontology-storage/blobs";
 import { Predicate, Schema, SchemaIssue, Redacted } from "effect";
 import { HttpClientError } from "effect/http";
 import { RpcClientError } from "effect/rpc";
@@ -179,6 +180,37 @@ export function classifyBackendFailure(operation: string, cause: unknown): Backe
             actionOutcome: "not-committed",
             cause: Redacted.make(cause),
         });
+    const blob =
+        cause instanceof BlobStorageError
+            ? cause
+            : cause instanceof OntologyStorageError && cause.reason._tag === "BlobStorageError"
+              ? cause.reason
+              : undefined;
+    if (blob) {
+        return new BackendError({
+            operation,
+            kind:
+                blob.kind === "NotFound"
+                    ? "NotFound"
+                    : blob.kind === "InvalidValue"
+                      ? "InvalidRequest"
+                      : blob.kind === "Busy" || blob.kind === "Conflict"
+                        ? "Conflict"
+                        : "Unavailable",
+            message:
+                blob.kind === "NotFound"
+                    ? "Attachment is unavailable."
+                    : blob.kind === "Busy"
+                      ? "Attachment upload is still in progress."
+                      : blob.kind === "Conflict"
+                        ? "Attachment state conflicts with this operation."
+                        : blob.kind === "InvalidValue"
+                          ? "Invalid attachment value."
+                          : "Attachment storage is unavailable.",
+            retryable: blob.kind === "Busy" || blob.kind === "Bytes",
+            cause: Redacted.make(cause),
+        });
+    }
     if (cause instanceof OntologyStorageError) {
         const reason = cause.reason;
         const kind: BackendErrorKind =

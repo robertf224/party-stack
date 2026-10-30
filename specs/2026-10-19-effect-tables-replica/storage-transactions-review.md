@@ -1,7 +1,8 @@
 # Storage and transactions review — 2026-10-29
 
-This is the working review record, not a claim that every possible transaction
-schedule has been proved correct. Implementation is unchanged during this review.
+Updated October 30. This working record preserves the initial findings and the
+subsequent fixes; it is not a claim that every possible transaction schedule has
+been proved correct. The October 30 follow-up records the implemented changes.
 
 ## Review checklist
 
@@ -12,8 +13,16 @@ schedule has been proved correct. Implementation is unchanged during this review
 - [x] Errors and recovery semantics
 - [x] Index/planning paths and scaling limits
 - [x] Existing verification and a targeted cross-driver reproduction
-- [ ] Agree on failed-operation semantics before implementing the confirmed fix
-- [ ] Add regressions for partial failures in composed object/blob operations
+- [x] Define failed-object-mutation semantics and implement rollback-only protection
+- [x] Add cross-driver regressions for caught/uncaught object/blob failures and concurrent mutations
+- [x] Unify ambient raw/object transaction composition (F3), preserving explicit nesting rejection
+- [x] Preserve attachment-retention failures and normalize downstream recovery categories
+- [x] Stream transactional index backfills and clean up caught partial failures
+
+Pure helper expected-error boundaries (F2) remain recorded below; the review
+explicitly deferred that pass. Structural sharing, SQL concurrency, native schema
+migrations, broader SQL query compilation and online/resumable index creation remain
+separate follow-ups rather than new correctness claims.
 
 ## 1. Public API and responsibility
 
@@ -167,13 +176,17 @@ isolation within a transaction.
   logical predicates to storage filters and rechecks residuals. Keeping physical
   plans small is reasonable, but operator semantics and lowering need parity
   tests; this is not yet literally a shared Subset type.
-- Object retention failures are currently wrapped as `CodecError`, including
-  missing authoritative bytes. That obscures the cause category. Preserve the
-  distinction when hardening F1 rather than reporting every blob failure as a
-  serialization problem.
-- `ensureIndex` backfills the full logical table and builds an in-memory entry
-  array. It is deliberate setup work, not a bounded online migration. Large late
-  index creation can be expensive in a DO or browser.
+- Attachment retention now preserves BlobStorageError or existing storage errors;
+  it is no longer classified as a codec error. The backend maps NotFound to a
+  nonretryable missing attachment, Busy to retryable Conflict, and Bytes to
+  Unavailable. Parameter/property attribution remains an action-layer concern.
+- `ensureIndex` now streams rows within the same transaction, without a table-sized
+  entries array or uniqueness Set. Memory iterates its map with bounded chunks;
+  IndexedDB and SQL use 128-row keyset batches. Memory/IndexedDB build provisional
+  entries; SQL prepares portable projections in batches and uses native grouping
+  and CREATE INDEX. Partial failed builds are cleaned before a caught retry;
+  cleanup failure makes the transaction rollback-only. This bounds scan buffers,
+  not total index size, transaction duration or database-engine workspace.
 - Unindexed/residual queries can hydrate a broad candidate set. Limit does not
   guarantee a bounded scan when filtering/sorting is residual.
 - Memory first-write copies a changed table's map and changed index buckets.
@@ -187,7 +200,7 @@ isolation within a transaction.
   signature used by replica/backend protocols has broader compatibility meaning.
   These two stamps should remain explicitly named/documented rather than confused.
 
-## Verification
+## Initial verification, before the fix
 
 The existing storage/SQL/IndexedDB task graph passed 15/15 tasks from unchanged
 input caches. This is baseline coverage, not evidence that F1 is safe. The fresh
@@ -203,7 +216,7 @@ composition in F1. No production fix or new regression has been applied yet.
 | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Memory driver row/definition/index Maps                            | Life of the memory Tables instance; size follows stored data                           | The database itself, not a second cache. A semaphore serializes transactions. First write copies the changed table map/index bucket; successful completion publishes working state, failure discards it.           |
 | Raw transaction `knownDefinitions`                                 | One transaction; one entry per table touched                                           | Avoid repeated metadata decoding/reads. Released with the transaction.                                                                                                                                             |
-| `CurrentTransactions` Context Maps                                 | Active Effect transaction context                                                      | Route calls on a particular storage service to the active handle; not a process-global transaction registry. Detached child fibers can retain their inherited context, so callers must join transaction work.      |
+| Shared `CurrentTransactions` Context Map                           | Active Effect transaction context                                                      | Route calls on a particular storage service to the active handle; not a process-global transaction registry. Detached child fibers can retain their inherited context, so callers must join transaction work.      |
 | `compiled` WeakMap                                                 | Lifetime of reachable StorageModel keys                                                | Stores compiled model metadata without keeping discarded models alive. Its per-model object-token Map has one entry per defined object type. It is private model implementation state, not a row or request cache. |
 | Blob `owners` WeakMap                                              | Lifetime of storage identity keys; values contain active scoped blob-service owner IDs | Scope registration/release maintains the Set. Unknown owners are considered dead only under the documented exclusive-process-owner assumption. This is not cross-process liveness or tab/client session tracking.  |
 | Planner hydration cache, overlay key merge, query-index collection | One query/helper execution                                                             | Deduplicate hydrated rows, merge sparse layers or collect declarations. Temporary does not imply small: broad scans or loading all override rows can still require significant memory.                             |
@@ -274,13 +287,19 @@ failures, the original row/root, and unrelated raw writes rolling back together.
 The query contract covers raw and ontology documents on all drivers, including
 correlation, pagination, computed/conditional selections, inputs and expired handles.
 
+Verification after these changes: workspace CI passed 133/133 tasks; real Chromium
+IndexedDB contract/planner/keyring coverage passed 3/3 tests (11/11 task graph).
+The shared contract ran on memory, native SQLite, PostgreSQL via PGlite, fake
+IndexedDB and native Chromium IndexedDB; the workspace also checked the DO bridge.
+
 Memory still clones a touched table Map and changed sorted index arrays. A
 structurally shared B-tree (or persistent key map plus ordered indexes) is a
 candidate improvement; benchmark small updates to large tables before selecting
 an implementation. No B-tree or native SQL schema migration was added here.
 
-Confirmed finding F3: raw/object transaction composition is currently asymmetric.
-A fresh memory reproduction showed:
+Initial finding F3: raw/object transaction composition was asymmetric. It is now
+fixed by sharing physical transaction state and per-storage wrapper bindings.
+The initial reproduction was:
 
 ```ts
 // Success: the object transaction establishes both contexts.
@@ -290,10 +309,38 @@ yield * storage.transaction(() => tables.put(metadata, "key", 1));
 yield * tables.transaction(() => storage.put(model.objects.Issue, { id: "one" }));
 ```
 
-Object service calls reuse the object-context transaction, while raw service calls
-reuse the underlying Tables context. With only the latter present, the object
-wrapper starts a new raw boundary rather than wrapping the existing transaction.
-Current owned backend composition puts the object transaction outside, so its
-journal/receipt path works. This is a composability limitation to simplify alongside
-transaction-scoped full-query execution; the two transaction-context Maps are
-bounded, but their layering is not completely transparent to callers.
+Both service-call directions now reuse the same physical transaction. The former
+separate object transaction Context Map is gone. Rollback-only state and complete
+object mutation serialization live at the physical boundary, including when
+multiple wrappers join it. Explicit nested transaction callbacks still reject;
+joining a read-only transaction cannot promote it to a write. Owned delivery
+capture no longer needs a nesting-order adapter. Shared driver contracts cover
+both directions, service spreads, read-only behavior, rollback and caught failures.
+
+## Future work: structural sharing and rebase checkpoints
+
+Deferred after the October 30 review; not a v0 requirement or an implementation
+commitment. Keep the current base/outbox/sparse-overlay model while investigating:
+
+- **Memory driver first.** Benchmark a structurally shared B-tree or persistent
+  key map plus ordered indexes against the current touched-table Map clones and
+  sorted-array index maintenance. Measure small writes to large tables, allocation,
+  rollback and range queries; maintain the existing cross-driver contract.
+- **Overlay reads and rebase.** Measure the cost of merging sparse overrides and
+  clearing/replaying the pending outbox. Consider indexed visible-state branches,
+  cheap snapshot roots and structural diffs only where measurements justify them.
+  Versioned branches could reduce snapshot/diff work, but do not by themselves
+  remove the need to rerun actions against changed upstream state.
+- **Correctness before replay reuse.** Reusing earlier action results requires
+  accounting for key reads, query membership/negative reads, action ordering and
+  execution context. Existing retention dependencies alone do not establish that
+  a replay can safely be skipped. Compare any optimization with full replay using
+  generated operation sequences and the existing oracle approach.
+- **Version lifetime.** Any retained roots/checkpoints need explicit scope,
+  retention, crash recovery and GC, including index and attachment dependencies.
+  Measure peak memory/disk and write amplification as well as latency.
+- **Preserve driver choices.** Do not require SQL storage to become an opaque
+  versioned B-tree. Keep native database transactions and indexes, and investigate
+  application-level historical branches separately from the memory-driver change.
+
+Reference: [Replicache's versioned rebase model](https://doc.replicache.dev/concepts/how-it-works).

@@ -1,7 +1,8 @@
-import { Context, Effect, Exit, Layer, Semaphore } from "effect";
+import { Context, Effect, Layer } from "effect";
 import { collectObjectAttachments, type BlobStorageService } from "../blobs/index.js";
 import {
     codecError,
+    attachmentError,
     configurationError,
     DefinitionMismatch,
     OntologyStorageError,
@@ -9,11 +10,12 @@ import {
 } from "../errors.js";
 import { executeQuery } from "../query/execute.js";
 import { Tables, type TablesService, type Transaction } from "../tables.js";
+import { useTransaction } from "../transactionContext.js";
 import { validateField, validateObjectQuery } from "./fields.js";
 import { compiledModel, type ObjectStore, type StorageModel } from "./model.js";
 import type { Index, Key, Query, Row } from "../model.js";
+import type { TransactionState } from "../transactionContext.js";
 import type { QueryDocument } from "@party-stack/ontology-spec";
-import type { Cause } from "effect";
 
 export interface StorageQueryOptions {
     readonly inputs?: Record<string, unknown>;
@@ -71,10 +73,6 @@ export class OntologyStorage extends Context.Service<OntologyStorage, OntologySt
             Effect.map(Tables, (tables) => makeOntologyStorage(model, tables))
         );
 }
-const CurrentTransactions = Context.Reference<ReadonlyMap<symbol, StorageTransaction>>(
-    "@party-stack/ontology-storage/CurrentObjectTransactions",
-    { defaultValue: () => new Map() }
-);
 const convert = <A>(direction: "encode" | "decode", f: () => A) =>
     Effect.try({ try: f, catch: (cause) => codecError(direction, cause) });
 const checkQuery = (f: () => void) => Effect.try({ try: f, catch: (cause) => queryError("query", cause) });
@@ -87,22 +85,12 @@ export function makeOntologyStorage(
 ): OntologyStorageService {
     const compiled = compiledModel(model);
     const identity = Symbol();
-    const wrap = (tx: Transaction, writable: boolean) => {
+    const wrap = (
+        tx: Transaction,
+        writable: boolean,
+        mutation: TransactionState["mutation"]
+    ): StorageTransaction => {
         let checked = false;
-        let failed: Cause.Cause<OntologyStorageError> | undefined;
-        const gate = Semaphore.makeUnsafe(1);
-        // A multi-step object mutation includes its attachment roots. Without savepoints,
-        // a caught failure must still abort the physical transaction, never commit half a put.
-        const mutation = <A>(effect: Effect.Effect<A, OntologyStorageError>) =>
-            gate.withPermits(1)(
-                Effect.suspend(() => (failed ? Effect.failCause(failed) : effect)).pipe(
-                    Effect.onExit((exit) =>
-                        Effect.sync(() => {
-                            if (Exit.isFailure(exit)) failed ??= exit.cause;
-                        })
-                    )
-                )
-            );
         const guard = Effect.gen(function* () {
             // Even a literal-only query must reject an escaped transaction handle.
             yield* tx.query(compiled.stamp, { limit: 0 });
@@ -213,7 +201,7 @@ export function makeOntologyStorage(
                             ),
                             { bytes: false }
                         )
-                        .pipe(Effect.mapError((cause) => codecError("encode", cause)));
+                        .pipe(Effect.mapError((cause) => attachmentError("attachment.retain", cause)));
                 yield* tx.put(definition.table, input, encoded);
             }, mutation),
             delete: Effect.fnUntraced(function* <A, K extends Key>(object: ObjectStore<A, K>, input: K) {
@@ -224,7 +212,7 @@ export function makeOntologyStorage(
                     yield* options.blobs
                         .in(tx)
                         .release(JSON.stringify(["object", model.namespace, object.name, selected]))
-                        .pipe(Effect.mapError((cause) => codecError("encode", cause)));
+                        .pipe(Effect.mapError((cause) => attachmentError("attachment.release", cause)));
                 yield* tx.delete(definition.table, selected);
             }, mutation),
             ensureIndex: Effect.fnUntraced(function* <A>(object: ObjectStore<A>, index: Index) {
@@ -234,29 +222,26 @@ export function makeOntologyStorage(
                 yield* tx.ensureIndex(definition.table, index);
             }, mutation),
         };
-        return { tx: api, complete: Effect.suspend(() => (failed ? Effect.failCause(failed) : Effect.void)) };
+        return api;
     };
-    const run = <A, E, R>(writable: boolean, body: (tx: StorageTransaction) => Effect.Effect<A, E, R>) => {
-        const inside = (raw: Transaction) => {
-            const { tx, complete } = wrap(raw, writable);
-            return Effect.flatMap(CurrentTransactions, (active) =>
-                body(tx).pipe(
-                    Effect.tap(() => complete),
-                    Effect.provideService(CurrentTransactions, new Map([...active, [identity, tx]]))
-                )
-            );
-        };
-        // Read transactions have the same runtime operations with write rejection.
-        return writable ? tables.transaction(inside) : tables.read((raw) => inside(raw as Transaction));
-    };
-    const operation = <A>(
+    const operation = <A, E, R>(
         writable: boolean,
-        body: (tx: StorageTransaction) => Effect.Effect<A, OntologyStorageError>
+        body: (tx: StorageTransaction) => Effect.Effect<A, E, R>
     ) =>
-        Effect.flatMap(CurrentTransactions, (active) => {
-            const tx = active.get(identity);
-            return tx ? body(tx) : run(writable, body);
-        });
+        useTransaction(tables, writable, (state) =>
+            Effect.suspend(() => {
+                let tx = state.bindings.get(identity) as StorageTransaction | undefined;
+                if (!tx) {
+                    tx = wrap(state.tx, state.writable, state.mutation);
+                    state.bindings.set(identity, tx);
+                }
+                return body(tx);
+            })
+        );
+    const run = <A, E, R>(writable: boolean, body: (tx: StorageTransaction) => Effect.Effect<A, E, R>) =>
+        writable
+            ? tables.transaction(() => operation(true, body))
+            : tables.read(() => operation(false, body));
     function query(
         document: QueryDocument,
         options?: StorageQueryOptions

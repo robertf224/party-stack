@@ -34,6 +34,7 @@ export { indexesForQuery } from "./query/indexes.js";
 export {
     OntologyStorageError,
     OntologyStorageErrorReason,
+    BlobStorageError,
     QueryError,
     CodecError,
     UniqueConstraint,

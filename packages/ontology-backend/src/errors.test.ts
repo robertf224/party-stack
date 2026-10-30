@@ -1,3 +1,5 @@
+import { OntologyStorageError } from "@party-stack/ontology-storage";
+import { BlobStorageError } from "@party-stack/ontology-storage/blobs";
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import {
@@ -8,6 +10,25 @@ import {
 } from "./errors.js";
 
 describe("normalized failures", () => {
+    it("preserves attachment recovery categories through storage and backend boundaries", () => {
+        for (const [kind, expected, retryable] of [
+            ["NotFound", "NotFound", false],
+            ["Busy", "Conflict", true],
+            ["Conflict", "Conflict", false],
+            ["InvalidValue", "InvalidRequest", false],
+            ["Bytes", "Unavailable", true],
+        ] as const) {
+            const blob = new BlobStorageError({ kind, message: "Private file path or backend details" });
+            const storage = new OntologyStorageError({ operation: "attachment.retain", reason: blob });
+            for (const cause of [blob, storage]) {
+                const error = classifyBackendFailure("applyAction", cause);
+                expect(error).toMatchObject({ kind: expected, retryable });
+                expect(error.message).not.toContain("Private file path");
+                if (kind === "NotFound" || kind === "Busy") expect(isUnknownActionOutcome(error)).toBe(false);
+            }
+        }
+    });
+
     it("distinguishes Salesforce quota failures from permissions and authentication", () => {
         expect(
             classifyBackendFailure("applyAction", { statusCode: 403, errorCode: "REQUEST_LIMIT_EXCEEDED" })

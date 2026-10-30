@@ -1,7 +1,12 @@
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { Effect, Result } from "effect";
 import { byteSource } from "../blobs/bytes.js";
-import { makeBlobStorage, collectByteBlob, type BlobBytesService } from "../blobs/index.js";
+import {
+    makeBlobStorage,
+    collectByteBlob,
+    type BlobBytesService,
+    type BlobStorageService,
+} from "../blobs/index.js";
 import { Table, field } from "../model.js";
 import { makeStorageModel } from "../ontology/model.js";
 import { makeOntologyStorage } from "../ontology/storage.js";
@@ -149,12 +154,12 @@ export const runBlobContract = Effect.fnUntraced(function* (tables: TablesServic
             yield* authoritative.stage("atomic-new", new Blob(["orphan"]));
             yield* atomic.put(atomicDrafts, { id: "one", slug: "old", files: [{ id: "atomic-old" }] });
             yield* atomic.put(atomicDrafts, { id: "two", slug: "taken", files: [] });
-            for (const caught of [false, true]) {
-                for (const kind of ["unique", "attachment"] as const) {
-                    const failedMutation = atomic.transaction((tx) =>
-                        Effect.gen(function* () {
+            for (const outer of ["object", "tables"] as const) {
+                for (const caught of [false, true]) {
+                    for (const kind of ["unique", "attachment"] as const) {
+                        const body = Effect.gen(function* () {
                             yield* tables.put(marker, "rolled-back", { caught, kind });
-                            const write = tx.put(atomicDrafts, {
+                            const write = atomic.put(atomicDrafts, {
                                 id: "one",
                                 slug: kind === "unique" ? "taken" : "available",
                                 files: [{ id: kind === "unique" ? "atomic-new" : "missing-attachment" }],
@@ -165,21 +170,33 @@ export const runBlobContract = Effect.fnUntraced(function* (tables: TablesServic
                                     throw new Error("Expected object mutation failure");
                                 if (kind === "unique" && result.failure.reason._tag !== "UniqueConstraint")
                                     throw new Error("Expected original unique constraint failure");
+                                if (
+                                    kind === "attachment" &&
+                                    !(
+                                        result.failure.reason._tag === "BlobStorageError" &&
+                                        result.failure.reason.kind === "NotFound"
+                                    )
+                                )
+                                    throw new Error(
+                                        "Missing attachments must preserve their NotFound classification"
+                                    );
                             } else yield* write;
-                        })
-                    );
-                    const result = yield* Effect.result(failedMutation);
-                    if (!Result.isFailure(result))
-                        throw new Error("A failed object mutation must prevent commit even when caught");
-                    if (yield* tables.get(marker, "rolled-back"))
-                        throw new Error(
-                            "Object mutation failure must roll back the enclosing physical transaction"
-                        );
-                    const row = (yield* atomic.get(atomicDrafts, "one")) as
-                        | { files: { id: string }[] }
-                        | undefined;
-                    if (row?.files[0]?.id !== "atomic-old")
-                        throw new Error("Failed replacement must preserve the original row");
+                        });
+                        const failedMutation =
+                            outer === "object" ? atomic.withTransaction(body) : tables.withTransaction(body);
+                        const result = yield* Effect.result(failedMutation);
+                        if (!Result.isFailure(result))
+                            throw new Error("A failed object mutation must prevent commit even when caught");
+                        if (yield* tables.get(marker, "rolled-back"))
+                            throw new Error(
+                                "Object mutation failure must roll back the enclosing physical transaction"
+                            );
+                        const row = (yield* atomic.get(atomicDrafts, "one")) as
+                            | { files: { id: string }[] }
+                            | undefined;
+                        if (row?.files[0]?.id !== "atomic-old")
+                            throw new Error("Failed replacement must preserve the original row");
+                    }
                 }
             }
             if ((yield* authoritative.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })) !== 1)
@@ -191,29 +208,29 @@ export const runBlobContract = Effect.fnUntraced(function* (tables: TablesServic
             yield* authoritative.stage("serial-a", new Blob(["A"]));
             yield* authoritative.stage("serial-b", new Blob(["B"]));
             const operations: string[] = [];
-            const serial = makeOntologyStorage(atomicModel, tables, {
-                blobs: {
-                    ...authoritative,
-                    in: (tx) => {
-                        const retention = authoritative.in(tx);
-                        return {
-                            ...retention,
-                            retain: (owner, ids, settings) =>
-                                Effect.gen(function* () {
-                                    operations.push(`begin:${ids[0]}`);
-                                    yield* Effect.yieldNow;
-                                    yield* retention.retain(owner, ids, settings);
-                                    operations.push(`end:${ids[0]}`);
-                                }),
-                        };
-                    },
+            const serialBlobs: BlobStorageService = {
+                ...authoritative,
+                in: (tx) => {
+                    const retention = authoritative.in(tx);
+                    return {
+                        ...retention,
+                        retain: (owner, ids, settings) =>
+                            Effect.gen(function* () {
+                                operations.push(`begin:${ids[0]}`);
+                                yield* Effect.yieldNow;
+                                yield* retention.retain(owner, ids, settings);
+                                operations.push(`end:${ids[0]}`);
+                            }),
+                    };
                 },
-            });
+            };
+            const serial = makeOntologyStorage(atomicModel, tables, { blobs: serialBlobs });
+            const second = makeOntologyStorage(atomicModel, { ...tables }, { blobs: serialBlobs });
             yield* serial.transaction((tx) =>
                 Effect.all(
                     [
                         tx.put(atomicDrafts, { id: "one", slug: "serial", files: [{ id: "serial-a" }] }),
-                        tx.put(atomicDrafts, { id: "one", slug: "serial", files: [{ id: "serial-b" }] }),
+                        second.put(atomicDrafts, { id: "one", slug: "serial", files: [{ id: "serial-b" }] }),
                     ],
                     { concurrency: 2 }
                 )

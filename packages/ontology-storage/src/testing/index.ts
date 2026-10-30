@@ -16,6 +16,50 @@ interface Task {
     email: string;
 }
 export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
+    // A late codec failure must clean up an unpublished, partially built index.
+    // Retry with a different array field under the same name to expose stale entries.
+    type BackfillRow = { id: number; oldTags: string[]; newTags: string[] };
+    let rejectBackfill = false;
+    const backfill = Table.make<BackfillRow>({
+        name: "streamed-index-backfill",
+        codec: {
+            encode: (row) => row,
+            decode: (value) => {
+                const row = value as BackfillRow;
+                if (rejectBackfill && row.id === 299) throw new Error("Late backfill decode failure");
+                return row;
+            },
+        },
+    });
+    yield* tables.transaction((tx) =>
+        Effect.gen(function* () {
+            for (let id = 0; id < 300; id++)
+                yield* tx.put(backfill, id, { id, oldTags: ["old"], newTags: ["new"] });
+        })
+    );
+    yield* tables.transaction((tx) =>
+        Effect.gen(function* () {
+            rejectBackfill = true;
+            const failed = yield* Effect.exit(
+                tx.ensureIndex(backfill, { name: "retry-array", field: field("oldTags"), multiEntry: true })
+            );
+            rejectBackfill = false;
+            assert(Exit.isFailure(failed), "Expected a late index-backfill codec failure");
+            yield* tx.ensureIndex(backfill, {
+                name: "retry-array",
+                field: field("newTags"),
+                multiEntry: true,
+            });
+        })
+    );
+    assert(
+        (yield* tables.query(backfill, { where: where.contains(field("newTags"), "old") })).length === 0,
+        "Failed build must remove partial entries/projections before a same-name retry"
+    );
+    assert(
+        (yield* tables.query(backfill, { where: where.contains(field("newTags"), "new") })).length === 300,
+        "Successful retry must index rows across all scan batches"
+    );
     const arrays = Table.make<{
         title: string;
         tags?: readonly (string | number | boolean | null | undefined)[];

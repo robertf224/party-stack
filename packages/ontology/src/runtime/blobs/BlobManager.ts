@@ -1,6 +1,5 @@
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import {
-    BlobStorageError,
     byteSource,
     byteChunks,
     collectByteBlob,
@@ -37,23 +36,7 @@ export interface BlobManagerOptions {
         ) => Effect.Effect<PartialBlobMetadata, BackendError>;
     };
 }
-const failure = (cause: unknown) =>
-    cause instanceof BlobStorageError
-        ? new BackendError({
-              operation: "attachment.storage",
-              kind:
-                  cause.kind === "NotFound"
-                      ? "NotFound"
-                      : cause.kind === "InvalidValue"
-                        ? "InvalidRequest"
-                        : cause.kind === "Busy" || cause.kind === "Conflict"
-                          ? "Conflict"
-                          : "Unavailable",
-              message: cause.message,
-              retryable: cause.kind === "Bytes" || cause.kind === "Busy",
-              cause,
-          })
-        : classifyBackendFailure("attachment.storage", cause);
+const failure = (cause: unknown) => classifyBackendFailure("attachment.storage", cause);
 const boundary = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.mapError(failure));
 const pickMetadata = (record: BlobRecord | undefined): PartialBlobMetadata =>
     record ? { size: record.size, type: record.type, name: record.name, dimensions: record.dimensions } : {};

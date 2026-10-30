@@ -1,8 +1,9 @@
 # Ontology-owned schemas, storage, and migrations
 
-Status: ontology-spec extraction, opt-in Effect generation, and the first ontology-storage
-port are implemented. Native columns, migration history, blob-byte integration, GC,
-and the future backend protocol remain proposals.
+Status updated October 30: ontology-spec, derived Effect schemas, ontology-storage,
+blob integration, GC and the backend protocol are implemented. Native SQL columns
+and general schema/data migration history remain future work. Native object
+columns will be designed with migrations, rather than as a separate current pass.
 
 ## One ontology model
 
@@ -82,6 +83,15 @@ consume the IR directly for physical layout and compose these codecs at its
 boundaries. Bigint is deferred until an explicit ontology kind such as long exists.
 
 ## Native SQL columns
+
+Deferred with schema/data migrations after the October 30 review. Initial DDL can
+be generated from ontology object definitions, with scalar columns and explicit
+JSON encodings for nested values. The larger work is plumbing that layout into
+the SQL driver, preserving codec/query/index semantics and specifying version
+changes across dialects. No second authored schema language is needed. Do not
+blindly enforce SQL foreign keys for partial replicas, whose referenced targets
+may legitimately be absent locally. Readable views could be an interim inspection
+feature; they are not a substitute for an explicit native layout/migration design.
 
 Currently SQL has shared rows/definitions tables, an encoded payload, and a
 JSON/JSONB projection for indexed scalar fields. Expression indexes and subset
