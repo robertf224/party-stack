@@ -16,6 +16,45 @@ interface Task {
     email: string;
 }
 export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
+    const claims = Table.make<number>({ name: "atomic-claims" });
+    assert(yield* tables.insert(claims, "key", 1), "First insert claims the key");
+    assert(!(yield* tables.insert(claims, "key", 2)), "Duplicate insert must not replace the key");
+    assert((yield* tables.get(claims, "key")) === 1, "Duplicate insert preserves the original value");
+    assert(
+        (yield* tables.transaction((tx) => tx.get(claims, "key", { forUpdate: true }))) === 1,
+        "Write-intent reads preserve portable values"
+    );
+    const uniqueClaims = Table.make<{ email: string }>({ name: "unique-inserts" });
+    yield* tables.ensureIndex(uniqueClaims, { name: "email", field: field("email"), unique: true });
+    assert(yield* tables.insert(uniqueClaims, "a", { email: "a@example.test" }), "Unique insert succeeds");
+    assert(
+        !(yield* tables.insert(uniqueClaims, "b", { email: "a@example.test" })),
+        "Unique-index conflict returns false"
+    );
+    assert((yield* tables.get(uniqueClaims, "b")) === undefined, "Conflicting insert changes no row");
+    yield* tables.transaction((tx) =>
+        Effect.gen(function* () {
+            assert(yield* tx.insert(claims, "next", 3), "Insert joins the physical transaction");
+            assert(!(yield* tx.insert(claims, "next", 4)), "Insert sees its own transaction's claim");
+        })
+    );
+    const firstRevision = yield* tables.transaction((tx) => tx.allocateRevision("contract-publication"));
+    const rollbackRevision = yield* Effect.exit(
+        tables.transaction((tx) =>
+            Effect.andThen(tx.allocateRevision("contract-publication"), Effect.fail("abort publication"))
+        )
+    );
+    assert(Exit.isFailure(rollbackRevision), "Aborted publication must fail its transaction");
+    const nextRevision = yield* tables.allocateRevision("contract-publication");
+    assert(nextRevision > firstRevision, "Publication revisions must increase; rollback gaps are permitted");
+    assert(
+        (yield* tables.allocateRevision("contract-other-publication")) === 1,
+        "Publication streams have independent clocks"
+    );
+    assert(
+        (yield* tables.allocateRevision("contract-publication", 100)) > 100,
+        "Publication clocks honor a persisted migration floor"
+    );
     // A late codec failure must clean up an unpublished, partially built index.
     // Retry with a different array field under the same name to expose stale entries.
     type BackfillRow = { id: number; oldTags: string[]; newTags: string[] };

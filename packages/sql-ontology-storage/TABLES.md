@@ -21,10 +21,10 @@ await Effect.runPromise(program.pipe(Effect.provide(storage)));
 ```
 
 A PostgreSQL driver layer can replace the SQLite driver without changing the Tables
-API. Tests use Node's SQLite driver and PostgreSQL via PGlite. Other drivers must
+API. Tests use Node's SQLite driver, PostgreSQL via PGlite, and real multi-connection PostgreSQL. Other drivers must
 preserve Effect SQL's transaction/connection semantics; they have not all been
-individually certified. Cloudflare Durable Object native transaction integration
-is not supplied in this checkpoint.
+individually certified. Cloudflare Durable Object native transactions are supplied by
+`@party-stack/durable-object-ontology-storage`.
 
 The layer initializes two physical tables plus native expression indexes. Their
 prefix defaults to `party_tables` and can be configured with `{ prefix: "app" }`.
@@ -62,13 +62,51 @@ pagination with a full-data oracle. Driver field-name transforms are disabled fo
 internal queries. Logical tables share physical row/definition tables; this does
 not map application fields to user-authored SQL columns.
 
-Transactions use `SqlClient.withTransaction`. PostgreSQL additionally takes a
-transaction-scoped advisory lock per Tables prefix, serializing Tables operations
-across instances. SQLite relies on its exclusive writer transaction; the tested
-Node driver uses `BEGIN IMMEDIATE`, including Tables read snapshots. Keep callbacks
-short. Writes that bypass Tables are outside these consistency guarantees.
+Transactions use `SqlClient.withTransaction`. PostgreSQL snapshot reads use
+`REPEATABLE READ READ ONLY` without application advisory locks. Writers use
+`READ COMMITTED` with strict transaction-scoped coordination: shared key locks for
+point reads, exclusive key locks for writes, and exclusive logical-table guards
+for predicate reads, clears and index builds. This protects changing membership
+and missing rows while allowing writes to independent keys to overlap. These
+rules coordinate cooperating Tables users, including separate processes; raw SQL
+writers bypass them. Predicate reads in write transactions remain conservative
+and can serialize work on an entire logical table.
 
-Read [the core contract](../effect-tables/README.md) before adding another dialect.
+Use `tx.get(table, key, { forUpdate: true })` when a read will be followed by a
+write. It takes write intent before reading, avoiding shared-lock upgrade
+deadlocks. Memory, IndexedDB and SQLite already serialize writers and require no
+additional mechanism for this hint. Confirmed PostgreSQL deadlock/serialization
+aborts retry the complete callback, up to eight retries with exponential backoff.
+Connection failures and ambiguous COMMIT replies are never automatically replayed.
+Keep callbacks replay-safe and stage network/blob IO outside the transaction.
+SQLite retains its native writer transaction; the tested Node bridge uses
+`BEGIN IMMEDIATE`, including Tables read snapshots.
+
+`insert(table, key, value)` inserts without replacement and returns false for a
+key or unique-index conflict. SQL uses native `ON CONFLICT DO NOTHING`; serialized
+drivers share the portable implementation. Updating an unchanged unique value
+avoids a redundant range check. `allocateRevision(stream, minimum?)` allocates a
+publication revision under coordination held through commit. Serialized drivers
+persist the clock transactionally; PostgreSQL uses a per-stream sequence and a
+short advisory publication lock. Gaps after rollback are allowed. Call it near
+commit, after business writes. The owned backend uses this same journal path on
+every store and derives its committed head from retained entries plus its archive
+marker, rather than updating a shared head row on every action.
+
+Run real PostgreSQL tests against a disposable database:
+
+```sh
+PARTY_STACK_TEST_POSTGRES_URL=postgres://postgres@127.0.0.1:5432/postgres \
+  vp run @party-stack/sql-ontology-storage#test
+```
+
+CI supplies a PostgreSQL 18 service for these tests. For the controlled before/after
+benchmark, build this package and run `node benchmarks/postgres.mjs faa2bdbb` from
+its directory with the same environment variable. It compares the old SQL/journal
+coordination against the current implementation using the same portable core,
+checks resulting rows, and removes its temporary schema and baseline source files.
+
+Read [the core contract](../ontology-storage/README.md) before adding another dialect.
 In particular, stored bigint values are not limited to signed 64-bit SQL integers,
 unique null/undefined semantics are explicit, and index/key size limits still apply.
 Application migrations and additional SQL dialects can be layered on later.

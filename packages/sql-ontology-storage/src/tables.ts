@@ -16,8 +16,11 @@ import { Effect, Layer, Option, Stream } from "effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { isSqlError } from "effect/sql/SqlError";
 import { arrayIndexExpression, compileQuery, indexExpression, literal, projectionKey } from "./compiler.js";
+import * as Postgres from "./postgres.js";
 
-/** SQLite and PostgreSQL, through any Effect SqlClient driver for those dialects. */
+/** SQLite and PostgreSQL, through any Effect SqlClient driver for those dialects.
+ * PostgreSQL transaction callbacks must be replay-safe: serialization/deadlock
+ * aborts retry the entire callback, with external IO staged before the boundary. */
 export const make = Effect.fnUntraced(function* (options: { readonly prefix?: string } = {}) {
     const original = yield* SqlClient.SqlClient;
     const sql = original.withoutTransforms();
@@ -61,307 +64,416 @@ export const make = Effect.fnUntraced(function* (options: { readonly prefix?: st
     );
     return makeTables({
         transaction: (mode, body) =>
-            Effect.suspend(() => {
-                let active = false;
-                let failed: OntologyStorageError | undefined;
-                const check = <A>(effect: Effect.Effect<A, OntologyStorageError>) =>
-                    Effect.suspend(() =>
-                        active
-                            ? effect.pipe(
-                                  Effect.tapError((error) =>
-                                      Effect.sync(() => {
+            Postgres.retryTransactions(dialect === "pg", (noteFailure) =>
+                Effect.suspend(() => {
+                    const coordination =
+                        dialect === "pg"
+                            ? Postgres.coordination(sql, prefix, mode === "readwrite")
+                            : undefined;
+                    const coordinate = <A>(
+                        lock: Effect.Effect<void, unknown> | undefined,
+                        effect: Effect.Effect<A, OntologyStorageError>
+                    ) =>
+                        lock
+                            ? Effect.andThen(
+                                  lock.pipe(
+                                      Effect.mapError((cause) => {
+                                          noteFailure(cause);
+                                          const error = storageError(
+                                              "sql",
+                                              "coordination",
+                                              cause,
+                                              isSqlError(cause) && cause.isRetryable
+                                          );
                                           failed ??= error;
+                                          return error;
                                       })
-                                  )
+                                  ),
+                                  effect
                               )
-                            : Effect.fail(transactionError("Closed", "Transaction is closed"))
-                    );
-                const write = <A>(effect: Effect.Effect<A, OntologyStorageError>) =>
-                    check(
-                        mode === "readwrite"
-                            ? effect.pipe(
-                                  Effect.tapError((error) =>
-                                      Effect.sync(() => {
-                                          failed ??= error;
-                                      })
+                            : effect;
+                    let active = false;
+                    let failed: OntologyStorageError | undefined;
+                    const check = <A>(effect: Effect.Effect<A, OntologyStorageError>) =>
+                        Effect.suspend(() =>
+                            active
+                                ? effect.pipe(
+                                      Effect.tapError((error) =>
+                                          Effect.sync(() => {
+                                              failed ??= error;
+                                              noteFailure(error);
+                                          })
+                                      )
                                   )
-                              )
-                            : Effect.fail(transactionError("ReadOnly", "Read-only transaction"))
-                    );
-                const conditions = (table: string, index: string, range: Range) => {
-                    const expr = sql.literal(indexExpression(dialect, index));
-                    const parts = [sql`table_name=${table}`, sql`${expr} IS NOT NULL`];
-                    if (range.lower !== undefined)
-                        parts.push(
-                            range.lowerOpen ? sql`${expr} > ${range.lower}` : sql`${expr} >= ${range.lower}`
+                                : Effect.fail(transactionError("Closed", "Transaction is closed"))
                         );
-                    if (range.upper !== undefined)
-                        parts.push(
-                            range.upperOpen ? sql`${expr} < ${range.upper}` : sql`${expr} <= ${range.upper}`
+                    const write = <A>(effect: Effect.Effect<A, OntologyStorageError>) =>
+                        check(
+                            mode === "readwrite"
+                                ? effect.pipe(
+                                      Effect.tapError((error) =>
+                                          Effect.sync(() => {
+                                              failed ??= error;
+                                              noteFailure(error);
+                                          })
+                                      )
+                                  )
+                                : Effect.fail(transactionError("ReadOnly", "Read-only transaction"))
                         );
-                    if (range.after)
-                        parts.push(
-                            range.direction === "desc"
-                                ? sql`(${expr} < ${range.after.value} OR (${expr}=${range.after.value} AND row_key < ${range.after.key}))`
-                                : sql`(${expr} > ${range.after.value} OR (${expr}=${range.after.value} AND row_key > ${range.after.key}))`
-                        );
-                    return sql.and(parts);
-                };
-                const raw: DriverTransaction = {
-                    nativeIndexes: true,
-                    clear: (table) =>
-                        write(
-                            run(sql`DELETE FROM ${sql(rows)} WHERE table_name=${table}`).pipe(Effect.asVoid)
-                        ),
-                    query: (table, indexes, query) =>
-                        check(
-                            Effect.suspend(() => {
-                                const compiled = compileQuery(dialect, indexes, query);
-                                // Table/path literals are escaped and stable so the planner can
-                                // match the exact partial expression index created by ensureIndex.
-                                return run(
-                                    sql.unsafe<{ row_key: string; data: string }>(
-                                        `SELECT row_key,data FROM ${q(rows)} WHERE table_name=${literal(dialect, table.name)} AND (${compiled.condition}) ORDER BY ${compiled.order}${compiled.pagination}`,
-                                        compiled.params
-                                    )
-                                ).pipe(
-                                    Effect.map((result) => ({
-                                        complete: compiled.complete,
-                                        rows: result.map((row): StoredRow => ({
-                                            table: table.name,
-                                            key: row.row_key,
-                                            data: row.data,
-                                        })),
-                                    }))
-                                );
-                            })
-                        ),
-                    get: (table, key) =>
-                        check(
-                            run(
-                                sql<{
-                                    data: string;
-                                }>`SELECT data FROM ${sql(rows)} WHERE table_name=${table} AND row_key=${key}`
-                            ).pipe(
-                                Effect.map((result) =>
-                                    result[0] ? { table, key, data: result[0].data } : undefined
-                                )
-                            )
-                        ),
-                    rows: (table) =>
-                        check(
-                            run(
-                                sql<{
-                                    row_key: string;
-                                    data: string;
-                                }>`SELECT row_key,data FROM ${sql(rows)} WHERE table_name=${table} ORDER BY row_key`
-                            ).pipe(
-                                Effect.map((result): StoredRow[] =>
-                                    result.map((row) => ({ table, key: row.row_key, data: row.data }))
-                                )
-                            )
-                        ),
-                    scanRows: (table) =>
-                        Stream.paginate(undefined as string | undefined, (after) => {
-                            const where =
-                                after === undefined
-                                    ? sql`table_name=${table}`
-                                    : sql`table_name=${table} AND row_key>${after}`;
-                            return check(
-                                run(
-                                    sql<{
-                                        row_key: string;
-                                        data: string;
-                                    }>`SELECT row_key,data FROM ${sql(rows)} WHERE ${where} ORDER BY row_key LIMIT ${INDEX_BACKFILL_BATCH_SIZE}`
-                                )
-                            ).pipe(
-                                Effect.map(
-                                    (page) =>
-                                        [
-                                            page.map((row): StoredRow => ({
-                                                table,
-                                                key: row.row_key,
-                                                data: row.data,
-                                            })),
-                                            page.length === INDEX_BACKFILL_BATCH_SIZE
-                                                ? Option.some(page.at(-1)!.row_key)
-                                                : Option.none<string | undefined>(),
-                                        ] as const
-                                )
+                    const conditions = (table: string, index: string, range: Range) => {
+                        const expr = sql.literal(indexExpression(dialect, index));
+                        const parts = [
+                            sql.literal(`table_name=${literal(dialect, table)}`),
+                            sql`${expr} IS NOT NULL`,
+                        ];
+                        if (range.lower !== undefined)
+                            parts.push(
+                                range.lowerOpen
+                                    ? sql`${expr} > ${range.lower}`
+                                    : sql`${expr} >= ${range.lower}`
                             );
-                        }),
-                    put: (row) =>
-                        write(
-                            run(
-                                sql`INSERT INTO ${sql(rows)} (table_name,row_key,data,projection) VALUES (${row.table},${row.key},${row.data},${JSON.stringify(Object.fromEntries(Object.entries(row.indexValues ?? {}).map(([name, value]) => [projectionKey(name), value])))}) ON CONFLICT (table_name,row_key) DO UPDATE SET data=excluded.data,projection=excluded.projection`
-                            ).pipe(Effect.asVoid)
-                        ),
-                    delete: (table, key) =>
-                        write(
-                            run(
-                                sql`DELETE FROM ${sql(rows)} WHERE table_name=${table} AND row_key=${key}`
-                            ).pipe(Effect.asVoid)
-                        ),
-                    indexes: (table) =>
-                        check(
-                            run(
-                                sql<{
-                                    data: string;
-                                }>`SELECT data FROM ${sql(definitions)} WHERE table_name=${table}`
-                            ).pipe(
-                                Effect.flatMap((result) =>
-                                    Effect.try({
-                                        try: () => result.map((row): unknown => JSON.parse(row.data)),
-                                        catch: (cause) =>
-                                            indexError("Invalid persisted index metadata", cause),
+                        if (range.upper !== undefined)
+                            parts.push(
+                                range.upperOpen
+                                    ? sql`${expr} < ${range.upper}`
+                                    : sql`${expr} <= ${range.upper}`
+                            );
+                        if (range.after)
+                            parts.push(
+                                range.direction === "desc"
+                                    ? sql`(${expr} < ${range.after.value} OR (${expr}=${range.after.value} AND row_key < ${range.after.key}))`
+                                    : sql`(${expr} > ${range.after.value} OR (${expr}=${range.after.value} AND row_key > ${range.after.key}))`
+                            );
+                        return sql.and(parts);
+                    };
+                    const raw: DriverTransaction = {
+                        nativeIndexes: true,
+                        insert: (row) =>
+                            write(
+                                coordinate(
+                                    coordination?.point(row.table, row.key, true),
+                                    run(
+                                        sql`INSERT INTO ${sql(rows)} (table_name,row_key,data,projection) VALUES (${row.table},${row.key},${row.data},${JSON.stringify(Object.fromEntries(Object.entries(row.indexValues ?? {}).map(([name, value]) => [projectionKey(name), value])))}) ON CONFLICT DO NOTHING RETURNING row_key`
+                                    ).pipe(Effect.map((result) => result.length > 0))
+                                )
+                            ),
+                        ...(dialect === "pg"
+                            ? {
+                                  allocateRevision: (stream: string, minimum: number) =>
+                                      write(
+                                          Postgres.allocateRevision(sql, prefix, stream, minimum).pipe(
+                                              Effect.mapError((cause) =>
+                                                  isSqlError(cause)
+                                                      ? storageError(
+                                                            "sql",
+                                                            "revision",
+                                                            cause,
+                                                            cause.isRetryable
+                                                        )
+                                                      : cause
+                                              )
+                                          )
+                                      ),
+                              }
+                            : {}),
+                        clear: (table) =>
+                            write(
+                                coordinate(
+                                    coordination?.predicate(table),
+                                    run(sql`DELETE FROM ${sql(rows)} WHERE table_name=${table}`).pipe(
+                                        Effect.asVoid
+                                    )
+                                )
+                            ),
+                        query: (table, indexes, query) =>
+                            check(
+                                coordinate(
+                                    coordination?.predicate(table.name),
+                                    Effect.suspend(() => {
+                                        const compiled = compileQuery(dialect, indexes, query);
+                                        // Table/path literals are escaped and stable so the planner can
+                                        // match the exact partial expression index created by ensureIndex.
+                                        return run(
+                                            sql.unsafe<{ row_key: string; data: string }>(
+                                                `SELECT row_key,data FROM ${q(rows)} WHERE table_name=${literal(dialect, table.name)} AND (${compiled.condition}) ORDER BY ${compiled.order}${compiled.pagination}`,
+                                                compiled.params
+                                            )
+                                        ).pipe(
+                                            Effect.map((result) => ({
+                                                complete: compiled.complete,
+                                                rows: result.map((row): StoredRow => ({
+                                                    table: table.name,
+                                                    key: row.row_key,
+                                                    data: row.data,
+                                                })),
+                                            }))
+                                        );
                                     })
                                 )
-                            )
-                        ),
-                    putIndex: (index) =>
-                        Effect.gen(function* () {
-                            if (index.unique && index.field.path.length) {
-                                // Native grouping checks the completed projection without a
-                                // JavaScript Set, before CREATE UNIQUE INDEX could abort PG.
-                                const expression = sql.literal(indexExpression(dialect, index.name));
-                                const duplicates = yield* check(
+                            ),
+                        get: (table, key, forUpdate) =>
+                            check(
+                                coordinate(
+                                    coordination?.point(table, key, forUpdate),
                                     run(
                                         sql<{
-                                            duplicate: number;
-                                        }>`SELECT 1 AS duplicate FROM ${sql(rows)} WHERE table_name=${index.table} GROUP BY ${expression} HAVING COUNT(*) > 1 LIMIT 1`
+                                            data: string;
+                                        }>`SELECT data FROM ${sql(rows)} WHERE table_name=${table} AND row_key=${key}`
+                                    ).pipe(
+                                        Effect.map((result) =>
+                                            result[0] ? { table, key, data: result[0].data } : undefined
+                                        )
+                                    )
+                                )
+                            ),
+                        rows: (table) =>
+                            check(
+                                coordinate(
+                                    coordination?.predicate(table),
+                                    run(
+                                        sql<{
+                                            row_key: string;
+                                            data: string;
+                                        }>`SELECT row_key,data FROM ${sql(rows)} WHERE table_name=${table} ORDER BY row_key`
+                                    ).pipe(
+                                        Effect.map((result): StoredRow[] =>
+                                            result.map((row) => ({ table, key: row.row_key, data: row.data }))
+                                        )
+                                    )
+                                )
+                            ),
+                        scanRows: (table) =>
+                            Stream.paginate(undefined as string | undefined, (after) => {
+                                const where =
+                                    after === undefined
+                                        ? sql`table_name=${table}`
+                                        : sql`table_name=${table} AND row_key>${after}`;
+                                return check(
+                                    coordinate(
+                                        coordination?.predicate(table),
+                                        run(
+                                            sql<{
+                                                row_key: string;
+                                                data: string;
+                                            }>`SELECT row_key,data FROM ${sql(rows)} WHERE ${where} ORDER BY row_key LIMIT ${INDEX_BACKFILL_BATCH_SIZE}`
+                                        )
+                                    ).pipe(
+                                        Effect.map(
+                                            (page) =>
+                                                [
+                                                    page.map((row): StoredRow => ({
+                                                        table,
+                                                        key: row.row_key,
+                                                        data: row.data,
+                                                    })),
+                                                    page.length === INDEX_BACKFILL_BATCH_SIZE
+                                                        ? Option.some(page.at(-1)!.row_key)
+                                                        : Option.none<string | undefined>(),
+                                                ] as const
+                                        )
                                     )
                                 );
-                                if (duplicates.length)
-                                    return yield* new OntologyStorageError({
-                                        operation: "unique",
-                                        reason: new UniqueConstraint({
-                                            table: index.table,
-                                            index: index.name,
-                                            message: `Duplicate value for index ${index.name}`,
-                                        }),
-                                    });
-                            }
-                            yield* write(
+                            }),
+                        put: (row) =>
+                            write(
+                                coordinate(
+                                    coordination?.point(row.table, row.key, true),
+                                    run(
+                                        sql`INSERT INTO ${sql(rows)} (table_name,row_key,data,projection) VALUES (${row.table},${row.key},${row.data},${JSON.stringify(Object.fromEntries(Object.entries(row.indexValues ?? {}).map(([name, value]) => [projectionKey(name), value])))}) ON CONFLICT (table_name,row_key) DO UPDATE SET data=excluded.data,projection=excluded.projection`
+                                    ).pipe(Effect.asVoid)
+                                )
+                            ),
+                        delete: (table, key) =>
+                            write(
+                                coordinate(
+                                    coordination?.point(table, key, true),
+                                    run(
+                                        sql`DELETE FROM ${sql(rows)} WHERE table_name=${table} AND row_key=${key}`
+                                    ).pipe(Effect.asVoid)
+                                )
+                            ),
+                        indexes: (table) =>
+                            check(
+                                coordinate(
+                                    coordination?.definition(table),
+                                    run(
+                                        sql<{
+                                            data: string;
+                                        }>`SELECT data FROM ${sql(definitions)} WHERE table_name=${table}`
+                                    ).pipe(
+                                        Effect.flatMap((result) =>
+                                            Effect.try({
+                                                try: () => result.map((row): unknown => JSON.parse(row.data)),
+                                                catch: (cause) =>
+                                                    indexError("Invalid persisted index metadata", cause),
+                                            })
+                                        )
+                                    )
+                                )
+                            ),
+                        putIndex: (index) =>
+                            coordinate(
+                                coordination?.predicate(index.table),
                                 Effect.gen(function* () {
-                                    if (index.field.path.length) {
-                                        if (index.multiEntry && dialect === "pg") {
-                                            const name = `${prefix.slice(0, 20)}_i_${crypto.randomUUID().replaceAll("-", "")}`;
-                                            yield* run(
-                                                sql.unsafe(
-                                                    `CREATE INDEX ${q(name)} ON ${q(rows)} USING GIN ((${arrayIndexExpression(dialect, index.name)})) WHERE table_name=${literal(dialect, index.table)}`
-                                                )
-                                            );
-                                        }
-                                        for (const variant of index.multiEntry
-                                            ? []
-                                            : [index.name, caseInsensitiveIndex(index.name)]) {
-                                            const name = `${prefix.slice(0, 20)}_i_${crypto.randomUUID().replaceAll("-", "")}`;
-                                            const expr = indexExpression(dialect, variant);
-                                            const unique = index.unique && variant === index.name;
-                                            yield* run(
-                                                sql.unsafe(
-                                                    `CREATE ${unique ? "UNIQUE " : ""}INDEX ${q(name)} ON ${q(rows)} (table_name, ${expr}${unique ? "" : ",row_key"}) WHERE table_name=${literal(dialect, index.table)}`
-                                                )
-                                            );
-                                        }
+                                    if (index.unique && index.field.path.length) {
+                                        // Native grouping checks the completed projection without a
+                                        // JavaScript Set, before CREATE UNIQUE INDEX could abort PG.
+                                        const expression = sql.literal(indexExpression(dialect, index.name));
+                                        const duplicates = yield* check(
+                                            run(
+                                                sql<{
+                                                    duplicate: number;
+                                                }>`SELECT 1 AS duplicate FROM ${sql(rows)} WHERE table_name=${index.table} GROUP BY ${expression} HAVING COUNT(*) > 1 LIMIT 1`
+                                            )
+                                        );
+                                        if (duplicates.length)
+                                            return yield* new OntologyStorageError({
+                                                operation: "unique",
+                                                reason: new UniqueConstraint({
+                                                    table: index.table,
+                                                    index: index.name,
+                                                    message: `Duplicate value for index ${index.name}`,
+                                                }),
+                                            });
                                     }
-                                    yield* run(
-                                        sql`INSERT INTO ${sql(definitions)} (table_name,index_name,data) VALUES (${index.table},${index.name},${JSON.stringify(index)})`
+                                    yield* write(
+                                        Effect.gen(function* () {
+                                            if (index.field.path.length) {
+                                                if (index.multiEntry && dialect === "pg") {
+                                                    const name = `${prefix.slice(0, 20)}_i_${crypto.randomUUID().replaceAll("-", "")}`;
+                                                    yield* run(
+                                                        sql.unsafe(
+                                                            `CREATE INDEX ${q(name)} ON ${q(rows)} USING GIN ((${arrayIndexExpression(dialect, index.name)})) WHERE table_name=${literal(dialect, index.table)}`
+                                                        )
+                                                    );
+                                                }
+                                                for (const variant of index.multiEntry
+                                                    ? []
+                                                    : [index.name, caseInsensitiveIndex(index.name)]) {
+                                                    const name = `${prefix.slice(0, 20)}_i_${crypto.randomUUID().replaceAll("-", "")}`;
+                                                    const expr = indexExpression(dialect, variant);
+                                                    const unique = index.unique && variant === index.name;
+                                                    yield* run(
+                                                        sql.unsafe(
+                                                            `CREATE ${unique ? "UNIQUE " : ""}INDEX ${q(name)} ON ${q(rows)} (table_name, ${expr}${unique ? "" : ",row_key"}) WHERE table_name=${literal(dialect, index.table)}`
+                                                        )
+                                                    );
+                                                }
+                                            }
+                                            yield* run(
+                                                sql`INSERT INTO ${sql(definitions)} (table_name,index_name,data) VALUES (${index.table},${index.name},${JSON.stringify(index)}) ON CONFLICT (table_name,index_name) DO NOTHING`
+                                            );
+                                        })
                                     );
                                 })
+                            ),
+                        // Backfill projections before installing native indexes.
+                        putEntry: (entry) =>
+                            write(
+                                coordinate(
+                                    coordination?.predicate(entry.table),
+                                    run(
+                                        entry.multiEntry
+                                            ? dialect === "sqlite"
+                                                ? sql`UPDATE ${sql(rows)} SET projection=json_insert(CASE WHEN json_type(projection, ${`$.${projectionKey(entry.index)}`}) IS NULL THEN json_set(projection, ${`$.${projectionKey(entry.index)}`}, json('[]')) ELSE projection END, ${`$.${projectionKey(entry.index)}[#]`}, ${entry.value}) WHERE table_name=${entry.table} AND row_key=${entry.key}`
+                                                : sql`UPDATE ${sql(rows)} SET projection=jsonb_set(projection, ARRAY[${projectionKey(entry.index)}]::text[], COALESCE(projection -> ${projectionKey(entry.index)}, '[]'::jsonb) || to_jsonb(${entry.value}::text)) WHERE table_name=${entry.table} AND row_key=${entry.key}`
+                                            : dialect === "sqlite"
+                                              ? sql`UPDATE ${sql(rows)} SET projection=json_set(projection, ${`$.${projectionKey(entry.index)}`}, ${entry.value}) WHERE table_name=${entry.table} AND row_key=${entry.key}`
+                                              : sql`UPDATE ${sql(rows)} SET projection=jsonb_set(projection, ARRAY[${projectionKey(entry.index)}]::text[], to_jsonb(${entry.value}::text)) WHERE table_name=${entry.table} AND row_key=${entry.key}`
+                                    ).pipe(Effect.asVoid)
+                                )
+                            ),
+                        // Failed unpublished builds remove partial projections in native SQL.
+                        deleteEntries: (table, index, key) => {
+                            const where =
+                                key === undefined
+                                    ? sql`table_name=${table}`
+                                    : sql`table_name=${table} AND row_key=${key}`;
+                            const value =
+                                dialect === "sqlite"
+                                    ? sql`json_remove(projection, ${`$.${projectionKey(index)}`})`
+                                    : sql`projection - ${projectionKey(index)}::text`;
+                            return write(
+                                coordinate(
+                                    coordination?.predicate(table),
+                                    run(sql`UPDATE ${sql(rows)} SET projection=${value} WHERE ${where}`).pipe(
+                                        Effect.asVoid
+                                    )
+                                )
                             );
-                        }),
-                    // Backfill projections before installing native indexes.
-                    putEntry: (entry) =>
-                        write(
-                            run(
-                                entry.multiEntry
-                                    ? dialect === "sqlite"
-                                        ? sql`UPDATE ${sql(rows)} SET projection=json_insert(CASE WHEN json_type(projection, ${`$.${projectionKey(entry.index)}`}) IS NULL THEN json_set(projection, ${`$.${projectionKey(entry.index)}`}, json('[]')) ELSE projection END, ${`$.${projectionKey(entry.index)}[#]`}, ${entry.value}) WHERE table_name=${entry.table} AND row_key=${entry.key}`
-                                        : sql`UPDATE ${sql(rows)} SET projection=jsonb_set(projection, ARRAY[${projectionKey(entry.index)}]::text[], COALESCE(projection -> ${projectionKey(entry.index)}, '[]'::jsonb) || to_jsonb(${entry.value}::text)) WHERE table_name=${entry.table} AND row_key=${entry.key}`
-                                    : dialect === "sqlite"
-                                      ? sql`UPDATE ${sql(rows)} SET projection=json_set(projection, ${`$.${projectionKey(entry.index)}`}, ${entry.value}) WHERE table_name=${entry.table} AND row_key=${entry.key}`
-                                      : sql`UPDATE ${sql(rows)} SET projection=jsonb_set(projection, ARRAY[${projectionKey(entry.index)}]::text[], to_jsonb(${entry.value}::text)) WHERE table_name=${entry.table} AND row_key=${entry.key}`
-                            ).pipe(Effect.asVoid)
-                        ),
-                    // Failed unpublished builds remove partial projections in native SQL.
-                    deleteEntries: (table, index, key) => {
-                        const where =
-                            key === undefined
-                                ? sql`table_name=${table}`
-                                : sql`table_name=${table} AND row_key=${key}`;
-                        const value =
-                            dialect === "sqlite"
-                                ? sql`json_remove(projection, ${`$.${projectionKey(index)}`})`
-                                : sql`projection - ${projectionKey(index)}::text`;
-                        return write(
-                            run(sql`UPDATE ${sql(rows)} SET projection=${value} WHERE ${where}`).pipe(
-                                Effect.asVoid
+                        },
+                        countEntries: (table, index, range = {}) =>
+                            check(
+                                coordinate(
+                                    coordination?.predicate(table),
+                                    run(
+                                        sql<{
+                                            count: number | string;
+                                        }>`SELECT COUNT(*) AS count FROM ${sql(rows)} WHERE ${conditions(table, index, range)}`
+                                    ).pipe(Effect.map((result) => Number(result[0]!.count)))
+                                )
+                            ),
+                        entries: (table, index, range = {}) =>
+                            check(
+                                coordinate(
+                                    coordination?.predicate(table),
+                                    run(
+                                        sql<{
+                                            value_key: string;
+                                            row_key: string;
+                                        }>`SELECT ${sql.literal(indexExpression(dialect, index))} AS value_key,row_key FROM ${sql(rows)} WHERE ${conditions(table, index, range)} ORDER BY ${sql.literal(range.direction === "desc" ? "value_key DESC,row_key DESC" : "value_key,row_key")} ${range.limit === undefined ? sql.literal("") : sql`LIMIT ${range.limit}`}`
+                                    ).pipe(
+                                        Effect.map((result) =>
+                                            result.map((entry): Entry => ({
+                                                table,
+                                                index,
+                                                value: entry.value_key,
+                                                key: entry.row_key,
+                                            }))
+                                        )
+                                    )
+                                )
+                            ),
+                    };
+                    return sql
+                        .withTransaction(
+                            Effect.gen(function* () {
+                                if (dialect === "pg")
+                                    yield* run(
+                                        sql.unsafe(
+                                            mode === "readonly"
+                                                ? "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+                                                : "SET TRANSACTION ISOLATION LEVEL READ COMMITTED"
+                                        )
+                                    );
+                                active = true;
+                                const result = yield* Effect.suspend(() => body(raw));
+                                // PostgreSQL can turn COMMIT into ROLLBACK after a caught
+                                // statement error. Never report that as a successful commit.
+                                if (failed) return yield* Effect.fail(failed);
+                                return result;
+                            })
+                        )
+                        .pipe(
+                            Effect.onExit(() =>
+                                Effect.sync(() => {
+                                    active = false;
+                                })
+                            ),
+                            Effect.mapError((cause) =>
+                                isSqlError(cause)
+                                    ? (noteFailure(cause),
+                                      transactionError(
+                                          "Backend",
+                                          "SQL transaction failed",
+                                          cause,
+                                          cause.isRetryable
+                                      ))
+                                    : cause
                             )
                         );
-                    },
-                    countEntries: (table, index, range = {}) =>
-                        check(
-                            run(
-                                sql<{
-                                    count: number | string;
-                                }>`SELECT COUNT(*) AS count FROM ${sql(rows)} WHERE ${conditions(table, index, range)}`
-                            ).pipe(Effect.map((result) => Number(result[0]!.count)))
-                        ),
-                    entries: (table, index, range = {}) =>
-                        check(
-                            run(
-                                sql<{
-                                    value_key: string;
-                                    row_key: string;
-                                }>`SELECT ${sql.literal(indexExpression(dialect, index))} AS value_key,row_key FROM ${sql(rows)} WHERE ${conditions(table, index, range)} ORDER BY ${sql.literal(range.direction === "desc" ? "value_key DESC,row_key DESC" : "value_key,row_key")} ${range.limit === undefined ? sql.literal("") : sql`LIMIT ${range.limit}`}`
-                            ).pipe(
-                                Effect.map((result) =>
-                                    result.map((entry): Entry => ({
-                                        table,
-                                        index,
-                                        value: entry.value_key,
-                                        key: entry.row_key,
-                                    }))
-                                )
-                            )
-                        ),
-                };
-                return sql
-                    .withTransaction(
-                        Effect.gen(function* () {
-                            // Serialize across Tables instances sharing this PostgreSQL namespace.
-                            // SQLite drivers use a writer transaction for the same guarantee.
-                            // TODO: serializable PG transactions/retries and journal publication
-                            // ordering should replace this coarse lock for concurrent workloads.
-                            if (dialect === "pg")
-                                yield* run(sql`SELECT pg_advisory_xact_lock(hashtext(${prefix}))`);
-                            active = true;
-                            const result = yield* Effect.suspend(() => body(raw));
-                            // PostgreSQL can turn COMMIT into ROLLBACK after a caught
-                            // statement error. Never report that as a successful commit.
-                            if (failed) return yield* Effect.fail(failed);
-                            return result;
-                        })
-                    )
-                    .pipe(
-                        Effect.onExit(() =>
-                            Effect.sync(() => {
-                                active = false;
-                            })
-                        ),
-                        Effect.mapError((cause) =>
-                            isSqlError(cause)
-                                ? transactionError(
-                                      "Backend",
-                                      "SQL transaction failed",
-                                      cause,
-                                      isSqlError(cause) && cause.isRetryable
-                                  )
-                                : cause
-                        )
-                    );
-            }),
+                })
+            ),
     });
 });
 export const layer = (options?: { readonly prefix?: string }) => Layer.effect(Tables, make(options));

@@ -349,10 +349,10 @@ test("a failed journal append rolls back the integration's object writes", async
             let rejectJournal = false;
             const tables = {
                 ...raw,
-                put: ((table, key, value) =>
+                insert: ((table, key, value) =>
                     rejectJournal && table.name === JSON.stringify(["backend", "journal-failure", "journal"])
                         ? Effect.die(new Error("journal unavailable"))
-                        : raw.put(table, key, value)) as typeof raw.put,
+                        : raw.insert(table, key, value)) as typeof raw.insert,
             };
             const backend = yield* makeOwnedBackend({
                 namespace: "journal-failure",
@@ -369,6 +369,9 @@ test("a failed journal append rolls back the integration's object writes", async
             rejectJournal = false;
             expect(yield* backend.storage.read((tx) => tx.get("Counter", "one"))).toBeUndefined();
             expect((yield* backend.changes!.pull({ cursor: before.cursor })).commits).toEqual([]);
+            expect((yield* backend.loadSubset({ objectType: "Counter" })).cursor).toBe(before.cursor);
+            yield* backend.storage.transaction((tx) => tx.put("Counter", { id: "one", count: 1 }));
+            expect((yield* backend.changes!.pull({ cursor: before.cursor })).commits).toHaveLength(1);
         })
     );
 });

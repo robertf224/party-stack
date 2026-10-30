@@ -227,7 +227,16 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             return yield* fault("changes", "HistoryExpired", "Invalid backend change position.");
         return parsed.revision;
     });
-    const current = Effect.map(tables.get(metadata, "head"), (value) => value?.revision ?? 0);
+    // The head is derived from committed journal rows. Updating one MVCC head
+    // row on every action would make independent serializable writers conflict.
+    const current = Effect.gen(function* () {
+        const last = yield* tables.query(journal, {
+            orderBy: [{ field: field("revision"), direction: "desc" }],
+            limit: 1,
+        });
+        return Math.max(last[0]?.value.revision ?? 0, (yield* tables.get(metadata, "head"))?.revision ?? 0);
+    });
+    let initialRevision = 0;
     const wakes = yield* PubSub.sliding<void>(1);
     yield* boundary(
         storage.transaction((native) =>
@@ -246,6 +255,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 const head = yield* tables.get(metadata, "head");
                 source = head?.source ?? `${options.namespace}:${crypto.randomUUID()}`;
                 if (!head) yield* tables.put(metadata, "head", { source, revision: 0 });
+                initialRevision = yield* current;
             })
         )
     );
@@ -327,23 +337,23 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         changes: ReadonlyMap<string, ObjectChange>,
         operationId?: string
     ) {
-        const revision = (yield* current) + 1;
+        const revision = yield* tables.allocateRevision(journal.name, initialRevision);
         if (!Number.isSafeInteger(revision))
             return yield* fault("commit", "Unavailable", "Backend journal revision exhausted.");
         const encodedCursor = cursor(revision);
         const commit: BackendCommit = { cursor: encodedCursor, operationId, changes: [...changes.values()] };
-        yield* tables.put(journal, revision, {
-            revision,
-            commit,
-            committedAt: yield* Clock.currentTimeMillis,
-        });
-        const journalFloor = Math.max(
-            (yield* tables.get(metadata, "head"))?.journalFloor ?? 0,
-            Number.isFinite(maxCommits) ? revision - maxCommits : 0
-        );
-        for (const row of yield* tables.query(journal, { where: lte(field("revision"), journalFloor) }))
-            yield* tables.delete(journal, row.key);
-        yield* tables.put(metadata, "head", { revision, source, journalFloor });
+        if (
+            !(yield* tables.insert(journal, revision, {
+                revision,
+                commit,
+                committedAt: yield* Clock.currentTimeMillis,
+            }))
+        )
+            return yield* fault("commit", "Internal", "Publication revision was already committed.");
+        const journalFloor = Math.max(0, Number.isFinite(maxCommits) ? revision - maxCommits : 0);
+        if (journalFloor > 0)
+            for (const row of yield* tables.query(journal, { where: lte(field("revision"), journalFloor) }))
+                yield* tables.delete(journal, row.key);
         return encodedCursor;
     });
     const trustedStorage: OwnedStorageService = {
@@ -447,7 +457,9 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         if (!invocation.id)
             return yield* fault("applyAction", "InvalidRequest", "Actions require a stable invocation ID.");
         const fingerprint = prepared.identity;
-        const previous = retainReceipt ? yield* tables.get(receipts, prepared.receiptKey) : undefined;
+        const previous = retainReceipt
+            ? yield* tables.get(receipts, prepared.receiptKey, { forUpdate: true })
+            : undefined;
         if (previous && previous.completedAt > (yield* Clock.currentTimeMillis) - resultRetentionMs) {
             if (previous.fingerprint !== fingerprint)
                 return yield* fault(
@@ -558,41 +570,82 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             })
         )
     );
-    const collectGarbage = boundary(
-        tables.transaction((tx) =>
-            Effect.gen(function* () {
-                yield* clients.expire(tx);
-                const now = yield* Clock.currentTimeMillis;
-                if (Number.isFinite(resultRetentionMs)) {
-                    for (const row of yield* tx.query(receipts, {
+    // Empty maintenance must not take predicate locks against active actions.
+    // Probe a snapshot first, then recheck all conditions in the write transaction.
+    const hasGarbage = tables.read((tx) =>
+        Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis;
+            if ((yield* tx.query(clients.clients, { where: lte(field("expiresAt"), now), limit: 1 })).length)
+                return true;
+            if (Number.isFinite(resultRetentionMs)) {
+                if (
+                    (yield* tx.query(receipts, {
                         where: lte(field("completedAt"), now - resultRetentionMs),
-                        limit: 100,
-                    }))
-                        yield* tx.delete(receipts, row.key);
-                    for (const row of yield* tx.query(results, {
+                        limit: 1,
+                    })).length
+                )
+                    return true;
+                if (
+                    (yield* tx.query(results, {
                         where: lte(field("entry", "completedAt"), now - resultRetentionMs),
-                        limit: 100,
-                    }))
-                        yield* tx.delete(results, row.key);
-                }
-                if (options.history?.maxAgeMs !== undefined && Number.isFinite(options.history.maxAgeMs)) {
-                    const expired = yield* tx.query(journal, {
-                        where: lte(field("committedAt"), now - options.history.maxAgeMs),
-                        orderBy: [{ field: field("revision") }],
-                        limit: 100,
-                    });
-                    const head = yield* tx.get(metadata, "head");
-                    if (head && expired.length)
-                        yield* tx.put(metadata, "head", {
-                            ...head,
-                            journalFloor: Math.max(
-                                head.journalFloor ?? 0,
-                                ...expired.map((row) => row.value.revision)
-                            ),
-                        });
-                    for (const row of expired) yield* tx.delete(journal, row.key);
-                }
-            })
+                        limit: 1,
+                    })).length
+                )
+                    return true;
+            }
+            return (
+                options.history?.maxAgeMs !== undefined &&
+                Number.isFinite(options.history.maxAgeMs) &&
+                (yield* tx.query(journal, {
+                    where: lte(field("committedAt"), now - options.history.maxAgeMs),
+                    limit: 1,
+                })).length > 0
+            );
+        })
+    );
+    const collectGarbage = boundary(
+        Effect.flatMap(hasGarbage, (needed) =>
+            needed
+                ? tables.transaction((tx) =>
+                      Effect.gen(function* () {
+                          yield* clients.expire(tx);
+                          const now = yield* Clock.currentTimeMillis;
+                          if (Number.isFinite(resultRetentionMs)) {
+                              for (const row of yield* tx.query(receipts, {
+                                  where: lte(field("completedAt"), now - resultRetentionMs),
+                                  limit: 100,
+                              }))
+                                  yield* tx.delete(receipts, row.key);
+                              for (const row of yield* tx.query(results, {
+                                  where: lte(field("entry", "completedAt"), now - resultRetentionMs),
+                                  limit: 100,
+                              }))
+                                  yield* tx.delete(results, row.key);
+                          }
+                          if (
+                              options.history?.maxAgeMs !== undefined &&
+                              Number.isFinite(options.history.maxAgeMs)
+                          ) {
+                              const expired = yield* tx.query(journal, {
+                                  where: lte(field("committedAt"), now - options.history.maxAgeMs),
+                                  orderBy: [{ field: field("revision") }],
+                                  limit: 100,
+                              });
+                              const head = yield* tx.get(metadata, "head");
+                              if (head && expired.length)
+                                  yield* tx.put(metadata, "head", {
+                                      ...head,
+                                      revision: yield* current,
+                                      journalFloor: Math.max(
+                                          head.journalFloor ?? 0,
+                                          ...expired.map((row) => row.value.revision)
+                                      ),
+                                  });
+                              for (const row of expired) yield* tx.delete(journal, row.key);
+                          }
+                      })
+                  )
+                : Effect.void
         )
     );
     const subscribeSelection: NonNullable<OntologyBackendService["subscribeSelection"]> = (
@@ -932,7 +985,10 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                         Effect.gen(function* () {
                             const head = yield* current;
                             const after = yield* parseCursor(request.cursor, head);
-                            const floor = (yield* tables.get(metadata, "head"))?.journalFloor ?? 0;
+                            const floor = Math.max(
+                                (yield* tables.get(metadata, "head"))?.journalFloor ?? 0,
+                                Number.isFinite(maxCommits) ? head - maxCommits : 0
+                            );
                             if (after < floor)
                                 return yield* fault(
                                     "changes",

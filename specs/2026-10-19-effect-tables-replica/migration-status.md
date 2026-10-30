@@ -184,15 +184,14 @@ tracked in [blob-future-work.md](./blob-future-work.md).
 
 ## Follow-up design
 
-- **Postgres concurrency (deferred):** keep the current Tables-prefix transaction
-  advisory lock for correctness. Later evaluate serializable transactions with
-  safe whole-transaction retries and real multi-connection tests. Revisit the
-  owned backend's shared journal-head row before claiming concurrent action
-  throughput. A plain sequence is not a safe publication cursor: allocation
-  order can differ from commit order. Compare a narrow publication lock with a
-  WAL-based PostgreSQL feed; see [the concurrency note](./postgres-concurrency.md)
-  for the issue/transaction example and Zero's commit-LSN approach. Keep changes
-  in the SQL driver and journal module, rather than platform branches in runtime.
+- **Postgres concurrency (implemented October 30):** snapshot readers no longer
+  acquire the Tables-prefix lock. Cooperating writers use key-level coordination,
+  conservative logical-table predicate guards and confirmed-abort retries.
+  Journal publication uses a short per-stream lock and sequence, with one shared
+  backend path across memory/IndexedDB/SQLite/PostgreSQL. Real multi-connection
+  tests and a controlled benchmark are included. WAL capture, finer predicate
+  locking and native application columns/migrations remain future work; see
+  [the concurrency note](./postgres-concurrency.md).
 
 - Portable query IR/builder with correlated subqueries, relationship helpers,
   cross-ontology references, security/demand interpretation and deeper limit pushdown.

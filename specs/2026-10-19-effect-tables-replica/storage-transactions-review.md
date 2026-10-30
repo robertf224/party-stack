@@ -79,7 +79,7 @@ For an owned backend, an action's transaction contains:
 
 1. Authorization/bind/reference checks that depend on the transaction's reads.
 2. Object mutations, including indexes and attachment-reference roots.
-3. One change-journal commit and revision/head update.
+3. One change-journal commit with a revision allocated under coordination held through commit.
 4. The action receipt when retained for idempotent recovery.
 
 The object wrapper's calls and raw metadata-table calls participate in the same
@@ -107,11 +107,13 @@ than becoming part of the object mutation's database transaction.
 - SQL acquisition is owned by the supplied SqlClient Layer. The synchronous
   SQLite bridge borrows the database rather than closing it. Its connection gate
   spans a transaction; DO-native rollback is awaited before release.
-- PG currently takes `pg_advisory_xact_lock(hashtext(prefix))` for **read and write**
-  transactions. This serializes participating Tables users of the same physical
-  prefix, even across different logical ontology namespaces. It is not a claim of
-  configured PostgreSQL SERIALIZABLE isolation or coordination with arbitrary SQL
-  writers that ignore the advisory lock. Better concurrency remains deferred.
+- PostgreSQL snapshot readers use repeatable-read transactions without application
+  advisory locks. Writers coordinate point reads/writes by key and predicate reads
+  by logical table, holding locks through commit. Write-intent reads avoid lock
+  upgrade deadlocks; confirmed aborts retry the entire callback. Journal publication
+  has its own short per-stream lock and sequence. No namespace-wide transaction
+  lock remains. Arbitrary external SQL writers do not participate in these rules.
+  See [the measured concurrency checkpoint](./postgres-concurrency.md).
 - Transaction errors preserve the callback's typed error channel. Defects and
   interruption also roll back. A success is returned only after commit completes.
 - Catching an Effect failure converts that subprogram into success. It does not

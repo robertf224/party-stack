@@ -23,9 +23,12 @@
         "@party-stack/ontology-storage": "workspace:*"
     },
     "devDependencies": {
+        "@effect/sql-pg": "^4.0.5",
         "@effect/sql-pglite": "^4.0.5",
         "@effect/sql-sqlite-node": "^4.0.5",
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/ontology-backend": "workspace:*",
+        "@party-stack/ontology-spec": "workspace:*",
         "effect": "^4.0.5",
         "typescript": "~7.0.2",
         "vite": "catalog:",

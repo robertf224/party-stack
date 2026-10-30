@@ -7,6 +7,18 @@ jobs:
     ci:
         name: CI
         runs-on: ubuntu-latest
+        services:
+            postgres:
+                image: postgres:18-alpine
+                env:
+                    POSTGRES_HOST_AUTH_METHOD: trust
+                ports:
+                    - 5432:5432
+                options: >-
+                    --health-cmd pg_isready
+                    --health-interval 5s
+                    --health-timeout 5s
+                    --health-retries 10
         steps:
             - name: Checkout
               uses: actions/checkout@v3
@@ -27,6 +39,10 @@ jobs:
                       vite-task-${{ runner.os }}-${{ runner.arch }}-
             - name: Check, build, and test
               run: vp run ci
+            - name: PostgreSQL concurrent transactions and journal publication
+              env:
+                  PARTY_STACK_TEST_POSTGRES_URL: postgres://postgres@127.0.0.1:5432/postgres
+              run: vp run @party-stack/sql-ontology-storage#test
             - name: Save Vite Task cache
               if: success()
               uses: actions/cache/save@v6

@@ -1006,7 +1006,7 @@ importers:
         version: 0.14.0(typescript@7.0.2)
       alchemy:
         specifier: ^2.0.0-beta.83
-        version: 2.0.0-beta.83(@effect/vitest@4.0.5(effect@4.0.5)(vitest@5.0.4))(@types/node@24.10.1)(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.2.0(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.51.2)(tsx@4.20.6)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.5)(hono@4.11.4)(react-devtools-core@6.1.5)(typescript@7.0.2)(ws@8.22.0)
+        version: 2.0.0-beta.83(@effect/sql-pg@4.0.5(effect@4.0.5))(@effect/vitest@4.0.5(effect@4.0.5)(vitest@5.0.4))(@types/node@24.10.1)(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.2.0(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.51.2)(tsx@4.20.6)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.5)(hono@4.11.4)(react-devtools-core@6.1.5)(typescript@7.0.2)(ws@8.22.0)
       esbuild:
         specifier: ^0.28.1
         version: 0.28.1
@@ -1971,6 +1971,9 @@ importers:
         specifier: workspace:*
         version: link:../ontology-storage
     devDependencies:
+      '@effect/sql-pg':
+        specifier: ^4.0.5
+        version: 4.0.5(effect@4.0.5)
       '@effect/sql-pglite':
         specifier: ^4.0.5
         version: 4.0.5(effect@4.0.5)
@@ -1980,6 +1983,12 @@ importers:
       '@party-stack/build-config':
         specifier: workspace:*
         version: link:../build-config
+      '@party-stack/ontology-backend':
+        specifier: workspace:*
+        version: link:../ontology-backend
+      '@party-stack/ontology-spec':
+        specifier: workspace:*
+        version: link:../ontology-spec
       effect:
         specifier: ^4.0.5
         version: 4.0.5
@@ -3120,6 +3129,11 @@ packages:
 
   '@effect/sql-d1@4.0.5':
     resolution: {integrity: sha512-ERArvCS/qOHx52yKFePc8v5qs0y18Ld+Ha6Xkkm/I1R+zTf+flfWpsuxlxkPKlwQCqB9K+yfU6Kw1gshKGRCPQ==}
+    peerDependencies:
+      effect: ^4.0.5
+
+  '@effect/sql-pg@4.0.5':
+    resolution: {integrity: sha512-F9tG76H+aryhYcp5pvgd+MwWrNltv3XAuLcZSBsOOX6q+PEl+IM4zkQKzx0TF9OsEMH/SQ+3gZRdYWOsDF+vJQ==}
     peerDependencies:
       effect: ^4.0.5
 
@@ -13499,6 +13513,10 @@ snapshots:
       '@cloudflare/workers-types': 5.20261023.1
       effect: 4.0.5
 
+  '@effect/sql-pg@4.0.5(effect@4.0.5)':
+    dependencies:
+      effect: 4.0.5
+
   '@effect/sql-pglite@4.0.5(effect@4.0.5)':
     dependencies:
       '@electric-sql/pglite': 0.5.10
@@ -17728,7 +17746,7 @@ snapshots:
 
   agent-cli-detector@0.1.7: {}
 
-  alchemy@2.0.0-beta.83(@effect/vitest@4.0.5(effect@4.0.5)(vitest@5.0.4))(@types/node@24.10.1)(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.2.0(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.51.2)(tsx@4.20.6)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.5)(hono@4.11.4)(react-devtools-core@6.1.5)(typescript@7.0.2)(ws@8.22.0):
+  alchemy@2.0.0-beta.83(@effect/sql-pg@4.0.5(effect@4.0.5))(@effect/vitest@4.0.5(effect@4.0.5)(vitest@5.0.4))(@types/node@24.10.1)(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.2.0(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.51.2)(tsx@4.20.6)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.5)(hono@4.11.4)(react-devtools-core@6.1.5)(typescript@7.0.2)(ws@8.22.0):
     dependencies:
       '@alchemy.run/cloudflare-runtime': 2.0.0-beta.83(@distilled.cloud/cloudflare@1.0.0-rc.15(effect@4.0.5))(@types/node@24.10.1)(@voidzero-dev/vite-plus-core@1.2.0(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.51.2)(tsx@4.20.6)(typescript@7.0.2)(yaml@2.9.1))(effect@4.0.5)(rolldown@1.2.5)(typescript@7.0.2)
       '@alchemy.run/floci': 2.0.0-beta.83(effect@4.0.5)
@@ -17770,6 +17788,7 @@ snapshots:
       tinyglobby: 0.2.17
       yaml: 2.9.1
     optionalDependencies:
+      '@effect/sql-pg': 4.0.5(effect@4.0.5)
       '@effect/vitest': 4.0.5(effect@4.0.5)(vitest@5.0.4)
       vite: '@voidzero-dev/vite-plus-core@1.2.0(@types/node@24.10.1)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.51.2)(tsx@4.20.6)(typescript@7.0.2)(yaml@2.9.1)'
       ws: 8.22.0

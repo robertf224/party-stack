@@ -31,7 +31,7 @@ import { executeQuery } from "./query/execute.js";
 import { IndexSchema } from "./query/schema.js";
 import { StoredIndexSchema } from "./storage/schema.js";
 import { CurrentTransactions, provideTransaction, TransactionIdentity } from "./transactionContext.js";
-import type { Driver, DriverTransaction, Entry, StoredIndex } from "./driver/index.js";
+import type { Driver, DriverTransaction, Entry, StoredIndex, StoredRow } from "./driver/index.js";
 import type { QueryDocument, OntologyIR } from "@party-stack/ontology-spec";
 
 export interface TableQueryOptions {
@@ -58,6 +58,25 @@ export interface ReadTransaction {
     readonly query: TableQuery;
 }
 export interface Transaction extends ReadTransaction {
+    /** Request write intent before reading to avoid shared-lock upgrade deadlocks. */
+    readonly get: <A>(
+        table: Table<A>,
+        key: Key,
+        options?: { readonly forUpdate?: boolean }
+    ) => Effect.Effect<A | undefined, OntologyStorageError>;
+    /** Insert without replacement; false means a key or unique-index conflict. */
+    readonly insert: <A>(
+        table: Table<A>,
+        key: Key,
+        value: NoInfer<A>
+    ) => Effect.Effect<boolean, OntologyStorageError>;
+    /** Allocate a monotonically increasing publication revision, holding coordination
+     * through commit. Call after business writes; callbacks may be retried by SQL.
+     * Revisions may have gaps and must not be used as a count of commits. */
+    readonly allocateRevision: (
+        stream: string,
+        minimum?: number
+    ) => Effect.Effect<number, OntologyStorageError>;
     readonly put: <A>(
         table: Table<A>,
         key: Key,
@@ -106,10 +125,15 @@ function transaction(
     const decodeIndexes = Schema.decodeUnknownSync(Schema.Array(StoredIndexSchema));
     const knownDefinitions = new Map<string, readonly StoredIndex[]>();
     const schemaIndex = "__party_tables_schema__";
-    const get = Effect.fnUntraced(function* <A>(table: Table<A>, key: Key) {
+    const get = Effect.fnUntraced(function* <A>(
+        table: Table<A>,
+        key: Key,
+        options?: { readonly forUpdate?: boolean }
+    ) {
+        if (options?.forUpdate) yield* assertWrite();
         yield* definitions(table);
         const encoded = yield* attempt("key", () => keyCode(key));
-        const row = yield* raw.get(table.name, encoded);
+        const row = yield* raw.get(table.name, encoded, options?.forUpdate);
         return row ? yield* codec("decode", () => table.decode(row.data)) : undefined;
     });
     const definitions = Effect.fnUntraced(function* <A>(table: ReadTable<A>) {
@@ -249,53 +273,118 @@ function transaction(
             value: scalarKey(typeof scalar === "string" ? scalar.toLowerCase() : undefined),
         };
     };
+    const writeRow = Effect.fnUntraced(function* <A>(
+        table: Table<A>,
+        key: Key,
+        value: A,
+        insertOnly: boolean
+    ) {
+        yield* assertWrite();
+        const code = yield* attempt("key", () => keyCode(key));
+        const data = yield* codec("encode", () => table.encode(value));
+        // Index canonical decoded values, including custom codec transformations.
+        const canonical = yield* codec("decode", () => table.decode(data));
+        const indexes = yield* definitions(table);
+        if (insertOnly && !raw.insert && (yield* raw.get(table.name, code))) return false;
+        // Validate every entry before mutating, even when the caller catches
+        // a uniqueness/codec error and continues the surrounding transaction.
+        const nativeInsert = insertOnly && raw.insert && raw.nativeIndexes;
+        const previous =
+            !nativeInsert && indexes.some((index) => index.unique)
+                ? yield* raw.get(table.name, code)
+                : undefined;
+        const nativeNew =
+            !insertOnly &&
+            !previous &&
+            raw.insert &&
+            raw.nativeIndexes &&
+            indexes.some((index) => index.unique);
+        const previousValue = previous
+            ? yield* codec("decode", () => table.decode(previous.data))
+            : undefined;
+        const entries: Entry[] = [];
+        for (const index of indexes) {
+            // An unchanged unique value is already owned by this row. Rechecking
+            // the range adds IO and broad predicate dependencies for no benefit.
+            const unchanged =
+                previous &&
+                index.unique &&
+                (yield* attempt(
+                    "index",
+                    () =>
+                        scalarKey(readField(previousValue, index.field)) ===
+                        scalarKey(readField(canonical, index.field))
+                ));
+            const indexed = yield* makeEntries(
+                unchanged || nativeInsert || nativeNew ? { ...index, unique: false } : index,
+                code,
+                canonical
+            );
+            entries.push(...indexed);
+            if (!index.multiEntry) entries.push(foldedEntry(indexed[0]!, canonical, index));
+        }
+        if (raw.nativeIndexes) {
+            const row: StoredRow = {
+                table: table.name,
+                key: code,
+                data,
+                indexValues: Object.fromEntries([
+                    ...entries
+                        .filter((entry) => !entry.multiEntry)
+                        .map((entry) => [entry.index, entry.value]),
+                    ...indexes
+                        .filter((index) => index.multiEntry)
+                        .map((index) => [
+                            index.name,
+                            entries.filter((entry) => entry.index === index.name).map((entry) => entry.value),
+                        ]),
+                ]),
+            };
+            if (insertOnly && raw.insert) return yield* raw.insert(row);
+            if (nativeNew && raw.insert) {
+                if (yield* raw.insert(row)) return true;
+                // A real conflict needs the portable diagnostic. The failed
+                // native insert changed nothing and did not abort the transaction.
+                for (const index of indexes) if (index.unique) yield* makeEntries(index, code, canonical);
+            }
+            yield* raw.put(row);
+            return true;
+        }
+        for (const index of indexes) {
+            yield* raw.deleteEntries(table.name, index.name, code);
+            if (!index.multiEntry)
+                yield* raw.deleteEntries(table.name, caseInsensitiveIndex(index.name), code);
+        }
+        for (const entry of entries) yield* raw.putEntry(entry);
+        yield* raw.put({ table: table.name, key: code, data });
+        return true;
+    });
     const api: Transaction = {
+        allocateRevision: Effect.fnUntraced(function* (stream: string, minimum = 0) {
+            yield* assertWrite();
+            if (!stream || !Number.isSafeInteger(minimum) || minimum < 0)
+                return yield* queryError(
+                    "revision",
+                    "Revision streams require a name and nonnegative safe minimum."
+                );
+            if (raw.allocateRevision) return yield* raw.allocateRevision(stream, minimum);
+            // Serialized drivers keep their clock in the same physical transaction.
+            const table = "\0party:revisions";
+            const key = keyCode(stream);
+            const previous = yield* raw.get(table, key);
+            const revision = Math.max(previous ? Number(previous.data) : 0, minimum) + 1;
+            if (!Number.isSafeInteger(revision))
+                return yield* transactionError("Backend", "Publication revision exhausted.");
+            yield* raw.put({ table, key, data: String(revision) });
+            return revision;
+        }),
         get,
         query,
-        put: Effect.fnUntraced(function* <A>(table: Table<A>, key: Key, value: A) {
-            yield* assertWrite();
-            const code = yield* attempt("key", () => keyCode(key));
-            const data = yield* codec("encode", () => table.encode(value));
-            // Index canonical decoded values, including custom codec transformations.
-            const canonical = yield* codec("decode", () => table.decode(data));
-            const indexes = yield* definitions(table);
-            // Validate every entry before mutating, even when the caller catches
-            // a uniqueness/codec error and continues the surrounding transaction.
-            const entries: Entry[] = [];
-            for (const index of indexes) {
-                const indexed = yield* makeEntries(index, code, canonical);
-                entries.push(...indexed);
-                if (!index.multiEntry) entries.push(foldedEntry(indexed[0]!, canonical, index));
-            }
-            if (raw.nativeIndexes) {
-                yield* raw.put({
-                    table: table.name,
-                    key: code,
-                    data,
-                    indexValues: Object.fromEntries([
-                        ...entries
-                            .filter((entry) => !entry.multiEntry)
-                            .map((entry) => [entry.index, entry.value]),
-                        ...indexes
-                            .filter((index) => index.multiEntry)
-                            .map((index) => [
-                                index.name,
-                                entries
-                                    .filter((entry) => entry.index === index.name)
-                                    .map((entry) => entry.value),
-                            ]),
-                    ]),
-                });
-                return;
-            }
-            for (const index of indexes) {
-                yield* raw.deleteEntries(table.name, index.name, code);
-                if (!index.multiEntry)
-                    yield* raw.deleteEntries(table.name, caseInsensitiveIndex(index.name), code);
-            }
-            for (const entry of entries) yield* raw.putEntry(entry);
-            yield* raw.put({ table: table.name, key: code, data });
-        }),
+        put: (table, key, value) => Effect.asVoid(writeRow(table, key, value, false)),
+        insert: (table, key, value) =>
+            writeRow(table, key, value, true).pipe(
+                Effect.catchReason("OntologyStorageError", "UniqueConstraint", () => Effect.succeed(false))
+            ),
         delete: deleteRow,
         clear: Effect.fnUntraced(function* <A>(table: Table<A>) {
             yield* assertWrite();
@@ -382,9 +471,11 @@ function transaction(
             : guarded(query(request, options as Query));
     }
     return {
-        get: (table, key) => guarded(api.get(table, key)),
+        allocateRevision: (stream, minimum) => guarded(api.allocateRevision(stream, minimum)),
+        get: (table, key, options) => guarded(api.get(table, key, options)),
         query: guardedQuery,
         put: (table, key, value) => guarded(api.put(table, key, value)),
+        insert: (table, key, value) => guarded(api.insert(table, key, value)),
         delete: (table, key) => guarded(api.delete(table, key)),
         clear: (table) => guarded(api.clear(table)),
         ensureIndex: (table, index) => guarded(api.ensureIndex(table, index)),
@@ -442,9 +533,13 @@ export function makeTables(driver: Driver): TablesService {
         read: (body) => run("readonly", body),
         withTransaction: (effect) => run("readwrite", () => effect),
         withReadTransaction: (effect) => run("readonly", () => effect),
-        get: (table, key) => operation("readonly", (tx) => tx.get(table, key)),
+        allocateRevision: (stream, minimum) =>
+            operation("readwrite", (tx) => tx.allocateRevision(stream, minimum)),
+        get: (table, key, options) =>
+            operation(options?.forUpdate ? "readwrite" : "readonly", (tx) => tx.get(table, key, options)),
         query,
         put: (table, key, value) => operation("readwrite", (tx) => tx.put(table, key, value)),
+        insert: (table, key, value) => operation("readwrite", (tx) => tx.insert(table, key, value)),
         delete: (table, key) => operation("readwrite", (tx) => tx.delete(table, key)),
         clear: (table) => operation("readwrite", (tx) => tx.clear(table)),
         ensureIndex: (table, index) => operation("readwrite", (tx) => tx.ensureIndex(table, index)),

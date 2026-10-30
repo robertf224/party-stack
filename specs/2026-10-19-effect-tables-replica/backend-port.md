@@ -19,8 +19,9 @@ the invocation's temporary state on rollback.
 
 A database snapshot alone is not a portable serializability guarantee. Select a
 documented conflict/serialization policy for each backend. The current SQL driver
-uses a PostgreSQL namespace advisory transaction lock for cooperating storage
-transactions; this does not establish isolation from arbitrary external writers.
+uses PostgreSQL key locks and conservative logical-table predicate guards held
+through commit for cooperating writers, plus lock-free repeatable-read snapshots.
+This does not establish isolation from arbitrary external writers.
 The bridge must also respect IndexedDB transaction lifetimes and Durable Object
 transaction/scheduling restrictions. Do not run remote/blob network I/O while
 holding a native storage transaction.

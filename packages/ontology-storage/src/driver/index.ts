@@ -32,10 +32,21 @@ export interface Range {
     readonly limit?: number;
 }
 export interface DriverTransaction {
+    /** Native atomic insert-if-absent, avoiding a missing-key predicate read. */
+    readonly insert?: (row: StoredRow) => Effect.Effect<boolean, OntologyStorageError>;
+    /** Allocate under coordination held through commit. Gaps after rollback are allowed. */
+    readonly allocateRevision?: (
+        stream: string,
+        minimum: number
+    ) => Effect.Effect<number, OntologyStorageError>;
     /** Native indexes are maintained from StoredRow.indexValues rather than entry writes. */
     readonly nativeIndexes?: boolean;
     readonly clear: (table: string) => Effect.Effect<void, OntologyStorageError>;
-    readonly get: (table: string, key: string) => Effect.Effect<StoredRow | undefined, OntologyStorageError>;
+    readonly get: (
+        table: string,
+        key: string,
+        forUpdate?: boolean
+    ) => Effect.Effect<StoredRow | undefined, OntologyStorageError>;
     readonly rows: (table: string) => Effect.Effect<readonly StoredRow[], OntologyStorageError>;
     /** Bounded batches/iteration within the active transaction; do not buffer the whole table. */
     readonly scanRows: (table: string) => Stream.Stream<StoredRow, OntologyStorageError>;
