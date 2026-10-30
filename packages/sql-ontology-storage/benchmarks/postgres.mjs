@@ -8,16 +8,13 @@ import { o } from "@party-stack/ontology-spec";
 import { Effect, Redacted } from "effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { make } from "../lib/tables.js";
+import { startPostgres } from "../src/postgres.setup.ts";
 
 // Compare coordination/journal implementations against the same portable core.
 // Baseline sources are temporary test oracles; no old implementation ships.
 const baseline = process.argv[2] ?? "faa2bdbb";
-const url = process.env.PARTY_STACK_TEST_POSTGRES_URL;
-if (!url || !/^[0-9a-f]{7,40}$/.test(baseline)) {
-    throw new Error(
-        "Set PARTY_STACK_TEST_POSTGRES_URL to a disposable database; pass a baseline commit hash."
-    );
-}
+let url = process.env.PARTY_STACK_TEST_POSTGRES_URL;
+if (!/^[0-9a-f]{7,40}$/.test(baseline)) throw new Error("Pass a baseline commit hash.");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporary = await mkdtemp(join(root, ".postgres-benchmark-"));
 const schema = `benchmark_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -51,7 +48,12 @@ const admin = (effect) =>
         effect.pipe(Effect.provide(Pg.layer({ url: Redacted.make(url), maxConnections: 1 })), Effect.scoped)
     );
 let created = false;
+let postgres;
 try {
+    if (!url) {
+        postgres = await startPostgres();
+        url = postgres.getConnectionUri();
+    }
     const source = (path) =>
         execFileSync("git", ["show", `${baseline}:${path}`], { cwd: root, encoding: "utf8" });
     await writeFile(
@@ -154,6 +156,10 @@ try {
                 })
             );
     } finally {
-        await rm(temporary, { recursive: true, force: true });
+        try {
+            await rm(temporary, { recursive: true, force: true });
+        } finally {
+            await postgres?.stop();
+        }
     }
 }

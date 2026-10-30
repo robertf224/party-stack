@@ -93,18 +93,25 @@ commit, after business writes. The owned backend uses this same journal path on
 every store and derives its committed head from retained entries plus its archive
 marker, rather than updating a shared head row on every action.
 
-Run real PostgreSQL tests against a disposable database:
+With Docker running, run the complete suite locally or in CI:
 
 ```sh
-PARTY_STACK_TEST_POSTGRES_URL=postgres://postgres@127.0.0.1:5432/postgres \
-  vp run @party-stack/sql-ontology-storage#test
+vp run @party-stack/sql-ontology-storage#test
 ```
 
-CI supplies a PostgreSQL 18 service for these tests. For the controlled before/after
-benchmark, build this package and run `node benchmarks/postgres.mjs faa2bdbb` from
-its directory with the same environment variable. It compares the old SQL/journal
-coordination against the current implementation using the same portable core,
-checks resulting rows, and removes its temporary schema and baseline source files.
+Vitest's `postgres` project starts PostgreSQL 18 through Testcontainers, injects
+its connection URL into the tests, and stops the container during teardown.
+Ports and credentials are managed by the fixture. The PostgreSQL tests run by
+default; startup failures fail the suite rather than silently skipping it.
+Select `--project unit` to run only SQLite/PGlite tests without Docker, or
+`--project postgres` to run only the real PostgreSQL tests.
+
+For the controlled before/after benchmark, build this package and run
+`node benchmarks/postgres.mjs faa2bdbb` from its directory. It uses the same managed
+container by default; `PARTY_STACK_TEST_POSTGRES_URL` can optionally target an
+existing disposable database. It compares the old SQL/journal coordination against
+the current implementation using the same portable core, checks resulting rows,
+and removes its temporary schema, baseline source files and managed container.
 
 Read [the core contract](../ontology-storage/README.md) before adding another dialect.
 In particular, stored bigint values are not limited to signed 64-bit SQL integers,

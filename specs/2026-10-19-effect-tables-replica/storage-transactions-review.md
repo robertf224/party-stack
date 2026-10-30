@@ -18,9 +18,11 @@ been proved correct. The October 30 follow-up records the implemented changes.
 - [x] Unify ambient raw/object transaction composition (F3), preserving explicit nesting rejection
 - [x] Preserve attachment-retention failures and normalize downstream recovery categories
 - [x] Stream transactional index backfills and clean up caught partial failures
+- [x] Narrow PostgreSQL coordination and verify real multi-connection publication/recovery
+- [x] Manage PostgreSQL test/benchmark lifecycle through Vitest and Testcontainers
 
 Pure helper expected-error boundaries (F2) remain recorded below; the review
-explicitly deferred that pass. Structural sharing, SQL concurrency, native schema
+explicitly deferred that pass. Structural sharing, finer PostgreSQL predicate coordination, native schema
 migrations, broader SQL query compilation and online/resumable index creation remain
 separate follow-ups rather than new correctness claims.
 

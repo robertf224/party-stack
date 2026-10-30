@@ -128,7 +128,7 @@ while writes commit, contended counters, predicate write skew, actual cross-key
 deadlock recovery, caught statement failures, lost COMMIT replies, ordered
 publication, duplicate actions, parallel action batches and full journal expiry.
 The portable contract also checks insertion conflicts and revision clocks across
-memory, IndexedDB, SQLite and PGlite. CI runs a PostgreSQL 18 service.
+memory, IndexedDB, SQLite and PGlite. Vitest global setup starts and stops PostgreSQL 18 through Testcontainers, both locally and in CI; the normal package test task includes these tests.
 
 Controlled local Docker PostgreSQL 18 measurements (two runs of three rounds, 16 independent
 existing Counter rows, concurrency eight, pool size twelve):
@@ -147,12 +147,12 @@ samples, not production capacity estimates or improvements for contended keys.
 Reproduce after building `@party-stack/sql-ontology-storage`, from that package:
 
 ```sh
-PARTY_STACK_TEST_POSTGRES_URL=postgres://postgres@127.0.0.1:5432/postgres \
-  node benchmarks/postgres.mjs faa2bdbb
+node benchmarks/postgres.mjs faa2bdbb
 ```
 
-The script uses an isolated temporary schema and removes it and its baseline
-source fixtures afterward. Native columns/migrations and WAL capture remain
+The script starts a managed PostgreSQL container, uses an isolated temporary
+schema, and removes the container, schema and baseline source fixtures afterward.
+An optional `PARTY_STACK_TEST_POSTGRES_URL` targets an existing disposable database. Native columns/migrations and WAL capture remain
 separate future checkpoints.
 
 Final validation: workspace `vp run ci` passed 133/133 tasks; the explicit real
