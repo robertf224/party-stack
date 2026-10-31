@@ -19,6 +19,7 @@ import { Effect, Schema, Stream } from "effect";
 import { projectOntologyDefinition } from "./definitionProjection.js";
 import { errorContext, projectValidationReport } from "./errorProjection.js";
 import { projectPolicyDefinition, validateContext } from "./policyDefinition.js";
+import { backendQueryReader } from "./query.js";
 import type {
     ActionRequest,
     ErrorProjection,
@@ -76,24 +77,7 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
         });
     const context = yield* validateContext(options.ir, options.context);
     const storage = "storage" in backend ? (backend.storage as OwnedStorageService) : undefined;
-    const sourceReader: QueryReader = {
-        ir: options.ir,
-        loadSubset: (objectType, query) =>
-            backend.loadSubset({ objectType, query }).pipe(
-                Effect.flatMap((snapshot) =>
-                    snapshot.complete
-                        ? Effect.succeed(snapshot.rows)
-                        : Effect.fail(
-                              new BackendError({
-                                  operation: "policy.read",
-                                  kind: "InvalidResponse",
-                                  message: "Policy evaluation requires a complete subset snapshot.",
-                                  retryable: false,
-                              })
-                          )
-                )
-            ),
-    };
+    const sourceReader = backendQueryReader(options.ir, backend);
     const definition = yield* projectPolicyDefinition({ ...options, context, reader: sourceReader });
     const ir = definition.ir;
     const boundIr = definition.specialized;

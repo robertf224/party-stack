@@ -1,8 +1,10 @@
 import { BackendError } from "@party-stack/ontology-backend";
+import { executeQuery } from "@party-stack/ontology-backend/query";
 import { makeCachedProxy, replicaStateSource } from "@party-stack/ontology-replica";
 import { sliceByteSource } from "@party-stack/ontology-storage/blobs";
 import { Effect } from "effect";
 import { projectOntologyBackend } from "./authorization.js";
+import { backendQueryReader } from "./query.js";
 import { makeOntologyHttpHandler } from "./rpcHttp.js";
 import type { OntologyRpcServerOptions } from "./rpc.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
@@ -172,7 +174,7 @@ export const makeOntologyServer = Effect.fn("OntologyServer.make")(function* <R 
               ? options.replica.ir
               : options.kind === "cached-proxy"
                 ? options.cache.ir
-                : undefined);
+                : options.ontology?.ir);
     let context = options.context;
     let query = options.query;
     let authorize = options.authorize;
@@ -204,6 +206,23 @@ export const makeOntologyServer = Effect.fn("OntologyServer.make")(function* <R 
             message: "A trusted transport gate or authenticated policy binding is required.",
             retryable: false,
         });
+    if (!query && ir) {
+        const definition = ir;
+        if (options.kind === "owned") {
+            const storage = options.backend.storage;
+            query = (document, inputs) =>
+                storage.read((tx) =>
+                    executeQuery(document, {
+                        reader: { ir: definition, loadSubset: (type, subset) => tx.loadSubset(type, subset) },
+                        inputs,
+                    }).pipe(Effect.map((result) => result.value))
+                );
+        } else {
+            const reader = backendQueryReader(definition, backend);
+            query = (document, inputs) =>
+                executeQuery(document, { reader, inputs }).pipe(Effect.map((result) => result.value));
+        }
+    }
     const handleRequest = yield* makeOntologyHttpHandler({
         ...options,
         ir,

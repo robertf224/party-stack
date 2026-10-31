@@ -2,6 +2,7 @@ import { o, type OntologyIR } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica } from "@party-stack/ontology-replica";
+import * as q from "@party-stack/ontology-spec/query";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { eq, field } from "@party-stack/ontology-storage";
 import { collectByteBlob, digestBytes, type ByteInput } from "@party-stack/ontology-storage/blobs";
@@ -52,6 +53,109 @@ const setup = Effect.fnUntraced(function* () {
                 }),
         },
     });
+});
+
+test.each(["owned", "proxy", "cached-proxy", "replica"] as const)(
+    "%s servers install finite Query execution without a custom handler",
+    async (kind) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const owned = yield* setup();
+                    yield* owned.applyAction({ id: "seed", name: "increment", parameters: {} });
+                    const reads = vi.spyOn(owned.storage, "read");
+                    const cache = yield* makeReplica({
+                        namespace: "query-cache",
+                        ir,
+                        tables: yield* Memory.make(),
+                        backend: owned,
+                        execute: () => Effect.void,
+                        startSync: false,
+                        gc: false,
+                    });
+                    const role =
+                        kind === "owned"
+                            ? { kind, backend: owned }
+                            : kind === "proxy"
+                              ? { kind, backend: owned, ir }
+                              : kind === "cached-proxy"
+                                ? { kind, backend: owned, cache }
+                                : { kind, backend: owned, replica: cache };
+                    const operations: string[] = [];
+                    const { handleRequest } = yield* makeOntologyServer({
+                        ...role,
+                        errors: "forward",
+                        authorize: (request) =>
+                            Effect.sync(() => {
+                                operations.push(request.operation);
+                            }),
+                    });
+                    yield* Effect.gen(function* () {
+                        const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
+                        const result = yield* connection.operations.query({
+                            select: [
+                                q.sub("counters", {
+                                    from: { source: { objectType: "Counter" }, binding: "c" },
+                                    where: q.eq(q.field("c", "id"), q.literal("one")),
+                                    select: [
+                                        q.selectField("id", q.field("c", "id")),
+                                        q.selectField(
+                                            "doubled",
+                                            q.add(q.field("c", "count"), q.field("c", "count"))
+                                        ),
+                                    ],
+                                }),
+                            ],
+                        });
+                        expect(result).toEqual({ counters: [{ id: "one", doubled: 2 }] });
+                        expect(operations).toContain("Query");
+                        if (kind === "owned") expect(reads).toHaveBeenCalledTimes(1);
+                    }).pipe(
+                        Effect.provide(FetchHttpClient.layer),
+                        Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                            handleRequest(new Request(input, init))
+                        )
+                    );
+                })
+            )
+        );
+    }
+);
+
+test("automatic finite queries reject incomplete source subsets", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* setup();
+                const { handleRequest } = yield* makeOntologyServer({
+                    kind: "proxy",
+                    ir,
+                    errors: "forward",
+                    authorize: () => Effect.void,
+                    backend: { ...owned, loadSubset: () => Effect.succeed({ rows: [], complete: false }) },
+                });
+                yield* Effect.gen(function* () {
+                    const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
+                    const result = yield* Effect.result(
+                        connection.operations.query({
+                            select: [
+                                q.sub("counters", {
+                                    from: { source: { objectType: "Counter" }, binding: "c" },
+                                    select: [q.selectField("id", q.field("c", "id"))],
+                                }),
+                            ],
+                        })
+                    );
+                    expect(result).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidResponse" } });
+                }).pipe(
+                    Effect.provide(FetchHttpClient.layer),
+                    Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                        handleRequest(new Request(input, init))
+                    )
+                );
+            })
+        )
+    );
 });
 
 test("domain RPC carries selected state, resumable ordered actions and acknowledgments", async () => {

@@ -128,6 +128,39 @@ export const runQueryContract = Effect.fnUntraced(function* (tables: TablesServi
         JSON.stringify(objects) === JSON.stringify(expected),
         "Ontology query must use the same Query IR evaluator"
     );
+    const batchDocument: QueryDocument = {
+        inputs: document.inputs,
+        select: [
+            q.sub("users", {
+                from: { source: { objectType: "User" }, binding: "u" },
+                select: [
+                    q.selectField("name", q.field("u", "name")),
+                    q.sub("tasks", { ...taskQuery, page: undefined }),
+                ],
+            }),
+        ],
+    };
+    const batchExpected = {
+        users: [
+            {
+                name: "Alice",
+                tasks: [
+                    { id: "three", score: 103 },
+                    { id: "two", score: 102 },
+                    { id: "one", score: 101 },
+                ],
+            },
+            { name: "Bob", tasks: [] },
+        ],
+    };
+    for (const result of [
+        yield* tables.query(batchDocument, { sources, ...options }),
+        yield* storage.query(batchDocument, options),
+    ])
+        assert(
+            JSON.stringify(result) === JSON.stringify(batchExpected),
+            "Batched hierarchical query must preserve per-parent results"
+        );
     for (const kind of ["raw", "ontology"] as const) {
         const rejected = yield* Effect.result(
             kind === "raw"

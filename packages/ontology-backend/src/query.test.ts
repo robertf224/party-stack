@@ -4,6 +4,8 @@ import {
     context,
     contains,
     eq,
+    and,
+    gt,
     exists,
     field,
     literal,
@@ -101,6 +103,211 @@ it("invalid policy configuration is a typed failure, not an Effect defect", asyn
 });
 
 describe("finite hierarchical queries", () => {
+    it.each([false, true])("batches child equality correlations (reversed: %s)", async (reversed) => {
+        const parentRows = Array.from({ length: 12 }, (_, i) => ({
+            id: `p${i}`,
+            title: `P${i}`,
+            admins: [],
+        }));
+        const issues = parentRows.flatMap((project, i) => [
+            { id: `i${i}`, projectId: project.id, title: `Issue ${i}`, rank: i },
+            { id: `excluded${i}`, projectId: project.id, title: "Excluded", rank: -1 },
+        ]);
+        const child = {
+            ...issueQuery(),
+            page: undefined,
+            where: and(
+                reversed
+                    ? eq(field("p", "id"), field("i", "projectId"))
+                    : eq(field("i", "projectId"), field("p", "id")),
+                gt(field("i", "rank"), literal(-1))
+            ),
+        };
+        const query: QueryDocument = {
+            select: [
+                sub("projects", {
+                    from: { source: { objectType: "Project" }, binding: "p" },
+                    select: [selectField("id", field("p", "id")), sub("issues", child)],
+                }),
+            ],
+        };
+        const planned = reader({ Project: parentRows, Issue: issues });
+        const reference = reader({ Project: parentRows, Issue: issues });
+        const result = await Effect.runPromise(executeQuery(query, { reader: planned.source }));
+        expect(result.value).toEqual(
+            (
+                await Effect.runPromise(
+                    executeQuery(query, { reader: reference.source, strategy: "reference" })
+                )
+            ).value
+        );
+        const calls = planned.calls.filter((call) => call.objectType === "Issue");
+        expect(calls).toHaveLength(1);
+        expect(calls[0]?.query).toMatchObject({
+            where: {
+                op: "and",
+                predicates: expect.arrayContaining([
+                    {
+                        op: "in",
+                        left: { _tag: "Field", path: ["projectId"] },
+                        values: expect.arrayContaining(parentRows.map((row) => row.id)),
+                    },
+                ]),
+            },
+        });
+        expect(reference.calls.filter((call) => call.objectType === "Issue")).toHaveLength(12);
+    });
+    it("bounds child IN lists and skips empty parent results", async () => {
+        const query: QueryDocument = {
+            select: [
+                sub("projects", {
+                    from: { source: { objectType: "Project" }, binding: "p" },
+                    select: [sub("issues", { ...issueQuery(), page: undefined })],
+                }),
+            ],
+        };
+        const parents = Array.from({ length: 600 }, (_, i) => ({ id: `p${i}`, title: "", admins: [] }));
+        const { source, calls } = reader({ Project: parents, Issue: [] });
+        await Effect.runPromise(executeQuery(query, { reader: source }));
+        const children = calls.filter((call) => call.objectType === "Issue");
+        expect(children).toHaveLength(3);
+        expect(children.map((call) => call.query?.where)).toMatchObject([
+            { predicates: [{ values: expect.any(Array) }] },
+            { predicates: [{ values: expect.any(Array) }] },
+            { predicates: [{ values: expect.any(Array) }] },
+        ]);
+        expect(
+            children.map((call) =>
+                call.query?.where?.op === "and" && call.query.where.predicates[0]?.op === "in"
+                    ? call.query.where.predicates[0].values.length
+                    : -1
+            )
+        ).toEqual([256, 256, 88]);
+        const empty = reader({ Project: [], Issue: [] });
+        expect((await Effect.runPromise(executeQuery(query, { reader: empty.source }))).value).toEqual({
+            projects: [],
+        });
+        expect(empty.calls.map((call) => call.objectType)).toEqual(["Project"]);
+    });
+    it("matches a domain oracle with duplicate correlation keys and missing children", async () => {
+        await fc.assert(
+            fc.asyncProperty(
+                fc.array(
+                    fc.record({
+                        project: fc.integer({ min: 0, max: 3 }),
+                        rank: fc.integer({ min: -3, max: 3 }),
+                    }),
+                    { maxLength: 35 }
+                ),
+                async (data) => {
+                    const parents = Array.from({ length: 6 }, (_, i) => ({
+                        id: `p${i}`,
+                        title: `group${i % 3}`,
+                        admins: [],
+                    }));
+                    const issues = data.map((row, i) => ({
+                        id: `i${String(i).padStart(2, "0")}`,
+                        projectId: `group${row.project}`,
+                        title: `Issue ${i}`,
+                        rank: row.rank,
+                    }));
+                    const query: QueryDocument = {
+                        select: [
+                            sub("projects", {
+                                from: { source: { objectType: "Project" }, binding: "p" },
+                                select: [
+                                    selectField("id", field("p", "id")),
+                                    sub("issues", {
+                                        ...issueQuery(),
+                                        page: undefined,
+                                        where: and(
+                                            eq(field("i", "projectId"), field("p", "title")),
+                                            gt(field("i", "rank"), literal(0))
+                                        ),
+                                    }),
+                                ],
+                            }),
+                        ],
+                    };
+                    const expected = {
+                        projects: parents.map((parent) => ({
+                            id: parent.id,
+                            issues: issues
+                                .filter((issue) => issue.projectId === parent.title && issue.rank > 0)
+                                .sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id))
+                                .map(({ id, title }) => ({ id, title })),
+                        })),
+                    };
+                    for (const strategy of ["planned", "reference"] as const) {
+                        const { source } = reader({ Project: parents, Issue: issues });
+                        expect(
+                            (await Effect.runPromise(executeQuery(query, { reader: source, strategy }))).value
+                        ).toEqual(expected);
+                    }
+                }
+            ),
+            { numRuns: 60 }
+        );
+    });
+    it("keeps per-parent top-K queries on the ordinary path", async () => {
+        const parents = Array.from({ length: 3 }, (_, i) => ({ id: `p${i}`, title: "", admins: [] }));
+        const issues = parents.flatMap((parent, p) =>
+            Array.from({ length: 4 }, (_, i) => ({
+                id: `i${p}-${i}`,
+                title: `Issue ${i}`,
+                projectId: parent.id,
+                rank: i,
+            }))
+        );
+        const query: QueryDocument = {
+            select: [
+                sub("projects", {
+                    from: { source: { objectType: "Project" }, binding: "p" },
+                    select: [sub("issues", { ...issueQuery(), page: { limit: 1 } })],
+                }),
+            ],
+        };
+        const { source, calls } = reader({ Project: parents, Issue: issues });
+        expect((await Effect.runPromise(executeQuery(query, { reader: source }))).value).toEqual({
+            projects: parents.map((_, p) => ({ issues: [{ id: `i${p}-3`, title: "Issue 3" }] })),
+        });
+        expect(calls.filter((call) => call.objectType === "Issue")).toHaveLength(3);
+    });
+    it("does not batch residual filters that depend on another parent property", async () => {
+        const parents = [
+            { id: "a", title: "A", admins: [] },
+            { id: "b", title: "B", admins: [] },
+        ];
+        const query: QueryDocument = {
+            select: [
+                sub("projects", {
+                    from: { source: { objectType: "Project" }, binding: "p" },
+                    select: [
+                        sub("issues", {
+                            ...issueQuery(),
+                            page: undefined,
+                            where: and(
+                                eq(field("i", "projectId"), field("p", "id")),
+                                eq(field("i", "title"), field("p", "title"))
+                            ),
+                        }),
+                    ],
+                }),
+            ],
+        };
+        const { source, calls } = reader({
+            Project: parents,
+            Issue: [
+                { id: "a1", title: "A", projectId: "a", rank: 1 },
+                { id: "a2", title: "B", projectId: "a", rank: 2 },
+                { id: "b1", title: "B", projectId: "b", rank: 1 },
+            ],
+        });
+        expect((await Effect.runPromise(executeQuery(query, { reader: source }))).value).toEqual({
+            projects: [{ issues: [{ id: "a1", title: "A" }] }, { issues: [{ id: "b1", title: "B" }] }],
+        });
+        expect(calls.filter((call) => call.objectType === "Issue")).toHaveLength(2);
+    });
     it("uses the same explicit null ordering for residual cursor filtering and source pagination", async () => {
         const definition = structuredClone(ir);
         definition.objectTypes

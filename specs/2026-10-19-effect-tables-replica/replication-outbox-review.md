@@ -262,16 +262,21 @@ speculative forwarding claims follow that rule. Focused view regressions pass
 
 ### Query batching review
 
-The server Query RPC is always declared, but its implementation callback is an
-optional constructor option. A policy-projected server supplies that callback;
-without it or an explicit handler the operation returns `NotImplemented`. This
-does not make full query execution an adapter capability.
+The server Query RPC is always declared. `makeOntologyServer` now automatically
+installs finite execution whenever its ontology definition is available. Owned
+execution uses one storage read transaction; proxy/cache/replica committed facets
+use their final backend reader, rejecting incomplete subsets. Policy-projected
+execution stays on the authorized path. Schema-less low-level RPC bindings can
+still omit Query. This does not make full query execution an adapter capability.
 
-There is a real N+1 acquisition pattern for hierarchical child queries today.
-Candidate optimization: batch simple equality correlations into bounded child
-`IN` requests, then partition results by correlation key and evaluate each
-parent's selection with the existing semantics. Retain the reference executor as
-an oracle and assert storage read counts as well as result equality.
+Implemented batching for simple unwindowed equality correlations: deduplicate
+parent values, acquire at most 256 distinct keys per child IN request, then group
+candidates and preserve ordinary per-parent filter/order/projection evaluation.
+Duplicate keys and empty groups are handled explicitly. State is local to the
+finite execution. The reference executor bypasses batching for oracle comparison.
+Tests assert 12 child reads become one, 600 distinct keys split into three reads,
+and generated results match both reference execution and a domain oracle. The
+shared storage contract exercises the path on raw and ontology stores.
 
 Start with provably compatible unwindowed correlations and retain the existing
 path otherwise. Per-parent limits/cursors cannot become one global child LIMIT;
@@ -279,3 +284,18 @@ fetching every matching child to implement local top-k can also be a regression.
 Composite/ancestor-dependent predicates, property authorization and parent-specific
 windows need explicit eligibility rules or native partitioned execution. Full
 SQL hierarchy compilation and server IVM are separate optimizations.
+
+TanStack comparison: installed `@tanstack/db` uses `subset-demand-controller.ts`
+to collect equality keys into IN segments. `compiler/order-by.ts` explicitly
+disables global limit-prefix loading for grouped ordering, and applies grouped
+top-K locally. That can acquire all matching children for selected parents. Our
+initial windowed fallback retains per-parent bounded source reads; native SQL
+partitioned windows/lateral execution are future alternatives to the round trips.
+
+Effect audit: non-test sources in ontology-replica and ontology-backend expose no
+Promise/async/runPromise APIs. Service commands are Effects and observations are
+Streams. LiveOntology converts those at the application boundary; Fetch handlers
+return platform-required Promises. Some server attachment/helper adapters still
+bridge the application facade back into Effect and are candidates for direct
+native-service composition in the organization review, rather than a reason to
+introduce duplicate public `/effect` exports.

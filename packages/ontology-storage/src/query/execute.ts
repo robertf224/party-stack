@@ -10,6 +10,7 @@ import { isRelatedFromForeignKeySource, resolveRelatedLink } from "@party-stack/
 import { Effect, Schema } from "effect";
 import { field, and, eq, ne, not, or, inArray, contains, like, ilike } from "../model.js";
 import { withObjectSources } from "../ontology/sources.js";
+import { batchCorrelation } from "./batch.js";
 import { compareScalar, readField, scalarKey } from "./evaluate.js";
 import type { Key, Operand, Predicate, Query as Scan, Row, Scalar } from "../model.js";
 import type {
@@ -75,6 +76,9 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
         context = options.context ?? {};
     const rowEntities = new WeakMap<object, QueryEntity>();
     const grants = new Map<string, QueryEntity>();
+    // Per-execution candidates only; ordinary evaluation still checks each
+    // parent's predicate, ordering and projection. Weak keys release old scopes.
+    const batched = new WeakMap<Query, WeakMap<Scope, readonly Row<Record<string, unknown>>[]>>();
     const source = (ref: QuerySource) => {
         const reader = ref.ontology ? options.sources?.[ref.ontology] : options.reader;
         if (
@@ -404,7 +408,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             };
         const pushedPage = candidate.exact && directOrder && !options.canReadProperty;
         if (pushedPage) Object.assign(scan, q.page);
-        const rows = yield* fetch(q.from.source, scan);
+        const rows = batched.get(q)?.get(parent) ?? (yield* fetch(q.from.source, scan));
         const accepted: { row: Row<Record<string, unknown>>; scope: Scope; order: unknown[] }[] = [];
         for (const row of rows) {
             const scope = new Map([...parent, [q.from.binding, row.value]]);
@@ -448,6 +452,72 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             q.page?.limit === undefined ? undefined : (q.page.offset ?? 0) + q.page.limit
         );
     });
+    const prepareChildren = Effect.fnUntraced(function* (
+        items: readonly QuerySelection[],
+        parents: readonly Scope[]
+    ) {
+        if (options.strategy === "reference" || options.canReadProperty || parents.length < 2) return;
+        for (const item of items) {
+            if (item.kind !== "sub") continue;
+            const query = item.value.query;
+            const plan = batchCorrelation(query);
+            if (!plan) continue;
+            const residual = plan.residual
+                ? yield* lower(plan.residual, query.from.binding, parents[0]!)
+                : { exact: true, where: undefined };
+            if (!residual.exact) continue;
+            const keys = new Map<string, { value: Scalar; parents: Scope[] }>();
+            let eligible = true;
+            for (const parent of parents) {
+                const value = yield* evaluate(plan.parent, parent);
+                if (!value.certain) {
+                    eligible = false;
+                    break;
+                }
+                let key: string;
+                try {
+                    key = scalarKey(value.value);
+                } catch {
+                    eligible = false;
+                    break;
+                }
+                const group = keys.get(key) ?? { value: value.value as Scalar, parents: [] };
+                group.parents.push(parent);
+                keys.set(key, group);
+            }
+            if (!eligible) continue;
+            const candidates = new WeakMap<Scope, readonly Row<Record<string, unknown>>[]>();
+            const groups = [...keys.entries()];
+            const path = field(...plan.path);
+            for (let offset = 0; offset < groups.length; offset += 256) {
+                const chunk = groups.slice(offset, offset + 256);
+                const grouped = new Map(chunk.map(([key]) => [key, [] as Row<Record<string, unknown>>[]]));
+                const rows = yield* fetch(query.from.source, {
+                    where: and(
+                        inArray(
+                            path,
+                            chunk.map(([, group]) => group.value)
+                        ),
+                        ...(residual.where ? [residual.where] : [])
+                    ),
+                });
+                for (const row of rows) {
+                    let key: string;
+                    try {
+                        key = scalarKey(readField(row.value, path));
+                    } catch {
+                        eligible = false;
+                        break;
+                    }
+                    grouped.get(key)?.push(row);
+                }
+                if (!eligible) break;
+                for (const [key, group] of chunk)
+                    for (const parent of group.parents) candidates.set(parent, grouped.get(key)!);
+            }
+            if (eligible) batched.set(query, candidates);
+        }
+    });
     const select = Effect.fnUntraced(function* (
         items: readonly QuerySelection[],
         scope: Scope
@@ -470,6 +540,10 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                 if (item.value.cardinality === "one" && rows.length > 1)
                     return yield* fail("A singular subquery returned multiple rows.");
                 const values = [];
+                yield* prepareChildren(
+                    item.value.query.select,
+                    rows.map((row) => row.scope)
+                );
                 for (const row of rows) {
                     if (options.mode === "entity") {
                         const entity = rowEntities.get(row.row.value)!;

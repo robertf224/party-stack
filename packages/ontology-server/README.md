@@ -90,6 +90,17 @@ whether incremental `PullChanges` and change hints are available; ordinary reque
 need no session acknowledgment/bookkeeping. The same transport supports full/draft
 validation, query functions and explicit attachment/decrypt operations.
 
+`makeOntologyServer` automatically installs finite hierarchical Query execution
+when an ontology definition is available (inferred for owned, cached-proxy and
+replica roles; supplied as `ir` or through `ontology` for a direct proxy).
+Call it through `connection.operations.query(document, inputs)`. No custom Query
+handler is required. Owned queries share one storage read transaction. Other roles
+use their final backend read path, including cache hits; multiple provider calls
+do not imply a provider-wide atomic snapshot. Incomplete source subsets are rejected.
+Policy-projected servers use the authorized query executor. The low-level RPC
+binding still permits endpoints without schema/query execution, and Describe
+advertises whether finite queries are available.
+
 Source identity is supplied by the server's backend/source in Describe. An owned
 backend generates and persists a namespace-scoped identity on initialization; deleting
 that state creates a new source. Adapter backends supply stable provider identities
