@@ -110,12 +110,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         work: (
             target: Pick<ReplicaService, "remove" | "retry" | "edit" | "reconcile">
         ) => Effect.Effect<void, BackendError>
-    ) =>
-        control(id).pipe(
-            Effect.flatMap((target) =>
-                work(target).pipe(Effect.andThen(target === replica ? Effect.void : replica.syncOnce))
-            )
-        );
+    ) => control(id).pipe(Effect.flatMap(work));
     const dbClient = yield* Effect.acquireRelease(
         Effect.sync(() => new DbClient()),
         (client) => Effect.promise(() => client.cleanup())
@@ -227,11 +222,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
                             .remove(id, settings)
                             .pipe(
                                 Effect.andThen(
-                                    target === replica
-                                        ? Effect.void
-                                        : replica
-                                              .acknowledgeParentRemoval(id)
-                                              .pipe(Effect.andThen(replica.syncOnce))
+                                    target === replica ? Effect.void : replica.acknowledgeParentRemoval(id)
                                 )
                             )
                     )
@@ -248,11 +239,6 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
             update(request);
             const invocation = { id, name: request.actionTypeName, parameters: request.parameters };
             await run(command(id, (target) => target.edit(id, invocation)));
-            const updated = (await run(visiblePending)).find((entry) => entry.invocation.id === id);
-            return toEntry(
-                updated ?? { ...entry, invocation, state: "queued", failure: undefined },
-                updated?.forwarding ?? entry.forwarding
-            );
         },
         cleanup: () => Promise.resolve(),
     };

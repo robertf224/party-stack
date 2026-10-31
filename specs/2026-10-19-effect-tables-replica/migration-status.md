@@ -1,4 +1,4 @@
-# Migration status — October 29, 2026
+# Migration status — October 30, 2026
 
 Current inventory. The [execution log](./implementation.md) records historical
 checkpoints; this file describes the current implementation. The overall
@@ -107,8 +107,13 @@ server extension are in place. Public website docs describe implemented setup an
 behavior; proposals remain in `specs/`.
 
 Hierarchical Query IR/context binding and stateless server authorization are now
-implemented in this checkpoint. The remaining v0 gates are downstream Gateway/form
-integration in the Streamline repository and final application acceptance. The
+implemented in this checkpoint. The remaining v0 gates include persistent
+hierarchical offline query demand (added explicitly during the October 30 replica
+review), downstream Gateway/form integration in the Streamline repository and
+final application acceptance. Offline queries are not implemented by the existing
+single-row `replica.pin` primitive. See the
+[replication/outbox review](./replication-outbox-review.md#review-discussion-demand-observation-and-offline-queries)
+for the scope and open API decisions. The
 legacy HTTP endpoints/clients/error envelopes are removed now, before downstream
 adoption, as agreed for this alpha release. Server IVM/live full-query watching,
 durable delta history/resume, general untrusted replica-state projection and

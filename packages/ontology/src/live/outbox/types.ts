@@ -54,7 +54,8 @@ export interface OntologyOutbox {
             visibility?: "confirmed" | "optimistic";
         }
     ): Promise<EnqueuedOntologyAction<Result>>;
-    edit(id: string, update: (request: OntologyActionRequest) => void): Promise<OntologyOutboxEntry>;
+    /** Resolves when the owner accepts the edit; the collection updates through replication. */
+    edit(id: string, update: (request: OntologyActionRequest) => void): Promise<void>;
     remove(id: string, options?: { allowUnknownOutcome?: boolean }): Promise<void>;
     /** Supply an independently verified remote receipt; read-back still runs normally. */
     reconcile(id: string, receipt: import("@party-stack/ontology-backend").ActionReceipt): Promise<void>;

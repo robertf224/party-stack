@@ -1575,6 +1575,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                 state: "sending",
                                 attempts: current.attempts + 1,
                                 failure: undefined,
+                                failureOutcome: current.failureOutcome === "unknown" ? "unknown" : undefined,
                             };
                             yield* tx.put(outbox, head.invocation.id, sending);
                             return sending;
@@ -3210,6 +3211,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                     state: "sending",
                                     attempts: head.attempts + 1,
                                     failure: undefined,
+                                    failureOutcome: head.failureOutcome === "unknown" ? "unknown" : undefined,
                                 };
                                 if (!head.submission) {
                                     const state = yield* position(tx);
@@ -3508,7 +3510,10 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                                 failure: undefined,
                                 failureMessage: undefined,
                                 failureIssues: undefined,
-                                failureOutcome: undefined,
+                                // Editing requires a known-uncommitted request; the new
+                                // payload has not been dispatched. Keep that evidence even
+                                // though attempts includes earlier rejected payloads.
+                                failureOutcome: "not-committed",
                                 failureRetryable: undefined,
                                 retryRequiresAcknowledgement: false,
                                 nextAttemptAt: undefined,

@@ -33,6 +33,109 @@ const ir: OntologyIR = {
 const rename: ReplicaOptions["execute"] = (tx, invocation) =>
     tx.put("Note", { id: "one", title: invocation.parameters.title });
 
+test.each(["incremental", "snapshot"] as const)(
+    "parent outbox controls propagate through %s replication without a bridge sync pass",
+    async (delivery) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const adapter = memoryRuntimeFixture("test", `outbox-controls-${delivery}`);
+                    yield* Effect.addFinalizer(() =>
+                        Effect.promise(async () => {
+                            await adapter.cleanup?.();
+                        })
+                    );
+                    const runtime = yield* makeTestRuntime(adapter);
+                    const owned = yield* makeOwnedBackend({
+                        namespace: "controls-server",
+                        ir,
+                        tables: yield* Memory.make(),
+                        mutators: { rename },
+                    });
+                    let dispatches = 0;
+                    const owner = yield* makeReplica({
+                        namespace: "controls-owner",
+                        ir,
+                        tables: yield* Memory.make(),
+                        backend: {
+                            ...owned,
+                            applyAction: () => {
+                                dispatches++;
+                                return Effect.fail(
+                                    new BackendError({
+                                        operation: "applyAction",
+                                        kind: "ValidationFailed",
+                                        message: "Invalid title.",
+                                        retryable: false,
+                                        actionOutcome: "not-committed",
+                                    })
+                                );
+                            },
+                        },
+                        execute: rename,
+                        startSync: false,
+                        gc: false,
+                    });
+                    yield* owner.enqueue({ id: "controlled", name: "rename", parameters: { title: "old" } });
+                    yield* Effect.result(owner.syncOnce);
+                    const parent = replicaStateSource(owner);
+                    const child = yield* makeReplica({
+                        namespace: "controls-child",
+                        ir,
+                        tables: runtime.tables,
+                        source: delivery === "snapshot" ? { ...parent, subscribe: undefined } : parent,
+                        execute: rename,
+                        gc: false,
+                    });
+                    const view = yield* makeReplicaOntologyView({
+                        ir,
+                        context: {},
+                        replica: {
+                            ...child,
+                            syncOnce: Effect.die("Outbox controls must not run a bridge sync pass."),
+                        },
+                        parentOutbox: owner,
+                        queryFunction: () => Effect.void,
+                        attachments: {} as LiveOntology["attachments"],
+                    }).pipe(Effect.provideService(Runtime, runtime));
+                    yield* Effect.promise(async () => {
+                        await view.outbox.collection._sync.loadSubset({});
+                        await vi.waitFor(() =>
+                            expect(view.outbox.collection.get("controlled")).toMatchObject({
+                                status: "blocked",
+                            })
+                        );
+                        await view.outbox.retry("controlled");
+                        await vi.waitFor(() =>
+                            expect(view.outbox.collection.get("controlled")).toMatchObject({
+                                status: "queued",
+                            })
+                        );
+                        await view.outbox.edit("controlled", (request) => {
+                            request.parameters.title = "corrected";
+                        });
+                        await vi.waitFor(() =>
+                            expect(view.outbox.collection.get("controlled")?.request.parameters.title).toBe(
+                                "corrected"
+                            )
+                        );
+                        expect((await Effect.runPromise(owner.pending))[0]?.failureOutcome).toBe(
+                            "not-committed"
+                        );
+                        await view.outbox.remove("controlled");
+                        await vi.waitFor(() =>
+                            expect(view.outbox.collection.get("controlled")).toBeUndefined()
+                        );
+                    });
+                    expect(yield* owner.pendingActions).toEqual([]);
+                    expect(yield* child.pendingActions).toEqual([]);
+                    expect(dispatches).toBe(1);
+                })
+            )
+        );
+    }
+);
+
 test.each(["pause", "discard-all"] as const)(
     "parent rejections preserve field issues with %s recovery",
     async (failureStrategy) => {
@@ -152,6 +255,8 @@ test.each(["pause", "discard-all"] as const)(
                             request.parameters.title = "corrected";
                         })
                     );
+                    // This fixture disables background replication and advances it explicitly.
+                    yield* child.syncOnce;
                     expect((yield* child.pendingActions)[0]?.invocation.parameters.title).toBe("corrected");
                     yield* Effect.result(owner.syncOnce);
                     yield* child.syncOnce;
