@@ -15,7 +15,14 @@ import { Tables, OntologyStorageError, UniqueConstraint } from "@party-stack/ont
 import { Effect, Layer, Option, Stream } from "effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { isSqlError } from "effect/sql/SqlError";
-import { arrayIndexExpression, compileQuery, indexExpression, literal, projectionKey } from "./compiler.js";
+import {
+    arrayIndexExpression,
+    compileQuery,
+    compileGroupedQuery,
+    indexExpression,
+    literal,
+    projectionKey,
+} from "./compiler.js";
 import * as Postgres from "./postgres.js";
 
 /** SQLite and PostgreSQL, through any Effect SqlClient driver for those dialects.
@@ -207,6 +214,35 @@ export const make = Effect.fnUntraced(function* (options: { readonly prefix?: st
                                                     data: row.data,
                                                 })),
                                             }))
+                                        );
+                                    })
+                                )
+                            ),
+                        queryGrouped: (table, indexes, partition, query) =>
+                            check(
+                                coordinate(
+                                    coordination?.predicate(table.name),
+                                    Effect.suspend(() => {
+                                        const compiled = compileGroupedQuery(
+                                            dialect,
+                                            indexes,
+                                            partition,
+                                            query
+                                        );
+                                        if (!compiled) return Effect.succeed(undefined);
+                                        return run(
+                                            sql.unsafe<{ row_key: string; data: string }>(
+                                                `SELECT row_key,data FROM (SELECT row_key,data,ROW_NUMBER() OVER (PARTITION BY ${compiled.partition} ORDER BY ${compiled.order}) AS row_rank FROM ${q(rows)} WHERE table_name=${literal(dialect, table.name)} AND (${compiled.condition})) AS ranked WHERE ${compiled.window} ORDER BY row_key ASC`,
+                                                compiled.params
+                                            )
+                                        ).pipe(
+                                            Effect.map((result) =>
+                                                result.map((row): StoredRow => ({
+                                                    table: table.name,
+                                                    key: row.row_key,
+                                                    data: row.data,
+                                                }))
+                                            )
                                         );
                                     })
                                 )

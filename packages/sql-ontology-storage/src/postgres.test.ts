@@ -14,6 +14,31 @@ const prefix = () => `pg_test_${crypto.randomUUID().replaceAll("-", "")}`;
 const run = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
     Effect.runPromise(effect.pipe(Effect.provide(layer()), Effect.scoped));
 
+test("native PostgreSQL ranks and windows each partition independently", async () => {
+    await run(
+        Effect.gen(function* () {
+            const tables = yield* make({ prefix: prefix() });
+            const rows = Table.make<{ group: string; n: number }>({ name: "partitioned" });
+            yield* tables.transaction((tx) =>
+                Effect.gen(function* () {
+                    for (let n = 0; n < 20; n++)
+                        yield* tx.put(rows, String(n), { group: n % 2 ? "b" : "a", n });
+                    for (const name of ["group", "n"])
+                        yield* tx.ensureIndex(rows, { name, field: field(name) });
+                })
+            );
+            const selected = yield* tables.read((tx) =>
+                tx.queryGrouped!(rows, field("group"), {
+                    orderBy: [{ field: field("n"), direction: "desc" }],
+                    offset: 1,
+                    limit: 2,
+                })
+            );
+            expect(selected?.map((row) => row.value.n).sort((a, b) => a - b)).toEqual([14, 15, 16, 17]);
+        })
+    );
+});
+
 test("independent writers overlap and a read transaction keeps its snapshot without blocking writes", async () => {
     await run(
         Effect.gen(function* () {

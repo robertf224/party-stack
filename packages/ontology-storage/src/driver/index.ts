@@ -1,4 +1,4 @@
-import type { Index, Query, ReadTable, OntologyStorageError } from "../model.js";
+import type { Field, Index, Query, ReadTable, OntologyStorageError } from "../model.js";
 /** Backend implementor API. Versioned with the core package, not an application API. */
 import type { Effect, Stream } from "effect";
 export const INDEX_BACKFILL_BATCH_SIZE = 128;
@@ -32,6 +32,14 @@ export interface Range {
     readonly limit?: number;
 }
 export interface DriverTransaction {
+    /** Exact per-partition windows only. Undefined declines the optimization;
+     * callers must keep the ordinary per-parent execution path. */
+    readonly queryGrouped?: <A>(
+        table: ReadTable<A>,
+        indexes: readonly StoredIndex[],
+        partition: Field,
+        query: Query
+    ) => Effect.Effect<readonly StoredRow[] | undefined, OntologyStorageError>;
     /** Native atomic insert-if-absent, avoiding a missing-key predicate read. */
     readonly insert?: (row: StoredRow) => Effect.Effect<boolean, OntologyStorageError>;
     /** Allocate under coordination held through commit. Gaps after rollback are allowed. */

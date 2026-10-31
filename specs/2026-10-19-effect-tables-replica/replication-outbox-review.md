@@ -8,6 +8,9 @@ runtime and storage/transaction reviews.
 
 - [x] Inventory public API, construction and actual consumers
 - [x] Inventory row layers and persisted bookkeeping
+- [x] Remove parent-control bridge sync and verify ordinary delivery
+- [x] Wire finite server queries and batch simple child correlations
+- [x] Add exact SQL grouped windows and authorization/reference/domain oracle tests
 - [ ] Trace enqueue, optimistic replay and action dependencies
 - [ ] Trace dispatch, durable receipts, read-back and reconciliation
 - [ ] Check speculative-parent acceptance versus upstream confirmation
@@ -299,3 +302,50 @@ return platform-required Promises. Some server attachment/helper adapters still
 bridge the application facade back into Effect and are candidates for direct
 native-service composition in the organization review, rather than a reason to
 introduce duplicate public `/effect` exports.
+
+### Native grouped-window checkpoint
+
+SQL transactional readers now offer an optional exact grouped scan. The finite
+executor uses it for simple equality correlations with limits/offsets, grouping
+at most 256 distinct parent keys per request. The driver compiles partitioned
+ROW_NUMBER only when all filters and ordering have native projections. Missing
+indexes, residual predicates, keyset child cursors and parent-dependent extra
+filters preserve the previous path. Memory/IndexedDB/provider readers require no
+new implementation. This is a physical execution capability, not a new logical
+Query IR operator or a new provider/RPC contract.
+
+Owned read transactions carry the capability into trusted policy graph execution.
+The masked policy reader deliberately does not forward it: storage's ability to
+rank rows does not establish that ranking precedes no outstanding permission
+filter. Public queries with arbitrary policies can still use the existing
+per-parent fallback. This checkpoint does not compile a caller query and its
+complete authorization graph into one SQL statement.
+
+SQLite and PostgreSQL/PGlite property tests compare generated grouped queries with
+the reference executor and an independent grouped/sorted/windowed domain oracle.
+Generated authorization cases vary project access and child visibility; masked
+results are checked with and without grouped execution against the same domain
+oracle. Coverage includes ties, undefined rank values, explicit null ordering,
+zero limits, offsets, empty groups, native refusal for a missing projection, and
+closed transaction handles. A real PostgreSQL test checks partition windows,
+and adversarial SQL tests exercise hostile partition/index/table names.
+
+LIKE/ILIKE translation also gained exact static-pattern evaluation over encoded
+UTF-16 projections. PostgreSQL uses a generated fixed-code-unit regex; SQLite uses
+native LIKE when zero/one percent segment guarantees code-unit alignment. Other
+SQLite patterns and dynamic patterns preserve residual execution. Prefix bounds
+remain planner hints. A separate property oracle covers Unicode, astral and lone
+surrogates, JS lowercase behavior, wildcard/escape punctuation, nonstring values,
+negation and pagination. The former `urgent%done` fallback example is now exact
+on both engines when its projection exists. Native columns remain future work;
+these semantic tests should survive a later physical representation change.
+
+### API review status
+
+The actual ReplicaOptions/ReplicaService definitions remain in
+`packages/ontology-replica/src/index.ts`. They have not yet been reorganized into
+the proposed outbox/demand facets. `observeRows`/`loadSubset` names still exist;
+scoped acquire-with-readiness, setPin/clearPin and persisted hierarchical query
+demand remain implementation items. Do not describe the proposed interface as
+already final. The action dispatch/reconciliation, lifecycle/recovery and bounded
+GC bookkeeping passes in this checklist remain to be reviewed explicitly.

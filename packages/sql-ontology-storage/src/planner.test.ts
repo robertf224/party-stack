@@ -23,8 +23,13 @@ const check = (dialect: Dialect) =>
     Effect.gen(function* () {
         const tables = yield* make();
         const sql = (yield* SqlClient.SqlClient).withoutTransforms();
-        const table = Table.make<{ n: number; name: string }>({ name: "query_plans'quoted" });
-        const all = Array.from({ length: 1000 }, (_, n) => ({ key: n, value: { n, name: `PrÉfix-${n}` } }));
+        const table = Table.make<{ n: number; name: string; pattern: string }>({
+            name: "query_plans'quoted",
+        });
+        const all = Array.from({ length: 1000 }, (_, n) => ({
+            key: n,
+            value: { n, name: `PrÉfix-${n}`, pattern: "PrÉfix-9_9" },
+        }));
         const indexes: StoredIndex[] = ["n", "name"].map((name) => ({
             name,
             field: field(name),
@@ -54,16 +59,16 @@ const check = (dialect: Dialect) =>
         const ci: Query = { where: ilike(field("name"), "PRÉFIX-99%"), limit: 5 };
         expect(compileQuery(dialect, indexes, ci).complete).toBe(true);
         expect(yield* tables.query(table, ci)).toEqual(applyQuery(all, ci));
-        // A complex pattern pushes its necessary prefix/range into SQL, then applies
-        // pagination after the exact residual. Early SQL LIMIT would return a short page.
+        // Dynamic row-valued patterns remain residual. Early SQL LIMIT could
+        // return a short page before the exact predicate is evaluated.
         const residual: Query = {
-            where: and(gte(field("n"), 900), like(field("name"), "PrÉfix-9_9")),
+            where: and(gte(field("n"), 900), like(field("name"), field("pattern"))),
             limit: 5,
             offset: 2,
         };
         const partial = compileQuery(dialect, indexes, residual);
         expect(partial.complete).toBe(false);
-        expect(partial.condition).toContain("AND");
+        expect(partial.condition).toContain(">=");
         expect(partial.pagination).toBe("");
         expect(yield* tables.query(table, residual)).toEqual(applyQuery(all, residual));
         const arrays = Table.make<{ title: string; tags: string[] }>({ name: "native_membership" });

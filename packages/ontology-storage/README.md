@@ -116,11 +116,15 @@ source queries; a hierarchical document is not compiled into one native SQL join
 
 Simple unwindowed child equality correlations batch parent keys into `IN` requests
 of at most 256 distinct values, then group and evaluate each parent's result.
-Single-parent reads, per-parent limits/offsets/cursors, parent-dependent residual
-filters and property-guarded execution retain the ordinary correlation path.
-This avoids turning a per-parent window into an incorrect global limit or loading
-an unbounded child region merely to apply top-K locally. Batching state lives only
-for the finite execution; the reference strategy remains available for oracle tests.
+SQL readers additionally use partitioned `ROW_NUMBER` for per-parent limits and
+offsets when the complete filter, grouping key and ordering have native projections.
+Other readers, keyset child cursors, parent-dependent residual filters and
+property-guarded execution retain the ordinary correlation path. Authorization
+wrappers do not advertise grouped reads merely because their underlying storage
+supports them: ranking must follow all permission filtering. Policy graphs can
+use native windows through their trusted reader; arbitrary public queries are not
+fused with policies into one SQL statement. Batching state lives only for the
+finite execution; the reference strategy remains available for oracle tests.
 
 Index creation streams existing rows within one transaction. IndexedDB and SQL
 use 128-row batches; memory iterates its stored rows in bounded chunks. This

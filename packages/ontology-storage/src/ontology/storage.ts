@@ -13,7 +13,7 @@ import { Tables, type TablesService, type Transaction } from "../tables.js";
 import { useTransaction } from "../transactionContext.js";
 import { validateField, validateObjectQuery } from "./fields.js";
 import { compiledModel, type ObjectStore, type StorageModel } from "./model.js";
-import type { Index, Key, Query, Row } from "../model.js";
+import type { Field, Index, Key, Query, Row } from "../model.js";
 import type { TransactionState } from "../transactionContext.js";
 import type { QueryDocument } from "@party-stack/ontology-spec";
 
@@ -35,6 +35,12 @@ export interface ReadStorageTransaction {
         key: NoInfer<K>
     ) => Effect.Effect<A | undefined, OntologyStorageError>;
     readonly query: StorageQuery;
+    /** Optional optimizer capability; no window is applied unless the native read is exact. */
+    readonly queryGrouped?: <A>(
+        object: ObjectStore<A>,
+        partition: Field,
+        query: Query
+    ) => Effect.Effect<Row<A>[] | undefined, OntologyStorageError>;
 }
 export interface StorageTransaction extends ReadStorageTransaction {
     /** Derive the key from the ontology primary-key property. */
@@ -166,6 +172,25 @@ export function makeOntologyStorage(
                                 const definition = yield* store(object);
                                 return yield* tx.query(definition.table, query);
                             }),
+                        ...(tx.queryGrouped
+                            ? {
+                                  loadGroupedSubset: (name: string, partition: Field, query: Query) =>
+                                      Effect.gen(function* () {
+                                          const object = model.objects[name];
+                                          if (!object)
+                                              return yield* queryError(
+                                                  "query",
+                                                  `Unknown object type: ${name}`
+                                              );
+                                          yield* checkQuery(() => {
+                                              validateObjectQuery(compiled.ir, object, query);
+                                              validateField(compiled.ir, object, partition);
+                                          });
+                                          const definition = yield* store(object);
+                                          return yield* tx.queryGrouped!(definition.table, partition, query);
+                                      }),
+                              }
+                            : {}),
                     },
                 });
                 return result.value;
@@ -181,6 +206,32 @@ export function makeOntologyStorage(
                     : ((yield* convert("decode", () => definition.decode(value))) as A);
             }),
             query,
+            ...(tx.queryGrouped
+                ? {
+                      queryGrouped: <A>(
+                          object: ObjectStore<A>,
+                          partition: Field,
+                          query: Query
+                      ): Effect.Effect<Row<A>[] | undefined, OntologyStorageError> =>
+                          Effect.gen(function* () {
+                              const definition = yield* store(object);
+                              yield* checkQuery(() => {
+                                  validateObjectQuery(compiled.ir, object, query);
+                                  validateField(compiled.ir, object, partition);
+                              });
+                              yield* guard;
+                              const rows = yield* tx.queryGrouped!(definition.table, partition, query);
+                              return rows === undefined
+                                  ? undefined
+                                  : yield* convert("decode", () =>
+                                        rows.map((row) => ({
+                                            key: row.key,
+                                            value: definition.decode(row.value) as A,
+                                        }))
+                                    );
+                          }),
+                  }
+                : {}),
             put: Effect.fnUntraced(function* <A>(object: ObjectStore<A>, value: A) {
                 const definition = yield* store(object);
                 const encoded = yield* convert("encode", () => definition.encode(value));

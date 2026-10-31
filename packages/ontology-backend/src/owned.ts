@@ -39,12 +39,22 @@ import type {
     Index,
     Key,
     Query,
+    Field,
     ReadStorageTransaction,
     StorageTransaction,
 } from "@party-stack/ontology-storage";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
 
 export interface OwnedReadTransaction {
+    /** Exact grouped-read capability for the finite query executor, when available. */
+    readonly loadGroupedSubset?: (
+        objectType: string,
+        partition: Field,
+        query: Query
+    ) => Effect.Effect<
+        readonly { readonly key: Key; readonly value: Record<string, unknown> }[] | undefined,
+        BackendError
+    >;
     get(objectType: string, key: Key): Effect.Effect<Record<string, unknown> | undefined, BackendError>;
     loadSubset(
         objectType: string,
@@ -269,6 +279,16 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         get: (name, key) => boundary(Effect.flatMap(object(name), (store) => native.get(store, key))),
         loadSubset: (name, query) =>
             boundary(Effect.flatMap(object(name), (store) => native.query(store, query))),
+        ...(native.queryGrouped
+            ? {
+                  loadGroupedSubset: (name: string, partition: Field, query: Query) =>
+                      boundary(
+                          Effect.flatMap(object(name), (store) =>
+                              native.queryGrouped!(store, partition, query)
+                          )
+                      ),
+              }
+            : {}),
     });
     const mutation = (native: StorageTransaction) => {
         const changes = new Map<string, ObjectChange>();

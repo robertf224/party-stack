@@ -213,7 +213,11 @@ export const makeOntologyServer = Effect.fn("OntologyServer.make")(function* <R 
             query = (document, inputs) =>
                 storage.read((tx) =>
                     executeQuery(document, {
-                        reader: { ir: definition, loadSubset: (type, subset) => tx.loadSubset(type, subset) },
+                        reader: {
+                            ir: definition,
+                            loadSubset: (type, subset) => tx.loadSubset(type, subset),
+                            loadGroupedSubset: tx.loadGroupedSubset,
+                        },
                         inputs,
                     }).pipe(Effect.map((result) => result.value))
                 );

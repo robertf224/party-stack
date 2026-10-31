@@ -20,6 +20,14 @@ const check = Effect.fnUntraced(function* (dialect: Dialect) {
     yield* tables.ensureIndex(table, index);
     yield* tables.ensureIndex(table, { name: "n", field: field("n") });
     yield* tables.ensureIndex(table, { name: "other", field: field("other") });
+    const grouped = yield* tables.read((tx) =>
+        tx.queryGrouped!(table, field(hostile), {
+            where: inArray(field(hostile), [hostile, "safe"]),
+            orderBy: [{ field: field("n") }],
+            limit: 1,
+        })
+    );
+    assert.strictEqual(grouped?.length, 2);
     for (const predicate of [
         eq(field(hostile), hostile),
         eq(hostile, field(hostile)),

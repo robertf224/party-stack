@@ -34,6 +34,31 @@ interface Fragment {
 }
 const unknown: Fragment = { sql: undefined, complete: false };
 
+// String projections encode each UTF-16 unit as four ASCII hex digits. Match
+// that representation so SQL collation/Unicode/escape rules cannot change LIKE.
+function encodedPattern(pattern: string) {
+    let like = "6",
+        regex = "^6",
+        stars = 0;
+    for (let i = 0; i < pattern.length; i++) {
+        const unit = pattern[i]!;
+        if (unit === "%") {
+            if (i && pattern[i - 1] === "%") continue;
+            stars++;
+            like += "%";
+            regex += "([0-9a-f]{4})*";
+        } else if (unit === "_") {
+            like += "____";
+            regex += "[0-9a-f]{4}";
+        } else {
+            const encoded = scalarKey(unit).slice(1);
+            like += encoded;
+            regex += encoded;
+        }
+    }
+    return { like, regex: `${regex}$`, stars };
+}
+
 /** Let the engine plan a necessary predicate; leave only unsupported semantics as residuals. */
 export function compileQuery(dialect: Dialect, indexes: readonly StoredIndex[], query: Query) {
     const params: (string | number)[] = [];
@@ -107,9 +132,22 @@ export function compileQuery(dialect: Dialect, indexes: readonly StoredIndex[], 
             const wildcard = pattern.search(/[%_]/);
             if (wildcard < 0) return { sql: `${expr} = ${bind(scalarKey(pattern))}`, complete: true };
             const lower = scalarKey(pattern.slice(0, wildcard));
+            const prefix = `(${expr} >= ${bind(lower)} AND ${expr} < ${bind(`${lower}g`)})`;
+            if (pattern.slice(wildcard) === "%") return { sql: prefix, complete: true };
+            // Avoid engine-specific regex/LIKE program-size limits; the exact
+            // shared matcher remains available for large client patterns.
+            if (pattern.length > 256) return { sql: prefix, complete: false };
+            const encoded = encodedPattern(pattern);
+            if (dialect === "pg")
+                return { sql: `(${prefix} AND ${expr} ~ ${bind(encoded.regex)})`, complete: true };
+            // With zero/one %, fixed-width surrounding tokens force alignment.
+            // Multiple % segments can match between code units; SQLite keeps a
+            // residual rather than pretending that native LIKE is exact there.
+            if (encoded.stars <= 1)
+                return { sql: `(${prefix} AND ${expr} LIKE ${bind(encoded.like)})`, complete: true };
             return {
-                sql: `(${expr} >= ${bind(lower)} AND ${expr} < ${bind(`${lower}g`)})`,
-                complete: pattern.slice(wildcard) === "%",
+                sql: prefix,
+                complete: false,
             };
         }
         if (p.op === "in" && p.values.length === 0) return { sql: "1=0", complete: true };
@@ -184,4 +222,34 @@ export function compileQuery(dialect: Dialect, indexes: readonly StoredIndex[], 
         complete = false;
     }
     return { condition, order, pagination, params, complete };
+}
+
+/** Rank only after the complete predicate and portable ordering are native.
+ * Unsupported predicates/projections must never consume a partition's window. */
+export function compileGroupedQuery(
+    dialect: Dialect,
+    indexes: readonly StoredIndex[],
+    partition: Field,
+    query: Query
+) {
+    if (query.after) return;
+    const index = indexes.find(
+        (index) =>
+            !index.multiEntry &&
+            index.field.path.length === partition.path.length &&
+            index.field.path.every((part, i) => part === partition.path[i])
+    );
+    if (!index) return;
+    const plan = compileQuery(dialect, indexes, { ...query, limit: undefined, offset: undefined });
+    if (!plan.complete) return;
+    const offset = query.offset ?? 0;
+    const end = query.limit === undefined ? undefined : offset + query.limit;
+    if (end !== undefined && !Number.isSafeInteger(end)) return;
+    const bind = (value: number) => {
+        plan.params.push(value);
+        return dialect === "pg" ? `$${plan.params.length}` : "?";
+    };
+    const window = `row_rank > ${bind(offset)}${end === undefined ? "" : ` AND row_rank <= ${bind(end)}`}`;
+    if (plan.params.length > 500) return;
+    return { ...plan, partition: indexExpression(dialect, index.name), window };
 }

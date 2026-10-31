@@ -47,14 +47,27 @@ contract that null/undefined are ordinary comparable values. There is no SQL
 user-space entries table or JavaScript mini planner.
 
 Fully supported queries push predicates, ordering, exclusive cursors, and
-pagination into the engine. Complex LIKE/ILIKE patterns push a necessary prefix
-bound; undeclared fields and unsupported portions remain exact JavaScript
-residuals. AND can retain supported conjuncts. OR/NOT never use an unsafe partial
+pagination into the engine. Static LIKE/ILIKE patterns use native matching on the
+UTF-16 encoded string projections: PostgreSQL supports arbitrary static patterns within a bounded native-pattern budget;
+SQLite supports underscore patterns and at most one nonadjacent percent segment.
+Large patterns and SQLite patterns with multiple percent segments retain an exact residual because
+unconstrained SQL wildcards could match between encoded code units. Prefix ranges
+remain available to the index planner. Dynamic row-valued patterns, undeclared
+fields and unsupported portions remain exact JavaScript residuals. AND can retain
+supported conjuncts. OR/NOT never use an unsafe partial
 predicate. Queries with residuals fetch candidates before applying final
 filtering/pagination; they may read more rows. This allows the same wildcard and
 Unicode normalization semantics on both engines without relying on SQLite's
 case-insensitive LIKE default or database-specific locale behavior. Define indexes
 for fields whose filtering/ordering should run entirely in SQL.
+
+The finite hierarchical executor can request exact per-partition windows through
+the optional transactional grouped-read capability. SQL uses `ROW_NUMBER() OVER
+(PARTITION BY ... ORDER BY ...)`, after the complete predicate, with bound rank
+limits/offsets. A missing projection, residual predicate or unsupported ordering
+declines the optimization. It never ranks candidate supersets before an exact
+filter. Authorization wrappers must also preserve permission-filter-before-window
+ordering; native storage support alone does not authorize forwarding this capability.
 
 The package tests actual `EXPLAIN QUERY PLAN` / `EXPLAIN (FORMAT JSON)` output on
 SQLite and PGlite PostgreSQL to verify native index use, and compares residual

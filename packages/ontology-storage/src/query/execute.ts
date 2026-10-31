@@ -12,7 +12,7 @@ import { field, and, eq, ne, not, or, inArray, contains, like, ilike } from "../
 import { withObjectSources } from "../ontology/sources.js";
 import { batchCorrelation } from "./batch.js";
 import { compareScalar, readField, scalarKey } from "./evaluate.js";
-import type { Key, Operand, Predicate, Query as Scan, Row, Scalar } from "../model.js";
+import type { Field, Key, Operand, Predicate, Query as Scan, Row, Scalar } from "../model.js";
 import type {
     Expression,
     FieldDef,
@@ -33,6 +33,13 @@ export interface QueryReader<E> {
         objectType: string,
         subset?: Scan
     ) => Effect.Effect<readonly Row<Record<string, unknown>>[], E>;
+    /** Optional exact per-partition window, after this reader's filtering.
+     * Authorization wrappers must omit this unless they can preserve that order. */
+    readonly loadGroupedSubset?: (
+        objectType: string,
+        partition: Field,
+        query: Scan
+    ) => Effect.Effect<readonly Row<Record<string, unknown>>[] | undefined, E>;
 }
 export interface QueryEntity {
     readonly source?: string;
@@ -89,10 +96,12 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             throw new Error("Unknown query source.");
         return reader;
     };
-    const fetch = Effect.fnUntraced(function* (ref: QuerySource, scan: Scan = {}) {
-        const reader = yield* attempt(() => source(ref));
-        const rows = yield* reader.loadSubset(ref.objectType, scan);
-        return rows.map((row) => {
+    const install = (
+        ref: QuerySource,
+        reader: QueryReader<E>,
+        rows: readonly Row<Record<string, unknown>>[]
+    ) =>
+        rows.map((row) => {
             const object = reader.ir.objectTypes.find((type) => type.name === ref.objectType);
             const value = object
                 ? withObjectSources({
@@ -111,6 +120,16 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             });
             return { ...row, value };
         });
+    const fetch = Effect.fnUntraced(function* (ref: QuerySource, scan: Scan = {}) {
+        const reader = yield* attempt(() => source(ref));
+        return install(ref, reader, yield* reader.loadSubset(ref.objectType, scan));
+    });
+    const fetchGrouped = Effect.fnUntraced(function* (ref: QuerySource, scan: Scan, partition: Field) {
+        const reader = yield* attempt(() => source(ref));
+        const rows = yield* (
+            reader.loadGroupedSubset?.(ref.objectType, partition, scan) ?? Effect.succeed(undefined)
+        );
+        return rows === undefined ? undefined : install(ref, reader, rows);
     });
     const resolve = (type: TypeDef | undefined, seen = new Set<string>()): TypeDef | undefined => {
         if (type?.kind === "optional") return resolve(type.value.type, seen);
@@ -408,7 +427,8 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             };
         const pushedPage = candidate.exact && directOrder && !options.canReadProperty;
         if (pushedPage) Object.assign(scan, q.page);
-        const rows = batched.get(q)?.get(parent) ?? (yield* fetch(q.from.source, scan));
+        const prefetched = batched.get(q)?.get(parent);
+        const rows = prefetched ?? (yield* fetch(q.from.source, scan))!;
         const accepted: { row: Row<Record<string, unknown>>; scope: Scope; order: unknown[] }[] = [];
         for (const row of rows) {
             const scope = new Map([...parent, [q.from.binding, row.value]]);
@@ -440,7 +460,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             return compareScalar(leftKey, rightKey);
         };
         yield* attempt(() => accepted.sort((a, b) => compare(a.order, a.row.key, b.order, b.row.key)));
-        if (pushedPage) return accepted;
+        if (pushedPage || prefetched) return accepted;
         const after = q.page?.after;
         const filtered = after
             ? yield* attempt(() =>
@@ -460,8 +480,18 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
         for (const item of items) {
             if (item.kind !== "sub") continue;
             const query = item.value.query;
-            const plan = batchCorrelation(query);
+            const windowed = query.page?.limit !== undefined || query.page?.offset !== undefined;
+            if (query.page?.after || (windowed && !source(query.from.source).loadGroupedSubset)) continue;
+            const plan = batchCorrelation(query, windowed);
             if (!plan) continue;
+            const directOrder =
+                query.orderBy?.every(
+                    (order) =>
+                        order.expression.kind === "getAt" &&
+                        order.expression.value.source.kind === "localReference" &&
+                        order.expression.value.source.value.name === query.from.binding
+                ) ?? true;
+            if (windowed && !directOrder) continue;
             const residual = plan.residual
                 ? yield* lower(plan.residual, query.from.binding, parents[0]!)
                 : { exact: true, where: undefined };
@@ -492,7 +522,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             for (let offset = 0; offset < groups.length; offset += 256) {
                 const chunk = groups.slice(offset, offset + 256);
                 const grouped = new Map(chunk.map(([key]) => [key, [] as Row<Record<string, unknown>>[]]));
-                const rows = yield* fetch(query.from.source, {
+                const scan: Scan = {
                     where: and(
                         inArray(
                             path,
@@ -500,7 +530,28 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                         ),
                         ...(residual.where ? [residual.where] : [])
                     ),
-                });
+                    ...(windowed
+                        ? {
+                              limit: query.page?.limit,
+                              offset: query.page?.offset,
+                              orderBy: query.orderBy?.map((order) => ({
+                                  field: field(
+                                      ...(order.expression as Extract<Expression, { kind: "getAt" }>).value
+                                          .path
+                                  ),
+                                  direction: order.direction,
+                                  nulls: order.nulls,
+                              })),
+                          }
+                        : {}),
+                };
+                const rows = windowed
+                    ? yield* fetchGrouped(query.from.source, scan, path)
+                    : yield* fetch(query.from.source, scan);
+                if (!rows) {
+                    eligible = false;
+                    break;
+                }
                 for (const row of rows) {
                     let key: string;
                     try {

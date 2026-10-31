@@ -31,10 +31,10 @@ function independent(expression: Expression, binding: string): boolean {
     return false;
 }
 
-export function batchCorrelation(query: Query) {
+export function batchCorrelation(query: Query, windowed = false) {
     if (
-        query.page?.limit !== undefined ||
-        query.page?.offset !== undefined ||
+        (!windowed && query.page?.limit !== undefined) ||
+        (!windowed && query.page?.offset !== undefined) ||
         query.page?.after !== undefined
     )
         return;

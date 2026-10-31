@@ -96,7 +96,11 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
     ): Effect.Effect<A, BackendError> =>
         storage
             ? storage.read((tx) =>
-                  work({ ir: boundIr, loadSubset: (type, query) => tx.loadSubset(type, query) })
+                  work({
+                      ir: boundIr,
+                      loadSubset: (type, query) => tx.loadSubset(type, query),
+                      loadGroupedSubset: tx.loadGroupedSubset,
+                  })
               )
             : work(reader);
     const schemas = yield* Effect.try({

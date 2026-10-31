@@ -16,6 +16,7 @@ import {
     type Row,
     type Table,
     type ReadTable,
+    type Field,
 } from "./model.js";
 import {
     caseInsensitiveIndex,
@@ -28,7 +29,7 @@ import {
     validateQuery,
 } from "./query/evaluate.js";
 import { executeQuery } from "./query/execute.js";
-import { IndexSchema } from "./query/schema.js";
+import { FieldSchema, IndexSchema } from "./query/schema.js";
 import { StoredIndexSchema } from "./storage/schema.js";
 import { CurrentTransactions, provideTransaction, TransactionIdentity } from "./transactionContext.js";
 import type { Driver, DriverTransaction, Entry, StoredIndex, StoredRow } from "./driver/index.js";
@@ -56,6 +57,12 @@ const untypedIR: OntologyIR = {
 export interface ReadTransaction {
     readonly get: <A>(table: Table<A>, key: Key) => Effect.Effect<A | undefined, OntologyStorageError>;
     readonly query: TableQuery;
+    /** Optional exact grouped scan for query execution; undefined requests fallback. */
+    readonly queryGrouped?: <A>(
+        table: ReadTable<A>,
+        partition: Field,
+        query: Query
+    ) => Effect.Effect<Row<A>[] | undefined, OntologyStorageError>;
 }
 export interface Transaction extends ReadTransaction {
     /** Request write intent before reading to avoid shared-lock upgrade deadlocks. */
@@ -123,6 +130,7 @@ function transaction(
             )
         );
     const decodeIndexes = Schema.decodeUnknownSync(Schema.Array(StoredIndexSchema));
+    const decodeField = Schema.decodeUnknownSync(FieldSchema);
     const knownDefinitions = new Map<string, readonly StoredIndex[]>();
     const schemaIndex = "__party_tables_schema__";
     const get = Effect.fnUntraced(function* <A>(
@@ -181,6 +189,20 @@ function transaction(
         );
         return result.complete ? decoded : yield* attempt("query", () => applyQuery(decoded, query));
     });
+    const scanGrouped = Effect.fnUntraced(function* <A>(table: ReadTable<A>, partition: Field, query: Query) {
+        yield* attempt("query", () => {
+            validateQuery(query);
+            decodeField(partition);
+        });
+        const indexes = yield* definitions(table);
+        if (query.limit === 0) return [];
+        const result = yield* raw.queryGrouped!(table, indexes, partition, query);
+        return result === undefined
+            ? undefined
+            : yield* codec("decode", () =>
+                  result.map((row) => ({ key: decodeKey(row.key), value: table.decode(row.data) }))
+              );
+    });
     function query(
         document: QueryDocument,
         options: TableQueryOptions
@@ -207,6 +229,18 @@ function transaction(
                             ? scan(table, query)
                             : Effect.fail(queryError("query", `Unknown table source: ${name}`));
                     },
+                    ...(raw.queryGrouped
+                        ? {
+                              loadGroupedSubset: (name: string, partition: Field, query: Query) => {
+                                  const table = Object.hasOwn(bindings.sources, name)
+                                      ? bindings.sources[name]
+                                      : undefined;
+                                  return table
+                                      ? scanGrouped(table, partition, query)
+                                      : Effect.fail(queryError("query", `Unknown table source: ${name}`));
+                              },
+                          }
+                        : {}),
                 },
             });
             return result.value;
@@ -474,6 +508,12 @@ function transaction(
         allocateRevision: (stream, minimum) => guarded(api.allocateRevision(stream, minimum)),
         get: (table, key, options) => guarded(api.get(table, key, options)),
         query: guardedQuery,
+        ...(raw.queryGrouped
+            ? {
+                  queryGrouped: <A>(table: ReadTable<A>, partition: Field, query: Query) =>
+                      guarded(scanGrouped(table, partition, query)),
+              }
+            : {}),
         put: (table, key, value) => guarded(api.put(table, key, value)),
         insert: (table, key, value) => guarded(api.insert(table, key, value)),
         delete: (table, key) => guarded(api.delete(table, key)),
