@@ -119,7 +119,7 @@ test("speculative acceptance and confirmation use the stream without applying a 
                 let snapshots = 0;
                 const child = yield* makeReplica({
                     namespace: "tab",
-                    online: Effect.succeed(false),
+                    connectivity: { online: Effect.succeed(false), changes: Stream.never },
                     ir,
                     tables: yield* Memory.make(),
                     execute,
@@ -401,7 +401,7 @@ test("invalid replication data stops delivery, exposes a diagnostic and preserve
                     ir,
                     tables,
                     execute,
-                    online: Effect.succeed(false),
+                    connectivity: { online: Effect.succeed(false), changes: Stream.never },
                     backend: {
                         ...owned,
                         subscribeSelection: (selection) =>

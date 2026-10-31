@@ -840,7 +840,7 @@ test("a replica server keeps its committed facet separate from speculative publi
                     backend: owned,
                     tables: yield* Memory.make(),
                     startSync: false,
-                    online: Effect.succeed(false),
+                    connectivity: { online: Effect.succeed(false), changes: Stream.never },
                     execute: (tx) => tx.put("Counter", { id: "one", count: 1 }),
                 });
                 yield* replica.enqueue({ id: "local", name: "increment", parameters: {} });

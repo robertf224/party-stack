@@ -153,9 +153,6 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
                 }
                 return yield* submit(submission);
             });
-    const connected = options.connection
-        ? Stream.map(options.connection.changes, (state) => state.status === "active")
-        : Stream.never;
     const replica = yield* makeReplica({
         namespace: options.id ?? runtime.namespace,
         clients: options.clients ?? { sessionIdleTimeoutMs: 10 * 60_000 },
@@ -216,13 +213,8 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
                 context,
                 mutators: options.writes?.mutators,
             }),
-        online: Effect.gen(function* () {
-            return (
-                (yield* services.connectivity.online) &&
-                (!options.connection || options.connection.state.status === "active")
-            );
-        }),
-        connectivity: Stream.merge(services.connectivity.changes, connected),
+        connectivity: services.connectivity,
+        connection: options.connection,
         objectCacheGc: options.objectCacheGc,
         demand: options.demand,
         outbox: options.writes?.outbox,

@@ -6,7 +6,11 @@ import { Effect, Stream } from "effect";
  */
 export const superviseWatch = Effect.fnUntraced(function* <A>(options: {
     readonly stream: () => Stream.Stream<A, BackendError>;
-    readonly online?: Effect.Effect<boolean>;
+    readonly canRun?: Effect.Effect<boolean>;
+    readonly authentication?: {
+        readonly generation: Effect.Effect<number>;
+        readonly awaitActivation: (after: number) => Effect.Effect<void>;
+    };
     readonly onValue: (value: A) => Effect.Effect<void>;
     readonly onError: (error: BackendError | undefined) => Effect.Effect<void>;
     readonly retryDelayMs?: number;
@@ -14,10 +18,11 @@ export const superviseWatch = Effect.fnUntraced(function* <A>(options: {
     const initialDelay = options.retryDelayMs ?? 1_000;
     let delay = initialDelay;
     for (;;) {
-        if (!(yield* options.online ?? Effect.succeed(true))) {
+        if (!(yield* options.canRun ?? Effect.succeed(true))) {
             yield* Effect.sleep(initialDelay);
             continue;
         }
+        const generation = yield* options.authentication?.generation ?? Effect.succeed(0);
         const result = yield* Effect.result(
             Effect.scoped(
                 Effect.gen(function* () {
@@ -44,6 +49,11 @@ export const superviseWatch = Effect.fnUntraced(function* <A>(options: {
                       message: "The change subscription ended; reconnecting.",
                   });
         yield* options.onError(error);
+        if (error.kind === "Unauthenticated" && options.authentication) {
+            yield* options.authentication.awaitActivation(generation);
+            delay = initialDelay;
+            continue;
+        }
         if (!error.retryable) return;
         yield* Effect.sleep(Math.max(delay, error.retryAfterMs ?? 0));
         delay = Math.min(delay * 2, 30_000);

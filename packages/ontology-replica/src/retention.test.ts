@@ -5,7 +5,8 @@ import { eq, field, gte } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Scope, Exit, Result } from "effect";
-import { expect, test, vi } from "vitest";
+import { TestClock } from "effect/testing";
+import { expect, test } from "vitest";
 import { makeReplica } from "./index.js";
 import type { ReplicaOptions } from "./index.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -234,18 +235,14 @@ test("automatic bounded collection belongs to the replica scope and preserves a 
                     owner
                 );
                 yield* Scope.provide(replica.retainLocal("Row", { where: eq(field("id"), "row0") }), owner);
-                yield* Effect.promise(() =>
-                    vi.waitFor(async () => {
-                        const rows = await Effect.runPromise(replica.loadSubset("Row"));
-                        expect(rows.map((row) => row.key)).toEqual(["row0"]);
-                    })
-                );
+                yield* TestClock.adjust(100);
+                expect((yield* replica.loadSubset("Row")).map((row) => row.key)).toEqual(["row0"]);
                 yield* Scope.close(owner, Exit.void);
                 const closedAt = transactions;
-                yield* Effect.sleep(30);
+                yield* TestClock.adjust(30);
                 expect(transactions).toBe(closedAt);
             })
-        )
+        ).pipe(Effect.provide(TestClock.layer()))
     );
 });
 

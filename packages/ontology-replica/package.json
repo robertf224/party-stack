@@ -12,9 +12,11 @@
         }
     },
     "dependencies": {
+        "@party-stack/connect": "workspace:*",
         "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-spec": "workspace:*",
-        "@party-stack/ontology-storage": "workspace:*"
+        "@party-stack/ontology-storage": "workspace:*",
+        "@party-stack/runtime": "workspace:*"
     },
     "devDependencies": {
         "@fast-check/vitest": "^0.5.0",

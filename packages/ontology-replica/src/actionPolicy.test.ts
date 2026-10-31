@@ -2,7 +2,7 @@ import { BackendError, type OntologyBackendService } from "@party-stack/ontology
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Effect, Exit, Fiber, Scope } from "effect";
+import { Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
 import { makeReplica, replicaStateSource } from "./index.js";
@@ -367,7 +367,7 @@ test("protected pending receipts cannot starve expired journal-hint cleanup", as
                     backend: backend(() => Effect.die("offline")),
                     execute: () => Effect.void,
                     startSync: false,
-                    online: Effect.succeed(false),
+                    connectivity: { online: Effect.succeed(false), changes: Stream.never },
                     resultRetentionMs: 100,
                 });
                 const hints = Table.make({

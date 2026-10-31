@@ -431,3 +431,52 @@ backend capability today; projected remote results alone cannot establish entity
 coverage or replace installing raw rows. A Promise-based custom-mutator authoring
 bridge can remain in ontology while shared execution/rebase stays Effect-native
 below it. It must not duplicate action execution or own sync lifecycles.
+
+Replica one-shot query APIs are now explicitly deferred; applications can use
+TanStack queryOnce in the meantime. The shared finite executor remains available
+to storage, authorization and server query handling.
+
+### Separate connectivity and connection checkpoint
+
+Implemented: replica accepts Runtime's existing NetworkConnectivity capability and
+the read-only state/changes portion of Connect's ConnectionMonitor. It exposes
+both without merging their states. The old online Effect / connectivity Stream
+pair is removed. Diagnostics carry networkOnline and the complete connection state
+separately, using Connect's shared schema across RPC. Devtools distinguishes
+offline, sign-in required and connection failures. Eligibility for adapter IO is
+derived from both snapshots internally; events only wake/reinspect those states.
+Network reconnect alone no longer clears an authentication failure. Connection
+activation clears that failure and wakes processing. A regression test covers both
+online/unauthenticated and offline/authenticated, plus action dispatch gating and
+auth recovery independently of network events.
+
+Connection reactivation also clears cached Unauthenticated demand-load failures
+and resumes watches suspended for authentication. Watch attempts record the
+activation generation before opening, so activation racing with an error is not
+lost. Initial connection state and network notifications are not new credential
+activations. Forbidden and other unrelated terminal failures stay stopped. The
+previous watch attempt closes before waiting, and all waits/subscriptions belong
+to the existing engine/demand Scope.
+
+Snapshot loads also record the activation generation: an old-credential failure
+arriving after reauthentication cannot reinstall a permanent load failure. The
+failed call still reports its own error, while ordinary sync can repair using the
+new credentials. The regression holds a real load in flight across activation and
+verifies the subsequent repair. The automatic object-cache GC scope test now uses
+TestClock so zero-age collection cannot run before its retention lease is acquired.
+
+Still outstanding: scoped demand currently takes BackendSubset, whose query is a
+physical StorageQuery. The TanStack bridge lowers too early. The public boundary
+should use an object-bound spec Subset and perform physical translation below
+that boundary; merely renaming BackendSubset would not address the leak.
+
+Cached proxy invalidation marks coverage stale before ordinary sync repairs it;
+it does not delete rows or bypass the engine. Forwarded actions are outside the
+cache's outbox, and a provider without a journal or with delayed watch hints
+otherwise permits coverage reuse before that write becomes visible locally.
+
+The current Alchemy DO resource is an owned server. Its alarm runs owned-backend
+maintenance (including retained history/session/results) and blob GC, not replica
+object-cache eviction. An intermediate replica DO must additionally schedule its
+replica object-cache collector; the current owned resource does not create an
+intermediate replica or implicitly wire that alarm for one.

@@ -1,3 +1,4 @@
+import { ConnectionStateSchema } from "@party-stack/connect";
 import { SourceQueryPlanSchema, BackendErrorKindSchema } from "@party-stack/ontology-backend";
 import { BackendSubsetSchema } from "@party-stack/ontology-backend/protocol";
 import { Cause, Clock, Effect, Exit, Fiber, Option, PubSub, Schema, Stream } from "effect";
@@ -33,7 +34,8 @@ export const ReplicaStatusSchema = Schema.Struct({
     sourceId: Schema.String,
     upstreamId: Schema.String,
     mode: Schema.Literals(["adapter", "protocol"]),
-    online: Schema.optional(Schema.Boolean),
+    networkOnline: Schema.Boolean,
+    connection: Schema.optional(ConnectionStateSchema),
     watchError: Schema.optional(DemandFailure),
     replicationError: Schema.optional(
         Schema.Struct({
@@ -146,7 +148,6 @@ export const makeReplicaDiagnostics = Effect.fnUntraced(function* () {
     let loads: readonly ReplicaLoad[] = [];
     let count = 0;
     let active = 0;
-    let online: boolean | undefined;
     let lastSync: ReplicaStatus["lastSync"];
     const outcome = <A>(exit: Exit.Exit<A, BackendError>) =>
         Exit.isSuccess(exit)
@@ -237,10 +238,6 @@ export const makeReplicaDiagnostics = Effect.fnUntraced(function* () {
         subscribe: PubSub.subscribe(events).pipe(Effect.map(Stream.fromSubscription)),
         load,
         sync,
-        setOnline: (value: boolean) =>
-            Effect.sync(() => {
-                online = value;
-            }).pipe(Effect.andThen(changed)),
-        snapshot: () => ({ online, syncing: active > 0, lastSync, loads, loadCount: count }),
+        snapshot: () => ({ syncing: active > 0, lastSync, loads, loadCount: count }),
     };
 });

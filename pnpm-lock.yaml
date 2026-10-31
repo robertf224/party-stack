@@ -1693,6 +1693,9 @@ importers:
 
   packages/ontology-replica:
     dependencies:
+      '@party-stack/connect':
+        specifier: workspace:*
+        version: link:../connect
       '@party-stack/ontology-backend':
         specifier: workspace:*
         version: link:../ontology-backend
@@ -1702,6 +1705,9 @@ importers:
       '@party-stack/ontology-storage':
         specifier: workspace:*
         version: link:../ontology-storage
+      '@party-stack/runtime':
+        specifier: workspace:*
+        version: link:../runtime
     devDependencies:
       '@fast-check/vitest':
         specifier: ^0.5.0

@@ -6,6 +6,7 @@ export {
     type ConnectionManagerOptions,
 } from "./createConnectionManager.js";
 export { createConnectionMonitor } from "./createConnectionMonitor.js";
+export { ConnectionStateSchema } from "./types.js";
 export { createDefaultConnectionEgressHandlers } from "./createDefaultConnectionEgressHandlers.js";
 export { withHttpAuthenticationErrorHandling } from "./withHttpAuthenticationErrorHandling.js";
 export type {

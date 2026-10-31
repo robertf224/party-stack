@@ -2,12 +2,14 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, field, ilike, evaluateQuery } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Cause, Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
+import { makeNetworkConnectivity } from "@party-stack/runtime";
+import { Cause, Deferred, Effect, Exit, Fiber, PubSub, Scope, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test, vi } from "vitest";
 import { makeReplicaDiagnostics } from "./status.js";
 import { makeReplica, makeReplicaMonitor } from "./index.js";
 import type { ReplicaStatus } from "./index.js";
+import type { ConnectionState } from "@party-stack/connect";
 
 test("a failure during cancellation remains failed in load and sync diagnostics", async () => {
     await Effect.runPromise(
@@ -51,6 +53,197 @@ const ir: OntologyIR = {
     ],
 };
 
+test("network and connection state remain independent and either can pause remote work", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const connectivity = yield* makeNetworkConnectivity(true);
+                const events = yield* PubSub.sliding<ConnectionState>({ capacity: 1, replay: 1 });
+                yield* Effect.addFinalizer(() => PubSub.shutdown(events));
+                let state: ConnectionState = { status: "needs-auth" };
+                const connection = {
+                    get state() {
+                        return state;
+                    },
+                    changes: Stream.fromPubSub(events),
+                };
+                const setConnection = (next: ConnectionState) =>
+                    Effect.sync(() => {
+                        state = next;
+                        PubSub.publishUnsafe(events, next);
+                    });
+                yield* setConnection(state);
+                let failAuthentication = false;
+                let delayed:
+                    | { entered: Deferred.Deferred<void>; finish: Deferred.Deferred<void> }
+                    | undefined;
+                let loads = 0,
+                    writes = 0;
+                const replica = yield* makeReplica({
+                    namespace: "separate-availability",
+                    ir: {
+                        ...ir,
+                        actionTypes: [{ name: "write", displayName: "Write", parameters: [], logic: [] }],
+                    },
+                    tables: yield* Memory.make(),
+                    startSync: false,
+                    connectivity,
+                    connection,
+                    execute: () => Effect.void,
+                    backend: {
+                        name: "fixture",
+                        sourceId: "fixture",
+                        supportsIdempotency: true,
+                        pollIntervalMs: () => false,
+                        queryFunction: () => Effect.void,
+                        loadSubset: () =>
+                            Effect.gen(function* () {
+                                loads++;
+                                const failed = failAuthentication;
+                                const pending = delayed;
+                                delayed = undefined;
+                                if (pending) {
+                                    yield* Deferred.succeed(pending.entered, undefined);
+                                    yield* Deferred.await(pending.finish);
+                                }
+                                if (failed)
+                                    return yield* new BackendError({
+                                        operation: "loadSubset",
+                                        kind: "Unauthenticated",
+                                        retryable: false,
+                                        message: "Sign in again.",
+                                    });
+                                return { complete: true, rows: [{ key: "one", value: { id: "one" } }] };
+                            }),
+                        applyAction: (request) =>
+                            Effect.sync(() => {
+                                writes++;
+                                return {
+                                    operationId: request.id,
+                                    outcome: "committed" as const,
+                                    affected: [],
+                                };
+                            }),
+                    },
+                });
+                expect(replica.connectivity).toBe(connectivity);
+                expect(replica.connection).toBe(connection);
+                const initial = yield* Deferred.make<void>();
+                const offlineActive = yield* Deferred.make<void>();
+                const onlineNeedsAuth = yield* Deferred.make<void>();
+                let recovered = yield* Deferred.make<void>();
+                let recovering = false;
+                yield* Stream.runForEach(replica.statuses, (status) =>
+                    Effect.gen(function* () {
+                        yield* Deferred.succeed(initial, undefined);
+                        if (!status.networkOnline && status.connection?.status === "active")
+                            yield* Deferred.succeed(offlineActive, undefined);
+                        if (
+                            status.networkOnline &&
+                            status.connection?.status === "needs-auth" &&
+                            status.replicationError
+                        )
+                            yield* Deferred.succeed(onlineNeedsAuth, undefined);
+                        if (recovering && status.connection?.status === "active" && !status.replicationError)
+                            yield* Deferred.succeed(recovered, undefined);
+                    })
+                ).pipe(Effect.forkScoped);
+                yield* Deferred.await(initial);
+                yield* replica.demand({ objectType: "Item" });
+                yield* replica.enqueue({ id: "write-1", name: "write", parameters: {} });
+                yield* replica.syncOnce;
+                expect([loads, writes]).toEqual([0, 0]);
+                expect(yield* replica.status).toMatchObject({
+                    networkOnline: true,
+                    connection: { status: "needs-auth" },
+                });
+
+                yield* connectivity.set(false);
+                yield* setConnection({ status: "active" });
+                yield* Deferred.await(offlineActive);
+                yield* replica.syncOnce;
+                expect([loads, writes]).toEqual([0, 0]);
+
+                yield* connectivity.set(true);
+                yield* replica.syncOnce;
+                expect(loads).toBeGreaterThan(0);
+                expect(writes).toBe(1);
+
+                failAuthentication = true;
+                yield* replica.invalidate(["Item"]);
+                expect(yield* Effect.result(replica.syncOnce)).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "Unauthenticated" },
+                });
+                const failedLoads = loads;
+                failAuthentication = false;
+                expect(yield* Effect.result(replica.syncOnce)).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "Unauthenticated" },
+                });
+                expect(loads).toBe(failedLoads);
+
+                yield* setConnection({ status: "needs-auth" });
+                yield* replica.reportReplicationFailure(
+                    new BackendError({
+                        operation: "sync",
+                        kind: "Unauthenticated",
+                        retryable: false,
+                        message: "Sign in again.",
+                    })
+                );
+                yield* connectivity.set(false);
+                yield* connectivity.set(true);
+                yield* Deferred.await(onlineNeedsAuth);
+                expect((yield* replica.status).replicationError?.kind).toBe("Unauthenticated");
+                recovering = true;
+                yield* setConnection({ status: "active" });
+                yield* Deferred.await(recovered);
+                expect((yield* replica.status).replicationError).toBeUndefined();
+                yield* replica.syncOnce;
+                expect(loads).toBe(failedLoads + 1);
+                expect((yield* replica.status).demands[0]?.loadError).toBeUndefined();
+
+                // A reply using old credentials may arrive after reauthentication.
+                // It must not install a new permanent authentication failure.
+                const pending = {
+                    entered: yield* Deferred.make<void>(),
+                    finish: yield* Deferred.make<void>(),
+                };
+                delayed = pending;
+                failAuthentication = true;
+                yield* replica.invalidate(["Item"]);
+                const stale = yield* Effect.forkChild(Effect.result(replica.syncOnce));
+                yield* Deferred.await(pending.entered);
+                failAuthentication = false;
+                recovering = false;
+                recovered = yield* Deferred.make<void>();
+                yield* replica.reportReplicationFailure(
+                    new BackendError({
+                        operation: "sync",
+                        kind: "Unauthenticated",
+                        retryable: false,
+                        message: "Old credentials.",
+                    })
+                );
+                recovering = true;
+                yield* setConnection({ status: "needs-auth" });
+                yield* setConnection({ status: "active" });
+                yield* Deferred.await(recovered);
+                yield* Deferred.succeed(pending.finish, undefined);
+                expect(yield* Fiber.join(stale)).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "Unauthenticated" },
+                });
+                const beforeRepair = loads;
+                yield* replica.syncOnce;
+                expect(loads).toBe(beforeRepair + 1);
+                expect((yield* replica.status).demands[0]?.loadError).toBeUndefined();
+            })
+        )
+    );
+});
+
 test("inspection streams do not acquire demand, and record live loads, failures, offline state and released demand", async () => {
     await Effect.runPromise(
         Effect.scoped(
@@ -67,7 +260,7 @@ test("inspection streams do not acquire demand, and record live loads, failures,
                     tables: yield* Memory.make(),
                     startSync: false,
                     objectCacheGc: false,
-                    online: Effect.sync(() => online),
+                    connectivity: { online: Effect.sync(() => online), changes: Stream.never },
                     execute: () => Effect.void,
                     backend: {
                         name: "fixture",
@@ -123,7 +316,7 @@ test("inspection streams do not acquire demand, and record live loads, failures,
                 const active = yield* replica.status;
                 expect(active).toMatchObject({
                     mode: "adapter",
-                    online: true,
+                    networkOnline: true,
                     syncing: true,
                     demands: [{ ...subset, references: 2, installed: 0, revision: 1 }],
                     loads: [{ operation: "loadSubset", reason: "demand", outcome: "running", subset }],
@@ -163,7 +356,7 @@ test("inspection streams do not acquire demand, and record live loads, failures,
                 });
                 online = false;
                 yield* replica.syncOnce;
-                expect((yield* replica.status).online).toBe(false);
+                expect((yield* replica.status).networkOnline).toBe(false);
                 expect(requests).toBe(2);
                 yield* Scope.close(demandScope, Exit.void);
                 expect((yield* replica.status).demands).toEqual([]);

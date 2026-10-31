@@ -3,7 +3,7 @@ import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, field } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Effect, Deferred, Scope, Exit, Result } from "effect";
+import { Effect, Deferred, Scope, Exit, Result, Stream } from "effect";
 import { expect, test } from "vitest";
 import { makeReplica, type ReplicaService } from "./index.js";
 import type { ActionRequest, OntologyBackendService } from "@party-stack/ontology-backend";
@@ -90,7 +90,7 @@ test("offline enqueue, restart, ordered rebase and reconnect never require netwo
                     backend: remote,
                     execute,
                     startSync: false,
-                    online: Effect.sync(() => online),
+                    connectivity: { online: Effect.sync(() => online), changes: Stream.never },
                 };
                 yield* backend.applyAction({ id: "seed", name: "increment", parameters: {} });
                 const firstScope = yield* Scope.make();

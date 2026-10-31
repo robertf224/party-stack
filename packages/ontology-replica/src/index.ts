@@ -1,5 +1,8 @@
 import { isUnknownActionOutcome } from "@party-stack/ontology-backend";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
+import { alwaysOnlineConnectivity } from "@party-stack/runtime";
+import type { ConnectionMonitor } from "@party-stack/connect";
+import type { NetworkConnectivity } from "@party-stack/runtime";
 import type { Scope } from "effect";
 export { makeCachedProxy } from "./proxy.js";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
@@ -159,6 +162,8 @@ export interface ObjectCacheGcPolicy extends ObjectCacheSweepOptions {
 export interface ReplicaService extends OwnedReadTransaction {
     readonly ir: OntologyIR;
     readonly mode: "adapter" | "protocol";
+    readonly connectivity: NetworkConnectivity;
+    readonly connection?: Pick<ConnectionMonitor, "state" | "changes">;
     /** Read-only diagnostics; inspecting never acquires remote demand. */
     readonly status: Effect.Effect<ReplicaStatus, BackendError>;
     readonly statuses: Stream.Stream<ReplicaStatus, BackendError>;
@@ -308,8 +313,8 @@ interface ReplicaCommonOptions {
     ) => Effect.Effect<void | ObjectValue, BackendError>;
     /** Idempotent local receipt application. Runs only after the receipt is durable; failures retry without dispatch. */
     readonly onReceipt?: (receipt: ActionReceipt) => Effect.Effect<void, BackendError>;
-    readonly online?: Effect.Effect<boolean>;
-    readonly connectivity?: Stream.Stream<boolean>;
+    readonly connectivity?: NetworkConnectivity;
+    readonly connection?: Pick<ConnectionMonitor, "state" | "changes">;
     /** Multi-context deployments supply their existing leader lease here. */
     readonly startSync?: boolean;
     readonly clients?: ClientPolicy;
@@ -358,6 +363,11 @@ const snapshotDigest = Effect.fnUntraced(function* (snapshot: ReplicaStateSnapsh
 
 /** A scoped persistent Replica. Its replay capability cannot reach the backend. */
 export const makeReplica = Effect.fn("Replica.make")(function* (options: ReplicaOptions) {
+    const connectivity = options.connectivity ?? alwaysOnlineConnectivity;
+    const connection = options.connection;
+    const canSync = Effect.gen(function* () {
+        return (yield* connectivity.online) && (!connection || connection.state.status === "active");
+    });
     const maxRetries = options.outbox?.maxRetries ?? 3;
     const retryDelayMs = options.outbox?.retryDelayMs ?? 1_000;
     if (
@@ -613,6 +623,25 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         });
     });
     const diagnostics = yield* makeReplicaDiagnostics();
+    let authenticationGeneration = 0;
+    const authentication = connection
+        ? {
+              generation: Effect.sync(() => authenticationGeneration),
+              awaitActivation: (after: number) =>
+                  Effect.scoped(
+                      Effect.gen(function* () {
+                          const changes = yield* diagnostics.subscribe;
+                          yield* Stream.concat(Stream.succeed(undefined), changes).pipe(
+                              Stream.filter(
+                                  () =>
+                                      authenticationGeneration > after && connection.state.status === "active"
+                              ),
+                              Stream.runHead
+                          );
+                      })
+                  ),
+          }
+        : undefined;
     let replicationError: ReplicaStatus["replicationError"];
     let changeWatchFailure: BackendError | undefined;
     let syncRetry: { readonly error: BackendError; readonly at: number } | undefined;
@@ -1503,7 +1532,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
     const recoverOutbox = Effect.fnUntraced(function* () {
         yield* open;
         const backend = yield* backendEffect;
-        if (!(yield* options.online ?? Effect.succeed(true))) return;
+        if (!(yield* canSync)) return;
         // Recover only while holding the source leader lease.
         yield* boundary(
             tables.transaction((tx) =>
@@ -1553,7 +1582,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         if (replicationError?.recovery === "stop")
             return yield* fault(replicationError.kind, replicationError.message);
         const backend = yield* backendEffect;
-        if (!(yield* options.online ?? Effect.succeed(true))) return;
+        if (!(yield* canSync)) return;
         if (recover) yield* recoverOutbox();
         for (;;) {
             const entries = yield* boundary(tables.read(pendingIn));
@@ -1668,9 +1697,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         yield* service.collectClientGarbage;
         yield* collectResults;
         const backend = yield* backendEffect;
-        const online = yield* options.online ?? Effect.succeed(true);
-        yield* diagnostics.setOnline(online);
-        if (!online) return;
+        if (!(yield* canSync)) return;
         // A committed receipt must settle its overlay before a new source snapshot.
         // Recovery belongs to the outbox worker, never to a query acquisition.
         if (
@@ -1755,6 +1782,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             )
                 continue;
             const revision = demand.revision;
+            const authenticationAtLoad = authenticationGeneration;
             // Demand refresh belongs to the aggregate lease, not its first UI caller.
             // Releasing the last consumer cancels its IO without interrupting outbox work.
             const installed = yield* Effect.result(
@@ -1766,7 +1794,15 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 )
             );
             if (installed._tag === "Failure") {
-                demand.loadFailure = { revision, error: installed.failure };
+                if (
+                    installed.failure.kind === "Unauthenticated" &&
+                    authenticationGeneration > authenticationAtLoad &&
+                    connection?.state.status === "active"
+                ) {
+                    demand.loadFailure = undefined;
+                    if (demand.revision === revision) demand.revision++;
+                    yield* wake;
+                } else demand.loadFailure = { revision, error: installed.failure };
                 if (relevant) demandFailure ??= installed.failure;
             } else if (installed.success) {
                 demand.installed = revision;
@@ -2590,7 +2626,8 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                             return adapter!.watchSubset?.(copy) ?? hints;
                         })
                     ),
-                online: options.online,
+                canRun: canSync,
+                authentication,
                 onValue: () =>
                     Effect.gen(function* () {
                         if (!demand.loadFailure || demand.loadFailure.error.retryable) demand.revision++;
@@ -2616,7 +2653,7 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
         acquire: (key) => acquireDemand(demandCodec.decode(key)),
     });
     const waitForDelivery = Effect.gen(function* () {
-        if (!deliveryActive || !(yield* options.online ?? Effect.succeed(true))) return;
+        if (!deliveryActive || !(yield* canSync)) return;
         for (;;) {
             if (replicationError?.recovery === "stop")
                 return yield* fault(replicationError.kind, replicationError.message);
@@ -2767,6 +2804,8 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             ),
         ir: options.ir,
         mode: options.source ? "protocol" : "adapter",
+        connectivity,
+        connection,
         status: Effect.gen(function* () {
             const pending = yield* access(tables.read(pendingIn));
             const outbox: Record<string, number> = {};
@@ -2775,6 +2814,8 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 sourceId: ownSourceId,
                 upstreamId: sourceId,
                 mode: options.source ? ("protocol" as const) : ("adapter" as const),
+                networkOnline: yield* connectivity.online,
+                connection: connection?.state,
                 ...diagnostics.snapshot(),
                 replicationError,
                 watchError: changeWatchFailure && {
@@ -3796,23 +3837,12 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 })
             )
         );
-        if (options.connectivity)
-            yield* Effect.forkScoped(
-                Stream.runForEach(options.connectivity, (online) =>
-                    Effect.gen(function* () {
-                        if (online && replicationError?.kind === "Unauthenticated") {
-                            syncRetry = undefined;
-                            yield* service.reportReplicationFailure(undefined);
-                        }
-                        yield* wake;
-                    })
-                )
-            );
         if (adapter?.changes?.watch)
             yield* Effect.forkScoped(
                 superviseWatch({
                     stream: () => adapter.changes!.watch!,
-                    online: options.online,
+                    canRun: canSync,
+                    authentication,
                     onValue: () => wake,
                     onError: (error) =>
                         Effect.sync(() => {
@@ -3836,6 +3866,34 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 )
             );
     }
+    yield* Stream.runForEach(connectivity.changes, () => diagnostics.changed.pipe(Effect.andThen(wake))).pipe(
+        Effect.forkScoped
+    );
+    let initialConnectionState = true;
+    if (connection)
+        yield* Stream.runForEach(connection.changes, (state) =>
+            Effect.gen(function* () {
+                const activated =
+                    !initialConnectionState &&
+                    state.status === "active" &&
+                    connection.state.status === "active";
+                initialConnectionState = false;
+                if (activated) {
+                    authenticationGeneration++;
+                    for (const demand of demands.values())
+                        if (demand.loadFailure?.error.kind === "Unauthenticated") {
+                            demand.loadFailure = undefined;
+                            demand.revision++;
+                        }
+                }
+                if (activated && replicationError?.kind === "Unauthenticated") {
+                    syncRetry = undefined;
+                    yield* service.reportReplicationFailure(undefined);
+                }
+                yield* diagnostics.changed;
+                yield* wake;
+            })
+        ).pipe(Effect.forkScoped);
     if (options.startSync !== false && objectCacheGc) {
         const collect = service.collectGarbage(objectCacheGc).pipe(Effect.asVoid);
         const owned = gate.withPermits(1)(collect);

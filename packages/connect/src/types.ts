@@ -1,20 +1,20 @@
+import { Schema } from "effect";
 import type { ConnectionError } from "./ConnectionError.js";
 import type { UnauthenticatedError } from "@party-stack/ontology-backend";
 import type { Runtime } from "@party-stack/runtime";
 import type { Effect, Scope, Stream } from "effect";
 
-export type ConnectionState =
-    | { status: "pending" }
-    | {
-          status: "active";
-          expiration?: {
-              expiresAt: number;
-              refreshable: boolean;
-          };
-      }
-    | { status: "inactive" }
-    | { status: "needs-auth"; error?: string }
-    | { status: "error"; error: string };
+export const ConnectionStateSchema = Schema.Union([
+    Schema.Struct({ status: Schema.Literal("pending") }),
+    Schema.Struct({
+        status: Schema.Literal("active"),
+        expiration: Schema.optional(Schema.Struct({ expiresAt: Schema.Number, refreshable: Schema.Boolean })),
+    }),
+    Schema.Struct({ status: Schema.Literal("inactive") }),
+    Schema.Struct({ status: Schema.Literal("needs-auth"), error: Schema.optional(Schema.String) }),
+    Schema.Struct({ status: Schema.Literal("error"), error: Schema.String }),
+]);
+export type ConnectionState = typeof ConnectionStateSchema.Type;
 
 export type ConnectionStatus = ConnectionState["status"];
 
@@ -37,6 +37,7 @@ export interface Connection<Status extends ConnectionStatus = ConnectionStatus> 
 export interface ConnectionMonitor {
     readonly state: ConnectionState;
     subscribe(callback: (state: ConnectionState) => void): () => void;
+    /** Includes the current state, followed by connection lifecycle changes. */
     readonly changes: Stream.Stream<ConnectionState>;
     reportUnauthenticated(error: UnauthenticatedError): Effect.Effect<void, ConnectionError>;
 }

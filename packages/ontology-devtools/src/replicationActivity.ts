@@ -50,7 +50,11 @@ export const demandId = (demand: Pick<ReplicationDemand, "objectType" | "query">
 export function replicationState(status: ReplicationStatus | undefined, error?: string) {
     if (error) return "Monitoring disconnected";
     if (!status) return "Connecting…";
-    if (status.online === false) return "Offline";
+    if (status.networkOnline === false) return "Offline";
+    if (status.connection?.status === "needs-auth") return "Sign-in required";
+    if (status.connection?.status === "error") return "Connection failed";
+    if (status.connection?.status === "inactive") return "Disconnected";
+    if (status.connection?.status === "pending") return "Connecting…";
     if (status.syncing) return "Syncing";
     if (status.lastSync?.outcome === "failure") return "Sync failed";
     if ((status.outbox.blocked ?? 0) > 0) return "Outbox paused";
