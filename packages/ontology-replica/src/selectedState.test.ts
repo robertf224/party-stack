@@ -75,7 +75,7 @@ const setup = Effect.fnUntraced(function* () {
         execute,
         startSync: false,
         outbox: { retryDelayMs: 0 },
-        gc: false,
+        objectCacheGc: false,
     });
     yield* parent.demand({ objectType: "Item" });
     yield* parent.syncOnce;
@@ -163,7 +163,7 @@ test("membership changes at the same source revision are fenced and old views ca
                     execute,
                     startSync: false,
                     outbox: { retryDelayMs: 0 },
-                    gc: false,
+                    objectCacheGc: false,
                 });
                 const first = yield* Scope.make();
                 yield* Scope.provide(child.retainLocal("Item", window), first);
@@ -196,7 +196,7 @@ test("the owned source also transfers only selected rows", async () => {
                     execute,
                     startSync: false,
                     outbox: { retryDelayMs: 0 },
-                    gc: false,
+                    objectCacheGc: false,
                 });
                 yield* child.retainLocal("Item", window);
                 yield* child.syncOnce;
@@ -237,7 +237,7 @@ test("pending-action row dependencies survive releasing UI demand without pinnin
                     execute,
                     startSync: false,
                     outbox: { retryDelayMs: 0 },
-                    gc: false,
+                    objectCacheGc: false,
                 });
                 const reader = yield* Scope.make();
                 yield* Scope.provide(child.demand({ objectType: "Item", query: window }), reader);
@@ -258,7 +258,7 @@ test("pending-action row dependencies survive releasing UI demand without pinnin
                 yield* child.syncOnce;
                 expect((yield* child.receipt(put("z", 9, "second").id))?.outcome).toBe("committed");
                 // Last-read data is now eligible for ordinary GC, not an active dependency.
-                expect(yield* child.collectGarbage({ olderThanMs: 0 })).toBe(1);
+                expect(yield* child.collectGarbage({ minUnusedAgeMs: 0 })).toBe(1);
                 expect(yield* child.loadSubset("Item")).toEqual([]);
             })
         )
@@ -286,13 +286,13 @@ test("protocol GC evicts one logical base and can reload the identical parent re
                 );
                 yield* f.child.pin("Item", "new", true);
                 // 'a' is first in confirmed base; 'b' is first in parent-visible base.
-                expect(yield* f.child.collectGarbage({ olderThanMs: 0 })).toBe(2);
+                expect(yield* f.child.collectGarbage({ minUnusedAgeMs: 0 })).toBe(2);
                 expect(keys(yield* f.child.loadSubset("Item"))).toEqual(["a", "b", "new"]);
                 expect((yield* f.child.confirmed.get("Item", "a"))?.rank).toBe(1);
                 expect((yield* f.child.get("Item", "a"))?.rank).toBe(10);
                 yield* Scope.close(reader, Exit.void);
                 yield* f.child.pin("Item", "new", false);
-                expect(yield* f.child.collectGarbage({ olderThanMs: 0 })).toBe(3);
+                expect(yield* f.child.collectGarbage({ minUnusedAgeMs: 0 })).toBe(3);
                 expect(yield* f.child.loadSubset("Item")).toEqual([]);
                 expect((yield* f.child.parentState)?.objects[0]?.overrides).toEqual([]);
                 // A local rebase cannot resurrect the parent's evicted overrides.
@@ -328,7 +328,7 @@ test("protocol GC retains action dependencies after parent inclusion until final
                 expect(yield* f.child.pending).toEqual([]); // Accepted, not a second action to submit.
                 expect((yield* f.child.actionStatus(put("a", 10).id)).parentAcceptance).toBeDefined();
                 yield* Scope.close(reader, Exit.void);
-                expect(yield* f.child.collectGarbage({ olderThanMs: 0 })).toBe(3);
+                expect(yield* f.child.collectGarbage({ minUnusedAgeMs: 0 })).toBe(3);
                 expect(keys(yield* f.child.loadSubset("Item"))).toEqual(["a"]);
                 expect((yield* f.child.get("Item", "a"))?.rank).toBe(10);
                 expect((yield* f.child.confirmed.get("Item", "a"))?.rank).toBe(1);
@@ -339,7 +339,7 @@ test("protocol GC retains action dependencies after parent inclusion until final
                 yield* f.parent.syncOnce;
                 yield* f.child.syncOnce;
                 expect((yield* f.child.actionStatus(put("a", 10).id)).receipt?.outcome).toBe("committed");
-                expect(yield* f.child.collectGarbage({ olderThanMs: 0 })).toBe(1);
+                expect(yield* f.child.collectGarbage({ minUnusedAgeMs: 0 })).toBe(1);
                 expect(yield* f.child.loadSubset("Item")).toEqual([]);
             })
         )
@@ -358,9 +358,9 @@ test("protocol window retention imports the offset prefix and keeps explicit pin
                 expect(keys(yield* f.child.loadSubset("Item", { ...window, offset: 1, limit: 1 }))).toEqual([
                     "b",
                 ]);
-                expect(yield* f.child.collectGarbage({ olderThanMs: 0 })).toBe(0);
+                expect(yield* f.child.collectGarbage({ minUnusedAgeMs: 0 })).toBe(0);
                 yield* f.child.pin("Item", "z", false);
-                expect(yield* f.child.collectGarbage({ olderThanMs: 0 })).toBe(1);
+                expect(yield* f.child.collectGarbage({ minUnusedAgeMs: 0 })).toBe(1);
             })
         )
     );
@@ -459,7 +459,7 @@ test("protocol base preserves encrypted caches without mixing confirmed and inhe
                 yield* child.encryptedCache.put(updated, { ciphertext: "local-2" });
                 expect(yield* child.encryptedCache.get(updated)).toEqual({ ciphertext: "local-2" });
                 expect((yield* child.confirmed.get("Item", "a"))?.rank).toBe(1);
-                expect(yield* child.collectGarbage({ olderThanMs: 0 })).toBe(0);
+                expect(yield* child.collectGarbage({ minUnusedAgeMs: 0 })).toBe(0);
             })
         )
     );

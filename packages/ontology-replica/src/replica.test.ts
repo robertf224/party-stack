@@ -214,18 +214,18 @@ test("bounded GC advances past pinned candidates and honors persisted reader lea
                 const first = yield* makeReplica(options);
                 yield* first.syncOnce;
                 yield* first.pin("Counter", "first", true);
-                expect(yield* first.collectGarbage({ limit: 1, olderThanMs: 0 })).toBe(0);
-                expect(yield* first.collectGarbage({ limit: 1, olderThanMs: 0 })).toBe(1);
+                expect(yield* first.collectGarbage({ maxCandidates: 1, minUnusedAgeMs: 0 })).toBe(0);
+                expect(yield* first.collectGarbage({ maxCandidates: 1, minUnusedAgeMs: 0 })).toBe(1);
                 expect(yield* first.get("Counter", "second")).toBeUndefined();
                 expect(yield* first.get("Counter", "first")).toBeDefined();
                 const second = yield* makeReplica(options);
                 const readerScope = yield* Scope.make();
                 yield* Scope.provide(second.retainLocal("Counter"), readerScope);
                 yield* first.pin("Counter", "first", false);
-                expect(yield* first.collectGarbage({ limit: 10, olderThanMs: 0 })).toBe(0);
-                expect(yield* first.collectGarbage({ limit: 10, olderThanMs: 0 })).toBe(0);
+                expect(yield* first.collectGarbage({ maxCandidates: 10, minUnusedAgeMs: 0 })).toBe(0);
+                expect(yield* first.collectGarbage({ maxCandidates: 10, minUnusedAgeMs: 0 })).toBe(0);
                 yield* Scope.close(readerScope, Exit.void);
-                expect(yield* first.collectGarbage({ limit: 10, olderThanMs: 0 })).toBe(1);
+                expect(yield* first.collectGarbage({ maxCandidates: 10, minUnusedAgeMs: 0 })).toBe(1);
                 expect(yield* first.get("Counter", "first")).toBeUndefined();
             })
         )
@@ -751,7 +751,7 @@ test("a confirmed key reuses subset coverage until garbage collection invalidate
                 yield* Scope.close(reader, Exit.void);
                 yield* backend.applyAction({ id: "move-out-of-filter", name: "increment", parameters: {} });
                 yield* replica.syncOnce;
-                expect(yield* replica.collectGarbage({ olderThanMs: 0 })).toBe(1);
+                expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(1);
                 expect(yield* replica.get("Counter", "shared")).toBeUndefined();
                 yield* replica.demand(point);
                 yield* replica.syncOnce;
@@ -865,7 +865,7 @@ test("background demand IO survives one consumer's cancellation and stops after 
                     namespace: "cancel-shared-demand",
                     ir,
                     tables: yield* Memory.make(),
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                     backend: {
                         name: "fixture",
@@ -921,7 +921,7 @@ test("one nonretryable subset cannot starve another subset or the outbox", async
                     ir,
                     tables: yield* Memory.make(),
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                     backend: {
                         name: "fixture",
@@ -1003,7 +1003,7 @@ test("a fatal journal error stops background source IO until explicitly recovere
                     ir,
                     tables: yield* Memory.make(),
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                     backend: {
                         name: "source",
@@ -1064,7 +1064,7 @@ test("journal retry deadlines are not extended by intervening callers", async ()
                     ir,
                     tables: yield* Memory.make(),
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                     backend: {
                         name: "source",
@@ -1116,7 +1116,7 @@ test("canceling a query wait cannot interrupt an already submitting outbox actio
                     ir,
                     tables: yield* Memory.make(),
                     startSync: true,
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                     backend: {
                         name: "source",

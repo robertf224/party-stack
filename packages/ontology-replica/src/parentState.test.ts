@@ -91,7 +91,7 @@ const fixture = Effect.fnUntraced(function* () {
         backend,
         execute,
         startSync: false,
-        gc: false,
+        objectCacheGc: false,
     };
     const parentScope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(parentScope, Exit.void));
@@ -114,7 +114,7 @@ const client = Effect.fnUntraced(function* (
         tables,
         execute,
         startSync: false,
-        gc: false,
+        objectCacheGc: false,
         source: {
             sourceId: snapshot.sourceId,
             supportsIdempotency: true,
@@ -156,7 +156,7 @@ test("subset readiness never forwards child actions or drains the parent's outbo
                     source,
                     execute,
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                 });
                 const subset = { objectType: "Counter" };
                 yield* child.demand(subset);
@@ -186,7 +186,7 @@ test("a protocol source starts automatically without a backend adapter or mode f
                     tables: yield* Memory.make(),
                     source: replicaStateSource(f.parent),
                     execute,
-                    gc: false,
+                    objectCacheGc: false,
                 });
                 yield* child.retainLocal("Counter");
                 yield* child.syncOnce;
@@ -735,7 +735,7 @@ test("an expired parent session renews without losing queued work or reusing its
                     namespace: "expired-parent",
                     ir,
                     tables: yield* Memory.make(),
-                    clients: { leaseMs: 100 },
+                    clients: { sessionIdleTimeoutMs: 100 },
                     mutators: { increment: execute },
                 });
                 const child = yield* makeReplica({
@@ -744,7 +744,7 @@ test("an expired parent session renews without losing queued work or reusing its
                     tables: yield* Memory.make(),
                     source: owned.protocol,
                     execute,
-                    gc: false,
+                    objectCacheGc: false,
                     startSync: false,
                 });
                 yield* child.demand({ objectType: "Counter" });

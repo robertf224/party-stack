@@ -164,7 +164,7 @@ const replica =
     yield *
     makeReplica({
         ...options,
-        demand: { idleMs: 60_000, maxSubsets: 128 },
+        demand: { idleRetentionMs: 60_000, maxSubsets: 128 },
     });
 ```
 

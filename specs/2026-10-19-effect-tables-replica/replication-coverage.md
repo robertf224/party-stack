@@ -144,7 +144,7 @@ The future [query IR](./query-ir.md) should make those dependencies precise.
 Automatic replica GC runs in the owning Effect scope under the same placement
 capability as sync. Defaults are a pass every minute, at most 100 candidates per
 pass, and a 24-hour age threshold. The age threshold ranks disposable cache data;
-it does not decide replication freshness. `gc: false` disables scheduling, and
+it does not decide replication freshness. `objectCacheGc: false` disables scheduling, and
 manual `startSync: false` instances remain manually maintained. Explicit pins,
 live subset leases, and pending-operation roots override age. This policy touches
 replica base rows, never authoritative backend or local-only tables.

@@ -37,7 +37,7 @@ interface ReplicaHostCommonOptions {
     readonly context: Record<string, unknown>;
     readonly writes?: LiveOntologyWrites;
     readonly connection?: ConnectionMonitor;
-    readonly gc?: ReplicaOptions["gc"];
+    readonly objectCacheGc?: ReplicaOptions["objectCacheGc"];
     readonly demand?: ReplicaOptions["demand"];
     readonly clients?: ReplicaOptions["clients"];
 }
@@ -158,7 +158,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         : Stream.never;
     const replica = yield* makeReplica({
         namespace: options.id ?? runtime.namespace,
-        clients: options.clients ?? { leaseMs: 10 * 60_000 },
+        clients: options.clients ?? { sessionIdleTimeoutMs: 10 * 60_000 },
         ir,
         tables: services.tables,
         ...(!options.source
@@ -223,7 +223,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
             );
         }),
         connectivity: Stream.merge(services.connectivity.changes, connected),
-        gc: options.gc,
+        objectCacheGc: options.objectCacheGc,
         demand: options.demand,
         outbox: options.writes?.outbox,
     });

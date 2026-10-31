@@ -32,7 +32,7 @@ const proxyServer =
     });
 
 // Confirmed read cache; writes still forward directly to upstream.
-// Configure readCache with makeReplica({ ..., demand: { idleMs: 60_000, maxSubsets: 128 } }).
+// Configure readCache with makeReplica({ ..., demand: { idleRetentionMs: 60_000, maxSubsets: 128 } }).
 const cachedServer =
     yield *
     makeOntologyServer({

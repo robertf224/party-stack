@@ -419,7 +419,7 @@ test.each([false, true])(
                         execute: () => Effect.void,
                         startSync: false,
                         outbox: { retryDelayMs: 0 },
-                        gc: false as const,
+                        objectCacheGc: false as const,
                     };
                     const firstScope = yield* Scope.make();
                     const first = yield* Scope.provide(makeReplica(options), firstScope);
@@ -456,7 +456,7 @@ test("retry attempts advance once per submission, and acceptance never resets or
                     tables: yield* Memory.make(),
                     startSync: false,
                     outbox: { retryDelayMs: 0 },
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                     backend: {
                         name: "retry",

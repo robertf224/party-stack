@@ -86,14 +86,14 @@ test("overlapping demands retain only their rows and the prefix influencing a bo
                     window
                 );
                 yield* replica.demand({ objectType: "Row", query: { where: eq(field("id"), "row0") } });
-                expect(yield* replica.collectGarbage({ olderThanMs: 0 })).toBe(2);
+                expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(2);
                 expect((yield* replica.loadSubset("Row")).map((row) => row.key)).toEqual([
                     "row0",
                     "row3",
                     "row4",
                 ]);
                 yield* Scope.close(window, Exit.void);
-                expect(yield* replica.collectGarbage({ olderThanMs: 0 })).toBe(2);
+                expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(2);
                 expect((yield* replica.loadSubset("Row")).map((row) => row.key)).toEqual(["row0"]);
             })
         )
@@ -107,7 +107,7 @@ test("persisted-only reader roots are precise across contexts", async () => {
                 const { replica, options } = yield* setup();
                 const other = yield* makeReplica(options);
                 yield* other.retainLocal("Row", { where: eq(field("id"), "row2") });
-                expect(yield* replica.collectGarbage({ olderThanMs: 0 })).toBe(4);
+                expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(4);
                 expect((yield* other.loadSubset("Row")).map((row) => row.key)).toEqual(["row2"]);
             })
         )
@@ -126,14 +126,14 @@ test("pending point reads and write targets survive GC without retaining unrelat
                 );
                 yield* replica.enqueue({ id: "offline", name: "queued", parameters: {} });
                 const reopened = yield* makeReplica(options);
-                expect(yield* reopened.collectGarbage({ olderThanMs: 0 })).toBe(3);
+                expect(yield* reopened.collectGarbage({ minUnusedAgeMs: 0 })).toBe(3);
                 expect((yield* reopened.confirmed.loadSubset("Row")).map((row) => row.key)).toEqual([
                     "row1",
                     "row3",
                 ]);
                 expect((yield* reopened.get("Row", "row3"))?.count).toBe(11);
                 yield* reopened.remove("offline");
-                expect(yield* reopened.collectGarbage({ olderThanMs: 0 })).toBe(2);
+                expect(yield* reopened.collectGarbage({ minUnusedAgeMs: 0 })).toBe(2);
             })
         )
     );
@@ -154,14 +154,14 @@ test("sync ingestion and dependency replacement commit together while an outbox 
                     })
                 );
                 yield* replica.enqueue({ id: "pending", name: "queued", parameters: {} });
-                expect(yield* replica.collectGarbage({ olderThanMs: 0 })).toBe(4);
+                expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(4);
                 yield* put("new-source", 8);
                 yield* put("unrelated", 0);
                 const dispatch = yield* Effect.result(replica.syncOnce);
                 expect(Result.isFailure(dispatch) && dispatch.failure.kind).toBe("Unavailable");
                 expect((yield* replica.get("Row", "derived"))?.count).toBe(8);
                 expect((yield* replica.pending)[0]?.state).toBe("queued");
-                expect(yield* replica.collectGarbage({ olderThanMs: 0 })).toBe(2);
+                expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(2);
                 expect((yield* replica.confirmed.loadSubset("Row")).map((row) => row.key)).toEqual([
                     "new-source",
                 ]);
@@ -196,14 +196,14 @@ test("blocked replays keep previous dependencies, partial reads, and newly match
                 expect((yield* replica.pending)[0]?.state).toBe("blocked");
                 yield* put("phantom", 9);
                 yield* replica.syncOnce;
-                expect(yield* replica.collectGarbage({ olderThanMs: 0 })).toBe(4);
+                expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(4);
                 expect((yield* replica.loadSubset("Row")).map((row) => row.key)).toEqual([
                     "phantom",
                     "row1",
                     "row2",
                 ]);
                 yield* replica.remove("blocked");
-                expect(yield* replica.collectGarbage({ olderThanMs: 0 })).toBe(3);
+                expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(3);
             })
         )
     );
@@ -221,7 +221,7 @@ test("automatic bounded collection belongs to the replica scope and preserves a 
                         ...options,
                         startSync: true,
                         pollIntervalMs: 1_000_000,
-                        gc: { intervalMs: 10, olderThanMs: 0, limit: 2 },
+                        objectCacheGc: { sweepIntervalMs: 10, minUnusedAgeMs: 0, maxCandidates: 2 },
                         tables: {
                             ...options.tables,
                             transaction: (body) =>
@@ -273,7 +273,7 @@ test("owner restart discards abandoned query leases while retaining pins and pen
                 });
                 const reopened = yield* makeReplica(options);
                 expect(yield* tables.query(roots)).toEqual([]);
-                expect(yield* reopened.collectGarbage({ olderThanMs: 0 })).toBe(3);
+                expect(yield* reopened.collectGarbage({ minUnusedAgeMs: 0 })).toBe(3);
                 expect((yield* reopened.loadSubset("Row")).map((row) => row.key)).toEqual(["row0", "row1"]);
                 expect((yield* reopened.pending).map((entry) => entry.invocation.id)).toEqual(["pending"]);
             })

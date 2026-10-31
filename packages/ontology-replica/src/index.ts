@@ -145,6 +145,17 @@ export interface ReplicaOutboxPolicy {
     /** Abandon pending intent on terminal failure, including unknown remote outcomes. */
     readonly failureStrategy?: "pause" | "discard-all";
 }
+export interface ObjectCacheSweepOptions {
+    /** Minimum time since a row was last accessed before it can be considered. Defaults to 24 hours.
+     * Active demand, pending actions and explicit pins still protect older rows. */
+    readonly minUnusedAgeMs?: number;
+    /** Maximum candidates examined, including protected rows. Defaults to 100; maximum 10,000. */
+    readonly maxCandidates?: number;
+}
+export interface ObjectCacheGcPolicy extends ObjectCacheSweepOptions {
+    /** Time between automatic bounded sweeps. Defaults to 60 seconds. */
+    readonly sweepIntervalMs?: number;
+}
 export interface ReplicaService extends OwnedReadTransaction {
     readonly ir: OntologyIR;
     readonly mode: "adapter" | "protocol";
@@ -278,10 +289,7 @@ export interface ReplicaService extends OwnedReadTransaction {
     readonly syncSubset: (subset: BackendSubset) => Effect.Effect<void, BackendError>;
     readonly invalidate: (objectTypes?: readonly string[]) => Effect.Effect<void, BackendError>;
     readonly ensureIndex: (objectType: string, index: Index) => Effect.Effect<void, BackendError>;
-    readonly collectGarbage: (options?: {
-        limit?: number;
-        olderThanMs?: number;
-    }) => Effect.Effect<number, BackendError>;
+    readonly collectGarbage: (options?: ObjectCacheSweepOptions) => Effect.Effect<number, BackendError>;
     readonly wake: Effect.Effect<void>;
 }
 export class Replica extends Context.Service<Replica, ReplicaService>()(
@@ -310,9 +318,7 @@ interface ReplicaCommonOptions {
     readonly demand?: DemandPolicy;
     readonly outbox?: ReplicaOutboxPolicy;
     /** Replica cache eviction only; owned storage is never collected by this policy. */
-    readonly gc?:
-        | false
-        | { readonly intervalMs?: number; readonly olderThanMs?: number; readonly limit?: number };
+    readonly objectCacheGc?: false | ObjectCacheGcPolicy;
     readonly publish?: Effect.Effect<void>;
 }
 /** Use a provider/owned backend binding or a protocol source, never both.
@@ -428,25 +434,25 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                     Effect.map(({ result }) => result)
                 ),
     };
-    const gc =
-        options.gc === false
+    const objectCacheGc =
+        options.objectCacheGc === false
             ? undefined
             : {
-                  intervalMs: options.gc?.intervalMs ?? 60_000,
-                  olderThanMs: options.gc?.olderThanMs ?? 24 * 60 * 60 * 1000,
-                  limit: options.gc?.limit ?? 100,
+                  sweepIntervalMs: options.objectCacheGc?.sweepIntervalMs ?? 60_000,
+                  minUnusedAgeMs: options.objectCacheGc?.minUnusedAgeMs ?? 24 * 60 * 60 * 1000,
+                  maxCandidates: options.objectCacheGc?.maxCandidates ?? 100,
               };
     if (
-        gc &&
-        (!Number.isFinite(gc.intervalMs) ||
-            gc.intervalMs < 10 ||
-            !Number.isFinite(gc.olderThanMs) ||
-            gc.olderThanMs < 0 ||
-            !Number.isSafeInteger(gc.limit) ||
-            gc.limit < 1 ||
-            gc.limit > 10_000)
+        objectCacheGc &&
+        (!Number.isFinite(objectCacheGc.sweepIntervalMs) ||
+            objectCacheGc.sweepIntervalMs < 10 ||
+            !Number.isFinite(objectCacheGc.minUnusedAgeMs) ||
+            objectCacheGc.minUnusedAgeMs < 0 ||
+            !Number.isSafeInteger(objectCacheGc.maxCandidates) ||
+            objectCacheGc.maxCandidates < 1 ||
+            objectCacheGc.maxCandidates > 10_000)
     )
-        return yield* fault("InvalidConfiguration", "Invalid automatic GC policy.");
+        return yield* fault("InvalidConfiguration", "Invalid automatic object cache GC policy.");
     const schemas = yield* Effect.try({
         try: () => compileEffectSchemas(options.ir),
         catch: (cause) => fault("InvalidConfiguration", "Invalid ontology definition.", cause),
@@ -3626,12 +3632,9 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
             ).pipe(Effect.tap(() => localNotify)),
         ensureIndex: (objectType, index) =>
             access(Effect.flatMap(view(objectType), (v) => tables.ensureIndex(v.base, index))),
-        collectGarbage: Effect.fn("Replica.collectGarbage")(function* (settings?: {
-            limit?: number;
-            olderThanMs?: number;
-        }) {
-            const limit = settings?.limit ?? 100;
-            const age = settings?.olderThanMs ?? 24 * 60 * 60 * 1000;
+        collectGarbage: Effect.fn("Replica.collectGarbage")(function* (settings?: ObjectCacheSweepOptions) {
+            const limit = settings?.maxCandidates ?? 100;
+            const age = settings?.minUnusedAgeMs ?? 24 * 60 * 60 * 1000;
             if (
                 !Number.isSafeInteger(limit) ||
                 limit < 1 ||
@@ -3833,12 +3836,12 @@ export const makeReplica = Effect.fn("Replica.make")(function* (options: Replica
                 )
             );
     }
-    if (options.startSync !== false && gc) {
-        const collect = service.collectGarbage(gc).pipe(Effect.asVoid);
+    if (options.startSync !== false && objectCacheGc) {
+        const collect = service.collectGarbage(objectCacheGc).pipe(Effect.asVoid);
         const owned = gate.withPermits(1)(collect);
         yield* Effect.forkScoped(
             Effect.forever(
-                Effect.sleep(gc.intervalMs).pipe(
+                Effect.sleep(objectCacheGc.sweepIntervalMs).pipe(
                     Effect.andThen(owned),
                     Effect.catch((error) => Effect.logWarning("Replica GC pass failed", { kind: error.kind }))
                 )

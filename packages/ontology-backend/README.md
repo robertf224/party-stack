@@ -85,7 +85,11 @@ const owned =
         mutators,
         resultRetentionMs: 7 * 24 * 60 * 60 * 1_000,
         history: { maxCommits: 10_000, maxAgeMs: 24 * 60 * 60 * 1_000 },
-        clients: { leaseMs: 7 * 24 * 60 * 60 * 1_000, maxClients: 256, maxUnacknowledged: 1_024 },
+        clients: {
+            sessionIdleTimeoutMs: 7 * 24 * 60 * 60 * 1_000,
+            maxSessions: 256,
+            maxUnacknowledgedActions: 1_024,
+        },
     });
 ```
 

@@ -585,7 +585,7 @@ test("plain replica reads and observations attach source locators without changi
                     namespace: "read-sources",
                     tables,
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                     backend: {
                         name: "source",

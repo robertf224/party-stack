@@ -15,8 +15,8 @@ const cache =
     yield *
     makeReplica({
         ...replicaOptions,
-        demand: { idleMs: 60_000, maxSubsets: 128 },
-        gc: { olderThanMs: 10 * 60_000, intervalMs: 60_000, limit: 100 },
+        demand: { idleRetentionMs: 60_000, maxSubsets: 128 },
+        objectCacheGc: { minUnusedAgeMs: 10 * 60_000, sweepIntervalMs: 60_000, maxCandidates: 100 },
     });
 const server =
     yield *
@@ -28,7 +28,7 @@ const server =
     });
 ```
 
-`idleMs` defaults to zero (immediate release) and `maxSubsets` to 1,024. The cap
+`idleRetentionMs` defaults to zero (immediate release) and `maxSubsets` to 1,024. The cap
 counts distinct active **and** idle subsets, including eager demand. These are
 resource counts, not byte estimates. Settings are also available on LiveOntology
 construction; hosted compositions pass the policy to their underlying replica.
@@ -59,7 +59,7 @@ configure `gcTime`; the integration regression verifies that their source demand
 remains retained until query GC and that reuse renews the lifetime.
 
 For now, avoid stacking a long TanStack query lifetime and a long replica idle
-lifetime unintentionally. A UI can leave `demand.idleMs` at zero and retain its
+lifetime unintentionally. A UI can leave `demand.idleRetentionMs` at zero and retain its
 query. Cached proxies can configure replica idle demand without depending on
 TanStack. Raw subset replacement/filter changes can release acquisitions before
 the entire query collection's GC; query GC is not a universal per-subset policy.
@@ -94,9 +94,10 @@ Blob buffer at every transport/store boundary. A provider may still buffer.
 
 Existing controls to start with:
 
-1. Replica `demand.idleMs` and `maxSubsets` for reuse and bounded subscriptions.
-2. Row `gc.olderThanMs`, `intervalMs` and `limit` for the desired cache age and
-   bounded cleanup work. Blob GC has independent byte/orphan grace policies.
+1. Replica `demand.idleRetentionMs` and `maxSubsets` for reuse and bounded subscriptions.
+2. `objectCacheGc.minUnusedAgeMs`, `sweepIntervalMs` and `maxCandidates` for the
+   desired object-cache age and bounded cleanup work. Blob GC has independent
+   byte/orphan grace policies.
 3. Delivery `maxSubscriptions`, `maxRecords`, `maxBytes`, frame size and ACK timeout.
 4. Client session count/lease/result windows for actual replica children. Stateless
    cached metadata reads do not need a child session.

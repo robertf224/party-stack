@@ -71,7 +71,7 @@ test.each(["owned", "proxy", "cached-proxy", "replica"] as const)(
                         backend: owned,
                         execute: () => Effect.void,
                         startSync: false,
-                        gc: false,
+                        objectCacheGc: false,
                     });
                     const role =
                         kind === "owned"
@@ -566,7 +566,7 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                     backend: owned,
                     execute: () => Effect.void,
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                 });
                 const handler = yield* makeOntologyHttpHandler({
                     source: owned.protocol,

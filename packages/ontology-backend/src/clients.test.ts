@@ -53,7 +53,7 @@ test("acknowledgment compacts details while the watermark prevents old execution
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const f = yield* setup({ maxUnacknowledged: 2 });
+                const f = yield* setup({ maxUnacknowledgedActions: 2 });
                 for (let sequence = 1; sequence <= 50; sequence++) {
                     yield* f.admit(sequence);
                     yield* f.tables.transaction((tx) => f.registry.deliver(tx, f.session, sequence));
@@ -95,7 +95,7 @@ test("expired clients and their details are bounded without deleting accepted ap
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const f = yield* setup({ leaseMs: 100, maxClients: 1 });
+                const f = yield* setup({ sessionIdleTimeoutMs: 100, maxSessions: 1 });
                 yield* f.admit(1);
                 expect((yield* Effect.result(f.tables.transaction((tx) => f.registry.open(tx))))._tag).toBe(
                     "Failure"
@@ -121,7 +121,7 @@ test("future and stale acknowledgments cannot prune undelivered actions", async 
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const f = yield* setup({ maxUnacknowledged: 1 });
+                const f = yield* setup({ maxUnacknowledgedActions: 1 });
                 yield* f.admit(1);
                 expect((yield* Effect.result(f.admit(2)))._tag).toBe("Failure");
                 expect(

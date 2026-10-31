@@ -74,7 +74,7 @@ test.each(["incremental", "snapshot"] as const)(
                         },
                         execute: rename,
                         startSync: false,
-                        gc: false,
+                        objectCacheGc: false,
                     });
                     yield* owner.enqueue({ id: "controlled", name: "rename", parameters: { title: "old" } });
                     yield* Effect.result(owner.syncOnce);
@@ -85,7 +85,7 @@ test.each(["incremental", "snapshot"] as const)(
                         tables: runtime.tables,
                         source: delivery === "snapshot" ? { ...parent, subscribe: undefined } : parent,
                         execute: rename,
-                        gc: false,
+                        objectCacheGc: false,
                     });
                     const view = yield* makeReplicaOntologyView({
                         ir,
@@ -190,7 +190,7 @@ test.each(["pause", "discard-all"] as const)(
                         },
                         execute: rename,
                         startSync: false,
-                        gc: false,
+                        objectCacheGc: false,
                         outbox: { failureStrategy },
                     });
                     const child = yield* makeReplica({
@@ -200,7 +200,7 @@ test.each(["pause", "discard-all"] as const)(
                         source: replicaStateSource(owner),
                         execute: rename,
                         startSync: false,
-                        gc: false,
+                        objectCacheGc: false,
                     });
                     const view = yield* makeReplicaOntologyView({
                         ir,
@@ -310,7 +310,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                     },
                     execute: rename,
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                 });
                 const parent = replicaStateSource(owner);
                 const source = {
@@ -339,7 +339,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                                 source,
                                 execute: rename,
                                 startSync: false,
-                                gc: false,
+                                objectCacheGc: false,
                             });
                             const view = yield* makeReplicaOntologyView({
                                 ir,

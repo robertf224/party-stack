@@ -33,9 +33,14 @@ const ClientRecordSchema = Schema.Struct({
 export const ClientLeaseSchema = ClientRecordSchema;
 export type ClientLease = typeof ClientRecordSchema.Type;
 export interface ClientPolicy {
-    readonly leaseMs?: number;
-    readonly maxClients?: number;
-    readonly maxUnacknowledged?: number;
+    /** Inactivity before a resumable client session expires. Validated requests renew it.
+     * Defaults to seven days; expiry never discards accepted pending actions. */
+    readonly sessionIdleTimeoutMs?: number;
+    /** Retained unexpired sessions, including disconnected resumable clients. Defaults to 256. */
+    readonly maxSessions?: number;
+    /** Per-session accepted actions not yet acknowledged by the child. Defaults to 1,024.
+     * This bounds submission bookkeeping, not the parent's entire pending outbox. */
+    readonly maxUnacknowledgedActions?: number;
 }
 export interface ClientRegistryHooks {
     /** Release only this client's retained delivery/results, never accepted work. */
@@ -61,9 +66,9 @@ export const clientRegistry = (
     policy: ClientPolicy = {},
     hooks: ClientRegistryHooks = {}
 ) => {
-    const leaseMs = policy.leaseMs ?? 7 * 24 * 60 * 60 * 1000;
-    const maxClients = policy.maxClients ?? 256;
-    const maxUnacknowledged = policy.maxUnacknowledged ?? 1024;
+    const sessionIdleTimeoutMs = policy.sessionIdleTimeoutMs ?? 7 * 24 * 60 * 60 * 1000;
+    const maxSessions = policy.maxSessions ?? 256;
+    const maxUnacknowledgedActions = policy.maxUnacknowledgedActions ?? 1024;
     const clients = Table.make({
         name: JSON.stringify(["replica", namespace, "clients"]),
         codec: {
@@ -76,12 +81,12 @@ export const clientRegistry = (
     });
     const validatePolicy = Effect.gen(function* () {
         if (
-            !Number.isFinite(leaseMs) ||
-            leaseMs < 1 ||
-            !Number.isSafeInteger(maxClients) ||
-            maxClients < 1 ||
-            !Number.isSafeInteger(maxUnacknowledged) ||
-            maxUnacknowledged < 1
+            !Number.isFinite(sessionIdleTimeoutMs) ||
+            sessionIdleTimeoutMs < 1 ||
+            !Number.isSafeInteger(maxSessions) ||
+            maxSessions < 1 ||
+            !Number.isSafeInteger(maxUnacknowledgedActions) ||
+            maxUnacknowledgedActions < 1
         )
             return yield* error(
                 "policy",
@@ -115,7 +120,7 @@ export const clientRegistry = (
                 "SessionReplaced",
                 "A newer connection replaced this client session."
             );
-        return { ...stored, expiresAt: now + leaseMs };
+        return { ...stored, expiresAt: now + sessionIdleTimeoutMs };
     });
     const expire = Effect.fnUntraced(function* (tx: Transaction, limit = 100) {
         const now = yield* Clock.currentTimeMillis;
@@ -149,7 +154,7 @@ export const clientRegistry = (
                 );
         } else {
             yield* expire(tx);
-            if ((yield* tx.query(clients, { limit: maxClients })).length >= maxClients)
+            if ((yield* tx.query(clients, { limit: maxSessions })).length >= maxSessions)
                 return yield* error("capacity", "RateLimited", "Active client limit reached.");
         }
         const record: ClientLease = {
@@ -159,7 +164,7 @@ export const clientRegistry = (
                 resumeKey: crypto.randomUUID(),
             },
             connectionId: crypto.randomUUID(),
-            expiresAt: now + leaseMs,
+            expiresAt: now + sessionIdleTimeoutMs,
             acceptedThrough: previous?.acceptedThrough ?? 0,
             acknowledgedThrough: previous?.acknowledgedThrough ?? 0,
             deliveredThrough: previous?.deliveredThrough ?? 0,
@@ -209,7 +214,7 @@ export const clientRegistry = (
                 "Conflict",
                 "Submission is out of order; a preceding action is missing."
             );
-        if (record.acceptedThrough - record.acknowledgedThrough >= maxUnacknowledged)
+        if (record.acceptedThrough - record.acknowledgedThrough >= maxUnacknowledgedActions)
             return yield* error(
                 "capacity",
                 "RateLimited",

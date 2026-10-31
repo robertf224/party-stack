@@ -50,7 +50,7 @@ covered in [native-actions.md](./native-actions.md).
 - **Open crash-cleanup gap:** persistent runtimes without owner-liveness hooks
   can retain dead owners' demand roots after a crash, preventing cache eviction.
   WebRuntime supplies Web Lock liveness; Node/Expo need an equivalent recovery path.
-- **Demand retention:** replica-level `demand.idleMs` and `maxSubsets` control shared
+- **Demand retention:** replica-level `demand.idleRetentionMs` and `maxSubsets` control shared
   active/idle leases, with idle LRU eviction at capacity. Cached proxies use the
   same policy. Row/blob GC runs independently; hard byte budgets remain future work.
 - **Retention:** precise subset/action dependencies and bounded automatic row GC

@@ -66,7 +66,7 @@ test("inspection streams do not acquire demand, and record live loads, failures,
                     namespace: "inspect",
                     tables: yield* Memory.make(),
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                     online: Effect.sync(() => online),
                     execute: () => Effect.void,
                     backend: {
@@ -185,7 +185,7 @@ test("watch-maintained whole-collection coverage explains search reuse without a
                     namespace: "coverage-diagnostics",
                     tables: yield* Memory.make(),
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                     backend: {
                         name: "fixture",
@@ -247,7 +247,7 @@ test.each([true, false])(
                         namespace: `pk-proof-${complete}`,
                         tables: yield* Memory.make(),
                         startSync: false,
-                        gc: false,
+                        objectCacheGc: false,
                         execute: () => Effect.void,
                         backend: {
                             name: "fixture",
@@ -313,7 +313,7 @@ test("configured subset polling invalidates coverage on its interval and stops w
                     namespace: "polling",
                     tables: yield* Memory.make(),
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                     backend: {
                         name: "fixture",
@@ -365,7 +365,7 @@ test("disabled polling retains its snapshot without claiming an active watcher",
                     namespace: "no-polling",
                     tables: yield* Memory.make(),
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                     backend: {
                         name: "fixture",
@@ -405,7 +405,7 @@ test("load history stays bounded and cancellation does not leave running diagnos
                     namespace: "bounded",
                     tables: yield* Memory.make(),
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                     backend: {
                         name: "fixture",

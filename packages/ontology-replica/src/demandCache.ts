@@ -4,7 +4,7 @@ import type { Scope } from "effect";
 
 export interface DemandPolicy {
     /** Retain an unused subset's upstream demand for reuse. Zero releases immediately. */
-    readonly idleMs?: number;
+    readonly idleRetentionMs?: number;
     /** Active plus idle distinct subsets; idle entries are evicted before rejecting new work. */
     readonly maxSubsets?: number;
 }
@@ -14,7 +14,7 @@ export const makeDemandCache = Effect.fnUntraced(function* (options: {
     readonly policy?: DemandPolicy;
     readonly acquire: (key: string) => Effect.Effect<void, BackendError, Scope.Scope>;
 }) {
-    const idle = options.policy?.idleMs ?? 0;
+    const idle = options.policy?.idleRetentionMs ?? 0;
     const capacity = options.policy?.maxSubsets ?? 1_024;
     if (!Number.isFinite(idle) || idle < 0 || !Number.isSafeInteger(capacity) || capacity < 1)
         return yield* new BackendError({

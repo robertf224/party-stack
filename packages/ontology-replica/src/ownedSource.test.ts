@@ -49,7 +49,7 @@ test("the ordinary memory Replica connects directly to owned storage and preserv
                     source: owned.protocol,
                     execute,
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                 });
                 yield* child.retainLocal("Counter");
                 yield* child.refreshParent(owned.protocol);
@@ -102,7 +102,7 @@ test("lost owned-source replies recover from committed state without repeating t
                     source,
                     execute,
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                 });
                 yield* child.retainLocal("Counter");
                 yield* child.refreshParent(source);

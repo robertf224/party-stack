@@ -175,7 +175,7 @@ test("owned client progress rolls back with a failed action and survives reopen"
 test("owned result acknowledgments stay bounded and advance visible state coherently", async () => {
     await Effect.runPromise(
         Effect.gen(function* () {
-            const f = yield* setup({ maxUnacknowledged: 1 });
+            const f = yield* setup({ maxUnacknowledgedActions: 1 });
             let revision = 0;
             for (let sequence = 1; sequence <= 50; sequence++) {
                 const delivered = yield* f.source.submit({
@@ -216,7 +216,7 @@ test("owned result acknowledgments stay bounded and advance visible state cohere
 test("expiry releases abandoned owned results while committed data survives", async () => {
     await Effect.runPromise(
         Effect.gen(function* () {
-            const f = yield* setup({ leaseMs: 100, maxClients: 1 });
+            const f = yield* setup({ sessionIdleTimeoutMs: 100, maxSessions: 1 });
             yield* f.source.submit({
                 session: f.session,
                 sequence: 1,

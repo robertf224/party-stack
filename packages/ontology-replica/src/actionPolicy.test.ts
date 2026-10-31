@@ -59,7 +59,7 @@ test("retry deadline and budget survive reopening; explicit retry resets budget,
                     ir,
                     backend: remote,
                     startSync: false,
-                    gc: false as const,
+                    objectCacheGc: false as const,
                     execute: () => Effect.void,
                     outbox: { maxRetries: 1, retryDelayMs: 1_000 },
                 };
@@ -203,7 +203,7 @@ test("acceptance and confirmation waits differ; interrupting a wait leaves durab
                     source: replicaStateSource(parent),
                     execute: () => Effect.void,
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                 });
                 yield* child.enqueue(invocation("one"));
                 const waiting = yield* Effect.forkScoped(child.awaitAction("one"));

@@ -132,7 +132,7 @@ test("cache is an encrypted row property, survives reopening, stays out of repli
                         ) as never
                 );
                 expect((yield* Effect.result(reopened.decrypt(handle)))._tag).toBe("Failure");
-                expect(yield* replica.collectGarbage({ olderThanMs: 0 })).toBe(1);
+                expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(1);
                 expect(yield* tables.get(raw, "1")).toBeUndefined();
                 expect(yield* replica.encryptedCache.get(handle)).toBeUndefined();
                 expect((yield* Effect.result(reopened.decrypt(handle, { cache: true })))._tag).toBe(
@@ -230,7 +230,7 @@ test("a late remote response cannot recreate an evicted row or attach a cache to
                     );
                     const fiber = yield* Effect.forkChild(f.service.decrypt(handle, { cache: true }));
                     yield* Deferred.await(started);
-                    if (remove) yield* f.replica.collectGarbage({ olderThanMs: 0 });
+                    if (remove) yield* f.replica.collectGarbage({ minUnusedAgeMs: 0 });
                     else yield* f.tables.put(f.raw, "1", { id: "1", secret: { ciphertext: "newer" } });
                     yield* Deferred.succeed(reply, { value: wire, ciphertext: handle.ciphertext });
                     expect(yield* Fiber.join(fiber)).toEqual(decoded);

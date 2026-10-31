@@ -349,3 +349,85 @@ scoped acquire-with-readiness, setPin/clearPin and persisted hierarchical query
 demand remain implementation items. Do not describe the proposed interface as
 already final. The action dispatch/reconciliation, lifecycle/recovery and bounded
 GC bookkeeping passes in this checklist remain to be reviewed explicitly.
+
+### Constructor follow-up: services, configuration and scheduling
+
+Review direction, not yet implemented:
+
+- Keep network connectivity and provider connection/authentication independently
+  observable. Each capability groups its own snapshot and stream. The host
+  currently computes online as network AND active provider connection, but merges
+  the two raw boolean streams. Derive dispatch eligibility internally from both
+  current states; do not publish that derived boolean as network connectivity.
+- Express acquired dependencies through Effect requirements/Layers. Prefer the
+  Tables, BlobStorage, connectivity, upstream and local action-execution services
+  actually needed by the engine; the ontology host can supply them from Runtime
+  and its existing connection/mutator configuration. Keep config distinct from
+  acquired service values. No second runtime/adapter-provider abstraction.
+- `execute` is local transactional replay/default resolution at enqueue and
+  rebase, not remote action dispatch. Its implementation currently lives in
+  ontology above replica and uses the transaction collection bridge, preventing
+  replica from importing it directly. Making the runner internal requires moving
+  shared action execution below that dependency boundary. Renaming the callback or
+  wrapping it in a service alone does not remove the architectural split. Apps
+  should configure their custom mutators, not supply the replay algorithm.
+- Preserve application write admission/visibility defaults: direct versus outbox,
+  and confirmed versus optimistic. Both action call modes await confirmation by
+  default. Use outbox.retryPolicy for grouped retry bounds/delay; keep terminal
+  failureStrategy and completed result retention distinct from retry scheduling.
+- Group completed action result retention under outbox/action configuration.
+  Pending/blocked intent does not expire under that retention window.
+- Current `startSync:false` disables top-level state/outbox workers, parent
+  connection startup and automatic row GC. Per-demand watches are acquired
+  independently. Replace that ambiguous switch with explicit continuous/manual
+  lifecycle semantics; define scheduled sync passes separately from read readiness.
+- The global five-second `pollIntervalMs` currently controls source fallback
+  polling, main-loop wakeups and some retry delays. Adapters already expose
+  per-subset polling configuration. Put source refresh choices with the source;
+  use explicit retry/maintenance deadlines for engine work rather than a shared
+  provider-poll knob. Journal catch-up/repair scheduling still needs a deliberate
+  policy, even when watch hints exist.
+- `onReceipt` runs local post-receipt work only after receipt persistence and is
+  retried without redispatch. `publish` runs an external effect after normal local
+  notification. Current repo uses are test instrumentation/failure injection,
+  not production composition. Remove public hooks after migrating those tests to
+  appropriate storage failures and ordinary observations, preserving the durability
+  and no-transient-double-application assertions they currently exercise.
+
+Remaining passes mean invariant/transaction/lifetime audits of implemented code,
+targeted oracle/failure tests and fixes for findings, plus the explicitly pending
+API/Effect composition changes and persisted hierarchical demand feature. They
+are not a claim that those remaining features have already been implemented.
+
+### Naming and platform-bundle follow-up
+
+Implemented in the initial naming pass:
+
+- `demand.idleRetentionMs` replaces `idleMs`.
+- `objectCacheGc` replaces the replica's ambiguous `gc` option. Its policy uses
+  `sweepIntervalMs`, `minUnusedAgeMs` and `maxCandidates`. Explicit
+  `collectGarbage` sweeps use the same age/candidate names. The candidate bound
+  includes protected rows examined, not only rows deleted. Blob GC is unchanged.
+- Client policy fields are `sessionIdleTimeoutMs`, `maxSessions` and
+  `maxUnacknowledgedActions`. The last bounds accepted submissions not yet
+  acknowledged by that child, not all pending actions in a replica. Session expiry
+  renews on validated activity and never discards accepted pending actions.
+
+Still proposed: platform Layers should supply the individual capabilities together,
+like Effect's NodeServices bundle. Narrow engine requirements do not require apps
+to assemble a platform capability by capability. BlobStorage construction stays in
+the ontology/storage composition; the platform supplies raw bytes and Tables.
+
+Prefer `syncMode: "automatic" | "manual"` when replacing startSync, with explicitly
+defined behavior for demand watches and maintenance. Group session configuration
+under clientSessions when reorganizing construction. Distinguish committed versus
+speculative upstream state from adapter versus protocol transport; a cached proxy
+can publish committed state without itself being the authority.
+
+A local finite query API should use the shared Query IR executor in one local read
+transaction. One-shot remote demand should share hierarchical demand acquisition
+with persisted pins. Native provider whole-query pushdown is not an advertised
+backend capability today; projected remote results alone cannot establish entity
+coverage or replace installing raw rows. A Promise-based custom-mutator authoring
+bridge can remain in ontology while shared execution/rebase stays Effect-native
+below it. It must not duplicate action execution or own sync lifecycles.

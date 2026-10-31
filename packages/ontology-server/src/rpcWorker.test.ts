@@ -84,7 +84,7 @@ test("worker composition serves during delayed acquisition and releases its open
                     backend,
                     execute: increment,
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                 });
                 yield* owner.demand({ objectType: "Counter" });
                 yield* owner.syncOnce;
@@ -180,7 +180,7 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                     backend,
                     execute: increment,
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                 });
                 yield* owner.syncOnce;
                 const tabs = [];
@@ -192,7 +192,7 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                         tables: yield* Memory.make(),
                         source: speculativeSource(source),
                         execute: increment,
-                        gc: false,
+                        objectCacheGc: false,
                         startSync: false,
                     });
                     yield* tab.retainLocal("Counter");

@@ -44,12 +44,12 @@ test("cached demand renews its idle TTL and evicts the oldest idle lease at capa
             Effect.gen(function* () {
                 const replica = yield* makeReplica({
                     namespace: "idle-cache",
-                    demand: { idleMs: 60_000, maxSubsets: 2 },
+                    demand: { idleRetentionMs: 60_000, maxSubsets: 2 },
                     ir,
                     backend: quietBackend,
                     tables: yield* Memory.make(),
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                 });
                 const proxy = yield* makeCachedProxy({ replica, backend: quietBackend });
@@ -84,12 +84,12 @@ test("cached demand never evicts a subset while its request is reading", async (
             Effect.gen(function* () {
                 const replica = yield* makeReplica({
                     namespace: "active-cache",
-                    demand: { idleMs: 60_000, maxSubsets: 1 },
+                    demand: { idleRetentionMs: 60_000, maxSubsets: 1 },
                     ir,
                     backend: quietBackend,
                     tables: yield* Memory.make(),
                     startSync: false,
-                    gc: false,
+                    objectCacheGc: false,
                     execute: () => Effect.void,
                 });
                 const reading = yield* Deferred.make<void>();
@@ -150,7 +150,7 @@ test("cached proxy shares demand, forwards writes, and never enqueues them local
                 };
                 const replica = yield* makeReplica({
                     namespace: "cache",
-                    demand: { idleMs: 60_000, maxSubsets: 1 },
+                    demand: { idleRetentionMs: 60_000, maxSubsets: 1 },
                     ir,
                     backend,
                     tables: yield* Memory.make(),

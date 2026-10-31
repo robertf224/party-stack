@@ -132,7 +132,7 @@ export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> 
     /** Opt-in devtools trace history or a live-only diagnostic feed. */
     traceRecording?: TraceRecordingMode;
     demand?: import("@party-stack/ontology-replica").DemandPolicy;
-    gc?: import("@party-stack/ontology-replica").ReplicaOptions["gc"];
+    objectCacheGc?: import("@party-stack/ontology-replica").ReplicaOptions["objectCacheGc"];
     writes?: LiveOntologyWrites;
     context?: Context;
     connection?: ConnectionMonitor;
@@ -183,7 +183,7 @@ export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
                     backendAdapter,
                     writes: opts.writes,
                     demand: opts.demand,
-                    gc: opts.gc,
+                    objectCacheGc: opts.objectCacheGc,
                     connection: opts.connection,
                 }).pipe(Effect.provideService(Runtime, runtime));
                 let closing: Promise<void> | undefined;
