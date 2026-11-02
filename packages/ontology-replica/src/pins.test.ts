@@ -90,7 +90,7 @@ const fixture = Effect.fnUntraced(function* () {
                 };
             }),
     };
-    return { tables, connectivity, data, loads, backend };
+    return { tables, network: connectivity, data, loads, backend };
 });
 
 test("query pins retain a complete graph across replacement, offline edits, restart and clear", async () => {
@@ -103,7 +103,7 @@ test("query pins retain a complete graph across replacement, offline edits, rest
                 let replica = yield* Scope.provide(makeReplica(options), firstScope);
                 yield* replica.demand.setPin(document("a"));
                 expect(yield* replica.demand.pinStatus).toMatchObject({ ready: true });
-                yield* f.connectivity.set(false);
+                yield* f.network.set(false);
                 yield* replica.demand.setPin(document("b"));
                 yield* replica.demand.setPin(document("c"));
                 expect(yield* replica.demand.pinStatus).toMatchObject({
@@ -117,7 +117,7 @@ test("query pins retain a complete graph across replacement, offline edits, rest
                 replica = yield* makeReplica(options);
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect(yield* replica.get("Issue", "one")).toBeDefined();
-                yield* f.connectivity.set(true);
+                yield* f.network.set(true);
                 yield* replica.syncOnce;
                 expect(yield* replica.demand.pinStatus).toMatchObject({
                     ready: true,

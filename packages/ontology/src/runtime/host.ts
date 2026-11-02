@@ -72,7 +72,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         source: options.source,
         mutators: actionMutators(options.ir, options.writes?.mutators),
         outbox: options.writes?.outbox,
-        connection: options.connection,
+        authentication: options.connection,
         objectCacheGc: options.objectCacheGc,
         demand: options.demand,
         clientSessions: options.clientSessions,

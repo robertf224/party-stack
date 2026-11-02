@@ -136,15 +136,19 @@ test("network and connection state remain independent and either can pause remot
                 yield* Stream.runForEach(replica.statuses, (status) =>
                     Effect.gen(function* () {
                         yield* Deferred.succeed(initial, undefined);
-                        if (!status.networkOnline && status.connection?.status === "active")
+                        if (!status.networkOnline && status.authentication?.status === "active")
                             yield* Deferred.succeed(offlineActive, undefined);
                         if (
                             status.networkOnline &&
-                            status.connection?.status === "needs-auth" &&
+                            status.authentication?.status === "needs-auth" &&
                             status.replicationError
                         )
                             yield* Deferred.succeed(onlineNeedsAuth, undefined);
-                        if (recovering && status.connection?.status === "active" && !status.replicationError)
+                        if (
+                            recovering &&
+                            status.authentication?.status === "active" &&
+                            !status.replicationError
+                        )
                             yield* Deferred.succeed(recovered, undefined);
                     })
                 ).pipe(Effect.forkScoped);
@@ -155,7 +159,7 @@ test("network and connection state remain independent and either can pause remot
                 expect([loads, writes]).toEqual([0, 0]);
                 expect(yield* replica.status).toMatchObject({
                     networkOnline: true,
-                    connection: { status: "needs-auth" },
+                    authentication: { status: "needs-auth" },
                 });
 
                 yield* connectivity.set(false);

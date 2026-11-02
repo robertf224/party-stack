@@ -162,11 +162,13 @@ inspect state. `entries` is a local snapshot; `observe` also owns scoped interes
 in parent action records. `edit`, `retry`, `remove` and `reconcile` provide explicit recovery.
 Unknown remote outcomes remain distinct from retryability.
 
-`status` and `statuses` expose diagnostics, including separate network/auth state
-and pin readiness. `collectGarbage` runs an explicit bounded row sweep. Normal
+`status.get` and `status.changes` expose diagnostics, including separate network/auth state
+and pin readiness. `network` exposes platform connectivity; `authentication`
+exposes the optional upstream credential lifecycle, independently of RPC transport.
+`collectGarbage` runs an explicit bounded row sweep. Normal
 scope cleanup stops acquired resources; Replica has no application `destroy` call.
 
 Trusted server construction uses `@party-stack/ontology-replica/infrastructure` for
-session/delivery controllers, `replicaStateSource` and cached-proxy composition.
+`replicaStateSource` and cached-proxy composition.
 Those controls are not fields on the application-facing Replica service and are
 not an authorization boundary. Public servers still enforce their own policy.

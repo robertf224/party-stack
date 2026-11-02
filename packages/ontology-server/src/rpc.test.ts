@@ -651,7 +651,7 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                     )
                 );
                 // Inspecting the owner does not acquire demand or call the backend.
-                expect((yield* ontology.storage.status).loadCount).toBe(0);
+                expect((yield* ontology.storage.status.get).loadCount).toBe(0);
                 const unsubscribe = client.operations.traces.subscribe(() => undefined);
                 yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
                 yield* Deferred.await(subscribed);
@@ -841,7 +841,7 @@ test("a replica server keeps its committed facet separate from speculative publi
                     backend: owned,
                     tables: yield* Memory.make(),
                     live: false,
-                    connectivity: { online: Effect.succeed(false), changes: Stream.never },
+                    network: { online: Effect.succeed(false), changes: Stream.never },
                     mutators: { increment: (tx) => tx.put("Counter", { id: "one", count: 1 }) },
                 });
                 yield* replicaController(replica).enqueue({ id: "local", name: "increment", parameters: {} });

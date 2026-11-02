@@ -51,10 +51,10 @@ export function replicationState(status: ReplicationStatus | undefined, error?: 
     if (error) return "Monitoring disconnected";
     if (!status) return "Connecting…";
     if (status.networkOnline === false) return "Offline";
-    if (status.connection?.status === "needs-auth") return "Sign-in required";
-    if (status.connection?.status === "error") return "Connection failed";
-    if (status.connection?.status === "inactive") return "Disconnected";
-    if (status.connection?.status === "pending") return "Connecting…";
+    if (status.authentication?.status === "needs-auth") return "Sign-in required";
+    if (status.authentication?.status === "error") return "Authentication failed";
+    if (status.authentication?.status === "inactive") return "Signed out";
+    if (status.authentication?.status === "pending") return "Authenticating…";
     if (status.syncing) return "Syncing";
     if (status.lastSync?.outcome === "failure") return "Sync failed";
     if ((status.outbox.blocked ?? 0) > 0) return "Outbox paused";

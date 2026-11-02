@@ -550,7 +550,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                     yield* options.authorize({ operation: "ReplicaStatus" }, context.headers);
                     const ontology = yield* live();
                     if (!ontology.storage) return yield* missing("ReplicaStatus");
-                    return ontology.storage.statuses;
+                    return ontology.storage.status.changes;
                 })
             ),
         Traces: (_, context) =>

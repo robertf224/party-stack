@@ -16,7 +16,7 @@ import type { Scope } from "effect";
 
 export interface ReplicaHostOptions extends Omit<
     ReplicaOptions,
-    "namespace" | "tables" | "blobs" | "connectivity" | "backend" | "source" | "attachments"
+    "namespace" | "tables" | "blobs" | "network" | "backend" | "source" | "attachments"
 > {
     readonly id?: string;
     readonly backend: OntologyBackendService;
@@ -107,7 +107,7 @@ export const makeReplicaHost = Effect.fn("ReplicaHost.open")(function* (
         tables: runtime.tables,
         blobs: blobManager.storage,
         attachments: backend.attachments,
-        connectivity: runtime.connectivity,
+        network: runtime.connectivity,
         clientSessions: options.clientSessions ?? { sessionIdleTimeoutMs: 10 * 60_000 },
         ...(options.source
             ? {

@@ -98,7 +98,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
     const runtime = services;
     const { ir, context, replica } = options;
     const visiblePending = replica.outbox.entries;
-    const replicaMonitor = yield* makeReplicaMonitor(replica.statuses);
+    const replicaMonitor = yield* makeReplicaMonitor(replica.status.changes);
     const outboxEntries = Effect.map(visiblePending, (entries) =>
         entries.map((entry) => toEntry(entry, entry.forwarding))
     );

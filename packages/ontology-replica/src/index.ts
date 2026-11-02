@@ -24,7 +24,7 @@ export type { PendingAction } from "@party-stack/ontology-backend/protocol";
 export class Replica extends Context.Service<Replica, ReplicaService>()(
     "@party-stack/ontology-replica/Replica"
 ) {
-    static readonly layer = (options: Omit<ReplicaHostOptions, "backend" | "source" | "connection">) =>
+    static readonly layer = (options: Omit<ReplicaHostOptions, "backend" | "source" | "authentication">) =>
         Layer.effect(
             Replica,
             Effect.gen(function* () {
@@ -33,7 +33,7 @@ export class Replica extends Context.Service<Replica, ReplicaService>()(
                     ...options,
                     backend: upstream.backend,
                     source: upstream.kind === "speculative" ? upstream.source : undefined,
-                    connection: upstream.connection,
+                    authentication: upstream.authentication,
                 });
                 return host.replica;
             })

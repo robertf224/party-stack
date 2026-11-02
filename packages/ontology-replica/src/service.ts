@@ -56,8 +56,8 @@ export type ReplicaOptions = ReplicaConfiguration & {
     readonly tables: TablesService;
     readonly attachments?: Pick<BackendAttachments, "read">;
     readonly blobs?: BlobStorageService;
-    readonly connectivity?: NetworkConnectivity;
-    readonly connection?: Pick<ConnectionMonitor, "state" | "changes">;
+    readonly network?: NetworkConnectivity;
+    readonly authentication?: Pick<ConnectionMonitor, "state" | "changes">;
 } & (
         | { readonly backend: OntologyBackendService; readonly source?: never }
         | { readonly source: OntologySource; readonly backend?: never }
@@ -110,8 +110,8 @@ export interface ReplicaService extends ReplicaReads {
     readonly ir: OntologyIR;
     readonly sourceId: string;
     readonly upstreamKind: "committed" | "speculative";
-    readonly connectivity: NetworkConnectivity;
-    readonly connection?: Pick<ConnectionMonitor, "state" | "changes">;
+    readonly network: NetworkConnectivity;
+    readonly authentication?: Pick<ConnectionMonitor, "state" | "changes">;
     readonly confirmed: ReplicaReads;
     readonly observeSubset: (subset: ObjectSubset) => Stream.Stream<ReplicaRowsBatch, BackendError>;
     readonly demand: {
@@ -124,8 +124,10 @@ export interface ReplicaService extends ReplicaReads {
         ) => Effect.Effect<void, BackendError, Scope.Scope>;
     };
     readonly outbox: ReplicaOutbox;
-    readonly status: Effect.Effect<ReplicaStatus, BackendError>;
-    readonly statuses: Stream.Stream<ReplicaStatus, BackendError>;
+    readonly status: {
+        readonly get: Effect.Effect<ReplicaStatus, BackendError>;
+        readonly changes: Stream.Stream<ReplicaStatus, BackendError>;
+    };
     /** Explicit bounded checkpoint, including existing pending actions in one-shot mode. */
     readonly syncOnce: Effect.Effect<void, BackendError>;
     readonly collectGarbage: (options?: ObjectCacheSweepOptions) => Effect.Effect<number, BackendError>;
@@ -152,6 +154,8 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
     const engine = yield* makeReplicaKernel({
         ...options,
         startSync: options.live !== false,
+        connectivity: options.network,
+        connection: options.authentication,
         clients: options.clientSessions,
         resultRetentionMs: options.outbox?.resultRetentionMs,
         outbox: { ...options.outbox?.retryPolicy, failureStrategy: options.outbox?.failureStrategy },
@@ -197,8 +201,8 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         ir: engine.ir,
         sourceId: engine.sourceId,
         upstreamKind: options.source ? "speculative" : "committed",
-        connectivity: engine.connectivity,
-        connection: engine.connection,
+        network: engine.connectivity,
+        authentication: engine.connection,
         confirmed: reads(true),
         observeSubset: (subset) =>
             Stream.unwrap(
@@ -256,10 +260,12 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
             remove: engine.remove,
             reconcile: engine.reconcile,
         },
-        status,
-        statuses: Stream.merge(engine.statuses.pipe(Stream.as(undefined)), pin.changes).pipe(
-            Stream.mapEffect(() => status)
-        ),
+        status: {
+            get: status,
+            changes: Stream.merge(engine.statuses.pipe(Stream.as(undefined)), pin.changes).pipe(
+                Stream.mapEffect(() => status)
+            ),
+        },
         syncOnce: engine.syncOnce.pipe(Effect.andThen(pin.refresh)),
         collectGarbage: engine.collectGarbage,
     } satisfies ReplicaService & { readonly [kernel]: KernelService };

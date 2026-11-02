@@ -3,7 +3,7 @@ import * as q from "@party-stack/ontology-spec/query";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { makeNetworkConnectivity, MemoryRuntime, RuntimePartition } from "@party-stack/runtime";
-import { Effect, Exit, Scope, Layer } from "effect";
+import { Effect, Exit, Scope, Layer, Stream } from "effect";
 import { expect, test } from "vitest";
 import { makeReplica, Replica, ReplicaUpstream } from "./index.js";
 import type { BackendSubset } from "@party-stack/ontology-backend";
@@ -93,9 +93,9 @@ test("logical demand waits for its snapshot, releases its scope and rejects unsu
                 );
                 expect(calls).toHaveLength(1);
                 expect((yield* replica.get("Item", "3"))?.count).toBe(3);
-                expect((yield* replica.status).demands).toHaveLength(1);
+                expect((yield* replica.status.get).demands).toHaveLength(1);
                 yield* Scope.close(consumer, Exit.void);
-                expect((yield* replica.status).demands).toEqual([]);
+                expect((yield* replica.status.get).demands).toEqual([]);
                 const before = calls.length;
                 const unsupported = yield* Effect.result(
                     replica.demand.acquire({
@@ -135,7 +135,7 @@ test.each([true, false])(
                         namespace: "native-replay",
                         ir,
                         tables: yield* Memory.make(),
-                        connectivity,
+                        network: connectivity,
                         backend: {
                             name: "fixture",
                             sourceId: "fixture",
@@ -219,6 +219,12 @@ test("the replica Layer acquires its platform resources from one Runtime bundle"
                 const replica = yield* Replica;
                 yield* replica.demand.acquire({ from: { source: { objectType: "Item" }, binding: "item" } });
                 expect((yield* replica.get("Item", "one"))?.count).toBe(1);
+                expect(yield* replica.network.online).toBe(true);
+                expect((yield* replica.status.get).sourceId).toBe(replica.sourceId);
+                expect(yield* Stream.runHead(replica.status.changes)).toMatchObject({
+                    _tag: "Some",
+                    value: { sourceId: replica.sourceId },
+                });
             })
         ).pipe(Effect.provide(app))
     );

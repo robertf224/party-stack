@@ -761,3 +761,27 @@ budgets, narrower publication locking, query IVM/scoped hierarchical query deman
 selective/range attachment pinning and intermediate-replica Durable Object alarms.
 Installation extraction belongs to its own review. No further API policy feedback
 is required to proceed with the remaining subsystem reviews.
+
+### Public observation names and remaining composition leak
+
+Replica status observation is now grouped as status.get/status.changes. Public
+construction and service properties use network/authentication; Runtime's acquired
+NetworkConnectivity and Connect's existing monitor are reused. Diagnostics also
+call the credential state authentication, separately from transport recovery.
+
+The infrastructure subpath is a real same-package export. Server construction
+uses replicaStateSource/makeCachedProxy; those are legitimate composition APIs.
+The broad replicaController escape hatch still leaks the engine into ontology's
+decryption cache and parent-removal handling, plus integration-test fixtures.
+It should be replaced by cohesive decryption/outbox behavior in the owning layer,
+not merely renamed or split into getters exposing the same engine. No new broad
+controller consumers should be introduced.
+
+Resumable delivery remains future work: associate a retained selection and its
+acknowledged/pending batch with an existing speculative client session where
+available, and a lightweight delivery session for committed subscribers. Persist
+the producer sequence/signature and keep witnesses across transport teardown;
+verify source/schema/selection identity on resume and snapshot after expiry.
+Finite request/response calls should remain stateless. Cache byte budgets require
+accounting, pressure-based reclamation and admission when all remaining data is
+protected; optional platform capacity estimates are advisory, not a reservation.

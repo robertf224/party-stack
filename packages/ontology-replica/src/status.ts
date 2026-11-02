@@ -42,7 +42,7 @@ export const ReplicaStatusSchema = Schema.Struct({
     upstreamId: Schema.String,
     mode: Schema.Literals(["adapter", "protocol"]),
     networkOnline: Schema.Boolean,
-    connection: Schema.optional(ConnectionStateSchema),
+    authentication: Schema.optional(ConnectionStateSchema),
     watchError: Schema.optional(DemandFailure),
     replicationError: Schema.optional(
         Schema.Struct({
