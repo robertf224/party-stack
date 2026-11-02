@@ -1,7 +1,7 @@
 import { classifyBackendFailure } from "@party-stack/ontology-backend";
+import { makeBlobManager, type BlobManagerService } from "@party-stack/ontology-replica/attachments";
 import { Runtime } from "@party-stack/runtime";
 import { Context, Effect, Exit, Fiber, Scope } from "effect";
-import { makeBlobManager, type BlobManagerService } from "./BlobManager.js";
 import type { BlobManager, BlobManagerOptions } from "./types.js";
 import type { BackendError } from "@party-stack/ontology-backend";
 

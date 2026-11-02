@@ -10,7 +10,8 @@ import { Effect, Exit, Scope, Fiber, Deferred } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { makeReplicaOntologyView } from "./view.js";
 import type { LiveOntology } from "../live/LiveOntology.js";
-import type { ReplicaOptions } from "@party-stack/ontology-replica";
+import type { ActionRequest } from "@party-stack/ontology-backend";
+import type { OwnedTransaction } from "@party-stack/ontology-backend/owned";
 
 const ir: OntologyIR = {
     types: [],
@@ -30,7 +31,7 @@ const ir: OntologyIR = {
     ],
     actionTypes: [{ name: "rename", displayName: "Rename", parameters: [], logic: [] }],
 };
-const rename: ReplicaOptions["execute"] = (tx, invocation) =>
+const rename = (tx: OwnedTransaction, invocation: ActionRequest) =>
     tx.put("Note", { id: "one", title: invocation.parameters.title });
 
 test.each(["incremental", "snapshot"] as const)(
@@ -72,7 +73,7 @@ test.each(["incremental", "snapshot"] as const)(
                                 );
                             },
                         },
-                        execute: rename,
+                        mutators: { rename },
                         startSync: false,
                         objectCacheGc: false,
                     });
@@ -84,7 +85,7 @@ test.each(["incremental", "snapshot"] as const)(
                         ir,
                         tables: runtime.tables,
                         source: delivery === "snapshot" ? { ...parent, subscribe: undefined } : parent,
-                        execute: rename,
+                        mutators: { rename },
                         objectCacheGc: false,
                     });
                     const view = yield* makeReplicaOntologyView({
@@ -188,7 +189,7 @@ test.each(["pause", "discard-all"] as const)(
                                         : owned.applyAction(invocation);
                                 }),
                         },
-                        execute: rename,
+                        mutators: { rename },
                         startSync: false,
                         objectCacheGc: false,
                         outbox: { failureStrategy },
@@ -198,7 +199,7 @@ test.each(["pause", "discard-all"] as const)(
                         ir,
                         tables: runtime.tables,
                         source: replicaStateSource(owner),
-                        execute: rename,
+                        mutators: { rename },
                         startSync: false,
                         objectCacheGc: false,
                     });
@@ -308,7 +309,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                                 Effect.andThen(backend.applyAction(invocation))
                             ),
                     },
-                    execute: rename,
+                    mutators: { rename },
                     startSync: false,
                     objectCacheGc: false,
                 });
@@ -337,7 +338,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                                 ir,
                                 tables: runtime.tables,
                                 source,
-                                execute: rename,
+                                mutators: { rename },
                                 startSync: false,
                                 objectCacheGc: false,
                             });

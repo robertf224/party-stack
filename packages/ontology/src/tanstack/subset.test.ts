@@ -1,3 +1,4 @@
+import * as oq from "@party-stack/ontology-spec/query";
 import { evaluateQuery, eq as storageEq, field } from "@party-stack/ontology-storage";
 import { IR, compileSingleRowExpression, queryOnce, eq, gte } from "@tanstack/db";
 import { Deferred, Effect, PubSub, Stream, Fiber } from "effect";
@@ -6,6 +7,7 @@ import { expect, test } from "vite-plus/test";
 import { makeReplicatedCollection, persistedCollectionOptions, scopedCollection } from "./collections.js";
 import { storageSubset } from "./subset.js";
 import type { ReplicaService } from "@party-stack/ontology-replica";
+import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 
 const ir: ReplicaService["ir"] = {
     types: [{ name: "Rank", type: { kind: "integer", value: {} } }],
@@ -313,7 +315,7 @@ test("Temporal values retain typed equality and ordering", () => {
 });
 
 test("a real TanStack query forwards its predicate and numeric window into Replica demand", async () => {
-    const requested: import("@party-stack/ontology-storage").Query[] = [];
+    const requested: ObjectSubset[] = [];
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -324,10 +326,12 @@ test("a real TanStack query forwards its predicate and numeric window into Repli
                     subscribeChanges: Effect.succeed(Stream.never),
                     observeRows: (_type: string, query: import("@party-stack/ontology-storage").Query) =>
                         Stream.succeed({ reset: true, rows: evaluateQuery(rows, query), removed: [] }),
-                    demand: (subset: { query: import("@party-stack/ontology-storage").Query }) =>
-                        Effect.sync(() => {
-                            requested.push(subset.query);
-                        }),
+                    demand: {
+                        acquire: (subset: ObjectSubset) =>
+                            Effect.sync(() => {
+                                requested.push(subset);
+                            }),
+                    },
                     loadSubset: (_type: string, query: import("@party-stack/ontology-storage").Query) =>
                         Effect.sync(() => evaluateQuery(rows, query)),
                 } as unknown as ReplicaService;
@@ -350,7 +354,10 @@ test("a real TanStack query forwards its predicate and numeric window into Repli
                 expect(
                     requested.some(
                         (query) =>
-                            query.where && query.limit === 1 && query.orderBy?.[0]?.field.path[0] === "rank"
+                            query.where &&
+                            query.page?.limit === 1 &&
+                            query.orderBy?.[0]?.expression.kind === "getAt" &&
+                            query.orderBy[0].expression.value.path[0] === "rank"
                     )
                 ).toBe(true);
                 const point = yield* Effect.promise(() =>
@@ -359,7 +366,9 @@ test("a real TanStack query forwards its predicate and numeric window into Repli
                 expect(point.map((row) => row.id)).toEqual(["b"]);
                 expect(
                     requested.some(
-                        (query) => JSON.stringify(query.where) === JSON.stringify(storageEq(field("id"), "b"))
+                        (query) =>
+                            JSON.stringify(query.where) ===
+                            JSON.stringify(oq.eq(oq.field("row", "id"), oq.literal("b")))
                     )
                 ).toBe(true);
             })
@@ -392,12 +401,14 @@ test("overlapping scoped subsets share materialized rows and unload without clob
                                 );
                             })
                         ),
-                    demand: () =>
-                        Effect.acquireRelease(Effect.void, () =>
-                            Effect.sync(() => {
-                                releases++;
-                            })
-                        ),
+                    demand: {
+                        acquire: () =>
+                            Effect.acquireRelease(Effect.void, () =>
+                                Effect.sync(() => {
+                                    releases++;
+                                })
+                            ),
+                    },
                     loadSubset: (_type: string, query: import("@party-stack/ontology-storage").Query) =>
                         Effect.sync(() => evaluateQuery(local, query)),
                 } as unknown as ReplicaService;

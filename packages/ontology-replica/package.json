@@ -9,6 +9,14 @@
         ".": {
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
+        },
+        "./attachments": {
+            "types": "./lib/attachments/index.d.ts",
+            "default": "./lib/attachments/index.js"
+        },
+        "./host": {
+            "types": "./lib/host.d.ts",
+            "default": "./lib/host.js"
         }
     },
     "dependencies": {
@@ -16,7 +24,8 @@
         "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-spec": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
-        "@party-stack/runtime": "workspace:*"
+        "@party-stack/runtime": "workspace:*",
+        "image-dimensions": "^2.5.1"
     },
     "devDependencies": {
         "@fast-check/vitest": "^0.5.0",

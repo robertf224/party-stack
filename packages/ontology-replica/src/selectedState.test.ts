@@ -5,7 +5,7 @@ import { eq, field } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect, Exit, Scope } from "effect";
 import { expect, test } from "vitest";
-import { makeReplica, replicaStateSource } from "./index.js";
+import { makeReplica, replicaStateSource } from "./testing.js";
 import type { Query } from "@party-stack/ontology-storage";
 
 const ir: OntologyIR = {

@@ -33,11 +33,20 @@
         "./policy": {
             "types": "./lib/policy.d.ts",
             "default": "./lib/policy.js"
+        },
+        "./actions": {
+            "types": "./lib/actions.d.ts",
+            "default": "./lib/actions.js"
+        },
+        "./subset": {
+            "types": "./lib/subset.d.ts",
+            "default": "./lib/subset.js"
         }
     },
     "dependencies": {
         "@party-stack/ontology-spec": "workspace:*",
-        "@party-stack/ontology-storage": "workspace:*"
+        "@party-stack/ontology-storage": "workspace:*",
+        "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
         "@fast-check/vitest": "^0.5.0",

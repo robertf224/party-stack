@@ -4,7 +4,7 @@ import { evaluateQuery, field, inArray } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Deferred, Effect, Exit, Fiber, Schema, Scope } from "effect";
 import { expect, test } from "vitest";
-import { makeReplica } from "./index.js";
+import { makeReplica } from "./testing.js";
 import type { ActionReceipt, BackendSubset, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 

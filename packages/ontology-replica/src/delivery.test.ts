@@ -6,7 +6,7 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect, Exit, Scope, Stream } from "effect";
 import fc from "fast-check";
 import { expect, test } from "vitest";
-import { makeReplica, replicaStateSource } from "./index.js";
+import { makeReplica, replicaStateSource } from "./testing.js";
 
 const ir: OntologyIR = {
     types: [],

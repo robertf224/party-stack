@@ -1528,9 +1528,6 @@ importers:
       effect:
         specifier: ^4.0.5
         version: 4.0.5
-      image-dimensions:
-        specifier: ^2.5.1
-        version: 2.5.1
       jiti:
         specifier: ^2.6.1
         version: 2.6.1
@@ -1571,6 +1568,9 @@ importers:
       '@party-stack/ontology-storage':
         specifier: workspace:*
         version: link:../ontology-storage
+      temporal-polyfill:
+        specifier: ^0.3.0
+        version: 0.3.0
     devDependencies:
       '@fast-check/vitest':
         specifier: ^0.5.0
@@ -1708,6 +1708,9 @@ importers:
       '@party-stack/runtime':
         specifier: workspace:*
         version: link:../runtime
+      image-dimensions:
+        specifier: ^2.5.1
+        version: 2.5.1
     devDependencies:
       '@fast-check/vitest':
         specifier: ^0.5.0

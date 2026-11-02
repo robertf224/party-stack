@@ -23,7 +23,7 @@ Effect.runFork(
                 ir,
                 tables: runtime.tables,
                 backend,
-                execute: increment,
+                mutators: { increment },
             });
             const server = yield* serveOntologyWorker({
                 source: replicaStateSource(owner),

@@ -7,8 +7,8 @@ import { Cause, Deferred, Effect, Exit, Fiber, PubSub, Scope, Stream } from "eff
 import { TestClock } from "effect/testing";
 import { expect, test, vi } from "vitest";
 import { makeReplicaDiagnostics } from "./status.js";
-import { makeReplica, makeReplicaMonitor } from "./index.js";
-import type { ReplicaStatus } from "./index.js";
+import { makeReplica, makeReplicaMonitor } from "./testing.js";
+import type { ReplicaStatus } from "./testing.js";
 import type { ConnectionState } from "@party-stack/connect";
 
 test("a failure during cancellation remains failed in load and sync diagnostics", async () => {

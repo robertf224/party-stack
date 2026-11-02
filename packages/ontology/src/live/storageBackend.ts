@@ -11,7 +11,7 @@ import { makeEncryptedValues, type EncryptionKeyringService } from "@party-stack
 import { Effect, Schema, Stream } from "effect";
 import { executeTransactionMutator, withTransactionCollections } from "../runtime/index.js";
 import { resolveReadActionParameters } from "../runtime/resolveActionParameters.js";
-import { createReadTx } from "./mutators/createMutatorTx.js";
+import { createReadTx } from "./mutators/createReadTx.js";
 import type { OntologyMutatorRegistry, OntologyQueryFunctionRegistry } from "./mutators/types.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { attachment } from "@party-stack/ontology-spec/values";

@@ -508,9 +508,8 @@ test("HTTP cached-proxy views guard warm shared data independently for each prin
                     tables: yield* Memory.make(),
                     backend: upstream,
                     startSync: false,
-                    execute: () => Effect.void,
                 });
-                yield* cache.demand({ objectType: "Item" });
+                yield* cache.demand.acquire({ from: { source: { objectType: "Item" }, binding: "row" } });
                 yield* cache.syncOnce;
                 expect((yield* cache.get("Item", "b"))?.secret).toBe("bob-secret");
                 const partitions: string[] = [];
@@ -650,9 +649,11 @@ test("a token gateway replaces upstream context and policy, strips bindings and 
                     tables: yield* Memory.make(),
                     backend: upstream,
                     startSync: false,
-                    execute: () => Effect.void,
                 });
-                for (const type of sourceIR.objectTypes) yield* cache.demand({ objectType: type.name });
+                for (const type of sourceIR.objectTypes)
+                    yield* cache.demand.acquire({
+                        from: { source: { objectType: type.name }, binding: "row" },
+                    });
                 yield* cache.syncOnce;
                 const fields = (binding: string, names: string[]) =>
                     names.map((name) => selectField(name, field(binding, name)));

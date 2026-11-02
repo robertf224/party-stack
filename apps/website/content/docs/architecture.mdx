@@ -9,9 +9,9 @@ description: Definitions, storage, backends, replicas, and servers.
 | ------------------------------- | -------------------------------------------------------------------------------------- |
 | `ontology-spec`                 | Portable definitions, values, relationships, expressions, lenses, and generation.      |
 | `ontology-storage`              | Ontology-aware transactions, row queries, indexes, overlays, and blob metadata.        |
-| `ontology-backend`              | Provider operations, standard errors, receipts, and protocol state types.              |
+| `ontology-backend`              | Provider operations, portable action execution, errors, receipts, and protocol types.  |
 | `ontology/tanstack`             | Scoped TanStack DB collections, subset demand translation, and diagnostics.            |
-| `ontology-replica`              | Local base, pending actions, optimistic projection, reconciliation, and demand.        |
+| `ontology-replica`              | Local base, pending actions, replay, reconciliation, demand, and local attachments.    |
 | `ontology-server`               | Expose ontology operations and replication across a process/network boundary.          |
 | `ontology`                      | Application-facing objects/actions and the composition of a replica into LiveOntology. |
 | `runtime` and platform packages | Scoped platform storage, connectivity, private services, and lifecycle.                |
@@ -41,6 +41,11 @@ prediction when it imports a parent update that includes that action.
 
 A Durable Object can take any of these roles. Being a worker or a server does not
 by itself decide whether a component is authoritative.
+
+A cached proxy owns its read cache; the caller owns recovery of forwarded writes.
+An intermediate replica owns accepted writes across request or connection loss.
+Optimistic visibility is independent of that responsibility: disabling predictions
+does not turn durable write acceptance into request-only forwarding.
 
 ## Receiving updates
 
@@ -156,6 +161,32 @@ it needs no public Runtime actor-liveness capability. Ordinary row/blob GC then
 uses the same retention rules in web, Node and Expo.
 
 ## Demand retention
+
+`replica.demand.acquire` accepts an object-bound ontology subset. Its expressions,
+ordering and page use the same syntax as Query IR, without a result selection:
+
+```ts
+import * as q from "@party-stack/ontology-spec/query";
+
+yield *
+    replica.demand.acquire({
+        from: { source: { objectType: "Issue" }, binding: "issue" },
+        where: q.eq(q.field("issue", "status"), q.literal("open")),
+        orderBy: [{ expression: q.field("issue", "title") }],
+        page: { limit: 50 },
+    });
+```
+
+The caller's Scope owns the lease. Acquisition coordinates the initial load;
+offline or publication-gated initialization can still expose local rows, so
+completion alone is not proof of fresh, complete coverage. Local reads and
+observation do not themselves acquire upstream interest.
+
+The replica lowers supported predicates and field ordering to provider/storage
+reads internally. Unsupported computations or hierarchical demand fail with
+`NotImplemented` rather than silently requesting a broader subset. Backend adapter
+hooks still use candidate subset scans. Full hierarchical persistent demand is
+not implemented by this scoped API.
 
 A replica can keep unused subsets warm for reuse across requests or navigation:
 

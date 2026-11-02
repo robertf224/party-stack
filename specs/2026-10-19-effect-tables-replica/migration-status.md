@@ -1,4 +1,4 @@
-# Migration status — October 30, 2026
+# Migration status — November 2, 2026
 
 Current inventory. The [execution log](./implementation.md) records historical
 checkpoints; this file describes the current implementation. The overall
@@ -24,6 +24,13 @@ covered in [native-actions.md](./native-actions.md).
   State refresh and outbox processing have separate scoped workers; subset readiness
   never submits actions. Per-demand terminal load failures are isolated, and watches
   have shared retry supervision and visible failure diagnostics.
+- **Native replica composition:** portable action/default execution lives in
+  ontology-backend; replica owns replay and its native attachment host. Ontology
+  adapts Promise/TanStack authoring and UI collections. `Replica.layer` consumes
+  Runtime and ReplicaUpstream requirements; public construction no longer accepts
+  execute/onReceipt/publish hooks. Scoped demand accepts source-bound spec subsets,
+  lowers them internally and coordinates initial acquisition. Hierarchical
+  persistent demand remains a separate pending v0 item.
 - **Native action policy:** persisted retry deadlines/budgets, pause/discard-all,
   manual retry/reconciliation, and cancellable accepted/confirmed waits. Discard-all
   abandons local intent even for an unknown remote outcome, then refreshes base;

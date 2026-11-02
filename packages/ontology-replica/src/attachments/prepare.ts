@@ -1,8 +1,8 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { collectActionAttachments } from "@party-stack/ontology-storage/blobs";
 import { Effect } from "effect";
-import type { BlobManagerService } from "../../runtime/blobs/BlobManager.js";
-import type { OntologyAttachmentUpload } from "../OntologyBackendAdapter.js";
+import type { BlobManagerService } from "./manager.js";
+import type { AttachmentUpload as OntologyAttachmentUpload } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const failure = (cause: unknown) =>

@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import type { ReplicaService } from "./index.js";
+import type { ReplicaService } from "./engine.js";
 import type { BackendError } from "@party-stack/ontology-backend";
 import type { BackendSubset, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { Scope } from "effect";

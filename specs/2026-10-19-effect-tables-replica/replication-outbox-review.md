@@ -1,4 +1,4 @@
-# Replication and outbox review — 2026-10-30
+# Replication and outbox review — updated 2026-11-02
 
 Working review record. Checked inventory items below do not claim that all state
 transitions or failure schedules have been verified. This review follows the
@@ -24,8 +24,8 @@ runtime and storage/transaction reviews.
 ## 1. Public interface and responsibility
 
 `makeReplica` acquires a scoped engine. Both construction paths receive the same
-ontology IR, Tables service, optional local blob storage and local replay
-implementation. Exactly one upstream is supplied:
+ontology IR, Tables service and optional local blob storage. Replay is now internal;
+applications may supply native custom mutators. Exactly one upstream is supplied:
 
 - `backend: OntologyBackendService`: committed provider/owned-backend reads,
   action application, optional journals and selected delivery.
@@ -34,13 +34,13 @@ implementation. Exactly one upstream is supplied:
 
 The returned `ReplicaService` is shared by both paths. Application-facing groups:
 
-| Group              | Current API                                                                      | Meaning                                                                                                                       |
-| ------------------ | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Local reads        | `get`, `loadSubset`, `confirmed`, `observeRows`, `snapshotSubset`                | Read installed rows; do not acquire remote demand merely by reading. `confirmed` excludes both inherited and own predictions. |
-| Interest/retention | `demand`, `retainLocal`, `retainActions`, `pin`                                  | Scoped upstream interest, local reader retention, privileged action inspection and explicit durable row pins.                 |
-| Actions            | `enqueue`, `actionStatus`, `awaitAction`, `edit`, `retry`, `remove`, `reconcile` | Persist intent and predictions, observe acceptance/confirmation, or explicitly recover failed work.                           |
-| Sync/maintenance   | `syncSubset`, `invalidate`, `syncOnce`, `collectGarbage`, `ensureIndex`          | Explicit refresh/maintenance. `syncSubset` never dispatches actions; `syncOnce` explicitly includes outbox work.              |
-| Diagnostics        | `status`, `statuses`, `changes`                                                  | Read-only status and change observation.                                                                                      |
+| Group              | Current API                                                                      | Meaning                                                                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Local reads        | `get`, `loadSubset`, `confirmed`, `observeRows`, `snapshotSubset`                | Read installed rows; do not acquire remote demand merely by reading. `confirmed` excludes both inherited and own predictions.           |
+| Interest/retention | `demand.acquire`, `retainLocal`, `retainActions`, `pin`                          | Scoped upstream interest with initial coordination, local reader retention, privileged action inspection and explicit durable row pins. |
+| Actions            | `enqueue`, `actionStatus`, `awaitAction`, `edit`, `retry`, `remove`, `reconcile` | Persist intent and predictions, observe acceptance/confirmation, or explicitly recover failed work.                                     |
+| Sync/maintenance   | `invalidate`, `syncOnce`, `collectGarbage`, `ensureIndex`                        | Explicit refresh/maintenance. Private `syncSubset` never dispatches actions; `syncOnce` explicitly includes outbox work.                |
+| Diagnostics        | `status`, `statuses`, `changes`                                                  | Read-only status and change observation.                                                                                                |
 
 The same interface also exposes server/client session and delivery machinery:
 `openClient`, `acceptClient`, `submitClient`, `subscribeClient`, acknowledgments,
@@ -49,8 +49,11 @@ are infrastructure capabilities, not ordinary application operations.
 
 Actual consumers:
 
-- `ontology/runtime/host.ts` constructs the engine and supplies persisted-only
-  mutator execution, attachment preparation and connectivity.
+- `ontology-replica/host.ts` composes native attachments, platform resources and
+  replay. `Replica.layer` consumes Runtime and ReplicaUpstream. The low-level
+  `makeReplica` factory remains available for infrastructure/test composition.
+- `ontology/runtime/host.ts` adapts Promise/TanStack mutators and SDK attachment
+  facades around that native host; it no longer supplies a replay algorithm.
 - `ontology/runtime/view.ts` creates the TanStack collections and maps action
   submission/waits into the public UI API.
 - `ontology/tanstack` observes installed rows and acquires scoped demand.
@@ -465,10 +468,10 @@ new credentials. The regression holds a real load in flight across activation an
 verifies the subsequent repair. The automatic object-cache GC scope test now uses
 TestClock so zero-age collection cannot run before its retention lease is acquired.
 
-Still outstanding: scoped demand currently takes BackendSubset, whose query is a
-physical StorageQuery. The TanStack bridge lowers too early. The public boundary
-should use an object-bound spec Subset and perform physical translation below
-that boundary; merely renaming BackendSubset would not address the leak.
+Resolved in the November 2 extraction: scoped demand uses an ObjectSubset from
+ontology-spec/query (Subset plus QueryFrom). The TanStack demand bridge emits spec
+expressions, ordering and pages directly. Physical candidate translation happens
+inside the replica; provider/protocol and raw-table readers still use scan types.
 
 Cached proxy invalidation marks coverage stale before ordinary sync repairs it;
 it does not delete rows or bypass the engine. Forwarded actions are outside the
@@ -480,3 +483,56 @@ maintenance (including retained history/session/results) and blob GC, not replic
 object-cache eviction. An intermediate replica DO must additionally schedule its
 replica object-cache collector; the current owned resource does not create an
 intermediate replica or implicitly wire that alarm for one.
+
+### Native execution and demand extraction — November 2
+
+Implemented:
+
+- Public `demand.acquire(ObjectSubset)` validates and lowers exact supported
+  predicates/field ordering/windows, then acquires interest and coordinates its
+  initial load. Its Scope releases the lease. Offline/publication-gate early
+  returns still do not prove complete coverage. Computed/hierarchical demand
+  currently returns NotImplemented, not an unfiltered request.
+- `ontology-backend/actions` owns portable expressions/defaults and action logic,
+  including seeded UUID/frozen time behavior. Native custom mutators receive one
+  transaction, including finite QueryDocument reads. Commit/rollback remains with
+  the caller. The same executor serves local replay and authoritative composition.
+- Public `makeReplica` no longer accepts execute/onReceipt/publish. The private
+  controller retains fault-injection hooks for state-machine tests only; its
+  testing module is not a package export. Further service-facet organization is
+  still pending; moving the controller into engine.ts alone is not decomposition
+  of all state-machine responsibilities.
+- `Replica.layer` consumes Runtime and ReplicaUpstream; it constructs local blob
+  storage/preparation with the native host. No table/byte/replay plumbing is needed
+  from ordinary Layer consumers. The low-level explicit-service factory remains.
+- Native BlobManager and preparation moved from ontology to replica. Ontology
+  retains only attachment Promise facades and Promise/TanStack custom-mutator
+  authoring. Removed the old OntologyEdits/createMutatorTx/runOptimisticAction path.
+  Promise mutations serialize their existence checks and writes; reads invalidate
+  on mutation and are bounded to the invocation's Scope.
+- Tests compare logical subset lowering against finite reference execution,
+  exercise public Layer acquisition and offline native replay, and check custom
+  mutator query/read-your-writes, duplicate-create rollback and interruption/defect
+  rollback without publishing partial journal state.
+
+Cached proxy writes remain request-only forwarding: the caller owns recovery.
+Invalidation stales coverage and ordinary sync repairs the read cache; it is not a
+second durable receipt reconciler. A nonoptimistic intermediate replica can own
+writes durably while hiding predictions, and should reuse the normal outbox and
+receipt engine. Direct admission, prediction visibility and durable write ownership
+are separate choices. Do not duplicate outbox state inside the cached proxy to
+approximate that mode. This checkpoint does not change cached-proxy semantics.
+
+DO follow-up: the owned Alchemy resource already schedules backend maintenance
+and blob GC. An intermediate replica DO needs platform SQL/R2 composition,
+alarm-driven retry/refresh/object/blob collection and restoration of persistent
+demand before sweeping. Sleeping fibers are not a durable scheduler across DO
+eviction. Add eviction/restart/receipt tests before declaring that deployment
+supported; a generalized role/resource helper is a convenience, not a new storage
+algorithm. This remains future deployment work unless intermediate DO hosting is
+added to v0 acceptance.
+
+This extraction does not complete the remaining transition, recovery and retention
+checklist above. Persistent multi-root hierarchical offline query demand remains
+an explicit v0 gate. The next subsystem after replica/demand review is backend
+contracts/adapters, then server/protocol; see subsystem-audit.md for the full order.

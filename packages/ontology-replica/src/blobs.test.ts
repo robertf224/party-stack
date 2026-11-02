@@ -6,7 +6,7 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Deferred, Fiber, Effect, Result, Scope, Exit, Stream } from "effect";
 import { expect, test } from "vitest";
-import { replicaStateSource, makeReplica } from "./index.js";
+import { replicaStateSource, makeReplica } from "./testing.js";
 
 const ir: OntologyIR = {
     types: [],

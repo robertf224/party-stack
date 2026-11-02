@@ -27,7 +27,7 @@ const makeTab = Effect.gen(function* () {
         ir,
         tables: runtime.tables,
         source,
-        execute: increment,
+        mutators: { increment },
     });
     const collection = yield* makeReplicatedCollection<{ id: string; count: number }>({
         id: "counter",
@@ -35,7 +35,7 @@ const makeTab = Effect.gen(function* () {
         replica,
         getKey: (row) => row.id,
     });
-    yield* replica.demand({ objectType: "Counter" });
+    yield* replica.demand.acquire({ from: { source: { objectType: "Counter" }, binding: "row" } });
     return { replica, collection, ownerSourceId: source.sourceId };
 });
 class Tab extends Context.Service<Tab, Effect.Success<typeof makeTab>>()("test/Tab") {}

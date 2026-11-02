@@ -7,8 +7,8 @@ import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Scope, Exit, Result } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
-import { makeReplica } from "./index.js";
-import type { ReplicaOptions } from "./index.js";
+import { makeReplica } from "./testing.js";
+import type { ReplicaOptions } from "./testing.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {

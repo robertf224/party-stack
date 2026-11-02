@@ -3,7 +3,7 @@ import { Runtime } from "@party-stack/runtime";
 import { BasicIndex, createCollection, collectionOptions, whenSyncAccepted } from "@tanstack/db";
 import { Deferred, Effect, Exit, Fiber, Scope, Stream, Queue } from "effect";
 import { registerCollectionDemands, type CollectionDemandDiagnostic } from "./diagnostics.js";
-import { analyzeStorageSubset, storageSubset } from "./subset.js";
+import { analyzeStorageSubset, storageSubset, ontologySubset } from "./subset.js";
 import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { Key } from "@party-stack/ontology-storage";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
@@ -388,19 +388,9 @@ export const replicatedCollectionOptions = Effect.fnUntraced(function* <A extend
                       options.objectType,
                       storageSubset(subset, options.replica.ir, options.objectType)
                   )
-                : options.replica
-                      .demand({
-                          objectType: options.objectType,
-                          query: storageSubset(subset, options.replica.ir, options.objectType),
-                      })
-                      .pipe(
-                          Effect.andThen(
-                              options.replica.syncSubset({
-                                  objectType: options.objectType,
-                                  query: storageSubset(subset, options.replica.ir, options.objectType),
-                              })
-                          )
-                      ),
+                : options.replica.demand.acquire(
+                      ontologySubset(subset, options.replica.ir, options.objectType)
+                  ),
     });
 });
 export const scopedCollection = <A extends object, K extends Key>(

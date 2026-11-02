@@ -1,29 +1,18 @@
+import type {
+    PartialBlobMetadata,
+    BlobReadOptions,
+    BlobMetadataOptions,
+} from "@party-stack/ontology-replica/attachments";
 import type { BlobStorageService, ByteInput, ByteSource } from "@party-stack/ontology-storage/blobs";
 import type { RuntimeService } from "@party-stack/runtime";
 import type { Scope } from "effect";
-
-export interface PartialBlobMetadata {
-    size?: number;
-    type?: string;
-    name?: string | null;
-    dimensions?: BlobDimensions | null;
-}
-
-export interface BlobDimensions {
-    width: number;
-    height: number;
-}
-
-export interface BlobReadOptions {
-    signal?: AbortSignal;
-    meta?: Record<string, unknown>;
-}
-
-export type BlobMetadataField = keyof PartialBlobMetadata;
-
-export interface BlobMetadataOptions extends BlobReadOptions {
-    select?: readonly BlobMetadataField[];
-}
+export type {
+    PartialBlobMetadata,
+    BlobDimensions,
+    BlobReadOptions,
+    BlobMetadataField,
+    BlobMetadataOptions,
+} from "@party-stack/ontology-replica/attachments";
 
 export interface BlobRemoteSource {
     metadata?: (id: string, opts?: BlobMetadataOptions) => Promise<PartialBlobMetadata>;

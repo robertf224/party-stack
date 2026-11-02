@@ -3,6 +3,8 @@ import type {
     CaseExpression,
     Expression,
     Query,
+    Subset,
+    QueryFrom,
     QuerySelection,
     SelectCaseSelection,
 } from "../ir/generated/types.js";
@@ -25,6 +27,11 @@ export type {
     SelectCaseBranch,
     ExistsExpression,
 } from "../ir/generated/types.js";
+
+/** Source-bound subset; shares Query syntax without a result projection. */
+export interface ObjectSubset extends Subset {
+    readonly from: QueryFrom;
+}
 
 /** Pure low-level construction. Schema-aware proxy builders produce these same nodes. */
 export const literal = (value: unknown): Expression => o.Expression.literal({ value });

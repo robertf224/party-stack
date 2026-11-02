@@ -1,14 +1,14 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { getAtPath } from "@party-stack/ontology-spec/utils";
+import { executeAction } from "@party-stack/ontology-backend/actions";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { BasicIndex, whenSyncAccepted, DbClient, collectionOptions } from "@tanstack/db";
-import { Effect, Fiber } from "effect";
-import { resolveActionParameters } from "../live/expression.js";
-import { createReadTx } from "../live/mutators/createMutatorTx.js";
-import { runOptimisticAction } from "../live/mutators/runOptimisticAction.js";
+import { Effect, Fiber, Semaphore } from "effect";
+import { createReadTx } from "../live/mutators/createReadTx.js";
 import { storageSubset } from "../tanstack/index.js";
 import type { ExpressionReplay } from "../live/expression.js";
+import type { OntologyMutatorTx } from "../live/mutators/types.js";
 import type { OntologyMutatorRegistry, PrepareTransactionSources } from "../live/mutators/types.js";
+import type { ActionMutatorRegistry } from "@party-stack/ontology-backend/actions";
 import type { OwnedReadTransaction, OwnedTransaction } from "@party-stack/ontology-backend/owned";
 import type { OntologyIR, OntologyObject } from "@party-stack/ontology-spec";
 import type { Collection } from "@tanstack/db";
@@ -148,6 +148,153 @@ export const withTransactionCollections = <A, E, R>(
         })
     );
 
+/** Promise/TanStack authoring bridge only. Portable action logic and replay live below ontology. */
+export const actionMutators = (
+    ir: OntologyIR,
+    registry: OntologyMutatorRegistry = {}
+): ActionMutatorRegistry =>
+    Object.fromEntries(
+        Object.entries(registry).map(([name, handler]) => [
+            name,
+            (tx, request, context) =>
+                Effect.scoped(
+                    Effect.gen(function* () {
+                        const services = yield* Effect.context<never>();
+                        const scope = yield* Effect.scope;
+                        let closed = false;
+                        const reads = new Map<string, unknown>();
+                        const codec = Table.make({ name: "mutator-reads" });
+                        const cached = <A>(key: unknown, work: Effect.Effect<A, BackendError>) =>
+                            Effect.suspend(() => {
+                                const encoded = codec.encode(key);
+                                return reads.has(encoded)
+                                    ? Effect.succeed(reads.get(encoded) as A)
+                                    : work.pipe(
+                                          Effect.tap((value) => Effect.sync(() => reads.set(encoded, value)))
+                                      );
+                            });
+                        const invalidate = Effect.sync(() => reads.clear());
+                        const mutations = yield* Semaphore.make(1);
+                        const local: OwnedReadTransaction = {
+                            get: (type, key) => cached(["get", type, key], tx.get(type, key)),
+                            loadSubset: (type, scan) =>
+                                cached(["query", type, scan], tx.loadSubset(type, scan)),
+                        };
+                        yield* Effect.addFinalizer(() =>
+                            Effect.sync(() => {
+                                closed = true;
+                                reads.clear();
+                            })
+                        );
+                        const run = <A>(work: Effect.Effect<A, BackendError>) =>
+                            Effect.runPromiseWith(services)(
+                                Effect.suspend(() =>
+                                    closed
+                                        ? Effect.fail(failure("Mutator scope is closed."))
+                                        : Effect.flatMap(Effect.forkIn(work, scope), Fiber.join)
+                                )
+                            );
+                        const read: ReturnType<typeof createReadTx> = {
+                            query: <A>(build: Parameters<ReturnType<typeof createReadTx>["query"]>[0]) =>
+                                run(
+                                    withTransactionCollections(ir, local, (objects, prepare) =>
+                                        Effect.tryPromise({
+                                            try: () => createReadTx(objects, prepare).query<A>(build),
+                                            catch: failure,
+                                        })
+                                    )
+                                ),
+                        };
+                        const runMutation = <A>(work: Effect.Effect<A, BackendError>) =>
+                            run(mutations.withPermits(1)(work));
+                        const mutate = new Proxy(
+                            {},
+                            {
+                                get: (_target, type: string) => {
+                                    const definition = ir.objectTypes.find((t) => t.name === type);
+                                    if (!definition) throw failure(`Unknown object type "${type}".`);
+                                    const requireObject = (key: string | number) =>
+                                        tx.get(type, key).pipe(
+                                            Effect.flatMap((value) =>
+                                                value
+                                                    ? Effect.void
+                                                    : Effect.fail(
+                                                          new BackendError({
+                                                              operation: "mutator",
+                                                              kind: "NotFound",
+                                                              retryable: false,
+                                                              message: "Object is unavailable.",
+                                                          })
+                                                      )
+                                            )
+                                        );
+                                    return {
+                                        create: (value: Record<string, unknown>) =>
+                                            runMutation(
+                                                Effect.gen(function* () {
+                                                    const key = value[definition.primaryKey];
+                                                    if (typeof key !== "string" && typeof key !== "number")
+                                                        return yield* failure(
+                                                            "Created object requires its primary key."
+                                                        );
+                                                    if (yield* tx.get(type, key))
+                                                        return yield* new BackendError({
+                                                            operation: "mutator.create",
+                                                            kind: "Conflict",
+                                                            retryable: false,
+                                                            message: "Object already exists.",
+                                                        });
+                                                    yield* tx.put(type, value);
+                                                }).pipe(Effect.ensuring(invalidate))
+                                            ),
+                                        update: (
+                                            key: string | number,
+                                            changes:
+                                                | Record<string, unknown>
+                                                | { path: string[]; value: unknown }[]
+                                        ) =>
+                                            runMutation(
+                                                requireObject(key).pipe(
+                                                    Effect.andThen(
+                                                        tx.patch(
+                                                            type,
+                                                            key,
+                                                            Array.isArray(changes)
+                                                                ? changes
+                                                                : Object.entries(changes).map(
+                                                                      ([property, value]) => ({
+                                                                          path: [property],
+                                                                          value,
+                                                                      })
+                                                                  )
+                                                        )
+                                                    ),
+                                                    Effect.ensuring(invalidate)
+                                                )
+                                            ),
+                                        delete: (key: string | number) =>
+                                            runMutation(
+                                                requireObject(key).pipe(
+                                                    Effect.andThen(tx.delete(type, key)),
+                                                    Effect.ensuring(invalidate)
+                                                )
+                                            ),
+                                    };
+                                },
+                            }
+                        ) as OntologyMutatorTx["mutate"];
+                        yield* Effect.tryPromise({
+                            try: () =>
+                                Promise.resolve(
+                                    handler({ tx: { ...read, mutate }, args: request.parameters, context })
+                                ),
+                            catch: failure,
+                        });
+                    })
+                ),
+        ])
+    );
+
 export const executeTransactionMutator = Effect.fn("Ontology.executeMutator")(function* (options: {
     readonly ir: OntologyIR;
     readonly tx: OwnedTransaction;
@@ -155,98 +302,21 @@ export const executeTransactionMutator = Effect.fn("Ontology.executeMutator")(fu
     readonly parameters: Record<string, unknown>;
     readonly operationId: string;
     readonly replay?: ExpressionReplay;
-    /** Resolve portable inputs without constructing a local optimistic result. Authoritative execution omits this flag. */
     readonly resolveOnly?: boolean;
     readonly context?: Record<string, unknown>;
     readonly mutators?: OntologyMutatorRegistry;
-}): Effect.fn.Return<Record<string, unknown>, BackendError> {
-    return yield* withTransactionCollections(options.ir, options.tx, (objects, ensureLoaded, client) =>
-        Effect.gen(function* () {
-            const services = yield* Effect.context<never>();
-            const run = Effect.runPromiseWith(services);
-            const writes = new Map<string, Map<string, readonly string[]> | null>();
-            const transaction = client.createTransaction<OntologyObject>({
-                autoCommit: false,
-                mutationFn: async ({ transaction }) => {
-                    for (const mutation of transaction.mutations) {
-                        const objectType = Object.entries(objects).find(
-                            ([, collection]) => collection === mutation.collection
-                        )?.[0];
-                        if (!objectType) throw failure("Mutation belongs to another transaction.");
-                        if (mutation.type === "delete") {
-                            await run(options.tx.delete(objectType, mutation.key));
-                        } else if (
-                            mutation.type === "update" &&
-                            writes.get(JSON.stringify([objectType, mutation.key])) !== null
-                        ) {
-                            const paths = writes.get(JSON.stringify([objectType, mutation.key]));
-                            const changed = paths
-                                ? [...paths.values()]
-                                : Object.keys(mutation.changes).map((name) => [name]);
-                            await run(
-                                options.tx.patch(
-                                    objectType,
-                                    mutation.key,
-                                    changed.map((path) => ({
-                                        path,
-                                        value: getAtPath(mutation.modified, path),
-                                    }))
-                                )
-                            );
-                        } else {
-                            await run(options.tx.put(objectType, mutation.modified));
-                        }
-                    }
-                },
-            });
-            void transaction.isPersisted.promise.catch(() => undefined);
-            return yield* Effect.tryPromise({
-                try: async () => {
-                    try {
-                        const parameters = await resolveActionParameters({
-                            ir: options.ir,
-                            actionTypeName: options.name,
-                            initialParameters: options.parameters,
-                            context: options.context ?? {},
-                            replay: options.replay,
-                            tx: createReadTx(objects, ensureLoaded),
-                        });
-                        if (options.resolveOnly) {
-                            transaction.rollback();
-                            return parameters;
-                        }
-                        await runOptimisticAction({
-                            ir: options.ir,
-                            actionTypeName: options.name,
-                            parameters,
-                            context: options.context ?? {},
-                            replay: options.replay,
-                            transaction,
-                            objects,
-                            idempotencyKey: options.operationId,
-                            mutators: options.mutators,
-                            ensureLoaded,
-                            onMutation: (type, key, paths) => {
-                                const id = JSON.stringify([type, key]);
-                                if (!paths) {
-                                    writes.set(id, null);
-                                    return;
-                                }
-                                if (writes.get(id) === null) return;
-                                const changed = writes.get(id) ?? new Map();
-                                for (const path of paths) changed.set(JSON.stringify(path), [...path]);
-                                writes.set(id, changed);
-                            },
-                        });
-                        await transaction.commit();
-                        return parameters;
-                    } catch (cause) {
-                        if (transaction.state === "pending") transaction.rollback();
-                        throw cause;
-                    }
-                },
-                catch: failure,
-            });
-        })
-    );
+}) {
+    return yield* executeAction({
+        ir: options.ir,
+        tx: options.tx,
+        request: {
+            id: options.operationId,
+            name: options.name,
+            parameters: options.parameters,
+            replay: options.replay,
+        },
+        context: options.context,
+        resolveOnly: options.resolveOnly,
+        mutators: actionMutators(options.ir, options.mutators),
+    });
 });

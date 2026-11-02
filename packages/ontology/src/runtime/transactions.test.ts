@@ -5,7 +5,7 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Query, eq, toArray } from "@tanstack/db";
 import { Effect, Result } from "effect";
 import { expect, test } from "vite-plus/test";
-import { createReadTx } from "../live/mutators/createMutatorTx.js";
+import { createReadTx } from "../live/mutators/createReadTx.js";
 import { executeTransactionMutator, withTransactionCollections } from "./transactions.js";
 
 const ir: OntologyIR = {

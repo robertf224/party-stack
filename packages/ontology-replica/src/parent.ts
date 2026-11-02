@@ -1,7 +1,7 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { Clock, Effect, Queue, Ref, Stream } from "effect";
 import { deliveryRecovery } from "./recovery.js";
-import type { ReplicaService } from "./index.js";
+import type { ReplicaService } from "./engine.js";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 
 /** The parent's storage determines whether acceptance survives process exit.

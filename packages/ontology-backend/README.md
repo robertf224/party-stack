@@ -4,6 +4,17 @@ Effect-native backend contracts, normalized errors and authoritative execution.
 Adapters depend on this package for subset snapshots, action receipts, validation,
 attachment/decrypt capabilities and optional journal/watch interfaces.
 
+`/actions` owns portable IR action execution and parameter defaults. `executeAction`
+reads and writes only its supplied transaction; callers own commit/rollback and
+journaling. Replica replay and authoritative execution share it. Native custom
+mutators receive an `ActionTransaction` with point/subset reads, writes and finite
+QueryDocument execution. The `ontology` package separately adapts Promise/TanStack
+mutators into this Effect-native contract.
+
+`/subset` lowers object-bound spec subsets to provider/storage candidates. Replica
+demand uses spec expressions; physical scans remain below that public boundary.
+Exactness is required: unsupported demand computations return NotImplemented.
+
 ## Native adapter and operation identity
 
 An adapter's scoped open(context) returns one OntologyBackendService. Validation,

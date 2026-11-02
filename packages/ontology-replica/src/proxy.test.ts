@@ -5,7 +5,7 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Deferred, Effect, Fiber } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
-import { makeReplica, makeCachedProxy } from "./index.js";
+import { makeReplica, makeCachedProxy } from "./testing.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 
 const ir: OntologyIR = {

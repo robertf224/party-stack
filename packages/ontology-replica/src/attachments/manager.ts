@@ -12,7 +12,7 @@ import {
 } from "@party-stack/ontology-storage/blobs";
 import { Runtime } from "@party-stack/runtime";
 import { Effect, Exit, Fiber, RcMap, Scope, Semaphore, Stream } from "effect";
-import { measureBlobDimensions } from "./measureBlobDimensions.js";
+import { measureBlobDimensions } from "./dimensions.js";
 import type { BlobReadOptions, BlobMetadataOptions, PartialBlobMetadata } from "./types.js";
 
 export interface BlobManagerService {

@@ -1,3 +1,4 @@
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect, Stream } from "effect";
 import type { BackendSubset, BackendError } from "@party-stack/ontology-backend";
@@ -16,7 +17,7 @@ export function observeReplicaRows(
         Effect.gen(function* () {
             yield* options?.persistedOnly
                 ? replica.retainLocal(subset.objectType, subset.query)
-                : replica.demand(subset);
+                : replica.demand.acquire(objectSubset(subset.objectType, subset.query));
             const rows = new Map<string | number, Row<Record<string, unknown>>>();
             return replica.observeRows(subset.objectType, subset.query).pipe(
                 Stream.map((batch) => {

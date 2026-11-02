@@ -4,7 +4,7 @@ import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect } from "effect";
 import { expect, test } from "vitest";
-import { makeReplica } from "./index.js";
+import { makeReplica } from "./testing.js";
 import type { ActionRequest } from "@party-stack/ontology-backend";
 import type { ClientSubmission, OntologySource } from "@party-stack/ontology-backend/protocol";
 

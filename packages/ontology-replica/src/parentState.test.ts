@@ -7,8 +7,8 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Deferred, Effect, Exit, Scope, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
-import { connectReplicaParent, makeReplica, replicaStateSource } from "./index.js";
-import type { ClientSubmission, ReplicaOptions, ReplicaService, ReplicaStateSnapshot } from "./index.js";
+import { connectReplicaParent, makeReplica, replicaStateSource } from "./testing.js";
+import type { ClientSubmission, ReplicaOptions, ReplicaService, ReplicaStateSnapshot } from "./testing.js";
 import type { ActionRequest, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 

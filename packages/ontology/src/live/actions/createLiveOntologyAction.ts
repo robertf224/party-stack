@@ -1,5 +1,5 @@
 import { resolveActionParameters } from "../expression.js";
-import { createReadTx } from "../mutators/createMutatorTx.js";
+import { createReadTx } from "../mutators/createReadTx.js";
 import type { LiveOntologyWriteMode, LiveOntologyWriteVisibility } from "../LiveOntology.js";
 import type { OntologyCollection } from "../objects/types.js";
 import type { OntologyApplyActionResult } from "../OntologyBackendAdapter.js";

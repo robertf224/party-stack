@@ -1,7 +1,9 @@
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { Deferred, Effect, Fiber, PubSub, Stream } from "effect";
 import { expect, test } from "vite-plus/test";
 import { observeReplicaRows } from "./hostQuery.js";
 import type { BackendSubset } from "@party-stack/ontology-backend";
+import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 
 test("query streams do not miss a commit racing the initial snapshot and release demand", async () => {
     await Effect.runPromise(
@@ -11,20 +13,22 @@ test("query streams do not miss a commit racing the initial snapshot and release
                 let revision = 0;
                 let leases = 0;
                 const subset: BackendSubset = { objectType: "Note", query: { limit: 1 } };
-                const requested: BackendSubset[] = [];
+                const requested: ObjectSubset[] = [];
                 const stream = observeReplicaRows(
                     {
-                        demand: (value) =>
-                            Effect.acquireRelease(
-                                Effect.sync(() => {
-                                    requested.push(value);
-                                    leases++;
-                                }),
-                                () =>
+                        demand: {
+                            acquire: (value) =>
+                                Effect.acquireRelease(
                                     Effect.sync(() => {
-                                        leases--;
-                                    })
-                            ),
+                                        requested.push(value);
+                                        leases++;
+                                    }),
+                                    () =>
+                                        Effect.sync(() => {
+                                            leases--;
+                                        })
+                                ),
+                        },
                         retainLocal: () => Effect.die("Remote query used inspection lease"),
                         observeRows: (type, query) =>
                             Stream.unwrap(
@@ -58,7 +62,7 @@ test("query streams do not miss a commit racing the initial snapshot and release
                 );
                 const snapshots = yield* Stream.runCollect(Stream.take(stream, 2));
                 expect(snapshots.map((rows) => rows[0]?.value.revision)).toEqual([0, 1]);
-                expect(requested).toEqual([subset]);
+                expect(requested).toEqual([objectSubset(subset.objectType, subset.query)]);
                 expect(leases).toBe(0);
                 yield* PubSub.shutdown(events);
             })
@@ -77,10 +81,12 @@ test("inspection streams hold only a local reader lease and cancellation release
                 const fiber = yield* Stream.runForEach(
                     observeReplicaRows(
                         {
-                            demand: () =>
-                                Effect.sync(() => {
-                                    remote++;
-                                }),
+                            demand: {
+                                acquire: () =>
+                                    Effect.sync(() => {
+                                        remote++;
+                                    }),
+                            },
                             retainLocal: () =>
                                 Effect.acquireRelease(
                                     Effect.sync(() => {

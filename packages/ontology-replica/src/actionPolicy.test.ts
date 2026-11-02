@@ -5,7 +5,7 @@ import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
-import { makeReplica, replicaStateSource } from "./index.js";
+import { makeReplica, replicaStateSource } from "./testing.js";
 
 const ir: OntologyIR = {
     types: [],

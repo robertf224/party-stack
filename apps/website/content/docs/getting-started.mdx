@@ -221,6 +221,42 @@ owns a ManagedRuntime so platform resources outlive construction. Supplying a
 scoped Layer just to an Effect that immediately returns a facade would close its
 resources too early.
 
+### Replica without the collection facade
+
+Native Effect consumers can acquire `Replica` directly. The Layer takes its
+platform resources from `Runtime` and its acquired upstream from `ReplicaUpstream`:
+
+```ts
+import { Replica, ReplicaUpstream } from "@party-stack/ontology-replica";
+import { MemoryRuntime, RuntimePartition } from "@party-stack/runtime";
+import { Effect, Layer } from "effect";
+
+// backend is an already acquired OntologyBackendService in the enclosing Scope.
+const replicaLayer = Replica.layer({ ir }).pipe(
+    Layer.provide(Layer.succeed(ReplicaUpstream)({ kind: "committed", backend })),
+    Layer.provide(MemoryRuntime.layer),
+    Layer.provide(Layer.succeed(RuntimePartition)({ owner: userId, namespace: ontologyId }))
+);
+
+const read = Effect.scoped(
+    Effect.gen(function* () {
+        const replica = yield* Replica;
+        yield* replica.demand.acquire({
+            from: { source: { objectType: "Issue" }, binding: "issue" },
+        });
+        return yield* replica.get("Issue", issueId);
+    })
+).pipe(Effect.provide(replicaLayer));
+```
+
+Provide `WebRuntime.layer(...)` or another platform Layer instead for persistent
+storage. The backend must outlive this replica. A speculative upstream additionally
+supplies `source` with `kind: "speculative"`; the same Layer then uses parent-state
+delivery. Scope owns the replica, its demand leases and local attachment manager.
+Application code supplies custom native `mutators` when needed, rather than an
+execution/replay callback. Portable action execution reads only its supplied local
+transaction. The `ontology` package adds Promise/TanStack authoring conveniences.
+
 ## Attachment storage at this checkpoint
 
 Every replica uses the same local attachment machinery: memory or durable

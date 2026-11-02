@@ -11,8 +11,8 @@ import { expect, test, vi } from "vite-plus/test";
 import { connectOntologyWorker, serveOntologyWorker, serveOpenedOntologyWorker } from "./rpcWorker.js";
 import type { OntologyConnection } from "./rpc.js";
 import type { LiveOntology } from "@party-stack/ontology";
+import type { OwnedTransaction } from "@party-stack/ontology-backend/owned";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
-import type { ReplicaOptions } from "@party-stack/ontology-replica";
 
 const speculativeSource = (connection: OntologyConnection) => {
     if (connection.replication.kind !== "speculative") throw new Error("Expected speculative replication.");
@@ -36,7 +36,7 @@ const ir: OntologyIR = {
     ],
     actionTypes: [{ name: "increment", displayName: "Increment", parameters: [], logic: [] }],
 };
-const increment: ReplicaOptions["execute"] = (tx) =>
+const increment = (tx: OwnedTransaction) =>
     Effect.gen(function* () {
         const row = yield* tx.get("Counter", "one");
         yield* tx.put("Counter", { id: "one", count: Number(row?.count ?? 0) + 1 });
@@ -82,11 +82,11 @@ test("worker composition serves during delayed acquisition and releases its open
                     ir,
                     tables: yield* Memory.make(),
                     backend,
-                    execute: increment,
+                    mutators: { increment },
                     startSync: false,
                     objectCacheGc: false,
                 });
-                yield* owner.demand({ objectType: "Counter" });
+                yield* owner.demand.acquire({ from: { source: { objectType: "Counter" }, binding: "row" } });
                 yield* owner.syncOnce;
                 const gate = yield* Deferred.make<void>();
                 const started = yield* Deferred.make<void>();
@@ -178,7 +178,7 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                     ir,
                     tables: yield* Memory.make(),
                     backend,
-                    execute: increment,
+                    mutators: { increment },
                     startSync: false,
                     objectCacheGc: false,
                 });
@@ -191,7 +191,7 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                         ir,
                         tables: yield* Memory.make(),
                         source: speculativeSource(source),
-                        execute: increment,
+                        mutators: { increment },
                         objectCacheGc: false,
                         startSync: false,
                     });

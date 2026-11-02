@@ -69,7 +69,7 @@ test.each(["owned", "proxy", "cached-proxy", "replica"] as const)(
                         ir,
                         tables: yield* Memory.make(),
                         backend: owned,
-                        execute: () => Effect.void,
+
                         startSync: false,
                         objectCacheGc: false,
                     });
@@ -564,7 +564,7 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                     ir,
                     tables: yield* Memory.make(),
                     backend: owned,
-                    execute: () => Effect.void,
+
                     startSync: false,
                     objectCacheGc: false,
                 });
@@ -841,7 +841,7 @@ test("a replica server keeps its committed facet separate from speculative publi
                     tables: yield* Memory.make(),
                     startSync: false,
                     connectivity: { online: Effect.succeed(false), changes: Stream.never },
-                    execute: (tx) => tx.put("Counter", { id: "one", count: 1 }),
+                    mutators: { increment: (tx) => tx.put("Counter", { id: "one", count: 1 }) },
                 });
                 yield* replica.enqueue({ id: "local", name: "increment", parameters: {} });
                 const { handleRequest } = yield* makeOntologyServer({
@@ -935,7 +935,6 @@ test("only replica servers advertise speculative state; owned and proxy roles ex
                     tables: yield* Memory.make(),
                     backend: owned,
                     startSync: false,
-                    execute: () => Effect.void,
                 });
                 const roles: readonly import("./composition.js").OntologyServerOptions[] = [
                     { kind: "owned", backend: owned, authorize: () => Effect.void },
@@ -1091,7 +1090,7 @@ test.each(
                     const parent = yield* makeReplica({
                         namespace: `http-${kind}`,
                         ir,
-                        execute,
+                        mutators: { increment: execute },
                         backend: owned,
                         tables: yield* Memory.make(),
                         startSync: false,
@@ -1142,13 +1141,15 @@ test.each(
                         const child = yield* makeReplica({
                             namespace: "http-child",
                             ir,
-                            execute,
+                            mutators: { increment: execute },
                             tables: yield* Memory.make(),
                             ...(connection.replication.kind === "speculative"
                                 ? { source: connection.replication.source }
                                 : { backend: connection.backend }),
                         });
-                        yield* child.demand({ objectType: "Counter" });
+                        yield* child.demand.acquire({
+                            from: { source: { objectType: "Counter" }, binding: "row" },
+                        });
                         yield* child.syncOnce;
                         yield* wait(child.get("Counter", "one").pipe(Effect.map((row) => row?.count === 1)));
                         yield* owned.applyAction({ id: "external", name: "increment", parameters: {} });

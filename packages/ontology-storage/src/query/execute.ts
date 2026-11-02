@@ -322,6 +322,8 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
         binding: string,
         locals: Scope
     ): Effect.fn.Return<{ where?: Predicate; exact: boolean }, E> {
+        if (e.kind === "literal" && typeof e.value.value === "boolean")
+            return { where: eq(e.value.value, true), exact: true };
         if (e.kind === "and" || e.kind === "or") {
             const values = [];
             for (const expression of e.value.expressions)

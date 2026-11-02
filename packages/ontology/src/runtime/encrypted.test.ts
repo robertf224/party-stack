@@ -87,10 +87,13 @@ const fixture = Effect.fnUntraced(function* (settings?: { keys?: boolean; owner?
         tables,
         backend,
         startSync: false,
-        execute: () => Effect.void,
     });
     // Load, then release demand so the row can later be collected.
-    yield* Effect.scoped(replica.demand({ objectType: "Person" }).pipe(Effect.andThen(replica.syncOnce)));
+    yield* Effect.scoped(
+        replica.demand
+            .acquire({ from: { source: { objectType: "Person" }, binding: "row" } })
+            .pipe(Effect.andThen(replica.syncOnce))
+    );
     const open = (sourceId = "authority") =>
         makeLiveDecryption({ ir, replica, backend: { sourceId, encrypted: backend.encrypted } }).pipe(
             Effect.provideService(Runtime, runtime)
@@ -381,7 +384,6 @@ test("journal refresh preserves the device copy only while the authoritative cip
                     ir: definition,
                     tables,
                     backend: server,
-                    execute: () => Effect.void,
                     startSync: false,
                 });
                 yield* replica.syncOnce;

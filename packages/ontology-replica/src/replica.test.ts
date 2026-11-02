@@ -5,7 +5,7 @@ import { eq, field } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect, Deferred, Scope, Exit, Result, Stream } from "effect";
 import { expect, test } from "vitest";
-import { makeReplica, type ReplicaService } from "./index.js";
+import { makeReplica, type ReplicaService } from "./testing.js";
 import type { ActionRequest, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OwnedTransaction } from "@party-stack/ontology-backend/owned";
 

@@ -1,19 +1,27 @@
-import { field } from "@party-stack/ontology-storage";
-import { isField } from "@party-stack/ontology-storage/tables";
+import * as q from "@party-stack/ontology-spec/query";
 import { IR } from "@tanstack/db";
-import type { ReplicaService } from "@party-stack/ontology-replica";
-import type { Operand, Order, Predicate, Query, Scalar } from "@party-stack/ontology-storage";
+import type { Expression, Subset, QueryOrder, OntologyIR } from "@party-stack/ontology-spec";
+import type { ObjectSubset } from "@party-stack/ontology-spec/query";
+import type { Field } from "@party-stack/ontology-storage";
+import type {
+    Query,
+    Scalar,
+    Predicate as StoragePredicate,
+    Operand as StorageOperand,
+} from "@party-stack/ontology-storage";
+const field = (...path: string[]): Expression => q.field("row", ...path);
+const isField = (value: Expression) => value.kind === "getAt";
 import type { LoadSubsetOptions } from "@tanstack/db";
 
-type Definition = ReplicaService["ir"]["types"][number]["type"];
+type Definition = OntologyIR["types"][number]["type"];
 type Family = "string" | "number" | "boolean" | "date" | "timestamp";
 interface Value {
-    operand: Operand;
+    operand: Expression;
     family?: Family;
     elementFamily?: Family;
     optional: boolean;
 }
-type Condition = Predicate | boolean;
+type Condition = Expression | boolean;
 interface Truth {
     yes: Condition;
     no: Condition;
@@ -23,27 +31,22 @@ const unknown: Truth = { yes: true, no: true, exact: false };
 const combine = (op: "and" | "or", values: readonly Condition[]): Condition => {
     const terminal = op === "or";
     if (values.includes(terminal)) return terminal;
-    const predicates = values.filter((value): value is Predicate => typeof value !== "boolean");
+    const predicates = values.filter((value): value is Expression => typeof value !== "boolean");
     return predicates.length === 0
         ? !terminal
         : predicates.length === 1
           ? predicates[0]!
-          : { op, predicates };
+          : q[op](...predicates);
 };
-const predicate = (value: Condition): Predicate | undefined =>
-    value === true ? undefined : value === false ? { op: "or", predicates: [] } : value;
-const negate = (value: Condition): Condition =>
-    typeof value === "boolean" ? !value : { op: "not", predicate: value };
+const predicate = (value: Condition): Expression | undefined =>
+    value === true ? undefined : value === false ? q.or() : value;
+const negate = (value: Condition): Condition => (typeof value === "boolean" ? !value : q.not(value));
 
-/** Translate only semantics that storage can preserve. Unsupported expressions
+/** Translate TanStack semantics into the shared ontology expression IR. Unsupported expressions
  * widen demand; TanStack still evaluates the original query on the returned rows.
  * In particular, a residual filter or locale comparator must run before LIMIT.
  */
-export function analyzeStorageSubset(
-    subset: LoadSubsetOptions,
-    ir?: ReplicaService["ir"],
-    objectType?: string
-) {
+export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR, objectType?: string) {
     const objects = new Map(ir?.objectTypes.map((type) => [type.name, type]));
     const named = new Map(ir?.types.map((type) => [type.name, type.type]));
     const resolve = (
@@ -102,16 +105,20 @@ export function analyzeStorageSubset(
         }
         if (expression.type !== "val") return undefined;
         const literal: unknown = expression.value;
-        if (literal == null) return { operand: literal, optional: true };
+        if (literal == null) return { operand: q.literal(literal), optional: true };
         if (typeof literal === "string" || typeof literal === "boolean")
-            return { operand: literal, family: typeof literal as "string" | "boolean", optional: false };
+            return {
+                operand: q.literal(literal),
+                family: typeof literal as "string" | "boolean",
+                optional: false,
+            };
         if (typeof literal === "number" && Number.isFinite(literal))
-            return { operand: literal, family: "number", optional: false };
+            return { operand: q.literal(literal), family: "number", optional: false };
         if (typeof literal === "object") {
             const tag = Reflect.get(literal, Symbol.toStringTag) as unknown;
             if (tag === "Temporal.Instant" || tag === "Temporal.PlainDate")
                 return {
-                    operand: literal as Scalar,
+                    operand: q.literal(literal),
                     family: tag === "Temporal.Instant" ? "timestamp" : "date",
                     optional: false,
                 };
@@ -123,7 +130,7 @@ export function analyzeStorageSubset(
             ? true
             : isField(v.operand)
               ? // Ontology object decoding normalizes optional nulls to undefined.
-                { op: "ne", left: v.operand, right: undefined }
+                q.ne(v.operand, q.literal(undefined))
               : false;
     const truth = (expression: IR.BasicExpression): Truth => {
         if (expression.type === "val" && (typeof expression.value === "boolean" || expression.value == null))
@@ -136,8 +143,8 @@ export function analyzeStorageSubset(
             const v = value(expression);
             return v?.family === "boolean"
                 ? {
-                      yes: { op: "eq", left: v.operand, right: true },
-                      no: { op: "eq", left: v.operand, right: false },
+                      yes: q.eq(v.operand, q.literal(true)),
+                      no: q.eq(v.operand, q.literal(false)),
                       exact: true,
                   }
                 : unknown;
@@ -165,11 +172,7 @@ export function analyzeStorageSubset(
         const left = args[0] && value(args[0]);
         if (!left) return unknown;
         if ((name === "isNull" || name === "isUndefined") && args.length === 1) {
-            const yes: Predicate = {
-                op: "eq",
-                left: left.operand,
-                right: name === "isNull" ? null : undefined,
-            };
+            const yes = q.eq(left.operand, q.literal(name === "isNull" ? null : undefined));
             return { yes, no: negate(yes), exact: true };
         }
         if (name === "in" && args[1]?.type === "ref") {
@@ -177,7 +180,7 @@ export function analyzeStorageSubset(
             if (!array?.elementFamily || !isField(array.operand)) return unknown;
             if (!left.family) return { yes: false, no: false, exact: true };
             if (left.family !== array.elementFamily) return unknown;
-            const yes: Predicate = { op: "contains", left: array.operand, right: left.operand };
+            const yes = q.contains(array.operand, left.operand);
             return {
                 yes: combine("and", [present(left), yes]),
                 no: combine("and", [present(left), negate(yes)]),
@@ -189,11 +192,14 @@ export function analyzeStorageSubset(
                 .filter((item) => item != null)
                 .map((item) => value(new IR.Value(item)));
             if (items.some((item) => !item || item.family !== left.family)) return unknown;
-            const yes: Predicate = {
-                op: "in",
-                left: left.operand,
-                values: items.map((item) => item!.operand as Scalar),
-            };
+            const yes = q.inArray(
+                left.operand,
+                q.literal(
+                    items.map(
+                        (item) => (item!.operand as Extract<Expression, { kind: "literal" }>).value.value
+                    )
+                )
+            );
             return {
                 yes: combine("and", [present(left), yes]),
                 no: combine("and", [present(left), negate(yes)]),
@@ -206,11 +212,11 @@ export function analyzeStorageSubset(
         if (!left.family || !right.family) return { yes: false, no: false, exact: true };
         if (left.family !== right.family) return unknown;
         const guard = combine("and", [present(left), present(right)]);
-        let yes: Predicate;
+        let yes: Expression;
         if (name === "eq" || name === "gt" || name === "gte" || name === "lt" || name === "lte")
-            yes = { op: name, left: left.operand, right: right.operand };
+            yes = q[name](left.operand, right.operand);
         else if ((name === "like" || name === "ilike") && left.family === "string")
-            yes = { op: name, left: left.operand, right: right.operand as string | ReturnType<typeof field> };
+            yes = q[name](left.operand, right.operand);
         else return unknown;
         // Equality against a defined operand already rejects missing values. Two
         // optional operands can both be missing and still compare equal in storage.
@@ -228,7 +234,7 @@ export function analyzeStorageSubset(
     const cursor = subset.cursor
         ? truth(new IR.Func("or", [subset.cursor.whereFrom, subset.cursor.whereCurrent]))
         : undefined;
-    const orderBy: Order[] = [];
+    const orderBy: QueryOrder[] = [];
     let ordered = true;
     for (const order of subset.orderBy ?? []) {
         const v = value(order.expression);
@@ -243,30 +249,76 @@ export function analyzeStorageSubset(
             break;
         }
         orderBy.push({
-            field: v.operand as ReturnType<typeof field>,
+            expression: v.operand,
             direction: compare.direction,
             nulls: compare.nulls,
         });
     }
     const bounded = filter.exact && ordered && !cursor;
     const limit = bounded && subset.limit !== undefined ? subset.limit + (subset.offset ?? 0) : undefined;
-    const query: Query = {
+    const subsetIR: Subset = {
         where: predicate(combine("and", [filter.yes, cursor?.yes ?? true])),
         ...(ordered && orderBy.length ? { orderBy } : {}),
-        ...(limit !== undefined && Number.isSafeInteger(limit) ? { limit } : {}),
+        ...(limit !== undefined && Number.isSafeInteger(limit) ? { page: { limit } } : {}),
     };
     return {
-        query,
+        subset: subsetIR,
         exact: filter.exact && ordered && !cursor,
         filterExact: filter.exact,
         orderExact: ordered,
     };
 }
 
-export function storageSubset(
-    subset: LoadSubsetOptions,
-    ir?: ReplicaService["ir"],
-    objectType?: string
-): Query {
+/** Raw Tables/transaction adapter. Only serializes nodes constructed by the analyzer above. */
+function storageScan(subset: Subset): Query {
+    const operand = (e: Expression): StorageOperand =>
+        e.kind === "getAt"
+            ? { _tag: "Field", path: e.value.path }
+            : ((e as Extract<Expression, { kind: "literal" }>).value.value as Scalar);
+    const predicate = (e: Expression): StoragePredicate => {
+        if (e.kind === "and" || e.kind === "or")
+            return { op: e.kind, predicates: e.value.expressions.map(predicate) };
+        if (e.kind === "not") return { op: "not", predicate: predicate(e.value.expression) };
+        if (e.kind === "in")
+            return {
+                op: "in",
+                left: operand(e.value.left),
+                values: (e.value.right as Extract<Expression, { kind: "literal" }>).value.value as Scalar[],
+            };
+        const binary = e as Extract<
+            Expression,
+            { kind: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "like" | "ilike" | "contains" }
+        >;
+        return {
+            op: binary.kind,
+            left: operand(binary.value.left),
+            right: operand(binary.value.right),
+        } as StoragePredicate;
+    };
+    return {
+        where: subset.where ? predicate(subset.where) : undefined,
+        ...(subset.orderBy
+            ? {
+                  orderBy: subset.orderBy.map((o) => ({
+                      field: operand(o.expression) as Field,
+                      direction: o.direction,
+                      nulls: o.nulls,
+                  })),
+              }
+            : {}),
+        ...(subset.page?.limit !== undefined ? { limit: subset.page.limit } : {}),
+    };
+}
+export function analyzeStorageSubset(subset: LoadSubsetOptions, ir?: OntologyIR, objectType?: string) {
+    const analysis = analyzeOntologySubset(subset, ir, objectType);
+    return { ...analysis, query: storageScan(analysis.subset) };
+}
+export function storageSubset(subset: LoadSubsetOptions, ir?: OntologyIR, objectType?: string): Query {
     return analyzeStorageSubset(subset, ir, objectType).query;
+}
+export function ontologySubset(subset: LoadSubsetOptions, ir: OntologyIR, objectType: string): ObjectSubset {
+    return {
+        from: { source: { objectType }, binding: "row" },
+        ...analyzeOntologySubset(subset, ir, objectType).subset,
+    };
 }

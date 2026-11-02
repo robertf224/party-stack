@@ -2,7 +2,7 @@ import { o } from "@party-stack/ontology-spec";
 import { queryOnce, createCollection, localOnlyCollectionOptions } from "@tanstack/db";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { evaluateExpression } from "./expression.js";
-import { createReadTx } from "./mutators/createMutatorTx.js";
+import { createReadTx } from "./mutators/createReadTx.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { OntologyObject } from "@party-stack/ontology-spec";
 
