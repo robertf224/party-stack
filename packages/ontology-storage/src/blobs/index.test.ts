@@ -512,3 +512,56 @@ it.effect(
             expect(values.size).toBe(0);
         }).pipe(Effect.scoped)
 );
+
+it("byte budgets reclaim toward the target while preserving staged and pinned bytes", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const { bytes } = memoryBytes();
+                const blobs = yield* makeBlobStorage({ namespace: "budget", tables, bytes });
+                for (const id of ["one", "two", "pinned"]) {
+                    yield* blobs.cache(id, new Blob(["x".repeat(100)]));
+                    yield* blobs.bindRemoteId(id, id);
+                }
+                yield* tables.transaction((tx) => blobs.in(tx).retain("pin", ["pinned"], { bytes: true }));
+                yield* blobs.stage("staged", new Blob(["s".repeat(100)]));
+                expect(yield* blobs.usage).toBe(400);
+                yield* blobs.updateMetadata("one", { size: 1 });
+                expect(yield* blobs.usage).toBe(400);
+                expect((yield* blobs.metadata("one"))?.size).toBe(100);
+                yield* blobs.collectGarbage({
+                    olderThanMs: 24 * 60 * 60_000,
+                    maxBytes: 250,
+                    targetBytes: 200,
+                });
+                expect(yield* blobs.usage).toBe(200);
+                expect(yield* blobs.read("pinned")).toBeDefined();
+                expect(yield* blobs.read("staged")).toBeDefined();
+                const reopened = yield* makeBlobStorage({ namespace: "budget", tables, bytes });
+                expect(yield* reopened.usage).toBe(200);
+            })
+        )
+    );
+});
+
+it.effect("attachment eviction ranks age times size while excluding byte-retained data", () =>
+    Effect.gen(function* () {
+        const tables = yield* Memory.make();
+        const { bytes } = memoryBytes();
+        const blobs = yield* makeBlobStorage({ namespace: "score", tables, bytes });
+        yield* blobs.cache("old-small", new Blob(["x"]));
+        yield* blobs.bindRemoteId("old-small", "old-small");
+        yield* TestClock.adjust(10_000);
+        yield* blobs.cache("new-large", new Blob(["x".repeat(5000)]));
+        yield* blobs.bindRemoteId("new-large", "new-large");
+        yield* blobs.cache("pinned", new Blob(["x".repeat(20_000)]));
+        yield* blobs.bindRemoteId("pinned", "pinned");
+        yield* tables.transaction((tx) => blobs.in(tx).retain("offline-pin", ["pinned"], { bytes: true }));
+        yield* TestClock.adjust(10_000);
+        expect(yield* blobs.collectGarbage({ olderThanMs: 0, limit: 1 })).toBe(1);
+        expect((yield* blobs.metadata("new-large"))?.byteKey).toBeUndefined();
+        expect((yield* blobs.metadata("old-small"))?.byteKey).toBeDefined();
+        expect((yield* blobs.metadata("pinned"))?.byteKey).toBeDefined();
+    })
+);

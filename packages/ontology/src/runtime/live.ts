@@ -22,8 +22,6 @@ export const makeReplicaLiveOntology = Effect.fnUntraced(function* (
             writes: options.writes,
             queryFunction: backend.queryFunction,
             resolveActionParameters: backend.resolveActionParameters,
-            sourceId: backend.sourceId,
-            encrypted: backend.encrypted,
             attachments,
             traces,
             validate: backend.validateAction

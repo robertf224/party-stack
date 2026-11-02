@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { storageError } from "@party-stack/ontology-storage/driver";
@@ -67,6 +67,26 @@ export const make = Effect.fn("NodeRuntime.make")(function* (options: CreateNode
     const encryptionKeyring = yield* makeKeyMaterialStoreKeyring(secrets);
     return yield* Runtime.make({
         blobBytes,
+        capacity: {
+            memory: Effect.sync(() => ({
+                scope: "process" as const,
+                usedBytes: process.memoryUsage().rss,
+                availableBytes: process.availableMemory(),
+                limitBytes: process.constrainedMemory() || undefined,
+            })),
+            storage: Effect.tryPromise({
+                try: async () => {
+                    const stats = await statfs(directory);
+                    return {
+                        scope: "filesystem" as const,
+                        limitBytes: stats.blocks * stats.bsize,
+                        availableBytes: stats.bavail * stats.bsize,
+                        usedBytes: (stats.blocks - stats.bfree) * stats.bsize,
+                    };
+                },
+                catch: (cause) => new RuntimeError({ operation: "capacity.storage", cause }),
+            }),
+        },
         browserAuthentication: createNodeBrowserAuthentication(),
         encryptionKeyring,
 

@@ -40,6 +40,7 @@ const runParentActions = Effect.fnUntraced(function* (options: {
  */
 export const replicaStateSource = (parent: ReplicaService): OntologySource => ({
     sourceId: parent.sourceId,
+    outbox: { remove: parent.remove, retry: parent.retry, edit: parent.edit },
     supportsIdempotency: true,
     openClient: parent.openClient,
     read: parent.readClient,
@@ -94,13 +95,31 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
                                     yield* child.reportReplicationFailure();
                                     const meta = installed.metadata;
                                     if (source && meta.client)
-                                        yield* source.acknowledge(
-                                            meta.client,
-                                            meta.revision,
-                                            meta.client.deliveredThrough,
-                                            meta.generation
-                                        );
-                                    yield* opened.subscription.acknowledge(installed.position);
+                                        yield* source
+                                            .acknowledge(
+                                                opened.session ?? meta.client,
+                                                meta.revision,
+                                                meta.client.deliveredThrough,
+                                                meta.generation
+                                            )
+                                            .pipe(
+                                                Effect.withSpan("Replica.acknowledgeParent", {
+                                                    attributes: {
+                                                        streamId: installed.position.streamId,
+                                                        sequence: installed.position.sequence,
+                                                        generation: meta.generation,
+                                                        revision: meta.revision,
+                                                    },
+                                                })
+                                            );
+                                    yield* opened.subscription.acknowledge(installed.position).pipe(
+                                        Effect.withSpan("Replica.acknowledgeDelivery", {
+                                            attributes: {
+                                                streamId: installed.position.streamId,
+                                                sequence: installed.position.sequence,
+                                            },
+                                        })
+                                    );
                                 })
                             );
                             const changed = Effect.gen(function* () {
@@ -129,6 +148,7 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
                     if (recovery === "selection") continue;
                     yield* Ref.set(error, result.failure);
                     yield* child.reportReplicationFailure(result.failure);
+                    if (recovery === "snapshot") yield* child.resetParentDelivery;
                     if (source && recovery === "session")
                         yield* child
                             .refreshParent(source)

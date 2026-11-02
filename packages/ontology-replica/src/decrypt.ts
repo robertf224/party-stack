@@ -1,22 +1,21 @@
 import { BackendError, encryptedPropertyCodec, EncryptedValueSchema } from "@party-stack/ontology-backend";
-import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
-import { Runtime } from "@party-stack/runtime";
 import { Effect, Schema } from "effect";
+import type { ReplicaService } from "./engine.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
-import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { Encrypted } from "@party-stack/ontology-spec/values";
+import type { EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
 
 const rejected = (message: string, kind: BackendError["kind"] = "InvalidRequest") =>
-    new BackendError({ operation: "ontology.decrypt", kind, message, retryable: false });
+    new BackendError({ operation: "replica.decrypt", kind, message, retryable: false });
 // Do not retain decoder issues, provider exceptions or inputs: all can contain secrets.
 const safe = <A, E>(effect: Effect.Effect<A, E>) =>
     effect.pipe(
         Effect.mapError((error) =>
             error instanceof BackendError
                 ? new BackendError({
-                      operation: "ontology.decrypt",
+                      operation: "replica.decrypt",
                       kind: error.kind,
                       retryable: error.retryable,
                       message: "Decryption failed.",
@@ -28,14 +27,15 @@ const safe = <A, E>(effect: Effect.Effect<A, E>) =>
 /** One cache per already authenticated Runtime partition, further separated by authority and property.
  * Ciphertexts are device-encrypted copies, never imported provider ciphertext.
  */
-export const makeLiveDecryption = Effect.fnUntraced(function* (options: {
+export const makeReplicaDecryption = (options: {
     readonly ir: OntologyIR;
-    readonly replica: ReplicaService;
+    readonly cache: ReplicaService["encryptedCache"];
+    readonly namespace: string;
+    readonly keyring?: EncryptionKeyringService;
     readonly backend: Pick<OntologyBackendService, "sourceId" | "encrypted">;
-}) {
-    const runtime = yield* Runtime;
+}) => {
     const { backend, ir } = options;
-    const namespace = JSON.stringify(["decrypted-cache", runtime.owner, runtime.namespace]);
+    const namespace = JSON.stringify(["decrypted-cache", options.namespace]);
     const CachedPlaintext = Schema.Struct({ binding: Schema.String, value: Schema.Unknown });
     const parse = (value: Encrypted) =>
         Effect.try({
@@ -47,19 +47,19 @@ export const makeLiveDecryption = Effect.fnUntraced(function* (options: {
             },
             catch: () => rejected("Decryption requires a known top-level encrypted property source."),
         });
-    const values = () => makeEncryptedValues(namespace, runtime.encryptionKeyring!);
-    const decrypt = Effect.fn("Ontology.decrypt")(function* (
+    const values = () => makeEncryptedValues(namespace, options.keyring!);
+    const decrypt = Effect.fn("Replica.decrypt")(function* (
         value: Encrypted,
         settings?: { cache?: boolean }
     ) {
         const { handle, codec, key } = yield* parse(value);
-        if (settings?.cache && !runtime.encryptionKeyring)
+        if (settings?.cache && !options.keyring)
             return yield* rejected(
                 "Caching decrypted values requires an explicitly configured encryption keyring.",
                 "NotImplemented"
             );
         if (settings?.cache) {
-            const local = yield* safe(replicaController(options.replica).encryptedCache.get(handle));
+            const local = yield* safe(options.cache.get(handle));
             if (local) {
                 const result = yield* Effect.result(
                     safe(values().decrypt(CachedPlaintext, local)).pipe(
@@ -76,7 +76,8 @@ export const makeLiveDecryption = Effect.fnUntraced(function* (options: {
                         )
                     )
                 );
-                if (result._tag === "Success") return result.success;
+                if (result._tag === "Success")
+                    return { value: result.success, ciphertext: handle.ciphertext };
                 // Lost keys or corrupt ciphertext must not permanently prevent an authorized refetch.
             }
         }
@@ -97,9 +98,9 @@ export const makeLiveDecryption = Effect.fnUntraced(function* (options: {
                     value: result.value,
                 })
             );
-            yield* safe(replicaController(options.replica).encryptedCache.put(handle, local));
+            yield* safe(options.cache.put(handle, local));
         }
-        return decoded;
+        return { value: decoded, ciphertext: result.ciphertext };
     });
     return { decrypt };
-});
+};

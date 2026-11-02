@@ -52,3 +52,5 @@ export {
 } from "./errors.js";
 
 export { isField } from "./query/schema.js";
+
+export { tableUsage } from "./usage.js";

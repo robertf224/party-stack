@@ -1,5 +1,4 @@
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
-import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { MemoryBlobBytesStore, Runtimes } from "@party-stack/runtime";
@@ -8,6 +7,7 @@ import { defineRuntimeFixture, runtimeFixtureContext } from "@party-stack/runtim
 import { createLiveQueryCollection, queryOnce } from "@tanstack/db";
 import { Effect, Exit, Scope, Layer, Deferred } from "effect";
 import { expect, test, vi } from "vite-plus/test";
+import { replicaController } from "../../../ontology-replica/lib/internal.js";
 import { createLiveOntology, makeLiveOntology } from "../live/LiveOntology.js";
 import { makeReplicaHost } from "./host.js";
 

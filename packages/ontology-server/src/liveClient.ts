@@ -106,7 +106,6 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
             attachments,
             queryFunction: operations.queryFunction,
             resolveActionParameters: operations.resolveActionParameters,
-            decrypt: operations.decrypt,
             traces,
             diagnosticLabel: options.label,
             parentDiagnostics: speculative
@@ -118,7 +117,6 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
                       traces: operations.traces,
                   }
                 : undefined,
-            parentOutbox: speculative ? operations.outbox : undefined,
             awaitParentAcceptance: Boolean(speculative),
             validate: (name, parameters) => operations.validate(name, parameters),
             validateDraft: (name, parameters, known) => operations.validate(name, parameters, known),

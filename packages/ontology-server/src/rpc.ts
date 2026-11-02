@@ -62,13 +62,17 @@ const Description = Schema.Struct({
 const ReplicaRpcs = RpcGroup.make(
     Rpc.make("Describe", { success: Description, error: BackendError }),
     Rpc.make("SubscribeSelection", {
-        payload: StateSelectionCodec,
+        payload: { selection: StateSelectionCodec, resume: Schema.optional(DeliveryPositionSchema) },
         success: DeliveryFrameCodec,
         error: BackendError,
         stream: true,
     }),
     Rpc.make("SubscribeState", {
-        payload: { session: ClientSessionSchema, view: ClientViewCodec },
+        payload: {
+            session: ClientSessionSchema,
+            view: ClientViewCodec,
+            resume: Schema.optional(DeliveryPositionSchema),
+        },
         success: DeliveryFrameCodec,
         error: BackendError,
         stream: true,
@@ -331,13 +335,20 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                     })
                 )
             ),
-        SubscribeSelection: (selection, context) =>
+        SubscribeSelection: (request, context) =>
             Stream.unwrap(
                 Effect.gen(function* () {
-                    yield* authorize({ operation: "SubscribeSelection", selection }, context.headers);
+                    yield* authorize(
+                        { operation: "SubscribeSelection", selection: request.selection },
+                        context.headers
+                    );
                     if (snapshots || !options.backend?.subscribeSelection)
                         return yield* unavailableDelivery();
-                    const delivery = yield* options.backend.subscribeSelection(selection, options.delivery);
+                    const delivery = yield* options.backend.subscribeSelection(
+                        request.selection,
+                        options.delivery,
+                        request.resume
+                    );
                     return delivery.frames.pipe(
                         Stream.mapEffect((frame) =>
                             Effect.gen(function* () {
@@ -365,7 +376,12 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                 Effect.gen(function* () {
                     yield* authorize({ operation: "SubscribeState", ...request }, context.headers);
                     if (snapshots || !source.subscribe) return yield* unavailableDelivery();
-                    const delivery = yield* source.subscribe(request.session, request.view, options.delivery);
+                    const delivery = yield* source.subscribe(
+                        request.session,
+                        request.view,
+                        options.delivery,
+                        request.resume
+                    );
                     return delivery.frames.pipe(
                         Stream.map((frame) => ({
                             ...frame,
@@ -497,6 +513,7 @@ export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(f
     if (description.replication === "committed") return { ...common, replication: { kind: "committed" } };
     const source: OntologySource = {
         sourceId: description.sourceId,
+        outbox: operations.outbox,
         supportsIdempotency: description.supportsIdempotency,
         openClient: (resume) => client.OpenClient({ resume }).pipe(Effect.mapError(unavailable)),
         read: (session, view) => client.Read({ session, view }).pipe(Effect.mapError(unavailable)),
@@ -505,9 +522,11 @@ export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(f
             ? (request) => client.Accept(request).pipe(Effect.mapError(unavailable))
             : undefined,
         subscribe: description.stateDelivery
-            ? (session, view) =>
+            ? (session, view, _policy, resume) =>
                   Effect.succeed({
-                      frames: client.SubscribeState({ session, view }).pipe(Stream.mapError(unavailable)),
+                      frames: client
+                          .SubscribeState({ session, view, resume })
+                          .pipe(Stream.mapError(unavailable)),
                       acknowledge: (position) =>
                           client
                               .AckDelivery({ kind: "speculative", position })

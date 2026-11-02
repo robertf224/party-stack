@@ -62,6 +62,20 @@ export const makeDemandCache = Effect.fnUntraced(function* (options: {
         );
     return {
         acquire,
+        evictIdle: (limit = 16) =>
+            admission.withPermit(
+                Effect.gen(function* () {
+                    const idleEntries =
+                        leases.state._tag === "Open"
+                            ? [...leases.state.map]
+                                  .filter(([, entry]) => entry.refCount === 0)
+                                  .sort((a, b) => a[1].expiresAt - b[1].expiresAt)
+                                  .slice(0, limit)
+                            : [];
+                    for (const [key] of idleEntries) yield* RcMap.invalidate(leases, key);
+                    return idleEntries.length;
+                })
+            ),
         state: (key: string) => {
             const entry =
                 leases.state._tag === "Open"

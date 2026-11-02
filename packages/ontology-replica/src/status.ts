@@ -30,7 +30,40 @@ const DemandFailure = Schema.Struct({
     message: Schema.String,
     retryable: Schema.Boolean,
 });
+const CapacityEstimate = Schema.Struct({
+    scope: Schema.Literals(["origin", "filesystem", "process", "isolate", "database"]),
+    usedBytes: Schema.optional(Schema.Number),
+    limitBytes: Schema.optional(Schema.Number),
+    availableBytes: Schema.optional(Schema.Number),
+});
 export const ReplicaStatusSchema = Schema.Struct({
+    capacity: Schema.optional(
+        Schema.Struct({
+            memory: Schema.optional(CapacityEstimate),
+            storage: Schema.optional(CapacityEstimate),
+            memoryError: Schema.optional(Schema.String),
+            storageError: Schema.optional(Schema.String),
+        })
+    ),
+    cache: Schema.optional(
+        Schema.Struct({
+            attachments: Schema.optional(
+                Schema.Struct({
+                    bytes: Schema.Number,
+                    maxBytes: Schema.optional(Schema.Number),
+                    targetBytes: Schema.optional(Schema.Number),
+                })
+            ),
+            objects: Schema.Struct({
+                byObjectType: Schema.optional(
+                    Schema.Array(Schema.Struct({ objectType: Schema.String, bytes: Schema.Number }))
+                ),
+                bytes: Schema.Number,
+                maxBytes: Schema.optional(Schema.Number),
+                targetBytes: Schema.optional(Schema.Number),
+            }),
+        })
+    ),
     pin: Schema.optional(
         Schema.Struct({
             ready: Schema.Boolean,

@@ -34,6 +34,7 @@ import {
     Clock as ClockIcon,
     SquareCode as CodeBracketSquareIcon,
     Hash as HashtagIcon,
+    HardDrive as HardDriveIcon,
     Link as LinkIcon,
     List as ListBulletIcon,
     Map as MapIcon,
@@ -66,6 +67,7 @@ import { typeDisplayName } from "./typeDisplayName.js";
 export { layoutSchema } from "./schemaLayout.js";
 export { typeDisplayName } from "./typeDisplayName.js";
 import { Queries } from "./Queries.js";
+import { Storage } from "./Storage.js";
 import { Tracing } from "./Tracing.js";
 export { OntologyIcon } from "./OntologyIcons.js";
 import type {
@@ -480,7 +482,7 @@ function OutboxRows({ outbox, theme }: { outbox: OntologyOutbox; theme: "light" 
     );
 }
 
-type OntologyDevtoolsView = "objects" | "schema" | "outbox" | "meta" | "tracing" | "queries";
+type OntologyDevtoolsView = "objects" | "schema" | "outbox" | "meta" | "tracing" | "queries" | "storage";
 type OutboxActivity = "idle" | "draining" | "paused";
 
 export function getOutboxActivity(entries: OntologyOutboxEntry[]): OutboxActivity {
@@ -526,6 +528,7 @@ const ontologyViews: Array<{
     { id: "queries", label: "Queries", icon: SearchIcon },
     { id: "tracing", label: "Tracing", icon: GanttIcon },
     { id: "schema", label: "Schema", icon: WaypointsIcon },
+    { id: "storage", label: "Storage", icon: HardDriveIcon },
 ];
 
 function formatObjectValue(value: unknown): string {
@@ -1453,6 +1456,9 @@ function OntologyDevtoolsContent<
                 </Tabs.Panel>
                 <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="queries">
                     <Queries ontology={ontology} />
+                </Tabs.Panel>
+                <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="storage">
+                    <Storage ontology={ontology} />
                 </Tabs.Panel>
                 {metaOntology ? (
                     <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="meta">

@@ -85,13 +85,25 @@ export interface ClientSubmission {
  */
 export interface OntologySource {
     readonly sourceId: string;
+    readonly outbox?: {
+        readonly remove: (
+            id: string,
+            options?: { readonly allowUnknownOutcome?: boolean }
+        ) => Effect.Effect<void, BackendError>;
+        readonly retry: (
+            id: string,
+            options?: { readonly allowUnknownOutcome?: boolean }
+        ) => Effect.Effect<void, BackendError>;
+        readonly edit: (id: string, request: ActionRequest) => Effect.Effect<void, BackendError>;
+    };
     readonly supportsIdempotency: boolean;
     readonly openClient: (resume?: ClientToken) => Effect.Effect<ClientLease, BackendError>;
     readonly read: (session: ClientSession, view?: ClientView) => Effect.Effect<ClientState, BackendError>;
     readonly subscribe?: (
         session: ClientSession,
         view: ClientView,
-        policy?: import("./delivery.js").DeliveryPolicy
+        policy?: import("./delivery.js").DeliveryPolicy,
+        resume?: import("./delivery.js").DeliveryPosition
     ) => Effect.Effect<import("./delivery.js").DeliverySubscription, BackendError, Scope.Scope>;
     readonly acknowledgeDelivery?: (
         position: import("./delivery.js").DeliveryPosition

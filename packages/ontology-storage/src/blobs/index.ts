@@ -1,7 +1,9 @@
+import * as q from "@party-stack/ontology-spec/query";
 import { Clock, Context, Effect, Exit, Layer, Schema, Stream } from "effect";
 import { Table, eq, ne, field, lte, and, type Cursor } from "../model.js";
 import { cursorOf } from "../query/evaluate.js";
 import { Tables, type TablesService, type ReadTransaction, type Transaction } from "../tables.js";
+import { tableUsage } from "../usage.js";
 import { byteSource, byteChunks, collectByteBlob, type ByteInput, type ByteSource } from "./bytes.js";
 import {
     BlobBytes,
@@ -36,6 +38,7 @@ export interface BlobRetentionTransaction {
     readonly release: (owner: string) => Effect.Effect<void, Failure>;
 }
 export interface BlobStorageService {
+    readonly usage: Effect.Effect<number, Failure>;
     readonly in: (tx: Transaction) => BlobRetentionTransaction;
     readonly metadata: (id: string) => Effect.Effect<BlobRecord | undefined, Failure>;
     readonly records: (
@@ -50,6 +53,8 @@ export interface BlobStorageService {
     readonly updateMetadata: (id: string, value: BlobMetadata) => Effect.Effect<BlobRecord, Failure>;
     readonly bindRemoteId: (id: string, remoteId?: string) => Effect.Effect<void, Failure>;
     readonly collectGarbage: (options: {
+        readonly maxBytes?: number;
+        readonly targetBytes?: number;
         readonly olderThanMs: number;
         /** Unreferenced identities and sole local copies expire after this grace period. */
         readonly orphanGraceMs?: number;
@@ -91,7 +96,7 @@ export interface BlobStorageOptions {
 export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
     options: BlobStorageOptions
 ): Effect.fn.Return<BlobStorageService, Failure, Scope.Scope> {
-    const { tables, bytes } = options;
+    const { bytes, tables } = options;
     const owner = crypto.randomUUID();
     if (Boolean(options.registerOwner) !== Boolean(options.isOwnerAlive))
         return yield* blobFailure(
@@ -105,6 +110,13 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
         codec: {
             encode: Schema.encodeSync(BlobRecordSchema),
             decode: Schema.decodeUnknownSync(BlobRecordSchema),
+        },
+    });
+    const usage = tableUsage({
+        tables: () => [records] as Table<unknown>[],
+        size: (_table, value) => {
+            const record = value as BlobRecord;
+            return record.byteKey ? (record.size ?? 0) : 0;
         },
     });
     const roots = Table.make<{
@@ -190,7 +202,7 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
         yield* tx.put(records, record.id, {
             ...record,
             byteKey: record.byteKey ?? other?.byteKey,
-            size: record.size ?? other?.size,
+            size: record.byteKey ? record.size : other?.byteKey ? other.size : (record.size ?? other?.size),
             type: record.type ?? other?.type,
             name: record.name ?? other?.name,
             dimensions: record.dimensions ?? other?.dimensions,
@@ -397,9 +409,10 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
             }
         yield* drain();
     }).pipe(Effect.withSpan("BlobStorage.recover"));
-    let gcCursor: Cursor | undefined;
+    const gcBudget = Table.make<{ reclaiming: boolean }>({ name: name("cache-budget") });
     let orphanCursor: Cursor | undefined;
     const service: BlobStorageService = {
+        usage: tables.read(usage.total),
         in: retention,
         metadata: (id) => tables.read((tx) => find(tx, id)),
         records: (query) => tables.query(records, query),
@@ -474,9 +487,13 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
             return yield* tables.transaction((tx) =>
                 Effect.gen(function* () {
                     const now = yield* Clock.currentTimeMillis;
+                    const previous = yield* find(tx, id);
                     const record = {
-                        ...((yield* find(tx, id)) ?? empty(id, now)),
+                        ...(previous ?? empty(id, now)),
                         ...metadata,
+                        // The cached body's measured length is authoritative for its
+                        // immutable generation, regardless of provider metadata hints.
+                        size: previous?.byteKey ? previous.size : (metadata.size ?? previous?.size),
                         updatedAt: now,
                     };
                     yield* tx.put(records, record.id, record);
@@ -487,14 +504,24 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
         bindRemoteId: (id, remoteId) => tables.transaction((tx) => bindRemoteId(tx, id, remoteId)),
         collectGarbage: Effect.fn("BlobStorage.collectGarbage")(function* ({
             olderThanMs,
+            maxBytes,
+            targetBytes = maxBytes === undefined ? undefined : Math.floor(maxBytes * 0.8),
             limit = 100,
             orphanGraceMs = 60 * 60_000,
         }: {
             olderThanMs: number;
+            maxBytes?: number;
+            targetBytes?: number;
             orphanGraceMs?: number;
             limit?: number;
         }) {
             if (
+                (maxBytes !== undefined && (!Number.isFinite(maxBytes) || maxBytes < 0)) ||
+                (targetBytes !== undefined &&
+                    (!Number.isFinite(targetBytes) ||
+                        targetBytes < 0 ||
+                        maxBytes === undefined ||
+                        targetBytes > maxBytes)) ||
                 !Number.isFinite(olderThanMs) ||
                 olderThanMs < 0 ||
                 !Number.isFinite(orphanGraceMs) ||
@@ -504,7 +531,11 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
             )
                 return yield* blobFailure("InvalidValue", "Invalid blob GC policy.");
             const now = yield* Clock.currentTimeMillis;
-            const cutoff = now - olderThanMs;
+            const pressure =
+                maxBytes !== undefined &&
+                ((yield* tables.read(usage.total)) > maxBytes ||
+                    Boolean((yield* tables.get(gcBudget, "head"))?.reclaiming));
+            const cutoff = pressure ? now : now - olderThanMs;
             const count = yield* tables.transaction((tx) =>
                 Effect.gen(function* () {
                     let count = 0;
@@ -531,26 +562,55 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                         count++;
                     }
                     if (options.mode === "authoritative") return count;
-                    const candidates = yield* tx.query(records, {
-                        where: and(
-                            lte(field("lastAccessedAt"), cutoff),
-                            eq(field("writing"), undefined),
-                            ne(field("byteKey"), undefined),
-                            ne(field("remoteId"), undefined),
-                            ne(field("state"), "staged"),
-                            ne(field("bytesRetained"), true)
-                        ),
-                        orderBy: [{ field: field("lastAccessedAt") }],
-                        after: gcCursor,
-                        limit,
-                    });
-                    const last = candidates.at(-1);
-                    gcCursor =
-                        candidates.length === limit && last
-                            ? cursorOf(last, { orderBy: [{ field: field("lastAccessedAt") }] })
-                            : undefined;
-                    for (const { value: record } of candidates) {
+                    const candidates = yield* tx.query(
+                        {
+                            select: [
+                                q.sub("candidates", {
+                                    from: { source: { objectType: "Blob" }, binding: "blob" },
+                                    where: q.and(
+                                        q.lte(q.field("blob", "lastAccessedAt"), q.literal(cutoff)),
+                                        q.eq(q.field("blob", "writing"), q.literal(undefined)),
+                                        q.ne(q.field("blob", "byteKey"), q.literal(undefined)),
+                                        q.ne(q.field("blob", "remoteId"), q.literal(undefined)),
+                                        q.ne(q.field("blob", "state"), q.literal("staged")),
+                                        q.ne(q.field("blob", "bytesRetained"), q.literal(true))
+                                    ),
+                                    // Chromium Simple Cache's age × (size + entry overhead),
+                                    // normalized to seconds/MiB. Larger, older copies go first.
+                                    orderBy: [
+                                        {
+                                            expression: q.multiply(
+                                                q.divide(
+                                                    q.subtract(
+                                                        q.literal(now),
+                                                        q.field("blob", "lastAccessedAt")
+                                                    ),
+                                                    q.literal(1000)
+                                                ),
+                                                q.divide(
+                                                    q.add(
+                                                        q.coalesce(q.field("blob", "size"), q.literal(0)),
+                                                        q.literal(512)
+                                                    ),
+                                                    q.literal(1024 * 1024)
+                                                )
+                                            ),
+                                            direction: "desc",
+                                        },
+                                    ],
+                                    page: { limit },
+                                    select: [q.selectField("id", q.field("blob", "id"))],
+                                }),
+                            ],
+                        },
+                        { sources: { Blob: records } }
+                    );
+                    let remaining = pressure ? yield* usage.total(tx) : 0;
+                    for (const { id } of candidates.candidates as readonly { id: string }[]) {
+                        if (pressure && remaining <= targetBytes!) break;
+                        const record = yield* tx.get(records, id);
                         if (
+                            !record ||
                             !record.byteKey ||
                             record.state === "staged" ||
                             !record.remoteId ||
@@ -563,8 +623,12 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                         yield* tx.put(deletions, record.byteKey, { byteKey: record.byteKey });
                         // Detach before IO. New readers see a miss and can cache a new immutable generation.
                         yield* tx.put(records, record.id, { ...record, byteKey: undefined });
+                        remaining -= record.size ?? 0;
                         count++;
                     }
+                    yield* tx.put(gcBudget, "head", {
+                        reclaiming: pressure && remaining > targetBytes!,
+                    });
                     return count;
                 })
             );

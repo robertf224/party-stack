@@ -56,7 +56,9 @@ export function makeRpcBackend(
         },
         encrypted: {
             decrypt: (value) =>
-                operations.decrypt(value).pipe(Effect.map((plaintext) => ({ value: plaintext }))),
+                client
+                    .Decrypt({ value })
+                    .pipe(Effect.mapError((cause) => classifyBackendFailure("remote.decrypt", cause))),
         },
         name: "protocol",
         sourceId: description.sourceId,
@@ -92,10 +94,10 @@ export function makeRpcBackend(
                   )
             : undefined,
         subscribeSelection: description.delivery
-            ? (selection) =>
+            ? (selection, _policy, resume) =>
                   Effect.succeed({
                       frames: client
-                          .SubscribeSelection(selection)
+                          .SubscribeSelection({ selection, resume })
                           .pipe(Stream.mapError((cause) => classifyBackendFailure("remote.delivery", cause))),
                       acknowledge: (position) =>
                           client

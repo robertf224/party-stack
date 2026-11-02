@@ -430,24 +430,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
         const pushedPage = candidate.exact && directOrder && !options.canReadProperty;
         if (pushedPage) Object.assign(scan, q.page);
         const prefetched = batched.get(q)?.get(parent);
-        const rows = prefetched ?? (yield* fetch(q.from.source, scan))!;
         const accepted: { row: Row<Record<string, unknown>>; scope: Scope; order: unknown[] }[] = [];
-        for (const row of rows) {
-            const scope = new Map([...parent, [q.from.binding, row.value]]);
-            if (q.where) {
-                const test = yield* evaluate(q.where, scope);
-                if (!test.certain)
-                    return yield* fail("A query filter depends on unavailable data.", "Forbidden");
-                if (!(yield* attempt(() => booleanValue(test.value)))) continue;
-            }
-            const order: unknown[] = [];
-            for (const o of q.orderBy ?? []) {
-                const value = yield* evaluate(o.expression, scope);
-                if (!value.certain) return yield* fail("Ordering depends on unavailable data.", "Forbidden");
-                order.push(value.value);
-            }
-            accepted.push({ row, scope, order });
-        }
         const compare = (left: unknown[], leftKey: unknown, right: unknown[], rightKey: unknown): number => {
             for (const [i, order] of (q.orderBy ?? []).entries()) {
                 const x = left[i],
@@ -461,6 +444,60 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             }
             return compareScalar(leftKey, rightKey);
         };
+        // Raw table sources support exact keyset paging. A computed Top K can
+        // scan bounded pages without retaining every matching metadata row.
+        const paged =
+            options.strategy !== "reference" &&
+            !prefetched &&
+            !directOrder &&
+            q.page?.limit !== undefined &&
+            source(q.from.source).untypedSources?.has(q.from.source.objectType);
+        const keep = (q.page?.offset ?? 0) + (q.page?.limit ?? 0);
+        const accept = Effect.fnUntraced(function* (row: Row<Record<string, unknown>>) {
+            const scope = new Map([...parent, [q.from.binding, row.value]]);
+            if (q.where) {
+                const test = yield* evaluate(q.where, scope);
+                if (!test.certain)
+                    return yield* fail("A query filter depends on unavailable data.", "Forbidden");
+                if (!(yield* attempt(() => booleanValue(test.value)))) return;
+            }
+            const order: unknown[] = [];
+            for (const o of q.orderBy ?? []) {
+                const value = yield* evaluate(o.expression, scope);
+                if (!value.certain) return yield* fail("Ordering depends on unavailable data.", "Forbidden");
+                order.push(value.value);
+            }
+            if (paged && q.page?.after && compare(order, row.key, q.page.after.values, q.page.after.key) <= 0)
+                return;
+            const entry = { row, scope, order };
+            if (!paged) {
+                accepted.push(entry);
+                return;
+            }
+            let low = 0,
+                high = accepted.length;
+            while (low < high) {
+                const mid = (low + high) >>> 1;
+                const other = accepted[mid]!;
+                if (compare(other.order, other.row.key, order, row.key) <= 0) low = mid + 1;
+                else high = mid;
+            }
+            if (low < keep) accepted.splice(low, 0, entry);
+            if (accepted.length > keep) accepted.pop();
+        });
+        if (paged) {
+            if (!keep) return accepted;
+            let after: Scan["after"];
+            for (;;) {
+                const rows = yield* fetch(q.from.source, { ...scan, limit: 256, after });
+                for (const row of rows) yield* accept(row);
+                if (rows.length < 256) break;
+                after = { values: [], key: rows.at(-1)!.key };
+            }
+        } else {
+            const rows = prefetched ?? (yield* fetch(q.from.source, scan))!;
+            for (const row of rows) yield* accept(row);
+        }
         yield* attempt(() => accepted.sort((a, b) => compare(a.order, a.row.key, b.order, b.row.key)));
         if (pushedPage || prefetched) return accepted;
         const after = q.page?.after;

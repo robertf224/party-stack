@@ -23,6 +23,7 @@
         "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-server": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
         "@party-stack/sql-ontology-storage": "workspace:*",
         "effect": "^4.0.5"
     },

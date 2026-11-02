@@ -16,7 +16,16 @@ import type { Scope } from "effect";
 
 export interface ReplicaHostOptions extends Omit<
     ReplicaOptions,
-    "namespace" | "tables" | "blobs" | "network" | "backend" | "source" | "attachments"
+    | "namespace"
+    | "tables"
+    | "blobs"
+    | "network"
+    | "capacity"
+    | "backend"
+    | "source"
+    | "attachments"
+    | "encrypted"
+    | "encryptionKeyring"
 > {
     readonly id?: string;
     readonly backend: OntologyBackendService;
@@ -53,7 +62,13 @@ export const makeReplicaHost = Effect.fn("ReplicaHost.open")(function* (
               backend.attachments!.stage!(value, bytes, { target })
         : undefined;
     const blobManager = yield* makeBlobManager({
-        gcTime: 5 * 60_000,
+        gcTime:
+            options.cache?.attachments === false
+                ? Infinity
+                : (options.cache?.attachments?.minUnusedAgeMs ?? 5 * 60_000),
+        budget: options.cache?.attachments === false ? undefined : options.cache?.attachments,
+        sweepIntervalMs:
+            options.cache?.attachments === false ? undefined : options.cache?.attachments?.sweepIntervalMs,
         remote: {
             read: (id, settings) =>
                 backend.attachments?.read({
@@ -108,6 +123,9 @@ export const makeReplicaHost = Effect.fn("ReplicaHost.open")(function* (
         blobs: blobManager.storage,
         attachments: backend.attachments,
         network: runtime.connectivity,
+        capacity: runtime.capacity,
+        encrypted: backend.encrypted,
+        encryptionKeyring: runtime.encryptionKeyring,
         clientSessions: options.clientSessions ?? { sessionIdleTimeoutMs: 10 * 60_000 },
         ...(options.source
             ? {

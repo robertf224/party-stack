@@ -11,7 +11,7 @@ import {
     type ByteSource,
 } from "@party-stack/ontology-storage/blobs";
 import { Runtime } from "@party-stack/runtime";
-import { Effect, Exit, Fiber, RcMap, Scope, Semaphore, Stream } from "effect";
+import { Effect, Exit, Fiber, RcMap, Scope, Semaphore, Stream, Queue } from "effect";
 import { measureBlobDimensions } from "./dimensions.js";
 import type { BlobReadOptions, BlobMetadataOptions, PartialBlobMetadata } from "./types.js";
 
@@ -28,6 +28,8 @@ export interface BlobManagerService {
 }
 export interface BlobManagerOptions {
     readonly gcTime?: number;
+    readonly budget?: { readonly maxBytes?: number; readonly targetBytes?: number };
+    readonly sweepIntervalMs?: number;
     readonly remote: {
         readonly read: (id: string, options?: BlobReadOptions) => Effect.Effect<ByteInput, BackendError>;
         readonly metadata?: (
@@ -83,7 +85,9 @@ export const makeBlobManager = Effect.fn("BlobManager.make")(function* (
                     closed = true;
                 })
             );
-            const storage = yield* boundary(
+            const cachePressure = yield* Queue.sliding<void>(1);
+            yield* Effect.addFinalizer(() => Queue.shutdown(cachePressure));
+            const nativeStorage = yield* boundary(
                 makeBlobStorage({
                     namespace: JSON.stringify([runtime.owner, runtime.namespace]),
                     tables: runtime.tables,
@@ -91,6 +95,15 @@ export const makeBlobManager = Effect.fn("BlobManager.make")(function* (
                     ...exclusiveOwnerLiveness(runtime.tables),
                 })
             );
+            const wakePressure =
+                options.budget?.maxBytes === undefined
+                    ? Effect.void
+                    : Queue.offer(cachePressure, undefined).pipe(Effect.asVoid);
+            const storage: BlobStorageService = {
+                ...nativeStorage,
+                stage: (id, input) => nativeStorage.stage(id, input).pipe(Effect.tap(() => wakePressure)),
+                cache: (id, input) => nativeStorage.cache(id, input).pipe(Effect.tap(() => wakePressure)),
+            };
             const owned = <A>(work: Effect.Effect<A, BackendError>) =>
                 Effect.suspend(() =>
                     closed
@@ -106,9 +119,14 @@ export const makeBlobManager = Effect.fn("BlobManager.make")(function* (
                 );
             const reads = yield* RcMap.make({ lookup: () => Semaphore.make(1) });
             const collect =
-                gcTime === Infinity
+                gcTime === Infinity && options.budget?.maxBytes === undefined
                     ? Effect.void
-                    : boundary(storage.collectGarbage({ olderThanMs: gcTime })).pipe(Effect.asVoid);
+                    : boundary(
+                          storage.collectGarbage({
+                              olderThanMs: gcTime === Infinity ? Number.MAX_SAFE_INTEGER : gcTime,
+                              ...options.budget,
+                          })
+                      ).pipe(Effect.asVoid);
             const maintain = boundary(storage.recover).pipe(
                 Effect.andThen(collect),
                 Effect.catch((error) => Effect.logWarning("Blob maintenance failed", { kind: error.kind }))
@@ -116,8 +134,16 @@ export const makeBlobManager = Effect.fn("BlobManager.make")(function* (
             yield* Effect.forkScoped(
                 Effect.gen(function* () {
                     yield* maintain;
-                    if (gcTime === Infinity) return;
-                    yield* Effect.forever(Effect.sleep(Math.max(10, gcTime)).pipe(Effect.andThen(maintain)));
+                    if (gcTime === Infinity && options.budget?.maxBytes === undefined) return;
+                    yield* Effect.forever(
+                        Effect.raceFirst(
+                            Queue.take(cachePressure),
+                            Effect.sleep(
+                                options.sweepIntervalMs ??
+                                    (Number.isFinite(gcTime) ? Math.max(10, gcTime) : 60_000)
+                            )
+                        ).pipe(Effect.andThen(maintain))
+                    );
                 })
             );
             const ownedStream = (stream: Stream.Stream<Uint8Array, unknown>) =>

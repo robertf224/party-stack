@@ -1,12 +1,10 @@
-import { BackendError, encryptedPropertyCodec } from "@party-stack/ontology-backend";
+import { BackendError } from "@party-stack/ontology-backend";
 import { makeReplicaMonitor } from "@party-stack/ontology-replica";
-import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { Runtime } from "@party-stack/runtime";
 import { DbClient } from "@tanstack/db";
 import { Effect, Scope, Fiber, Stream } from "effect";
 import { createLiveOntologyAction } from "../live/actions/createLiveOntologyAction.js";
 import { makeReplicatedCollection, persistedCollectionOptions, scopedCollection } from "../tanstack/index.js";
-import { makeLiveDecryption } from "./encrypted.js";
 import type { LiveOntologyAttachments } from "../live/attachments/createLiveOntologyAttachments.js";
 import type { LiveOntology, LiveOntologyWrites } from "../live/LiveOntology.js";
 import type { OntologyApplyActionResult } from "../live/OntologyBackendAdapter.js";
@@ -19,7 +17,6 @@ import type {
 } from "@party-stack/ontology-backend";
 import type { PendingAction, ReplicaService } from "@party-stack/ontology-replica";
 import type { OntologyIR, OntologyObject } from "@party-stack/ontology-spec";
-import type { Encrypted } from "@party-stack/ontology-spec/values";
 import type { TraceStore } from "@party-stack/runtime/tracing";
 import type { Collection } from "@tanstack/db";
 const toEntry = (entry: PendingAction, forwarding = false): OntologyOutboxEntry => ({
@@ -64,19 +61,11 @@ export interface ReplicaViewOptions {
     readonly attachments: LiveOntologyAttachments;
     readonly queryFunction: OntologyBackendService["queryFunction"];
     readonly resolveActionParameters?: OntologyBackendService["resolveActionParameters"];
-    readonly encrypted?: OntologyBackendService["encrypted"];
-    readonly sourceId?: string;
-    /** A memory tab forwards cache policy to its persistent owner. */
-    readonly decrypt?: (
-        value: Encrypted,
-        options?: { cache?: boolean }
-    ) => Effect.Effect<unknown, BackendError>;
     readonly traces?: TraceStore;
     readonly parentDiagnostics?: LiveOntology["diagnostics"];
     readonly diagnosticLabel?: string;
     /** Memory children resolve enqueue only after their durable owner accepts the action. */
     readonly awaitParentAcceptance?: boolean;
-    readonly parentOutbox?: Pick<ReplicaService["outbox"], "remove" | "retry" | "edit" | "reconcile">;
     readonly validate?: (
         name: string,
         parameters: Record<string, unknown>,
@@ -102,18 +91,6 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
     const outboxEntries = Effect.map(visiblePending, (entries) =>
         entries.map((entry) => toEntry(entry, entry.forwarding))
     );
-    const control = (id: string) =>
-        Effect.map(replica.outbox.entries, (pending) =>
-            pending.some((entry) => entry.invocation.id === id && entry.forwarding)
-                ? replica.outbox
-                : (options.parentOutbox ?? replica.outbox)
-        );
-    const command = (
-        id: string,
-        work: (
-            target: Pick<ReplicaService["outbox"], "remove" | "retry" | "edit" | "reconcile">
-        ) => Effect.Effect<void, BackendError>
-    ) => control(id).pipe(Effect.flatMap(work));
     const dbClient = yield* Effect.acquireRelease(
         Effect.sync(() => new DbClient()),
         (client) => Effect.promise(() => client.cleanup())
@@ -173,14 +150,6 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
             ),
             { signal }
         );
-    const decryption = yield* makeLiveDecryption({
-        ir,
-        replica,
-        backend: {
-            sourceId: options.sourceId ?? replica.sourceId,
-            encrypted: options.encrypted,
-        },
-    });
     const wait = (id: string, until: "accepted" | "confirmed" = "confirmed") =>
         replica.outbox
             .wait(id, { until })
@@ -219,7 +188,6 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
     };
     const outbox: OntologyOutbox = {
         collection: pendingCollection,
-        ready: Promise.resolve(),
         enqueue: async <A>(
             request: Omit<OntologyActionRequest, "idempotencyKey"> & { idempotencyKey?: string },
             settings?: { visibility?: "confirmed" | "optimistic" }
@@ -227,24 +195,8 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
             const result = await enqueue(request, settings?.visibility);
             return { ...result, completed: result.completed as Promise<A> };
         },
-        remove: (id, settings) =>
-            run(
-                control(id).pipe(
-                    Effect.flatMap((target) =>
-                        target
-                            .remove(id, settings)
-                            .pipe(
-                                Effect.andThen(
-                                    target === replica.outbox
-                                        ? Effect.void
-                                        : replicaController(replica).acknowledgeParentRemoval(id)
-                                )
-                            )
-                    )
-                )
-            ),
-        reconcile: (id, receipt) => run(command(id, (target) => target.reconcile(id, receipt))),
-        retry: (id, settings) => run(command(id, (target) => target.retry(id, settings))),
+        remove: (id, settings) => run(replica.outbox.remove(id, settings)),
+        retry: (id, settings) => run(replica.outbox.retry(id, settings)),
         wait: <A>(id: string, settings?: { until?: "accepted" | "confirmed"; signal?: AbortSignal }) =>
             run(wait(id, settings?.until), settings?.signal) as Promise<A | void>,
         edit: async (id, update) => {
@@ -253,9 +205,8 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
             const request = structuredClone(toEntry(entry).request);
             update(request);
             const invocation = { id, name: request.actionTypeName, parameters: request.parameters };
-            await run(command(id, (target) => target.edit(id, invocation)));
+            await run(replica.outbox.edit(id, invocation));
         },
-        cleanup: () => Promise.resolve(),
     };
     const actions = Object.fromEntries(
         ir.actionTypes.map((action) => [
@@ -301,6 +252,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         ])
     );
     return {
+        ready: Promise.resolve(),
         dbClient,
         ir,
         context,
@@ -310,30 +262,13 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         outbox,
         attachments: options.attachments,
         decrypt: async (value, settings) =>
-            (await run(
-                options.decrypt
-                    ? Effect.flatMap(options.decrypt(value, settings), (wire) =>
-                          Effect.try({
-                              try: () => encryptedPropertyCodec(ir, value).decode(wire),
-                              catch: () =>
-                                  new BackendError({
-                                      operation: "ontology.decrypt",
-                                      kind: "InvalidResponse",
-                                      message: "Invalid decrypted value.",
-                                      retryable: false,
-                                  }),
-                          })
-                      )
-                    : decryption.decrypt(value, settings),
-                settings?.signal
-            )) as never,
+            (await run(replica.decrypt(value, settings), settings?.signal)).value as never,
         queryFunctions: Object.fromEntries(
             ir.queryFunctionTypes.map((query) => [
                 query.name,
                 (parameters: Record<string, unknown>) => run(options.queryFunction(query.name, parameters)),
             ])
         ),
-        ready: Promise.resolve(),
         traces: options.traces,
         diagnostics: {
             label: options.diagnosticLabel,

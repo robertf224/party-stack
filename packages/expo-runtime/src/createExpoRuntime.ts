@@ -5,6 +5,7 @@ import * as SqlTables from "@party-stack/sql-ontology-storage/tables";
 import { Effect, Layer, Schema } from "effect";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as SqlClient from "effect/sql/SqlClient";
+import { Paths } from "expo-file-system";
 import { deleteDatabaseAsync, openDatabaseAsync } from "expo-sqlite";
 import { createExpoBrowserAuthentication } from "./createExpoBrowserAuthentication.js";
 import { nativeKeyCodec } from "./encryptionKeys.js";
@@ -61,6 +62,17 @@ export const make = Effect.fn("ExpoRuntime.make")(function* () {
     const encryptionKeyring = yield* makeKeyMaterialStoreKeyring(secrets, nativeKeyCodec);
     return yield* Runtime.make({
         blobBytes,
+        capacity: {
+            memory: Effect.succeed(undefined),
+            storage: Effect.try({
+                try: () => ({
+                    scope: "filesystem" as const,
+                    limitBytes: Paths.totalDiskSpace,
+                    availableBytes: Paths.availableDiskSpace,
+                }),
+                catch: (cause) => new RuntimeError({ operation: "capacity.storage", cause }),
+            }),
+        },
         browserAuthentication: createExpoBrowserAuthentication(),
         encryptionKeyring,
         connectivity,

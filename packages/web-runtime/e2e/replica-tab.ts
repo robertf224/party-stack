@@ -1,6 +1,5 @@
 import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
 import { makeReplica } from "@party-stack/ontology-replica";
-import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { connectOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
 import { makeReplicatedCollection } from "@party-stack/ontology/tanstack";
 import { Runtime, RuntimePartition } from "@party-stack/runtime";
@@ -64,6 +63,6 @@ Reflect.set(window, "replicaTest", {
         ).map(({ id, count }) => ({ id, count })),
     enqueue: (id: string) =>
         app.runPromise(tab.replica.outbox.enqueue({ id, name: "increment", parameters: {} })),
-    receipt: (id: string) => app.runPromise(replicaController(tab.replica).receipt(id)),
+    receipt: (id: string) => app.runPromise(tab.replica.outbox.get(id)).then((status) => status.receipt),
     cleanup: () => app.dispose(),
 });

@@ -135,7 +135,7 @@ export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> 
     /** Opt-in devtools trace history or a live-only diagnostic feed. */
     traceRecording?: TraceRecordingMode;
     demand?: DemandPolicy;
-    objectCacheGc?: ReplicaOptions["objectCacheGc"];
+    cache?: ReplicaOptions["cache"];
     writes?: LiveOntologyWrites;
     context?: Context;
     connection?: ConnectionMonitor;
@@ -187,7 +187,7 @@ export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
                     writes: opts.writes,
                     live: opts.live,
                     demand: opts.demand,
-                    objectCacheGc: opts.objectCacheGc,
+                    cache: opts.cache,
                     connection: opts.connection,
                 }).pipe(Effect.provideService(Runtime, runtime));
                 let closing: Promise<void> | undefined;

@@ -1,6 +1,8 @@
 import { sqliteOntologyConformanceCases } from "@party-stack/ontology/testing/sqlite";
+import { cloudflareCapacity } from "@party-stack/runtime";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import type { DurableObjectOntologyTest } from "./worker.js";
 
@@ -40,6 +42,19 @@ describe("Durable Object ontology", () => {
         });
     }
 
+    it("reports real DO SQLite usage and a shared isolate limit without claiming free heap", async () => {
+        await runInDurableObject(createStub(), async (_instance, state) => {
+            const capacity = cloudflareCapacity({
+                sql: state.storage.sql,
+                storageLimitBytes: 1024 * 1024 * 1024,
+            });
+            const memory = await Effect.runPromise(capacity.memory);
+            const storage = await Effect.runPromise(capacity.storage);
+            expect(memory).toEqual({ scope: "isolate", limitBytes: 128 * 1024 * 1024 });
+            expect(storage?.usedBytes).toBe(state.storage.sql.databaseSize);
+            expect(storage?.availableBytes).toBe(1024 * 1024 * 1024 - state.storage.sql.databaseSize);
+        });
+    });
     it("initializes SQLite under blockConcurrencyWhile", async () => {
         const rows = await runInDurableObject(createStub(), (_instance, state) =>
             state.storage.sql

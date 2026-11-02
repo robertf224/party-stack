@@ -84,7 +84,7 @@ export const runProxyScenario = Effect.fnUntraced(function* (
                       namespace: "cache",
                       backend,
                       live: false,
-                      objectCacheGc: false,
+                      cache: { objects: false },
                       demand: { idleRetentionMs: 60_000 },
                   })
                 : undefined;

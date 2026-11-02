@@ -31,3 +31,6 @@ export { Runtimes, type RuntimeLayer } from "./Runtimes.js";
 export * as MemoryRuntime from "./MemoryRuntime.js";
 
 export type { BlobBytesService } from "@party-stack/ontology-storage/blobs";
+
+export { cloudflareCapacity } from "./capacity.js";
+export type { ResourceCapacity, CapacityEstimate } from "./capacity.js";

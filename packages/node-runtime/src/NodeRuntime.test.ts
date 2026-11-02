@@ -34,7 +34,12 @@ test("Node layers acquire lazily and interruption closes SQLite without a runtim
                 const ready = yield* Deferred.make<void>();
                 const fiber = yield* Effect.forkChild(
                     Effect.gen(function* () {
-                        yield* Runtime;
+                        const runtime = yield* Runtime;
+                        const memory = yield* runtime.capacity!.memory;
+                        const storage = yield* runtime.capacity!.storage;
+                        expect(memory?.scope).toBe("process");
+                        expect(storage?.scope).toBe("filesystem");
+                        expect(storage?.availableBytes).toBeGreaterThanOrEqual(0);
                         yield* Deferred.succeed(ready, undefined);
                         yield* Effect.never;
                     }).pipe(Effect.provide(runtimeLayer))

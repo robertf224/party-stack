@@ -93,3 +93,17 @@ test("unavailable persistent storage requires an explicit isolated-memory choice
     );
     expect(p.remove).toHaveBeenCalledTimes(2);
 });
+
+test("memory runtimes do not report browser disk quota as cache capacity", async () => {
+    platform();
+    const estimate = vi.fn(async () => ({ usage: 12, quota: 100 }));
+    vi.stubGlobal("navigator", { onLine: true, storage: { estimate } });
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            const runtime = yield* Runtime;
+            expect(yield* runtime.capacity!.memory).toBeUndefined();
+            expect(yield* runtime.capacity!.storage).toBeUndefined();
+        }).pipe(Effect.provide(layer({ owner: "test", namespace: "capacity", storage: "memory" })))
+    );
+    expect(estimate).not.toHaveBeenCalled();
+});

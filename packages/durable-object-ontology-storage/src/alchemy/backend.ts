@@ -15,6 +15,8 @@ export interface AlchemyOntologyOptions {
     readonly ir: OntologyIR;
     readonly bucket: ReadWriteBucketClient;
     readonly ontologyId: string;
+    /** SQLite quota for this deployment; omitted quotas remain unknown. */
+    readonly storageLimitBytes?: number;
     /** Authority-owned key service; can use Workers secrets or an external key-management service. */
     readonly encryptionKeyring?: import("@party-stack/ontology-storage/encrypted").EncryptionKeyringService;
     readonly context?: Record<string, unknown>;
@@ -42,10 +44,11 @@ export const makeAlchemyOntology = Effect.fn("AlchemyOntology.make")(function* (
         installationId: state.id.toString(),
         ontologyId: options.ontologyId,
     });
-    const { tables, blobs } = yield* boundary(
+    const { tables, blobs, capacity } = yield* boundary(
         makeDurableObjectOntologyStorage({
             storage: state.raw.storage,
             ontologyId: options.ontologyId,
+            storageLimitBytes: options.storageLimitBytes,
             bytes,
         })
     );
@@ -55,5 +58,5 @@ export const makeAlchemyOntology = Effect.fn("AlchemyOntology.make")(function* (
         tables,
         blobs,
     });
-    return { backend, blobs, collectGarbage: backend.collectGarbage() };
+    return { backend, blobs, capacity, collectGarbage: backend.collectGarbage() };
 });

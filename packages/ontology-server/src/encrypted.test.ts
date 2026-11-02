@@ -1,8 +1,10 @@
 import { o, type OntologyIR, type LiveOntology } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { makeReplica } from "@party-stack/ontology-replica";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { eq, field, literal, selectField, sub } from "@party-stack/ontology/query";
+import { makeMemoryEncryptionKeyring } from "@party-stack/runtime";
 import { Deferred, Effect, Fiber } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { Temporal } from "temporal-polyfill";
@@ -77,6 +79,25 @@ test("Effect HTTP RPC explicitly authorizes decrypt and preserves plaintext repr
                 expect(decrypt).not.toHaveBeenCalled();
                 allowed = true;
                 expect(yield* client.operations.decrypt(value)).toBe(plaintext);
+                const replica = yield* makeReplica({
+                    namespace: "decrypt-child",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend: client.backend,
+                    encryptionKeyring: yield* makeMemoryEncryptionKeyring(),
+                    live: false,
+                });
+                yield* Effect.scoped(
+                    replica.demand.acquire({ from: { source: { objectType: "Person" }, binding: "p" } })
+                );
+                const decrypted = yield* replica.decrypt(value, { cache: true });
+                expect(decrypted.ciphertext).toBe(value.ciphertext);
+                expect((decrypted.value as Temporal.Instant).toString()).toBe(plaintext);
+                const calls = decrypt.mock.calls.length;
+                allowed = false;
+                expect((yield* replica.decrypt(value, { cache: true })).ciphertext).toBe(value.ciphertext);
+                expect(decrypt).toHaveBeenCalledTimes(calls);
+
                 expect(yield* owned.storage.read((tx) => tx.get("Person", "1"))).toEqual({
                     id: "1",
                     secret: value,

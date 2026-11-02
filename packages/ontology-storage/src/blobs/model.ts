@@ -19,7 +19,9 @@ export class BlobBytes extends Context.Service<BlobBytes, BlobBytesService>()(
 ) {}
 
 export const BlobMetadataSchema = Schema.Struct({
-    size: Schema.optional(Schema.Number),
+    size: Schema.optional(
+        Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }))
+    ),
     type: Schema.optional(Schema.String),
     name: Schema.optional(Schema.NullOr(Schema.String)),
     dimensions: Schema.optional(

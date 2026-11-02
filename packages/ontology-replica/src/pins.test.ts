@@ -6,7 +6,7 @@ import { evaluateQuery } from "@party-stack/ontology-storage";
 import { makeBlobStorage, byteSource } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { makeNetworkConnectivity, MemoryBlobBytesStore } from "@party-stack/runtime";
+import { makeNetworkConnectivity, MemoryBlobBytesStore, RuntimeError } from "@party-stack/runtime";
 import { Effect, Exit, Scope, Stream, Deferred } from "effect";
 import { TestClock } from "effect/testing";
 import fc from "fast-check";
@@ -91,6 +91,42 @@ const fixture = Effect.fnUntraced(function* () {
             }),
     };
     return { tables, network: connectivity, data, loads, backend };
+});
+
+test("capacity estimates are live diagnostics and a failed sensor does not stop replica status", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                let availableBytes = 2048;
+                const replica = yield* makeReplica({
+                    namespace: "capacity",
+                    ir,
+                    tables: f.tables,
+                    backend: f.backend,
+                    capacity: {
+                        memory: Effect.fail(
+                            new RuntimeError({
+                                operation: "capacity.memory",
+                                cause: "private sensor details",
+                            })
+                        ),
+                        storage: Effect.sync(() => ({ scope: "filesystem", availableBytes })),
+                    },
+                });
+                const status = yield* replica.status.get;
+                expect(status.capacity).toEqual({
+                    memory: undefined,
+                    memoryError: "Memory estimate unavailable.",
+                    storage: { scope: "filesystem", availableBytes: 2048 },
+                    storageError: undefined,
+                });
+                expect(JSON.stringify(status)).not.toContain("private sensor details");
+                availableBytes = 1024;
+                expect((yield* replica.status.get).capacity?.storage?.availableBytes).toBe(1024);
+            })
+        )
+    );
 });
 
 test("query pins retain a complete graph across replacement, offline edits, restart and clear", async () => {
@@ -185,7 +221,7 @@ test("replacing a pin cancels its pending acquisition and cannot install the obs
                     ...f,
                     namespace: "pin-cancel",
                     ir,
-                    objectCacheGc: false,
+                    cache: { objects: false },
                     backend: {
                         ...f.backend,
                         loadSubset: (subset) =>
@@ -338,14 +374,14 @@ test.each(["committed", "speculative", "snapshot"] as const)(
                                   ir,
                                   tables: yield* Memory.make(),
                                   backend: authority,
-                                  objectCacheGc: false,
+                                  cache: { objects: false },
                               })
                             : undefined;
                     const replica = yield* makeReplica({
                         namespace: "membership",
                         ir,
                         tables,
-                        objectCacheGc: false,
+                        cache: { objects: false },
                         ...(parent
                             ? {
                                   source: {
@@ -395,7 +431,7 @@ test("caller refresh settings override adapter recommendations while healthy wat
                     ...f,
                     namespace: "refresh-defaults",
                     ir,
-                    objectCacheGc: false,
+                    cache: { objects: false },
                     demand: { refresh: { pollIntervalMs: false, maxCoverageAgeMs: 2_000 } },
                     backend: {
                         ...f.backend,
@@ -414,7 +450,7 @@ test("caller refresh settings override adapter recommendations while healthy wat
                     ...f,
                     namespace: "watched-age",
                     ir,
-                    objectCacheGc: false,
+                    cache: { objects: false },
                     demand: { refresh: { maxCoverageAgeMs: 0 } },
                     backend: { ...f.backend, watchSubset: () => Stream.never },
                 });
@@ -503,6 +539,59 @@ test("offset demand loads a prefix once and pins retain it for local evaluation 
                 yield* replica.demand.clearPin;
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect(yield* replica.readSubset(subset)).toEqual([]);
+            })
+        )
+    );
+});
+
+test("object cache budgets override age but never evict the pinned graph", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const replica = yield* makeReplica({
+                    ...f,
+                    namespace: "budget-pins",
+                    ir,
+                    live: false,
+                    cache: { objects: { maxBytes: 1, targetBytes: 0 } },
+                });
+                yield* Effect.scoped(
+                    replica.demand.acquire({ from: { source: { objectType: "Project" }, binding: "p" } })
+                );
+                yield* replica.demand.setPin(document("a"));
+                yield* replica.collectGarbage();
+                expect(yield* replica.get("Project", "a")).toBeDefined();
+                expect(yield* replica.get("Project", "b")).toBeUndefined();
+                expect((yield* replica.status.get).cache?.objects.bytes).toBeGreaterThan(1);
+                yield* replica.demand.clearPin;
+                yield* replica.collectGarbage();
+                expect((yield* replica.status.get).cache?.objects.bytes).toBe(0);
+            })
+        )
+    );
+});
+
+test("cache pressure releases idle demand before reclaiming its rows", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const replica = yield* makeReplica({
+                    ...f,
+                    namespace: "budget-idle",
+                    ir,
+                    live: false,
+                    demand: { idleRetentionMs: 60_000 },
+                    cache: { objects: { maxBytes: 1, targetBytes: 0 } },
+                });
+                yield* Effect.scoped(
+                    replica.demand.acquire({ from: { source: { objectType: "Project" }, binding: "p" } })
+                );
+                expect((yield* replica.status.get).demands).toHaveLength(1);
+                yield* replica.collectGarbage();
+                expect((yield* replica.status.get).demands).toEqual([]);
+                expect((yield* replica.status.get).cache?.objects.bytes).toBe(0);
             })
         )
     );

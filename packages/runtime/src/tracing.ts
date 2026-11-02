@@ -36,6 +36,23 @@ export function createTraceCapture(capacity = 500, upstream?: Tracer.Tracer, his
         "state",
         "db.system.name",
         "activity",
+        "stage",
+        "operationId",
+        "streamId",
+        "sequence",
+        "part",
+        "end",
+        "changes",
+        "records",
+        "generation",
+        "installed",
+        "acknowledged",
+        "expected",
+        "replay",
+        "until",
+        "receipt",
+        "parentAccepted",
+        "errorKind",
     ]);
     let records: readonly TraceRecord[] = [];
     let generation = 0;

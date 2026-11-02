@@ -15,7 +15,7 @@ import { digestBytes, byteSource } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Clock, Effect, PubSub, Schema, Stream } from "effect";
 import { clientRegistry } from "./clients.js";
-import { acknowledgeDelivery, makeDelivery, scanSelectedRows } from "./delivery.js";
+import { acknowledgeDelivery, makeDelivery, scanSelectedRows, collectDeliveryGarbage } from "./delivery.js";
 import { CurrentActionAuthorization, CurrentQueryAuthorization } from "./policy.js";
 import { actionReferenceIssues } from "./references.js";
 import {
@@ -670,12 +670,16 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     );
     const subscribeSelection: NonNullable<OntologyBackendService["subscribeSelection"]> = (
         selection,
-        policy
+        policy,
+        resume
     ) =>
         makeDelivery({
             tables,
             namespace: options.namespace,
-            policy,
+            policy: { retentionMs: options.clients?.deliveryRetentionMs, ...policy },
+            resume,
+            binding: JSON.stringify([source, schemaHash]),
+            identity: JSON.stringify(selection),
             changes: PubSub.subscribe(wakes).pipe(Effect.map(Stream.fromSubscription)),
             capture: (_tx, emit) =>
                 boundary(
@@ -861,7 +865,10 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         sourceId: source,
         protocol,
         collectClientGarbage,
-        maintenance: collectGarbage,
+        maintenance: collectGarbage.pipe(
+            Effect.andThen(collectDeliveryGarbage(tables, options.namespace)),
+            Effect.asVoid
+        ),
         supportsIdempotency: true,
         subscribeSelection,
         acknowledgeDelivery: (position) => acknowledgeDelivery(tables, options.namespace, position),

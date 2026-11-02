@@ -1,7 +1,8 @@
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { executeAction } from "@party-stack/ontology-backend/actions";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { Effect, Stream } from "effect";
+import { makeReplicaDecryption } from "./decrypt.js";
 import { makeReplicaKernel } from "./engine.js";
 import { kernel } from "./internal.js";
 import { makeQueryPin } from "./pins.js";
@@ -27,10 +28,12 @@ import type { OntologySource, PendingAction } from "@party-stack/ontology-backen
 import type { QueryDocument } from "@party-stack/ontology-spec";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
+import type { Encrypted } from "@party-stack/ontology-spec/values";
 import type { Key, Row } from "@party-stack/ontology-storage";
 import type { BlobStorageService } from "@party-stack/ontology-storage/blobs";
+import type { EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
-import type { NetworkConnectivity } from "@party-stack/runtime";
+import type { NetworkConnectivity, ResourceCapacity } from "@party-stack/runtime";
 import type { Scope } from "effect";
 
 export interface ReplicaConfiguration {
@@ -48,7 +51,17 @@ export interface ReplicaConfiguration {
     };
     /** Only used when this replica serves speculative children. */
     readonly clientSessions?: ClientPolicy;
-    readonly objectCacheGc?: false | ObjectCacheGcPolicy;
+    readonly cache?: {
+        readonly objects?: ObjectCacheGcPolicy | false;
+        readonly attachments?:
+            | {
+                  readonly minUnusedAgeMs?: number;
+                  readonly sweepIntervalMs?: number;
+                  readonly maxBytes?: number;
+                  readonly targetBytes?: number;
+              }
+            | false;
+    };
 }
 export type ReplicaOutboxPolicy = NonNullable<ReplicaConfiguration["outbox"]>;
 export type ReplicaOptions = ReplicaConfiguration & {
@@ -56,7 +69,10 @@ export type ReplicaOptions = ReplicaConfiguration & {
     readonly tables: TablesService;
     readonly attachments?: Pick<BackendAttachments, "read">;
     readonly blobs?: BlobStorageService;
+    readonly encrypted?: OntologyBackendService["encrypted"];
+    readonly encryptionKeyring?: EncryptionKeyringService;
     readonly network?: NetworkConnectivity;
+    readonly capacity?: ResourceCapacity;
     readonly authentication?: Pick<ConnectionMonitor, "state" | "changes">;
 } & (
         | { readonly backend: OntologyBackendService; readonly source?: never }
@@ -104,7 +120,6 @@ export interface ReplicaOutbox {
         id: string,
         options?: { readonly allowUnknownOutcome?: boolean }
     ) => Effect.Effect<void, BackendError>;
-    readonly reconcile: (id: string, receipt: ActionReceipt) => Effect.Effect<void, BackendError>;
 }
 export interface ReplicaService extends ReplicaReads {
     readonly ir: OntologyIR;
@@ -112,6 +127,10 @@ export interface ReplicaService extends ReplicaReads {
     readonly upstreamKind: "committed" | "speculative";
     readonly network: NetworkConnectivity;
     readonly authentication?: Pick<ConnectionMonitor, "state" | "changes">;
+    readonly decrypt: (
+        value: Encrypted,
+        options?: { readonly cache?: boolean }
+    ) => Effect.Effect<{ readonly value: unknown; readonly ciphertext?: string }, BackendError>;
     readonly confirmed: ReplicaReads;
     readonly observeSubset: (subset: ObjectSubset) => Stream.Stream<ReplicaRowsBatch, BackendError>;
     readonly demand: {
@@ -135,6 +154,35 @@ export interface ReplicaService extends ReplicaReads {
 export const makeReplica = Effect.fn("Replica.open")(function* (
     options: ReplicaOptions
 ): Effect.fn.Return<ReplicaService, BackendError, Scope.Scope> {
+    if (
+        options.cache?.attachments &&
+        options.cache.attachments.sweepIntervalMs !== undefined &&
+        (!Number.isFinite(options.cache.attachments.sweepIntervalMs) ||
+            options.cache.attachments.sweepIntervalMs < 10)
+    )
+        return yield* new BackendError({
+            operation: "replica.configure",
+            kind: "InvalidConfiguration",
+            retryable: false,
+            message: "Attachment cache sweep interval must be at least 10 milliseconds.",
+        });
+    for (const policy of [options.cache?.objects, options.cache?.attachments]) {
+        if (!policy) continue;
+        if (
+            (policy.maxBytes !== undefined && (!Number.isFinite(policy.maxBytes) || policy.maxBytes < 0)) ||
+            (policy.targetBytes !== undefined &&
+                (!Number.isFinite(policy.targetBytes) ||
+                    policy.targetBytes < 0 ||
+                    policy.maxBytes === undefined ||
+                    policy.targetBytes > policy.maxBytes))
+        )
+            return yield* new BackendError({
+                operation: "replica.configure",
+                kind: "InvalidConfiguration",
+                retryable: false,
+                message: "Cache targets must be nonnegative and no larger than a finite maximum.",
+            });
+    }
     const resultAge = options.outbox?.resultRetentionMs;
     if (resultAge !== undefined && (Number.isNaN(resultAge) || resultAge < 0))
         return yield* new BackendError({
@@ -154,6 +202,7 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
     const engine = yield* makeReplicaKernel({
         ...options,
         startSync: options.live !== false,
+        objectCacheGc: options.cache?.objects,
         connectivity: options.network,
         connection: options.authentication,
         clients: options.clientSessions,
@@ -169,6 +218,16 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                 resolveOnly: settings?.optimistic === false,
             }),
     });
+    const decryption = makeReplicaDecryption({
+        ir: options.ir,
+        namespace: options.namespace,
+        keyring: options.encryptionKeyring,
+        cache: engine.encryptedCache,
+        backend: {
+            sourceId: options.source?.sourceId ?? options.backend!.sourceId,
+            encrypted: options.encrypted ?? options.backend?.encrypted,
+        },
+    });
     const pin = yield* makeQueryPin({
         ...options,
         engine,
@@ -178,8 +237,35 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
     const status = Effect.gen(function* () {
         const current = yield* engine.status;
         const pinned = yield* pin.pinStatus;
+        const memory = options.capacity && (yield* Effect.result(options.capacity.memory));
+        const storage = options.capacity && (yield* Effect.result(options.capacity.storage));
         return {
             ...current,
+            capacity: options.capacity && {
+                memory: memory?._tag === "Success" ? memory.success : undefined,
+                storage: storage?._tag === "Success" ? storage.success : undefined,
+                memoryError: memory?._tag === "Failure" ? "Memory estimate unavailable." : undefined,
+                storageError: storage?._tag === "Failure" ? "Storage estimate unavailable." : undefined,
+            },
+            cache: current.cache && {
+                ...current.cache,
+                attachments: options.blobs && {
+                    bytes: yield* options.blobs.usage.pipe(
+                        Effect.mapError((cause) => classifyBackendFailure("replica.cache", cause))
+                    ),
+                    maxBytes:
+                        options.cache?.attachments === false
+                            ? undefined
+                            : options.cache?.attachments?.maxBytes,
+                    targetBytes:
+                        options.cache?.attachments === false
+                            ? undefined
+                            : (options.cache?.attachments?.targetBytes ??
+                              (options.cache?.attachments?.maxBytes === undefined
+                                  ? undefined
+                                  : Math.floor(options.cache.attachments.maxBytes * 0.8))),
+                },
+            },
             pin: pinned && {
                 ready: pinned.ready,
                 previousGraphRetained: pinned.previousGraphRetained,
@@ -195,6 +281,14 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
             return yield* (confirmed ? engine.confirmed : engine).loadSubset(scan.objectType, scan.query);
         }),
     });
+    const control = (id: string) =>
+        engine.pendingActions.pipe(
+            Effect.map((entries) =>
+                entries.some((entry) => entry.invocation.id === id && entry.forwarding)
+                    ? engine
+                    : (options.source?.outbox ?? engine)
+            )
+        );
     const service = {
         [kernel]: engine,
         ...reads(false),
@@ -203,6 +297,7 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         upstreamKind: options.source ? "speculative" : "committed",
         network: engine.connectivity,
         authentication: engine.connection,
+        decrypt: decryption.decrypt,
         confirmed: reads(true),
         observeSubset: (subset) =>
             Stream.unwrap(
@@ -255,10 +350,20 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                 ),
             get: engine.actionStatus,
             wait: engine.awaitAction,
-            edit: engine.edit,
-            retry: engine.retry,
-            remove: engine.remove,
-            reconcile: engine.reconcile,
+            edit: (id, request) => control(id).pipe(Effect.flatMap((target) => target.edit(id, request))),
+            retry: (id, settings) => control(id).pipe(Effect.flatMap((target) => target.retry(id, settings))),
+            remove: (id, settings) =>
+                control(id).pipe(
+                    Effect.flatMap((target) =>
+                        target
+                            .remove(id, settings)
+                            .pipe(
+                                Effect.andThen(
+                                    target === engine ? Effect.void : engine.acknowledgeParentRemoval(id)
+                                )
+                            )
+                    )
+                ),
         },
         status: {
             get: status,

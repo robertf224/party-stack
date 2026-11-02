@@ -89,7 +89,7 @@ Sending, receipt reconciliation and unknown outcomes cannot be edited. Explicit 
 resets the retry budget, preserving total attempts. Unknown outcomes needing a human
 decision require retry(id, {allowUnknownOutcome:true}); this can duplicate execution.
 remove(id, {allowUnknownOutcome:true}) abandons local intent and does not undo a remote
-write. A verified receipt can be supplied to reconcile instead. Ordinary remove/retry
+write. Ordinary remove/retry
 calls refuse an unsafe unknown-outcome decision. In-flight/reconciling actions cannot
 be discarded. Interrupting a wait does not cancel the action.
 

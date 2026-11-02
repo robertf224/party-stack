@@ -5,6 +5,7 @@ import {
     ValidationReportSchema,
     ActionReceiptSchema,
     EncryptedValueSchema,
+    DecryptedValueSchema,
     encryptedPropertyCodec,
 } from "@party-stack/ontology-backend";
 import {
@@ -107,7 +108,7 @@ const HelperRpcs = RpcGroup.make(
     }),
     Rpc.make("Decrypt", {
         payload: Schema.Struct({ value: EncryptedValueSchema, cache: Schema.optional(Schema.Boolean) }),
-        success: protocolValueCodec(Schema.Unknown),
+        success: protocolValueCodec(DecryptedValueSchema),
         error: BackendError,
     }),
     Rpc.make("QueryFunction", {
@@ -142,11 +143,10 @@ const HelperRpcs = RpcGroup.make(
     Rpc.make("ControlOutbox", {
         payload: protocolValueCodec(
             Schema.Struct({
-                operation: Schema.Literals(["remove", "retry", "edit", "reconcile"]),
+                operation: Schema.Literals(["remove", "retry", "edit"]),
                 id: Schema.NonEmptyString,
                 invocation: Schema.optional(ActionRequestSchema),
                 allowUnknownOutcome: Schema.optional(Schema.Boolean),
-                receipt: Schema.optional(ActionReceiptSchema),
             })
         ),
         error: BackendError,
@@ -203,7 +203,7 @@ export type OntologyOperationRequest =
     | {
           readonly operation: "ControlOutbox";
           readonly id: string;
-          readonly command: "remove" | "retry" | "edit" | "reconcile";
+          readonly command: "remove" | "retry" | "edit";
           readonly invocation?: Schema.Schema.Type<typeof ActionRequestSchema>;
       }
     | { readonly operation: "ReplicaStatus" | "Traces" | "DeleteLocalData" | "ReleaseOwner" };
@@ -410,15 +410,22 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                             message: "The encrypted value changed.",
                             retryable: false,
                         });
-                    return result.value;
+                    return result;
                 }
                 const ontology = yield* live();
+                if (ontology.storage) {
+                    const result = yield* ontology.storage.decrypt(request.value, { cache: request.cache });
+                    return {
+                        ...result,
+                        value: encryptedPropertyCodec(ontology.ir, request.value).encode(result.value),
+                    };
+                }
                 const value = yield* Effect.tryPromise({
                     try: (signal) => ontology.decrypt(request.value, { cache: request.cache, signal }),
                     catch: decryptFailure,
                 });
                 return yield* Effect.try({
-                    try: () => encryptedPropertyCodec(ontology.ir, request.value).encode(value),
+                    try: () => ({ value: encryptedPropertyCodec(ontology.ir, request.value).encode(value) }),
                     catch: () =>
                         new BackendError({
                             operation: "decrypt",
@@ -526,10 +533,6 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                             draft.parameters = invocation.parameters;
                         })
                     );
-                } else if (request.operation === "reconcile") {
-                    if (!request.receipt || request.receipt.operationId !== request.id)
-                        return yield* missing("matching receipt");
-                    yield* attempt(() => ontology.outbox.reconcile(request.id, request.receipt!));
                 } else if (request.operation === "remove")
                     yield* attempt(() =>
                         ontology.outbox.remove(request.id, {
@@ -635,7 +638,7 @@ export interface OntologyOperationsClient {
     readonly attachments: LiveOntology["attachments"];
     readonly outbox: Pick<
         import("@party-stack/ontology-replica").ReplicaService["outbox"],
-        "remove" | "retry" | "edit" | "reconcile"
+        "remove" | "retry" | "edit"
     >;
     readonly traces: TraceStore;
     readonly replicaMonitor: import("@party-stack/ontology-replica").ReplicaMonitor;
@@ -823,7 +826,10 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
     return {
         query: (document, inputs) => client.Query({ document, inputs }).pipe(Effect.mapError(failure)),
         decrypt: (value, settings) =>
-            client.Decrypt({ value, cache: settings?.cache }).pipe(Effect.mapError(decryptFailure)),
+            client.Decrypt({ value, cache: settings?.cache }).pipe(
+                Effect.map((result) => result.value),
+                Effect.mapError(decryptFailure)
+            ),
         deleteLocalData: client.DeleteLocalData().pipe(Effect.mapError(failure)),
         releaseOwner: client.ReleaseOwner(undefined, { discard: true }).pipe(Effect.mapError(failure)),
         queryFunction: (name, parameters) =>
@@ -834,8 +840,6 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
             client.ValidateAction({ name, parameters, knownParameters }).pipe(Effect.mapError(failure)),
         attachments,
         outbox: {
-            reconcile: (id, receipt) =>
-                client.ControlOutbox({ operation: "reconcile", id, receipt }).pipe(Effect.mapError(failure)),
             remove: (id, settings) =>
                 client
                     .ControlOutbox({

@@ -1,4 +1,5 @@
 import type { BrowserAuthenticationError } from "./BrowserAuthenticationError.js";
+import type { ResourceCapacity } from "./capacity.js";
 import type { RuntimeError } from "./Runtime.js";
 import type { OntologyStorageError } from "@party-stack/ontology-storage";
 import type { BlobBytesService } from "@party-stack/ontology-storage/blobs";
@@ -27,6 +28,7 @@ export interface BrowserAuthentication {
 
 /** Platform-acquired capabilities; Runtime.make assembles the RuntimeService. */
 export interface RuntimeOptions {
+    readonly capacity?: ResourceCapacity;
     blobBytes: BlobBytesService;
     connectivity?: NetworkConnectivity;
     browserAuthentication?: BrowserAuthentication;

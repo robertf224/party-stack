@@ -1,6 +1,7 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { exclusiveOwnerLiveness, type BlobBytesService } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
+import { cloudflareCapacity } from "@party-stack/runtime";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import { Effect } from "effect";
 export { makeR2Bytes, r2BytesLayer, destroyDurableObjectOntologyStorage } from "./r2.js";
@@ -14,6 +15,7 @@ export interface DurableObjectSqlCursor {
 export type DurableObjectSqlBinding = ArrayBuffer | string | number | null;
 
 export interface DurableObjectSqlStorage {
+    readonly databaseSize?: number;
     exec(query: string, ...bindings: DurableObjectSqlBinding[]): DurableObjectSqlCursor;
 }
 
@@ -83,6 +85,8 @@ export const sqlLayer = (storage: DurableObjectSQLiteStorage) =>
     SQLite.layer(createDurableObjectSQLiteDatabase(storage));
 
 export interface DurableObjectOntologyStorageOptions {
+    /** Quota depends on the deployment plan; omitted quotas remain unknown. */
+    readonly storageLimitBytes?: number;
     readonly storage: DurableObjectSQLiteStorage;
     readonly ontologyId: string;
     readonly namespace?: string;
@@ -116,5 +120,14 @@ export const makeDurableObjectOntologyStorage = Effect.fn("DurableObjectStorage.
             yield* tx.put(identity, "identity", { ontologyId: options.ontologyId });
         })
     );
-    return storage;
+    return {
+        ...storage,
+        capacity: cloudflareCapacity({
+            sql:
+                typeof options.storage.sql.databaseSize === "number"
+                    ? (options.storage.sql as { readonly databaseSize: number })
+                    : undefined,
+            storageLimitBytes: options.storageLimitBytes,
+        }),
+    };
 });

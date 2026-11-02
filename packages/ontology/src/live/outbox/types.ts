@@ -45,7 +45,6 @@ export interface EnqueuedOntologyAction<Result = unknown> {
 
 export interface OntologyOutbox {
     readonly collection: Collection<OntologyOutboxEntry, string>;
-    readonly ready: Promise<void>;
     enqueue<Result = unknown>(
         request: Omit<OntologyActionRequest, "idempotencyKey"> & {
             idempotencyKey?: string;
@@ -57,8 +56,6 @@ export interface OntologyOutbox {
     /** Resolves when the owner accepts the edit; the collection updates through replication. */
     edit(id: string, update: (request: OntologyActionRequest) => void): Promise<void>;
     remove(id: string, options?: { allowUnknownOutcome?: boolean }): Promise<void>;
-    /** Supply an independently verified remote receipt; read-back still runs normally. */
-    reconcile(id: string, receipt: import("@party-stack/ontology-backend").ActionReceipt): Promise<void>;
     retry(id: string, options?: { allowUnknownOutcome?: boolean }): Promise<void>;
     /** Cancel/timeout the observation with an AbortSignal; the action remains queued. */
     wait<Result = unknown>(
@@ -68,5 +65,4 @@ export interface OntologyOutbox {
             signal?: AbortSignal;
         }
     ): Promise<Result | void>;
-    cleanup(): Promise<void>;
 }

@@ -579,3 +579,44 @@ test.skipIf(!url)(
         }
     }
 );
+
+test.skipIf(!url)("storage inspector shows replica bytes and shared platform capacity", async () => {
+    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    try {
+        const page = await context.newPage();
+        await page.goto(url!);
+        await visible(page, "heading", "Connect profile");
+        await page.getByRole("button", { name: "Connect", exact: true }).click();
+        await visible(page, "button", "New issue");
+        await page.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
+        await page.getByRole("tab", { name: "Storage", exact: true }).click();
+        const inspector = page.getByLabel("Storage inspector", { exact: true });
+        await expect.poll(() => inspector.innerText()).toContain("transfer buffers are excluded");
+        await expect.poll(() => inspector.locator(".ps-storage-legend").innerText()).toContain("Issues");
+        await page.screenshot({ path: "/tmp/party-stack-storage-inspector.png" });
+        const legend = inspector.locator(".ps-storage-legend");
+        await legend.getByRole("button", { name: /^Issues/ }).hover();
+        await expect
+            .poll(() => inspector.locator('[data-storage-part="Projects"]').getAttribute("data-dimmed"))
+            .toBe("true");
+        expect(await inspector.locator('[data-storage-part="Issues"]').getAttribute("data-dimmed")).toBe(
+            "false"
+        );
+        await inspector.getByLabel("Storage view", { exact: true }).selectOption("available");
+        await expect.poll(() => inspector.innerText()).toContain("shared free quota");
+        expect(await inspector.locator(".ps-storage-legend").innerText()).toContain("Issues");
+        await page.screenshot({ path: "/tmp/party-stack-storage-capacity.png" });
+        await inspector.getByLabel("Storage source", { exact: true }).selectOption("0");
+        await expect
+            .poll(() =>
+                inspector
+                    .getByLabel("Storage view", { exact: true })
+                    .locator('option[value="available"]')
+                    .count()
+            )
+            .toBe(0);
+        expect(await inspector.innerText()).not.toContain("shared free quota");
+    } finally {
+        await context.close();
+    }
+});

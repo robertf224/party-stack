@@ -45,6 +45,27 @@ export const make = Effect.fn("WebRuntime.make")(function* (options: WebRuntimeO
         ? new OPFSBlobBytesStore({ directoryName: `${name}:blobs` })
         : new MemoryBlobBytesStore();
     const adapter: RuntimeOptions = {
+        capacity: {
+            memory: Effect.succeed(undefined),
+            storage: persistent
+                ? Effect.tryPromise({
+                      try: async () => {
+                          if (!globalThis.navigator?.storage?.estimate) return undefined;
+                          const estimate = await navigator.storage.estimate();
+                          return {
+                              scope: "origin" as const,
+                              usedBytes: estimate.usage,
+                              limitBytes: estimate.quota,
+                              availableBytes:
+                                  estimate.quota === undefined || estimate.usage === undefined
+                                      ? undefined
+                                      : Math.max(0, estimate.quota - estimate.usage),
+                          };
+                      },
+                      catch: (cause) => new RuntimeError({ operation: "capacity.storage", cause }),
+                  })
+                : Effect.succeed(undefined),
+        },
         connectivity,
         blobBytes,
         tables: persistent

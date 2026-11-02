@@ -6,7 +6,6 @@ import {
     type OntologyIR,
     type OntologyMutatorRegistry,
 } from "@party-stack/ontology";
-import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { byteSource, collectByteBlob, makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import { MemoryBlobBytesStore, Runtime } from "@party-stack/runtime";
@@ -14,6 +13,7 @@ import { makeTestRuntime } from "@party-stack/runtime/testing";
 import { Deferred, Effect, Fiber, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
 import { expect, test, vi } from "vite-plus/test";
+import { replicaController } from "../../ontology-replica/lib/internal.js";
 import { connectLiveOntology } from "./liveClient.js";
 import { makeOntologyProtocolClient, ontologyRpcHandlers, OntologyRpcs } from "./rpc.js";
 

@@ -1163,3 +1163,54 @@ test("canceling a query wait cannot interrupt an already submitting outbox actio
         )
     );
 });
+
+test("warm demand coverage checks share one read snapshot before yielding the publication gate", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const local = yield* Memory.make();
+                const owned = yield* makeOwnedBackend({
+                    namespace: "coverage-read-batching",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: { increment: execute },
+                });
+                yield* owned.applyAction({ id: "seed", name: "increment", parameters: {} });
+                let reads = 0;
+                const proofReads: number[] = [];
+                const replica = yield* makeReplica({
+                    namespace: "batched",
+                    ir,
+                    execute,
+                    startSync: false,
+                    tables: {
+                        ...local,
+                        read: (body) =>
+                            local.read((tx) => {
+                                const id = ++reads;
+                                return body({
+                                    ...tx,
+                                    query: ((table: any, query: any) => {
+                                        if (table.name?.endsWith('"coverage"]')) proofReads.push(id);
+                                        return tx.query(table, query);
+                                    }) as typeof tx.query,
+                                });
+                            }),
+                    },
+                    backend: owned,
+                });
+                yield* replica.demand({ objectType: "Counter", query: {} });
+                yield* replica.syncOnce;
+                for (let n = 0; n < 4; n++)
+                    yield* replica.demand({ objectType: "Counter", query: { where: eq(field("count"), n) } });
+                proofReads.length = 0;
+                yield* replica.syncSubset({ objectType: "Counter", query: {} });
+                expect(proofReads.length).toBe(1);
+                expect(new Set(proofReads).size).toBe(1);
+                expect(
+                    (yield* replica.status).demands.every((demand) => demand.installed === demand.revision)
+                ).toBe(true);
+            })
+        )
+    );
+});

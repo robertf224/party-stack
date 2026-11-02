@@ -1,4 +1,4 @@
-import { and, cursorOf, eq, field, lte } from "@party-stack/ontology-storage";
+import { cursorOf, eq, field, lte } from "@party-stack/ontology-storage";
 import { digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Clock, Effect, Option, Queue, Schema, Stream } from "effect";
@@ -6,7 +6,7 @@ import { ClientLeaseSchema } from "./clients.js";
 import { BackendSubsetSchema, PendingActionSchema, protocolValueCodec } from "./protocol.js";
 import { BackendError, classifyBackendFailure } from "./index.js";
 import type { Row } from "@party-stack/ontology-storage";
-import type { TablesService, Transaction } from "@party-stack/ontology-storage/tables";
+import type { TablesService, Transaction, ReadTransaction } from "@party-stack/ontology-storage/tables";
 import type { Scope } from "effect";
 
 const KeySchema = Schema.Union([Schema.String, Schema.Finite]);
@@ -84,6 +84,8 @@ export interface DeliveryPolicy {
     readonly maxSubscriptions?: number;
     readonly ackTimeoutMs?: number;
     readonly heartbeatMs?: number;
+    /** Retain a disconnected logical subscription for resumption. Default 60 seconds. */
+    readonly retentionMs?: number;
 }
 export const deliveryRef = (record: DeliveryRecord): DeliveryRef =>
     record.kind === "base" || record.kind === "override"
@@ -164,7 +166,6 @@ export const scanSelectedRows = Effect.fnUntraced(function* <A>(
 
 interface Witness {
     stream: string;
-    generation: number;
     ref: DeliveryRef;
     hash: string;
     record: DeliveryRecord;
@@ -175,13 +176,52 @@ interface Patch {
     change: DeliveryChange;
 }
 interface DeliverySession {
+    format: 2;
     expiresAt: number;
     expected: number;
     acknowledged: number;
+    binding: string;
+    identity: string;
+    producer: string;
+    installed: number;
+    signature?: string;
+    pending?: { sequence: number; metadata: DeliveryMetadata; nextSignature: string; count: number };
 }
 const liveAcknowledgments = new Map<string, Queue.Queue<void>>();
 const sessionTable = (namespace: string) =>
     Table.make<DeliverySession>({ name: JSON.stringify([namespace, "delivery", "sessions"]) });
+/** Bounded indexed expiry, shared by admission and host maintenance. */
+export const collectDeliveryGarbage = Effect.fn("Delivery.collectGarbage")(function* (
+    tables: TablesService,
+    namespace: string,
+    maxSessions = 4
+) {
+    return yield* boundary(
+        tables.transaction((tx) =>
+            Effect.gen(function* () {
+                const sessions = sessionTable(namespace);
+                yield* tx.ensureIndex(sessions, { name: "expiry", field: field("expiresAt") });
+                const expired = yield* tx.query(sessions, {
+                    where: lte(field("expiresAt"), yield* Clock.currentTimeMillis),
+                    limit: maxSessions,
+                });
+                for (const row of expired) {
+                    for (const part of ["records", "patches"]) {
+                        const table = Table.make<{ stream: string }>({
+                            name: JSON.stringify([namespace, "delivery", part]),
+                        });
+                        yield* tx.ensureIndex(table, { name: "stream", field: field("stream") });
+                        yield* scanDeliveryRows(tx, table, { where: eq(field("stream"), row.key) }, (entry) =>
+                            tx.delete(table, entry.key)
+                        );
+                    }
+                    yield* tx.delete(sessions, row.key);
+                }
+                return expired.length;
+            })
+        )
+    );
+});
 /** Acknowledgments work across request-scoped HTTP handlers. The live signal is
  * only a latency optimization; the producer also observes the stored watermark.
  */
@@ -223,6 +263,9 @@ export const makeDelivery = Effect.fn("Delivery.open")(function* (options: {
         emit: (record: DeliveryRecord) => Effect.Effect<void, BackendError>
     ) => Effect.Effect<DeliveryMetadata, BackendError>;
     policy?: DeliveryPolicy;
+    binding: string;
+    identity: string;
+    resume?: DeliveryPosition;
 }): Effect.fn.Return<DeliverySubscription, BackendError, Scope.Scope> {
     const limits = {
         maxRecords: 10_000,
@@ -233,41 +276,26 @@ export const makeDelivery = Effect.fn("Delivery.open")(function* (options: {
         ackTimeoutMs: 30_000,
         heartbeatMs: 15_000,
         ...options.policy,
+        retentionMs: options.policy?.retentionMs ?? 60_000,
     };
     if (Object.values(limits).some((n) => !Number.isSafeInteger(n) || n < 1))
         return yield* failure("Delivery limits must be positive integers.", "InvalidConfiguration");
+    const activeRetentionMs = Math.max(limits.retentionMs, limits.ackTimeoutMs + limits.heartbeatMs * 3);
     const { tables } = options;
-    const streamId = crypto.randomUUID();
+    let streamId = options.resume?.streamId ?? crypto.randomUUID();
+    const producer = crypto.randomUUID();
     const names = (name: string) => JSON.stringify([options.namespace, "delivery", name]);
     const sessions = sessionTable(options.namespace);
     const records = Table.make<Witness>({ name: names("records") });
     const patches = Table.make<Patch>({ name: names("patches") });
-    const clear = (
-        tx: Transaction,
-        table: Table<Witness> | Table<Patch>,
-        stream: string,
-        generation?: number
-    ) =>
+    const clear = (tx: Transaction, table: Table<Witness> | Table<Patch>, stream: string) =>
         scanDeliveryRows(
             tx,
             table as Table<Witness | Patch>,
             {
-                where:
-                    generation === undefined
-                        ? eq(field("stream"), stream)
-                        : and(eq(field("stream"), stream), eq(field("generation"), generation)),
+                where: eq(field("stream"), stream),
             },
             (row) => tx.delete(table as Table<Witness | Patch>, row.key)
-        );
-    const release = (id: string) =>
-        boundary(
-            tables.transaction((tx) =>
-                Effect.gen(function* () {
-                    yield* clear(tx, records, id);
-                    yield* clear(tx, patches, id);
-                    yield* tx.delete(sessions, id);
-                })
-            )
         );
     yield* boundary(
         tables.transaction((tx) =>
@@ -284,39 +312,115 @@ export const makeDelivery = Effect.fn("Delivery.open")(function* (options: {
                     yield* clear(tx, patches, String(expired.key));
                     yield* tx.delete(sessions, expired.key);
                 }
+                if (options.resume) {
+                    const prior = yield* tx.get(sessions, streamId);
+                    if (
+                        !prior ||
+                        prior.format !== 2 ||
+                        prior.expiresAt <= now ||
+                        prior.binding !== options.binding
+                    )
+                        return yield* failure("Delivery history expired.", "HistoryExpired");
+                    if (prior.identity === options.identity) {
+                        const position = options.resume.sequence;
+                        if (position < prior.installed || position > prior.expected)
+                            return yield* failure("Delivery position cannot resume.", "HistoryExpired");
+                        yield* tx.put(sessions, streamId, {
+                            ...prior,
+                            producer,
+                            acknowledged: Math.max(prior.acknowledged, position),
+                            expiresAt: now + activeRetentionMs,
+                        });
+                        return;
+                    }
+                    // Same authenticated binding, a new selection: replace its old witnesses.
+                    yield* clear(tx, records, streamId);
+                    yield* clear(tx, patches, streamId);
+                    yield* tx.delete(sessions, streamId);
+                    streamId = crypto.randomUUID();
+                }
                 if (
                     (yield* tx.query(sessions, { limit: limits.maxSubscriptions })).length >=
                     limits.maxSubscriptions
                 )
                     return yield* failure("Delivery subscription capacity reached.", "RateLimited");
                 yield* tx.put(sessions, streamId, {
-                    expiresAt: now + limits.ackTimeoutMs + limits.heartbeatMs * 3,
+                    format: 2,
+                    expiresAt: now + activeRetentionMs,
                     expected: 0,
                     acknowledged: 0,
+                    installed: 0,
+                    binding: options.binding,
+                    identity: options.identity,
+                    producer,
                 });
             })
         )
     );
+    const current = (tx: ReadTransaction) =>
+        Effect.gen(function* () {
+            const session = yield* tx.get(sessions, streamId);
+            if (!session || session.producer !== producer)
+                return yield* failure("Delivery connection was superseded.", "SessionReplaced");
+            return session;
+        });
     yield* Effect.addFinalizer(() =>
-        release(streamId).pipe(
-            Effect.catch(() => Effect.void),
-            Effect.tap(() => Effect.sync(() => liveAcknowledgments.delete(streamId)))
-        )
+        boundary(
+            tables.transaction((tx) =>
+                Effect.gen(function* () {
+                    const session = yield* tx.get(sessions, streamId);
+                    if (session?.producer === producer)
+                        yield* tx.put(sessions, streamId, {
+                            ...session,
+                            expiresAt: (yield* Clock.currentTimeMillis) + limits.retentionMs,
+                        });
+                })
+            )
+        ).pipe(Effect.catch(() => Effect.void))
     );
     const changes = yield* options.changes;
     const dirty = yield* Queue.sliding<void>(1);
+    yield* Effect.addFinalizer(() => Queue.shutdown(dirty));
     yield* Stream.runForEach(changes, () => Queue.offer(dirty, undefined)).pipe(Effect.forkScoped);
-    let installed = 0;
-    let signature: string | undefined;
+    // Recheck after replaying a retained batch: writes during the disconnected
+    // interval have no live hint to wake this producer.
+    yield* Queue.offer(dirty, undefined);
     let consumed = false;
     const prepare = boundary(
         tables.transaction((tx) =>
             Effect.gen(function* () {
+                const session = yield* current(tx);
+                const installed = session.installed;
+                const signature = session.signature;
+                yield* Effect.annotateCurrentSpan({
+                    streamId,
+                    installed: session.installed,
+                    acknowledged: session.acknowledged,
+                    expected: session.expected,
+                    replay: Boolean(session.pending),
+                });
+                if (session.pending) return session.pending;
                 const sequence = installed + 1;
                 let count = 0;
                 let bytes = 0;
+                const seen = new Map<string, number>();
+                const patchOrders = new Map<string, number>();
+                const append = (change: DeliveryChange) => {
+                    const ref = deliveryKey(change.kind === "put" ? deliveryRef(change.record) : change.ref);
+                    let order = patchOrders.get(ref);
+                    if (order === undefined) {
+                        order = patchOrders.size;
+                        patchOrders.set(ref, order);
+                    }
+                    return tx.put(patches, JSON.stringify([streamId, order]), {
+                        stream: streamId,
+                        order,
+                        change,
+                    });
+                };
                 const emit = Effect.fnUntraced(function* (record: DeliveryRecord) {
-                    const key = JSON.stringify([streamId, sequence, deliveryKey(deliveryRef(record))]);
+                    const ref = deliveryKey(deliveryRef(record));
+                    const key = JSON.stringify([streamId, ref]);
                     const encoded = yield* Effect.try({
                         try: () => recordCodec.encode(record),
                         catch: () => failure("Selected data cannot be encoded.", "InvalidResponse"),
@@ -327,11 +431,10 @@ export const makeDelivery = Effect.fn("Delivery.open")(function* (options: {
                             "A delivery record exceeds the configured frame budget.",
                             "RateLimited"
                         );
-                    const prior = yield* tx.get(records, key);
-                    if (!prior) count++;
-                    bytes +=
-                        encodedBytes.length -
-                        (prior ? new TextEncoder().encode(recordCodec.encode(prior.record)).length : 0);
+                    const previousSize = seen.get(ref);
+                    if (previousSize === undefined) count++;
+                    bytes += encodedBytes.length - (previousSize ?? 0);
+                    seen.set(ref, encodedBytes.length);
                     if (count > limits.maxRecords || bytes > limits.maxBytes)
                         return yield* failure(
                             "Selected delivery exceeds its configured size budget.",
@@ -341,73 +444,58 @@ export const makeDelivery = Effect.fn("Delivery.open")(function* (options: {
                         type: "application/json",
                         stream: Stream.make(encodedBytes),
                     });
+                    const prior = yield* tx.get(records, key);
+                    if (prior?.hash === hash) return;
                     yield* tx.put(records, key, {
                         stream: streamId,
-                        generation: sequence,
                         ref: deliveryRef(record),
                         hash,
                         record,
                     });
+                    yield* append({ kind: "put", record });
                 });
-                const metadata = yield* options.capture(tx, (record) => boundary(emit(record)));
+                const metadata = yield* options
+                    .capture(tx, (record) => boundary(emit(record)))
+                    .pipe(Effect.withSpan("Delivery.capture"));
                 if (size(metadata) > limits.frameBytes / 2)
                     return yield* failure("Delivery metadata exceeds the frame budget.", "RateLimited");
                 const { client: _client, ...identity } = metadata;
                 const nextSignature = valueCodec.encode(identity);
-                let order = 0;
-                const append = (change: DeliveryChange) =>
-                    tx.put(patches, JSON.stringify([streamId, order]), {
-                        stream: streamId,
-                        order: order++,
-                        change,
-                    });
-                yield* scanDeliveryRows(
-                    tx,
-                    records,
-                    { where: and(eq(field("stream"), streamId), eq(field("generation"), sequence)) },
-                    (row) =>
-                        Effect.gen(function* () {
-                            const previous = installed
-                                ? yield* tx.get(
-                                      records,
-                                      JSON.stringify([streamId, installed, deliveryKey(row.value.ref)])
-                                  )
-                                : undefined;
-                            if (previous?.hash !== row.value.hash)
-                                yield* append({ kind: "put", record: row.value.record });
-                        })
+                // The witness is the target of the pending batch, committed with
+                // its replayable patch. Until acknowledgement, prepare replays that
+                // patch instead of recapturing. Unchanged rows need no writes.
+                yield* scanDeliveryRows(tx, records, { where: eq(field("stream"), streamId) }, (row) =>
+                    Effect.gen(function* () {
+                        if (seen.has(deliveryKey(row.value.ref))) return;
+                        yield* append({ kind: "remove", ref: row.value.ref });
+                        yield* tx.delete(records, row.key);
+                    })
                 );
-                if (installed)
-                    yield* scanDeliveryRows(
-                        tx,
-                        records,
-                        { where: and(eq(field("stream"), streamId), eq(field("generation"), installed)) },
-                        (row) =>
-                            Effect.gen(function* () {
-                                if (
-                                    !(yield* tx.get(
-                                        records,
-                                        JSON.stringify([streamId, sequence, deliveryKey(row.value.ref)])
-                                    ))
-                                )
-                                    yield* append({ kind: "remove", ref: row.value.ref });
-                            })
-                    );
-                const session = (yield* tx.get(sessions, streamId))!;
+                const order = patchOrders.size;
+                const pending =
+                    installed && order === 0 && signature === nextSignature
+                        ? undefined
+                        : { sequence, metadata, nextSignature, count: order };
+                yield* Effect.annotateCurrentSpan({
+                    sequence,
+                    changes: order,
+                    records: count,
+                    generation: metadata.generation,
+                    revision: metadata.revision,
+                });
                 yield* tx.put(sessions, streamId, {
                     ...session,
-                    expiresAt:
-                        (yield* Clock.currentTimeMillis) + limits.ackTimeoutMs + limits.heartbeatMs * 3,
+                    expiresAt: (yield* Clock.currentTimeMillis) + activeRetentionMs,
+                    pending,
                     expected: installed && order === 0 && signature === nextSignature ? installed : sequence,
                 });
                 if (installed && order === 0 && signature === nextSignature) {
-                    yield* clear(tx, records, streamId, sequence);
                     return undefined;
                 }
                 return { sequence, metadata, nextSignature, count: order };
             })
         )
-    );
+    ).pipe(Effect.withSpan("Delivery.prepare"));
     const loop = (): Stream.Stream<DeliveryFrame, BackendError> =>
         Stream.unwrap(
             Effect.gen(function* () {
@@ -423,6 +511,8 @@ export const makeDelivery = Effect.fn("Delivery.open")(function* (options: {
                     boundary(
                         tables.read((tx) =>
                             Effect.gen(function* () {
+                                const head = yield* current(tx);
+                                const installed = head.installed;
                                 const changes: DeliveryChange[] = [];
                                 let bytes = 256;
                                 let order = start;
@@ -434,7 +524,7 @@ export const makeDelivery = Effect.fn("Delivery.open")(function* (options: {
                                     bytes += length;
                                     order++;
                                 }
-                                const end = start === next.count;
+                                const end = order === next.count;
                                 const frame: DeliveryFrame = {
                                     streamId,
                                     sequence: next.sequence,
@@ -452,11 +542,15 @@ export const makeDelivery = Effect.fn("Delivery.open")(function* (options: {
                 );
                 const observeAck = Effect.gen(function* () {
                     for (;;) {
-                        const session = yield* boundary(tables.get(sessions, streamId));
-                        if (session && session.acknowledged >= next.sequence) return;
+                        const session = yield* boundary(tables.read((tx) => current(tx)));
+                        if (session.acknowledged >= next.sequence) return;
                         yield* Effect.raceFirst(Queue.take(ack), Effect.sleep(250));
                     }
-                });
+                }).pipe(
+                    Effect.withSpan("Delivery.awaitAcknowledgment", {
+                        attributes: { streamId, sequence: next.sequence },
+                    })
+                );
                 const advance = observeAck.pipe(
                     Effect.timeoutOrElse({
                         duration: limits.ackTimeoutMs,
@@ -466,24 +560,37 @@ export const makeDelivery = Effect.fn("Delivery.open")(function* (options: {
                         boundary(
                             tables.transaction((tx) =>
                                 Effect.gen(function* () {
-                                    if (installed) yield* clear(tx, records, streamId, installed);
+                                    const head = yield* current(tx);
                                     yield* clear(tx, patches, streamId);
+                                    yield* tx.put(sessions, streamId, {
+                                        ...head,
+                                        installed: next.sequence,
+                                        signature: next.nextSignature,
+                                        pending: undefined,
+                                        expiresAt: (yield* Clock.currentTimeMillis) + activeRetentionMs,
+                                    });
                                 })
                             )
                         )
                     ),
                     Effect.tap(() =>
                         Effect.sync(() => {
-                            installed = next.sequence;
-                            signature = next.nextSignature;
-                            liveAcknowledgments.delete(streamId);
+                            if (liveAcknowledgments.get(streamId) === ack)
+                                liveAcknowledgments.delete(streamId);
                         })
                     ),
                     Effect.andThen(Effect.raceFirst(Queue.take(dirty), Effect.sleep(limits.heartbeatMs)))
                 );
                 return Stream.concat(
-                    frames,
-                    Stream.concat(Stream.fromEffect(advance).pipe(Stream.drain), Stream.suspend(loop))
+                    Stream.concat(frames, Stream.fromEffect(advance).pipe(Stream.drain)).pipe(
+                        Stream.ensuring(
+                            Effect.sync(() => {
+                                if (liveAcknowledgments.get(streamId) === ack)
+                                    liveAcknowledgments.delete(streamId);
+                            }).pipe(Effect.andThen(Queue.shutdown(ack)))
+                        )
+                    ),
+                    Stream.suspend(loop)
                 );
             })
         );
@@ -538,10 +645,39 @@ export const makeDeliveryReceiver = (options: {
         const decode = Schema.decodeUnknownEffect(DeliveryFrameSchema);
         return {
             installed: boundary(tables.get(state, "installed")),
+            resume: boundary(
+                tables.read((tx) =>
+                    Effect.gen(function* () {
+                        const installed = yield* tx.get(state, "installed");
+                        const pending = yield* tx.get(state, "pending");
+                        return pending && pending.streamId !== installed?.streamId
+                            ? { streamId: pending.streamId, sequence: 0 }
+                            : installed
+                              ? { streamId: installed.streamId, sequence: installed.sequence }
+                              : undefined;
+                    })
+                )
+            ),
+            forget: boundary(
+                tables.transaction((tx) =>
+                    Effect.gen(function* () {
+                        yield* tx.clear(state);
+                        yield* tx.clear(changes);
+                        yield* tx.clear(frameHashes);
+                    })
+                )
+            ),
             receive: Effect.fn("Delivery.install")(function* (input: DeliveryFrame) {
                 const frame = yield* decode(input).pipe(
                     Effect.mapError(() => failure("Invalid delivery frame.", "InvalidResponse"))
                 );
+                yield* Effect.annotateCurrentSpan({
+                    streamId: frame.streamId,
+                    sequence: frame.sequence,
+                    part: frame.part,
+                    end: frame.end,
+                    changes: frame.changes.length,
+                });
                 const ready = yield* boundary(
                     tables.transaction((tx) =>
                         Effect.gen(function* () {

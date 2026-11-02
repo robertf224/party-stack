@@ -33,10 +33,18 @@ const replicaLayer = Replica.layer({
         failureStrategy: "pause",
         resultRetentionMs: 7 * 24 * 60 * 60 * 1000,
     },
-    objectCacheGc: {
-        sweepIntervalMs: 60_000,
-        minUnusedAgeMs: 24 * 60 * 60 * 1000,
-        maxCandidates: 100,
+    cache: {
+        objects: {
+            sweepIntervalMs: 60_000,
+            minUnusedAgeMs: 24 * 60 * 60 * 1000,
+            maxCandidates: 100,
+            maxBytes: 64 * 1024 * 1024,
+            targetBytes: 48 * 1024 * 1024,
+        },
+        attachments: {
+            maxBytes: 256 * 1024 * 1024,
+            targetBytes: 192 * 1024 * 1024,
+        },
     },
 }).pipe(
     Layer.provide(Layer.succeed(ReplicaUpstream)({ kind: "committed", backend })),
@@ -101,7 +109,7 @@ its proof and requires revalidation.
 
 Adapters recommend these defaults through `refresh(subset)`; explicit Replica
 configuration wins. Demand idle retention controls how long unused interest stays
-alive, while `objectCacheGc` controls row eviction. Completed action result retention
+alive, while `cache.objects` controls object eviction. Completed action result retention
 is separate from pending outbox intent. These policies do not share a scheduler.
 
 ## Persistent query pins
@@ -159,7 +167,7 @@ Neither replacement nor clear wipes the replica's unrelated cached data.
 for confirmation; `{ until: "accepted" }` observes immediate-parent acceptance.
 Interrupting a wait does not cancel the action. `outbox.get`, `entries` and `observe`
 inspect state. `entries` is a local snapshot; `observe` also owns scoped interest
-in parent action records. `edit`, `retry`, `remove` and `reconcile` provide explicit recovery.
+in parent action records. `edit`, `retry` and `remove` let applications correct, retry or discard paused submissions. The replica routes these operations to the current owner.
 Unknown remote outcomes remain distinct from retryability.
 
 `status.get` and `status.changes` expose diagnostics, including separate network/auth state
@@ -172,3 +180,71 @@ Trusted server construction uses `@party-stack/ontology-replica/infrastructure` 
 `replicaStateSource` and cached-proxy composition.
 Those controls are not fields on the application-facing Replica service and are
 not an authorization boundary. Public servers still enforce their own policy.
+
+## Reconnect and cache capacity
+
+Incremental subscriptions retain their selection witnesses, outstanding batch and
+acknowledged position in Tables. Closing the transport releases live demand; a
+new transport can resume the same logical delivery. The child installs rows and
+its position in one transaction. Replayed batches do not reapply actions or rows.
+Changes made during disconnection are captured after the retained batch is acknowledged.
+The server commits the pending patch and its target witnesses together; unchanged
+witnesses are not rewritten on every wake. Acknowledgement advances the position
+and releases the patch, while the witnesses remain for the next comparison.
+
+`clientSessions.deliveryRetentionMs` controls disconnected delivery retention
+(default 60 seconds), independently of action-session/result retention. Servers can
+also set `delivery.retentionMs` and delivery admission/frame limits. Expired history
+or a changed selection starts a fresh selected snapshot; source/schema mismatches
+still require explicit recovery. Pending local actions survive snapshot recovery.
+Memory tabs naturally lose their positions when closed. Persistent replicas retain
+them; resumption requires a compatible selection and unexpired upstream state.
+
+Attachment byte reclamation ranks eligible metadata with a storage query using
+age multiplied by size (with a small-object overhead), while respecting retention
+roots. Raw table stores page computed Top K candidates rather than materializing
+all candidates; native arithmetic ordering in SQL remains future work.
+
+Cache `maxBytes` starts pressure-based reclamation; `targetBytes` is the target
+below that threshold and defaults to 80% of the maximum. Objects and attachments
+have independent policies. A pressure pass ignores ordinary age, but keeps active
+demand, pending action dependencies and pins. Idle demand is released first when
+object usage exceeds its maximum. Protected data can exceed the budget;
+this is not a promise to cap the entire process heap. Sweeps remain bounded.
+Attachment budgets preserve staged/local-only bytes and explicitly retained bytes.
+
+Object accounting measures encoded row payloads, including inherited/local
+predictions. Attachment accounting measures locally cached content. Inspection and
+budget sweeps query persisted metadata in bounded pages within read snapshots;
+there are no per-write byte counters or additional write locks. These sizes exclude
+filesystem overhead, SQL indexes and JavaScript objects. `status.get` reports
+logical usage, the per-object-type breakdown and configured budgets.
+
+Platform runtimes optionally expose `capacity.memory` and `capacity.storage` Effects.
+Each estimate names its scope and can contain `usedBytes`, `limitBytes` and
+`availableBytes`; unsupported measurements stay undefined. Browser storage is
+origin-wide. Node estimates describe the process and filesystem. Expo reports
+device disk capacity and available storage, without an available-memory estimate.
+For Workers,
+`cloudflareCapacity()` reports the shared isolate limit without inventing free heap.
+The DO storage/Alchemy helpers also return `capacity`, using current SQLite size;
+pass `storageLimitBytes` when the deployment quota is known. R2 is a separate resource.
+
+Devtools' **Storage** tab shows a per-object-type chart using schema colors.
+Its view selector can scale that usage against available storage or a configured
+object/attachment budget. Legend hover highlights the corresponding segment.
+Memory web runtimes do not report browser disk quota as available cache capacity. Its source selector can inspect the tab or a
+parent replica. These values travel through the normal diagnostic status stream;
+inspecting storage does not acquire object demand or download attachments.
+Unavailable sensors are labeled explicitly. Capacity reporting is advisory and
+does not automatically change the configured cache budgets.
+
+## Decryption
+
+`replica.decrypt(handle, { cache: true })` optionally caches a device-encrypted copy
+on the existing replica row. Without `cache: true`, it performs an upstream decrypt.
+Caching requires a configured keyring and evidence binding the response to the
+requested ciphertext. The local copy follows row GC and never appears in portable
+row exports or downstream replication. The native result includes `value` and
+optional `ciphertext` evidence. `LiveOntology.decrypt` unwraps `value` and adds the
+typed Promise and AbortSignal boundary around this native operation.

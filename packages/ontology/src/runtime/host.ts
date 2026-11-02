@@ -24,7 +24,7 @@ interface ReplicaHostCommonOptions {
     readonly context: Record<string, unknown>;
     readonly writes?: LiveOntologyWrites;
     readonly connection?: ConnectionMonitor;
-    readonly objectCacheGc?: ReplicaOptions["objectCacheGc"];
+    readonly cache?: ReplicaOptions["cache"];
     readonly demand?: ReplicaOptions["demand"];
     readonly clientSessions?: ReplicaOptions["clientSessions"];
 }
@@ -73,7 +73,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         mutators: actionMutators(options.ir, options.writes?.mutators),
         outbox: options.writes?.outbox,
         authentication: options.connection,
-        objectCacheGc: options.objectCacheGc,
+        cache: options.cache,
         demand: options.demand,
         clientSessions: options.clientSessions,
     });

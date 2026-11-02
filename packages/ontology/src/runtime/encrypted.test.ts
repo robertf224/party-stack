@@ -1,7 +1,6 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica } from "@party-stack/ontology-replica";
-import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { TemporalTimestamp } from "@party-stack/ontology-spec/effect";
 import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
@@ -15,9 +14,10 @@ import { queryOnce } from "@tanstack/db";
 import { Deferred, Effect, Fiber, Schema } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { expect, test, vi } from "vite-plus/test";
+import { makeReplicaDecryption } from "../../../ontology-replica/lib/decrypt.js";
+import { replicaController } from "../../../ontology-replica/lib/internal.js";
 import { createLiveOntology } from "../live/LiveOntology.js";
 import { makeStorageOntologyBackend } from "../live/storageBackend.js";
-import { makeLiveDecryption } from "./encrypted.js";
 import type { Encrypted } from "@party-stack/ontology-spec/values";
 const ir: OntologyIR = {
     types: [],
@@ -96,7 +96,19 @@ const fixture = Effect.fnUntraced(function* (settings?: { keys?: boolean; owner?
             .pipe(Effect.andThen(replica.syncOnce))
     );
     const open = (sourceId = "authority") =>
-        makeLiveDecryption({ ir, replica, backend: { sourceId, encrypted: backend.encrypted } }).pipe(
+        Effect.sync(() =>
+            makeReplicaDecryption({
+                ir,
+                cache: replicaController(replica).encryptedCache,
+                namespace: `${owner}:private`,
+                keyring: runtime.encryptionKeyring,
+                backend: { sourceId, encrypted: backend.encrypted },
+            })
+        ).pipe(
+            Effect.map((native) => ({
+                decrypt: (value: Encrypted, settings?: { cache?: boolean }) =>
+                    native.decrypt(value, settings).pipe(Effect.map((result) => result.value)),
+            })),
             Effect.provideService(Runtime, runtime)
         );
     const raw = Table.make<{ id: string; secret: Encrypted & { localCache?: Encrypted } }>({

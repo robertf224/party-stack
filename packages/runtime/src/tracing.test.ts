@@ -177,3 +177,30 @@ test("subscription messages update live, remain bounded, and exclude arbitrary e
     expect(traces.getSnapshot()[0]?.outcome).toBe("success");
     expect(JSON.stringify(traces.getSnapshot())).not.toContain("secret");
 });
+
+test("delivery diagnostics retain progress identifiers without recording payloads", async () => {
+    const capture = createTraceCapture();
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            yield* Effect.annotateCurrentSpan({
+                streamId: "stream-one",
+                operationId: "operation-one",
+                sequence: 3,
+                installed: 2,
+                acknowledged: 2,
+                stage: "waiting-for-publication-gate",
+                parameters: { secret: "do-not-record" },
+                resumeKey: "do-not-record",
+            });
+        }).pipe(Effect.withSpan("Delivery.prepare"), Effect.provideService(Tracer.Tracer, capture.tracer))
+    );
+    expect(capture.getSnapshot()[0]?.attributes).toEqual({
+        streamId: "stream-one",
+        operationId: "operation-one",
+        sequence: 3,
+        installed: 2,
+        acknowledged: 2,
+        stage: "waiting-for-publication-gate",
+    });
+    expect(JSON.stringify(capture.getSnapshot())).not.toContain("do-not-record");
+});

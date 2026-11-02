@@ -985,6 +985,9 @@ importers:
       '@party-stack/ontology-storage':
         specifier: workspace:*
         version: link:../ontology-storage
+      '@party-stack/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@party-stack/sql-ontology-storage':
         specifier: workspace:*
         version: link:../sql-ontology-storage

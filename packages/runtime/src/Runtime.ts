@@ -1,6 +1,7 @@
 import { Context, Effect, Schema } from "effect";
 import { alwaysOnlineConnectivity } from "./NetworkConnectivity.js";
 import { RuntimePartition } from "./RuntimePartition.js";
+import type { ResourceCapacity } from "./capacity.js";
 import type { RuntimeOptions, BrowserAuthentication, NetworkConnectivity } from "./types.js";
 import type { BlobBytesService } from "@party-stack/ontology-storage/blobs";
 import type { EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
@@ -12,6 +13,7 @@ export class RuntimeError extends Schema.TaggedError<RuntimeError>()("RuntimeErr
 }) {}
 /** Acquired platform capabilities and application-boundary bridges, owned by an Effect Scope. */
 export interface RuntimeService {
+    readonly capacity?: ResourceCapacity;
     readonly owner: string;
     readonly namespace: string;
     readonly browserAuthentication?: BrowserAuthentication;
@@ -28,6 +30,7 @@ export class Runtime extends Context.Service<Runtime, RuntimeService>()("@party-
 
         const service = Runtime.of({
             ...partition,
+            capacity: adapter.capacity,
             browserAuthentication: adapter.browserAuthentication,
             destroy: adapter.destroy ?? Effect.void,
             tables: adapter.tables,

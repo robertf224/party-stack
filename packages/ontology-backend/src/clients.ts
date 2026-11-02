@@ -33,6 +33,8 @@ const ClientRecordSchema = Schema.Struct({
 export const ClientLeaseSchema = ClientRecordSchema;
 export type ClientLease = typeof ClientRecordSchema.Type;
 export interface ClientPolicy {
+    /** Retain disconnected selected delivery independently of action recovery. Default 60 seconds. */
+    readonly deliveryRetentionMs?: number;
     /** Inactivity before a resumable client session expires. Validated requests renew it.
      * Defaults to seven days; expiry never discards accepted pending actions. */
     readonly sessionIdleTimeoutMs?: number;
@@ -81,6 +83,8 @@ export const clientRegistry = (
     });
     const validatePolicy = Effect.gen(function* () {
         if (
+            (policy.deliveryRetentionMs !== undefined &&
+                (!Number.isFinite(policy.deliveryRetentionMs) || policy.deliveryRetentionMs < 1)) ||
             !Number.isFinite(sessionIdleTimeoutMs) ||
             sessionIdleTimeoutMs < 1 ||
             !Number.isSafeInteger(maxSessions) ||

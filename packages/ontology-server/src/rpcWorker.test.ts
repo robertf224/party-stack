@@ -5,11 +5,11 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica } from "@party-stack/ontology-replica";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
-import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Deferred, Effect, Exit, Fiber, Scope } from "effect";
+import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { expect, test, vi } from "vite-plus/test";
+import { replicaController } from "../../ontology-replica/lib/internal.js";
 import { connectOntologyWorker, serveOntologyWorker, serveOpenedOntologyWorker } from "./rpcWorker.js";
 import type { OntologyConnection } from "./rpc.js";
 import type { LiveOntology } from "@party-stack/ontology";
@@ -60,6 +60,91 @@ const openPort = Effect.fnUntraced(function* (
     return yield* connectOntologyWorker().pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)));
 });
 
+test("multipart worker delivery carries a rejection after successful actions from two clients", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* makeOwnedBackend({
+                    namespace: "rejection-authority",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: { increment },
+                });
+                yield* owned.storage.transaction((tx) =>
+                    Effect.forEach(
+                        Array.from({ length: 200 }, (_, n) => n),
+                        (n) => tx.put("Counter", { id: `cached-${n}`, count: n }),
+                        { discard: true }
+                    )
+                );
+                const rejectNow = yield* Deferred.make<void>();
+                const backend = {
+                    ...owned,
+                    applyAction: (request: Parameters<typeof owned.applyAction>[0]) =>
+                        request.id === "rejected"
+                            ? Deferred.await(rejectNow).pipe(
+                                  Effect.andThen(
+                                      Effect.fail(
+                                          new BackendError({
+                                              operation: "applyAction",
+                                              kind: "ValidationFailed",
+                                              message: "Rejected input.",
+                                              retryable: false,
+                                              actionOutcome: "not-committed",
+                                          })
+                                      )
+                                  )
+                              )
+                            : owned.applyAction(request),
+                };
+                const parent = yield* makeReplica({
+                    namespace: "rejection-parent",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend,
+                    mutators: { increment },
+                    outbox: { failureStrategy: "discard-all" },
+                });
+                const source = replicaStateSource(parent);
+                const connect = Effect.fnUntraced(function* (namespace: string) {
+                    const connection = yield* openPort(source, backend);
+                    return yield* makeReplica({
+                        namespace,
+                        ir,
+                        tables: yield* Memory.make(),
+                        source: speculativeSource(connection),
+                        mutators: { increment },
+                    });
+                });
+                const first = yield* connect("first");
+                const second = yield* connect("second");
+                const subset = { from: { source: { objectType: "Counter" }, binding: "counter" } };
+                yield* first.demand.acquire(subset);
+                yield* second.demand.acquire(subset);
+                yield* Stream.runDrain(second.outbox.observe()).pipe(
+                    Effect.forkScoped({ startImmediately: true })
+                );
+                for (const [child, id] of [
+                    [first, "first-success"],
+                    [second, "second-success"],
+                ] as const) {
+                    yield* child.outbox.enqueue({ id, name: "increment", parameters: {} });
+                    yield* child.outbox.wait(id).pipe(Effect.timeout("3 seconds"));
+                }
+                yield* first.outbox.enqueue({ id: "rejected", name: "increment", parameters: {} });
+                const waiter = yield* Effect.forkScoped(
+                    Effect.result(first.outbox.wait("rejected").pipe(Effect.timeout("3 seconds")))
+                );
+                yield* first.outbox.wait("rejected", { until: "accepted" }).pipe(Effect.timeout("3 seconds"));
+                yield* Deferred.succeed(rejectNow, undefined);
+                const result = yield* Fiber.join(waiter);
+                expect(result).toMatchObject({ _tag: "Failure", failure: { kind: "ValidationFailed" } });
+                expect(yield* first.outbox.entries).toEqual([]);
+            })
+        )
+    );
+}, 20_000);
+
 test("worker composition serves during delayed acquisition and releases its opened facade on interruption", async () => {
     const cleanup = vi.fn(async () => {});
     await Effect.runPromise(
@@ -86,7 +171,7 @@ test("worker composition serves during delayed acquisition and releases its open
                     backend,
                     mutators: { increment },
                     live: false,
-                    objectCacheGc: false,
+                    cache: { objects: false },
                 });
                 yield* owner.demand.acquire({ from: { source: { objectType: "Counter" }, binding: "row" } });
                 yield* owner.syncOnce;
@@ -182,7 +267,7 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                     backend,
                     mutators: { increment },
                     live: false,
-                    objectCacheGc: false,
+                    cache: { objects: false },
                 });
                 yield* owner.syncOnce;
                 const tabs = [];
@@ -194,7 +279,7 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                         tables: yield* Memory.make(),
                         source: speculativeSource(source),
                         mutators: { increment },
-                        objectCacheGc: false,
+                        cache: { objects: false },
                         live: false,
                     });
                     yield* replicaController(tab).retainLocal("Counter");

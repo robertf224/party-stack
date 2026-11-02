@@ -734,3 +734,19 @@ acceptance passes eight functional tests plus the existing expected TanStack
 cleanup-warning failure. Known workerd disconnect/body warnings remain tracked
 in the audit. The [review agenda](./subsystem-audit.md#follow-up-review-order)
 starts with storage/transactions, then replica/outbox state and demand/GC.
+
+## November 2: resumable Replica delivery and bounded cache policies
+
+The Replica review checkpoint now includes retained incremental delivery across
+transport replacement, configurable disconnected history expiry, native decryption
+and owner-aware outbox recovery controls. The application facade delegates these
+operations rather than accessing an engine controller. Receipt injection is no
+longer an application/RPC operation.
+
+Cache configuration is grouped under cache.objects/cache.attachments, with
+max/target byte watermarks and existing retention protections. Paged read-side usage
+measurements support inspection and bounded GC without per-write counters;
+platform runtimes optionally expose scoped
+capacity estimates. DO SQL usage is measured directly, while unavailable free heap
+stays unknown. See replication-outbox-review.md for semantics, tests and remaining
+aggregate/physical resource-budget work.

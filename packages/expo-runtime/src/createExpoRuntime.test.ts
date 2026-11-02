@@ -19,6 +19,15 @@ const state = vi.hoisted(() => ({
     disconnect: vi.fn(),
     clear: vi.fn(),
     directory: vi.fn(),
+    availableDiskSpace: 4096,
+}));
+vi.mock("expo-file-system", () => ({
+    Paths: {
+        totalDiskSpace: 16384,
+        get availableDiskSpace() {
+            return state.availableDiskSpace;
+        },
+    },
 }));
 vi.mock("expo-crypto", () => ({
     CryptoDigestAlgorithm: { SHA256: "SHA-256" },
@@ -62,6 +71,24 @@ describe("createExpoRuntime", () => {
             getAllSync: vi.fn(() => []),
             runSync: vi.fn(),
         });
+    });
+
+    it("reports live device storage capacity without inventing available memory", async () => {
+        const runtime = await acquireRuntime(createExpoRuntime("owner", "capacity"));
+        try {
+            const native = await runtimeFixtureContext(runtime).runtime.runPromise(Runtime);
+            expect(await Effect.runPromise(native.capacity!.memory)).toBeUndefined();
+            state.availableDiskSpace = 4096;
+            expect(await Effect.runPromise(native.capacity!.storage)).toEqual({
+                scope: "filesystem",
+                limitBytes: 16384,
+                availableBytes: 4096,
+            });
+            state.availableDiskSpace = 2048;
+            expect((await Effect.runPromise(native.capacity!.storage))?.availableBytes).toBe(2048);
+        } finally {
+            await runtime.cleanup?.();
+        }
     });
 
     it("hashes logical partition names into bounded filesystem names without ambiguous separators", async () => {

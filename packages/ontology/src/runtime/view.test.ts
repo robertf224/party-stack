@@ -2,7 +2,6 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica as makeNativeReplica } from "@party-stack/ontology-replica";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
-import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Runtime } from "@party-stack/runtime";
@@ -10,6 +9,7 @@ import { makeTestRuntime } from "@party-stack/runtime/testing";
 import { memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect, Exit, Scope, Fiber, Deferred } from "effect";
 import { expect, test, vi } from "vite-plus/test";
+import { replicaController } from "../../../ontology-replica/lib/internal.js";
 import { makeReplicaOntologyView } from "./view.js";
 import type { LiveOntology } from "../live/LiveOntology.js";
 import type { ActionRequest } from "@party-stack/ontology-backend";
@@ -85,7 +85,7 @@ test.each(["incremental", "snapshot"] as const)(
                         },
                         mutators: { rename },
                         live: false,
-                        objectCacheGc: false,
+                        cache: { objects: false },
                     });
                     yield* replicaController(owner).enqueue({
                         id: "controlled",
@@ -100,7 +100,7 @@ test.each(["incremental", "snapshot"] as const)(
                         tables: runtime.tables,
                         source: delivery === "snapshot" ? { ...parent, subscribe: undefined } : parent,
                         mutators: { rename },
-                        objectCacheGc: false,
+                        cache: { objects: false },
                     });
                     const view = yield* makeReplicaOntologyView({
                         ir,
@@ -109,7 +109,6 @@ test.each(["incremental", "snapshot"] as const)(
                             ...child,
                             syncOnce: Effect.die("Outbox controls must not run a bridge sync pass."),
                         },
-                        parentOutbox: owner.outbox,
                         queryFunction: () => Effect.void,
                         attachments: {} as LiveOntology["attachments"],
                     }).pipe(Effect.provideService(Runtime, runtime));
@@ -205,7 +204,7 @@ test.each(["pause", "discard-all"] as const)(
                         },
                         mutators: { rename },
                         live: false,
-                        objectCacheGc: false,
+                        cache: { objects: false },
                         outbox: { failureStrategy },
                     });
                     const child = yield* makeReplica({
@@ -215,13 +214,12 @@ test.each(["pause", "discard-all"] as const)(
                         source: replicaStateSource(owner),
                         mutators: { rename },
                         live: false,
-                        objectCacheGc: false,
+                        cache: { objects: false },
                     });
                     const view = yield* makeReplicaOntologyView({
                         ir,
                         context: {},
                         replica: child,
-                        parentOutbox: owner.outbox,
                         queryFunction: () => Effect.void,
                         attachments: {} as LiveOntology["attachments"],
                     }).pipe(Effect.provideService(Runtime, runtime));
@@ -327,7 +325,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                     },
                     mutators: { rename },
                     live: false,
-                    objectCacheGc: false,
+                    cache: { objects: false },
                 });
                 const parent = replicaStateSource(owner);
                 const source = {
@@ -356,7 +354,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                                 source,
                                 mutators: { rename },
                                 live: false,
-                                objectCacheGc: false,
+                                cache: { objects: false },
                             });
                             const view = yield* makeReplicaOntologyView({
                                 ir,

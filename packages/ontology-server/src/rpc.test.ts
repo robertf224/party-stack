@@ -2,7 +2,6 @@ import { o, type OntologyIR } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica } from "@party-stack/ontology-replica";
-import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import * as q from "@party-stack/ontology-spec/query";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { eq, field } from "@party-stack/ontology-storage";
@@ -13,6 +12,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { RpcTest } from "effect/rpc";
 import { Temporal } from "temporal-polyfill";
 import { expect, test, vi } from "vite-plus/test";
+import { replicaController } from "../../ontology-replica/lib/internal.js";
 import { makeOntologyServer } from "./composition.js";
 import { makeOntologyProtocolClient, ontologyRpcHandlers, OntologyRpcs } from "./rpc.js";
 import { connectOntologyBackendHttp, connectOntologyHttp, makeOntologyHttpHandler } from "./rpcHttp.js";
@@ -72,7 +72,7 @@ test.each(["owned", "proxy", "cached-proxy", "replica"] as const)(
                         backend: owned,
 
                         live: false,
-                        objectCacheGc: false,
+                        cache: { objects: false },
                     });
                     const role =
                         kind === "owned"
@@ -567,7 +567,7 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                     backend: owned,
 
                     live: false,
-                    objectCacheGc: false,
+                    cache: { objects: false },
                 });
                 const handler = yield* makeOntologyHttpHandler({
                     source: owned.protocol,
@@ -1231,8 +1231,10 @@ test("snapshot endpoints reject direct incremental calls and retain subset inval
                 const subscription = yield* Effect.result(
                     Stream.runDrain(
                         client.SubscribeSelection({
-                            subsets: [{ objectType: "Counter" }],
-                            actionIds: [],
+                            selection: {
+                                subsets: [{ objectType: "Counter" }],
+                                actionIds: [],
+                            },
                         })
                     )
                 );

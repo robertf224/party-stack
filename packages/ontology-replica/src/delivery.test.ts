@@ -1,11 +1,13 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend, type OwnedTransaction } from "@party-stack/ontology-backend/owned";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
-import { eq, field } from "@party-stack/ontology-storage";
+import { eq, field, inArray } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Effect, Exit, Scope, Stream } from "effect";
+import { Effect, Exit, Scope, Stream, Deferred, Fiber } from "effect";
 import fc from "fast-check";
 import { expect, test } from "vitest";
+import { replicaStateSource as publicSource } from "./infrastructure.js";
+import { makeReplica as makePublicReplica } from "./service.js";
 import { makeReplica, replicaStateSource } from "./testing.js";
 
 const ir: OntologyIR = {
@@ -50,6 +52,121 @@ const setup = Effect.fnUntraced(function* () {
         tables: yield* Memory.make(),
         mutators: { increment: execute, remove: execute },
     });
+});
+
+test("reordered IN values share demand and do not replace the delivery selection", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* setup();
+                const replica = yield* makeReplica({
+                    namespace: "canonical-selection",
+                    ir,
+                    tables: yield* Memory.make(),
+                    execute,
+                    backend: owned,
+                });
+                yield* replica.demand({
+                    objectType: "Counter",
+                    query: { where: inArray(field("id"), ["one", "two"]) },
+                });
+                const generation = yield* replica.parentDeliveryGeneration;
+                yield* replica.demand({
+                    objectType: "Counter",
+                    query: { where: inArray(field("id"), ["two", "one", "one"]) },
+                });
+                expect((yield* replica.status).demands).toHaveLength(1);
+                expect(yield* replica.parentDeliveryGeneration).toBe(generation);
+            })
+        )
+    );
+});
+
+test("multipart delivery settles a rejection after cross-client writes", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const authority = yield* setup();
+                const rejectNow = yield* Deferred.make<void>();
+                yield* authority.storage.transaction((tx) =>
+                    Effect.forEach(
+                        Array.from({ length: 200 }, (_, n) => n),
+                        (n) => tx.put("Counter", { id: `cached-${n}`, count: n }),
+                        { discard: true }
+                    )
+                );
+                const parent = yield* makePublicReplica({
+                    namespace: "reject-parent",
+                    ir,
+                    mutators: { increment: execute, remove: execute },
+                    tables: yield* Memory.make(),
+                    backend: {
+                        ...authority,
+                        applyAction: (request) =>
+                            request.id !== "rejected"
+                                ? authority.applyAction(request)
+                                : Deferred.await(rejectNow).pipe(
+                                      Effect.andThen(
+                                          Effect.fail(
+                                              new BackendError({
+                                                  operation: "applyAction",
+                                                  kind: "ValidationFailed",
+                                                  message: "Choose a valid project.",
+                                                  retryable: false,
+                                                  actionOutcome: "not-committed",
+                                                  issues: [
+                                                      {
+                                                          path: ["project"],
+                                                          code: "InvalidObjectReference",
+                                                          message: "Choose a valid value.",
+                                                      },
+                                                  ],
+                                              })
+                                          )
+                                      )
+                                  ),
+                    },
+                    outbox: { failureStrategy: "discard-all" },
+                });
+                const child = yield* makePublicReplica({
+                    namespace: "reject-child",
+                    ir,
+                    mutators: { increment: execute, remove: execute },
+                    tables: yield* Memory.make(),
+                    source: publicSource(parent),
+                });
+                const other = yield* makePublicReplica({
+                    namespace: "other-child",
+                    ir,
+                    tables: yield* Memory.make(),
+                    source: publicSource(parent),
+                    mutators: { increment: execute, remove: execute },
+                });
+                const subset = { from: { source: { objectType: "Counter" }, binding: "counter" } };
+                yield* child.demand.acquire(subset);
+                yield* other.demand.acquire(subset);
+                yield* Stream.runDrain(other.outbox.observe()).pipe(
+                    Effect.forkScoped({ startImmediately: true })
+                );
+                yield* child.outbox.enqueue(action("first-success"));
+                yield* child.outbox.wait("first-success").pipe(Effect.timeout("3 seconds"));
+                yield* other.outbox.enqueue(action("second-success", "remove"));
+                yield* other.outbox.wait("second-success").pipe(Effect.timeout("3 seconds"));
+                yield* child.outbox.enqueue(action("rejected"));
+                const waiter = yield* Effect.forkScoped(
+                    Effect.result(child.outbox.wait("rejected").pipe(Effect.timeout("3 seconds")))
+                );
+                yield* child.outbox.wait("rejected", { until: "accepted" }).pipe(Effect.timeout("3 seconds"));
+                yield* Deferred.succeed(rejectNow, undefined);
+                const result = yield* Fiber.join(waiter);
+                expect(result).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "ValidationFailed", issues: [{ path: ["project"] }] },
+                });
+                expect(yield* child.outbox.entries).toEqual([]);
+            })
+        )
+    );
 });
 
 test("owned selection delivery propagates inserts, updates and deletes without reloading source snapshots", async () => {
@@ -287,19 +404,37 @@ test("persisted-only readers preserve cached rows without selecting new upstream
 test("generated speculative updates, removals and rollbacks agree with the selected-snapshot oracle", async () => {
     await fc.assert(
         fc.asyncProperty(
-            fc.array(fc.constantFrom("increment", "remove", "rollback", "commit"), { maxLength: 20 }),
+            fc.array(fc.constantFrom("increment", "remove", "rollback", "commit", "reject"), {
+                maxLength: 20,
+            }),
             async (operations) => {
                 await Effect.runPromise(
                     Effect.scoped(
                         Effect.gen(function* () {
                             const owned = yield* setup();
                             yield* owned.applyAction(action("seed"));
+                            const rejected = new Set<string>();
                             const parent = yield* makeReplica({
                                 namespace: "property-parent",
                                 ir,
                                 tables: yield* Memory.make(),
                                 execute,
-                                backend: owned,
+                                backend: {
+                                    ...owned,
+                                    applyAction: (request) =>
+                                        rejected.has(request.id)
+                                            ? Effect.fail(
+                                                  new BackendError({
+                                                      operation: "applyAction",
+                                                      kind: "ValidationFailed",
+                                                      message: "Rejected input.",
+                                                      retryable: false,
+                                                      actionOutcome: "not-committed",
+                                                  })
+                                              )
+                                            : owned.applyAction(request),
+                                },
+                                outbox: { failureStrategy: "discard-all" },
                                 startSync: false,
                             });
                             yield* parent.demand({ objectType: "Counter" });
@@ -323,6 +458,8 @@ test("generated speculative updates, removals and rollbacks agree with the selec
                             });
                             yield* child.retainLocal("Counter");
                             yield* oracle.retainLocal("Counter");
+                            yield* child.retainActions();
+                            yield* oracle.retainActions();
                             const opened = yield* child.openParentDelivery(source);
                             yield* Stream.runForEach(opened.subscription.frames, (frame) =>
                                 child
@@ -338,10 +475,19 @@ test("generated speculative updates, removals and rollbacks agree with the selec
                             const session = yield* source.openClient();
                             const view = {
                                 generation: 1,
-                                selection: { subsets: [{ objectType: "Counter" }], actionIds: [] },
+                                selection: {
+                                    subsets: [{ objectType: "Counter" }],
+                                    actionIds: [],
+                                    inspectActions: true,
+                                },
                             };
                             for (const [index, operation] of operations.entries()) {
-                                if (operation === "commit") yield* parent.syncOnce;
+                                if (operation === "reject") {
+                                    const id = `rejected-${index}`;
+                                    rejected.add(id);
+                                    yield* parent.enqueue(action(id));
+                                    yield* Effect.result(parent.syncOnce);
+                                } else if (operation === "commit") yield* parent.syncOnce;
                                 else if (operation === "rollback") {
                                     const queued = (yield* parent.pending)[0];
                                     if (queued) yield* parent.remove(queued.invocation.id);
@@ -350,13 +496,17 @@ test("generated speculative updates, removals and rollbacks agree with the selec
                                 yield* oracle.receiveParentState(snapshot.state);
                                 const expected = yield* oracle.loadSubset("Counter");
                                 const confirmed = yield* oracle.confirmed.loadSubset("Counter");
+                                const actions = (state: Awaited<Effect.Success<typeof oracle.parentState>>) =>
+                                    JSON.stringify({ pending: state?.pending, completed: state?.completed });
+                                const expectedActions = actions(yield* oracle.parentState);
                                 yield* until(
                                     Effect.gen(function* () {
                                         return (
                                             JSON.stringify(yield* child.loadSubset("Counter")) ===
                                                 JSON.stringify(expected) &&
                                             JSON.stringify(yield* child.confirmed.loadSubset("Counter")) ===
-                                                JSON.stringify(confirmed)
+                                                JSON.stringify(confirmed) &&
+                                            actions(yield* child.parentState) === expectedActions
                                         );
                                     })
                                 );
@@ -364,6 +514,7 @@ test("generated speculative updates, removals and rollbacks agree with the selec
                                 expect(yield* child.confirmed.loadSubset("Counter")).toEqual(
                                     yield* oracle.confirmed.loadSubset("Counter")
                                 );
+                                expect(actions(yield* child.parentState)).toBe(expectedActions);
                             }
                         })
                     )
@@ -372,7 +523,7 @@ test("generated speculative updates, removals and rollbacks agree with the selec
         ),
         { numRuns: 40 }
     );
-});
+}, 30_000);
 
 test("invalid replication data stops delivery, exposes a diagnostic and preserves pending actions", async () => {
     await Effect.runPromise(

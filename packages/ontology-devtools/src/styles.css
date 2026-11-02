@@ -1807,6 +1807,130 @@
         outline: 2px solid var(--ps-inspector-muted);
         outline-offset: 2px;
     }
+    .ps-storage-content {
+        overflow: auto;
+        padding: 20px;
+    }
+    .ps-storage-summary {
+        padding: 16px;
+        background: var(--ps-surface);
+        border: 1px solid var(--ps-border);
+        border-radius: 8px;
+    }
+    .ps-storage-summary + .ps-storage-summary {
+        margin-top: 20px;
+    }
+    .ps-trace-toolbar select[aria-label="Storage view"] {
+        width: 190px;
+    }
+    .ps-storage-chart {
+        margin: 0;
+    }
+    .ps-storage-footnote {
+        margin-top: 18px;
+    }
+    .ps-storage-budget-note {
+        color: var(--ps-muted);
+        margin: 12px 0 0;
+    }
+    .ps-storage-heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+    }
+    .ps-storage-heading h2 {
+        margin: 0;
+    }
+    .ps-storage-heading > strong {
+        font-variant-numeric: tabular-nums;
+        color: var(--ps-muted);
+        font-size: 14px;
+    }
+    .ps-storage-bar {
+        position: relative;
+        margin: 0;
+        display: flex;
+        height: 24px;
+        overflow: hidden;
+        border-radius: 5px;
+        background: var(--ps-border);
+    }
+    .ps-storage-free {
+        display: grid;
+        place-items: center;
+        color: var(--ps-muted);
+        background: var(--ps-hover);
+        font-size: 11px;
+        white-space: nowrap;
+    }
+    .ps-storage-target {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: var(--ps-inspector-text);
+    }
+    .ps-storage-bar > span {
+        border-right: 1px solid var(--ps-surface);
+    }
+    .ps-storage-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 20px;
+        margin-top: 12px;
+        color: var(--ps-muted);
+    }
+    .ps-storage-legend > button {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .ps-storage-legend > button {
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+    }
+    .ps-storage-bar > span {
+        transition: opacity 120ms;
+        flex-shrink: 0;
+    }
+    .ps-storage-bar > span[data-dimmed="true"] {
+        opacity: 0.18;
+    }
+    .ps-storage-legend i {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+    }
+    .ps-storage-legend strong {
+        color: var(--ps-inspector-text);
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+    }
+    .ps-storage-content h2 {
+        margin: 0 0 12px;
+        font-size: 13px;
+        font-weight: 600;
+    }
+    .ps-storage-content h2:not(:first-child) {
+        margin-top: 24px;
+    }
+    .ps-storage-note {
+        color: var(--ps-muted);
+        font-size: 12px;
+        line-height: 1.6;
+    }
+    .ps-storage-over {
+        color: var(--ps-accent);
+        font-size: 12px;
+        line-height: 1.6;
+        margin-bottom: 0;
+    }
     .ps-devtools .ps-trace-source-select option {
         background: var(--ps-inspector-bg);
         color: var(--ps-inspector-text);

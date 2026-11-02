@@ -4,10 +4,12 @@ import { fc, test } from "@fast-check/vitest";
 import { eq, gte, field } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Effect, PubSub, Queue, Stream } from "effect";
+import { Effect, PubSub, Queue, Stream, Scope, Exit } from "effect";
+import { TestClock } from "effect/testing";
 import { expect } from "vite-plus/test";
 import {
     acknowledgeDelivery,
+    collectDeliveryGarbage,
     makeDelivery,
     makeDeliveryReceiver,
     scanDeliveryRows,
@@ -44,6 +46,8 @@ test.prop(
                     const complete = yield* Queue.unbounded<DeliveryFrame>();
                     let revision = 1;
                     const subscription = yield* makeDelivery({
+                        binding: "test",
+                        identity: "selection",
                         namespace: "oracle",
                         tables,
                         policy: { frameRecords: 2, frameBytes: 2048 },
@@ -155,6 +159,8 @@ test("a slow consumer holds one batch and coalesces intervening writes", async (
                 let captures = 0;
                 let value = 0;
                 const subscription = yield* makeDelivery({
+                    binding: "test",
+                    identity: "selection",
                     tables,
                     namespace: "slow",
                     changes: PubSub.subscribe(events).pipe(Effect.map(Stream.fromSubscription)),
@@ -305,7 +311,7 @@ test("gaps, invalid frame order and exceeded budgets never install partial data"
     );
 });
 
-test("acknowledgments from another handler use stored positions; scope cleanup removes delivery records", async () => {
+test("acknowledgments from another handler use stored positions; scope cleanup retains resumable delivery records", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -316,6 +322,8 @@ test("acknowledgments from another handler use stored positions; scope cleanup r
                         const ends = yield* Queue.unbounded<DeliveryFrame>();
                         let revision = 1;
                         const subscription = yield* makeDelivery({
+                            binding: "test",
+                            identity: "selection",
                             tables,
                             namespace: "http",
                             changes: PubSub.subscribe(events).pipe(Effect.map(Stream.fromSubscription)),
@@ -345,9 +353,259 @@ test("acknowledgments from another handler use stored positions; scope cleanup r
                 );
                 const sessions = Table.make({ name: JSON.stringify(["http", "delivery", "sessions"]) });
                 const records = Table.make({ name: JSON.stringify(["http", "delivery", "records"]) });
-                expect(yield* tables.query(sessions, { where: eq(field("expected"), 2) })).toEqual([]);
+                expect(yield* tables.query(sessions, { where: eq(field("expected"), 2) })).toHaveLength(1);
                 expect(yield* tables.query(records)).toEqual([]);
             })
         )
+    );
+});
+
+test("stored batches resume after producer/receiver recreation and lost acknowledgments without reapplying", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const local = yield* Memory.make();
+                const rows = Table.make<{ value: number }>({ name: "local" });
+                const events = yield* PubSub.sliding<void>(1);
+                let value = 1;
+                let applies = 0;
+                const receiver = () =>
+                    makeDeliveryReceiver({
+                        tables: local,
+                        namespace: "child",
+                        apply: (tx, batch) =>
+                            Effect.gen(function* () {
+                                applies++;
+                                yield* batch.forEach((change) =>
+                                    change.kind === "put" && change.record.kind === "base"
+                                        ? tx
+                                              .put(
+                                                  rows,
+                                                  change.record.key,
+                                                  change.record.value as { value: number }
+                                              )
+                                              .pipe(Effect.orDie)
+                                        : Effect.void
+                                );
+                            }),
+                    });
+                const firstReceiver = yield* receiver();
+                const firstScope = yield* Scope.make();
+                const first = yield* Scope.provide(
+                    makeDelivery({
+                        tables,
+                        namespace: "resume",
+                        binding: "authority",
+                        identity: "selected",
+                        changes: PubSub.subscribe(events).pipe(Effect.map(Stream.fromSubscription)),
+                        capture: (_tx, emit) =>
+                            emit({ kind: "base", objectType: "Item", key: "one", value: { value } }).pipe(
+                                Effect.as({ ...metadata, revision: value })
+                            ),
+                    }),
+                    firstScope
+                );
+                const received = yield* Queue.unbounded<DeliveryFrame>();
+                yield* Scope.provide(
+                    Stream.runForEach(first.frames, (frame) =>
+                        firstReceiver
+                            .receive(frame)
+                            .pipe(Effect.andThen(frame.end ? Queue.offer(received, frame) : Effect.void))
+                    ).pipe(Effect.forkScoped),
+                    firstScope
+                );
+                const initial = yield* Queue.take(received);
+                yield* Scope.close(firstScope, Exit.void); // durable install, lost acknowledgment
+                expect(applies).toBe(1);
+                value = 2;
+                const reopenedReceiver = yield* receiver();
+                const next = yield* makeDelivery({
+                    tables,
+                    namespace: "resume",
+                    binding: "authority",
+                    identity: "selected",
+                    resume: yield* reopenedReceiver.resume,
+                    changes: PubSub.subscribe(events).pipe(Effect.map(Stream.fromSubscription)),
+                    capture: (_tx, emit) =>
+                        emit({ kind: "base", objectType: "Item", key: "one", value: { value } }).pipe(
+                            Effect.as({ ...metadata, revision: value })
+                        ),
+                });
+                yield* Stream.runForEach(next.frames, (frame) =>
+                    Effect.gen(function* () {
+                        const installed = yield* reopenedReceiver.receive(frame);
+                        if (installed) {
+                            yield* next.acknowledge(installed.position);
+                            yield* Queue.offer(received, frame);
+                        }
+                    })
+                ).pipe(Effect.forkScoped);
+                const duplicate = yield* Queue.take(received);
+                expect(duplicate.streamId).toBe(initial.streamId);
+                expect(duplicate.sequence).toBe(initial.sequence);
+                const patch = yield* Queue.take(received);
+                expect(patch).toMatchObject({
+                    streamId: initial.streamId,
+                    kind: "patch",
+                    sequence: 2,
+                    previous: 1,
+                });
+                expect(applies).toBe(2);
+                expect(yield* local.get(rows, "one")).toEqual({ value: 2 });
+            })
+        )
+    );
+});
+
+test("delivery expiry is indexed, bounded and requires a fresh snapshot after retention", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const scope = yield* Scope.make();
+                const config = {
+                    tables,
+                    namespace: "expiry",
+                    binding: "authority",
+                    identity: "query",
+                    policy: { retentionMs: 10 },
+                    changes: Effect.succeed(Stream.never),
+                    capture: () => Effect.succeed(metadata),
+                };
+                const first = yield* Scope.provide(makeDelivery(config), scope);
+                const frames = yield* Stream.runCollect(first.frames.pipe(Stream.take(1)));
+                const position = { streamId: frames[0]!.streamId, sequence: 0 };
+                yield* TestClock.adjust(11);
+                expect(yield* collectDeliveryGarbage(tables, "expiry")).toBe(0);
+                yield* Scope.close(scope, Exit.void);
+                yield* TestClock.adjust(11);
+                expect(yield* collectDeliveryGarbage(tables, "expiry")).toBe(1);
+                expect(yield* Effect.result(makeDelivery({ ...config, resume: position }))).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "HistoryExpired" },
+                });
+                const fresh = yield* makeDelivery(config);
+                const snapshot = (yield* Stream.runCollect(fresh.frames.pipe(Stream.take(1))))[0]!;
+                expect(snapshot.kind).toBe("snapshot");
+                expect(snapshot.streamId).not.toBe(position.streamId);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
+});
+
+test("selection replacement releases old witnesses instead of accumulating delivery sessions", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const config = {
+                    tables,
+                    namespace: "replace",
+                    binding: "authority",
+                    identity: "first",
+                    policy: { maxSubscriptions: 1 },
+                    changes: Effect.succeed(Stream.never),
+                    capture: () => Effect.succeed(metadata),
+                };
+                const first = yield* makeDelivery(config);
+                const initial = (yield* Stream.runCollect(first.frames.pipe(Stream.take(1))))[0]!;
+                const second = yield* makeDelivery({
+                    ...config,
+                    identity: "second",
+                    resume: { streamId: initial.streamId, sequence: 0 },
+                });
+                const replacement = (yield* Stream.runCollect(second.frames.pipe(Stream.take(1))))[0]!;
+                expect(replacement.kind).toBe("snapshot");
+                expect(replacement.streamId).not.toBe(initial.streamId);
+                const sessions = Table.make({ name: JSON.stringify(["replace", "delivery", "sessions"]) });
+                expect(yield* tables.query(sessions)).toHaveLength(1);
+            })
+        )
+    );
+});
+
+test("metadata and single-row updates do not rewrite unchanged durable witnesses", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                let witnessWrites = 0;
+                let witnessDeletes = 0;
+                const instrumented: typeof tables = {
+                    ...tables,
+                    transaction: (body) =>
+                        tables.transaction((tx) =>
+                            body({
+                                ...tx,
+                                put: (table, key, value) => {
+                                    if (table.name.endsWith('"records"]')) witnessWrites++;
+                                    return tx.put(table, key, value);
+                                },
+                                delete: (table, key) => {
+                                    if (table.name.endsWith('"records"]')) witnessDeletes++;
+                                    return tx.delete(table, key);
+                                },
+                            })
+                        ),
+                };
+                const values = new Map(Array.from({ length: 200 }, (_, id) => [id, 0]));
+                let revision = 1;
+                const events = yield* PubSub.sliding<void>(1);
+                const batches = yield* Queue.unbounded<DeliveryFrame>();
+                const subscription = yield* makeDelivery({
+                    tables: instrumented,
+                    namespace: "write-amplification",
+                    binding: "source",
+                    identity: "all",
+                    changes: PubSub.subscribe(events).pipe(Effect.map(Stream.fromSubscription)),
+                    capture: (_tx, emit) =>
+                        Effect.gen(function* () {
+                            for (const [key, value] of values) {
+                                const row = {
+                                    kind: "base" as const,
+                                    objectType: "Row",
+                                    key,
+                                    value: { id: key, value },
+                                };
+                                yield* emit(row);
+                                yield* emit(row); // Overlapping subsets must not duplicate writes or patches.
+                            }
+                            return { ...metadata, revision };
+                        }),
+                });
+                yield* Stream.runForEach(subscription.frames, (frame) =>
+                    frame.end ? Queue.offer(batches, frame) : Effect.void
+                ).pipe(Effect.forkScoped);
+                const first = yield* Queue.take(batches);
+                expect(witnessWrites).toBe(200);
+                yield* subscription.acknowledge(first);
+                witnessWrites = 0;
+                revision++;
+                yield* PubSub.publish(events, undefined);
+                const second = yield* Queue.take(batches);
+                expect(second.kind).toBe("patch");
+                expect(second.changes).toEqual([]);
+                expect(witnessWrites).toBe(0);
+                yield* subscription.acknowledge(second);
+                values.set(3, 1);
+                revision++;
+                yield* PubSub.publish(events, undefined);
+                const third = yield* Queue.take(batches);
+                expect(third.changes).toHaveLength(1);
+                expect(witnessWrites).toBe(1);
+                yield* subscription.acknowledge(third);
+                values.delete(3);
+                revision++;
+                yield* PubSub.publish(events, undefined);
+                const fourth = yield* Queue.take(batches);
+                expect(fourth.changes).toEqual([
+                    { kind: "remove", ref: { kind: "base", objectType: "Row", key: 3 } },
+                ]);
+                expect(witnessWrites).toBe(1);
+                expect(witnessDeletes).toBe(1);
+                yield* subscription.acknowledge(fourth);
+            })
+        ).pipe(Effect.timeout("10 seconds"))
     );
 });

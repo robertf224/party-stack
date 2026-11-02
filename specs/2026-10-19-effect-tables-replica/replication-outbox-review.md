@@ -785,3 +785,120 @@ verify source/schema/selection identity on resume and snapshot after expiry.
 Finite request/response calls should remain stateless. Cache byte budgets require
 accounting, pressure-based reclamation and admission when all remaining data is
 protected; optional platform capacity estimates are advisory, not a reservation.
+
+### Retained delivery, native capabilities and cache budgets — November 2
+
+Supersedes the earlier retained-delivery/budget follow-ups above.
+
+- Delivery sessions now retain producer sequence/signature, current witnesses and
+  at most one outstanding batch in Tables. Transport scopes retain only handles,
+  signals and frame iteration state. A new producer fences its predecessor.
+  Children resume from their transactionally installed position; outstanding
+  frames are replayed idempotently, then selection capture catches disconnected
+  changes without waiting for a hint. Selection replacement reuses admission by
+  removing obsolete witnesses. Indexed expiry is bounded and wired to maintenance.
+  History expiry resets delivery positions/staging, preserving rows until the new
+  selected snapshot installs and preserving pending actions throughout.
+- ClientPolicy.deliveryRetentionMs defaults to 60 seconds. DeliveryPolicy can
+  override retention and already bounds session/frame/selection size. Action-client
+  session/result retention remains independent. Memory tab reloads start fresh;
+  persisted children can resume compatible selections while history is retained.
+  Active leases cover acknowledgment/heartbeat deadlines even when disconnected
+  retention is shorter. Closing the producer starts its configured retention window.
+- Replica.decrypt owns provider decryption, response validation and optional local
+  encryption/cache installation. Native results carry the decoded value plus
+  optional ciphertext evidence. HTTP/worker RPC preserves that evidence so a
+  child can cache independently. LiveOntology unwraps the value at its typed
+  Promise boundary. Cache copies remain embedded in rows and are excluded from
+  portable state. Missing evidence prevents caching; contradictions fail.
+- Source-native outbox controls route edits/retries/removal to the current owner
+  and finish local handoff bookkeeping. The UI no longer selects an owner or
+  accesses a controller. Public reconcile(id, receipt) and the corresponding RPC
+  are removed: current uses are private fault-injection/recovery tests. The unused
+  outbox ready/cleanup no-ops are removed. Native application actions still submit
+  through normal action APIs; outbox controls support paused offline submissions.
+- The infrastructure export contains only replicaStateSource and makeCachedProxy.
+  The former presents speculative replica state/action acceptance through the
+  standard source interface; the latter supplies a committed read-cache/forwarded
+  write backend to the server constructor. Neither constructs a transport. No raw
+  controller or manual connection constructor is exported. Repository-only tests
+  access built private fixtures rather than widening the supported package API.
+- Public cache policy is cache.objects/cache.attachments. Each accepts optional
+  maxBytes/targetBytes alongside its age/sweep settings; the default target is 80%
+  of a supplied maximum. These are pressure-reclamation watermarks, not a total
+  process-memory ceiling. Protected demand, pins, action dependencies, staged and
+  sole local bytes win over eviction. Over-budget protected state is observable.
+  Object pressure ignores age, continues toward the target in bounded sweeps and
+  releases idle demand first. It wakes on cache changes independently of data/outbox
+  scheduling. Provider metadata cannot replace measured cached body lengths.
+- Logical usage is measured by paged metadata queries during inspection and budget
+  sweeps, including a per-object-type breakdown. An initial write-side counter
+  implementation was removed after review: it added a shared write dependency for
+  diagnostic accounting. Payload sizes exclude filesystem/index and JS-object
+  overhead. There are no per-write byte counters or usage locks. Bounded recent-operation history remains
+  diagnostic-only; no duplicated row/outbox correctness model is introduced.
+- Runtime.capacity is optional. Browser origin quota, Node process/filesystem
+  estimates and Cloudflare isolate/database estimates identify their scope.
+  Workers expose a known isolate limit, not measurable free heap. DO helpers and
+  Alchemy composition return live databaseSize estimates with optional configured
+  quota; R2 is separate. No fake zero/Infinity value stands in for unavailable data.
+- Expo supplies live device storage capacity/free-space estimates. Capacity is
+  included in native replica status and its diagnostic RPC. Sensor failures stay
+  diagnostic-only and exclude raw causes. The Storage inspector separates logical
+  cache budgets from platform-wide capacity and supports tab/parent inspection.
+- Accounting's extra yields exposed redundant outbox wakes bypassing confirmation
+  deadlines. Startup recovery now runs once per acquired engine, receipt hooks do
+  not rerun for ordinary accepted-state wakes, and confirmation backoff is persisted
+  on the existing entry. Scheduler assertions retain their exact deadlines.
+
+Verification added lost-ack producer/receiver recreation, duplicate replay,
+selection replacement, expiry, paged usage measurement, rollback,
+reopen, protected cache budgets, native platform estimates and decrypt proof/caching
+through HTTP. The speculative oracle keeps forty traces and its per-step deadlines;
+its aggregate test timeout is thirty seconds to accommodate the full workspace load.
+
+Remaining: aggregate transient in-flight byte admission across transports, physical
+memory/disk reservations, platform pressure-driven policy tuning, selective/range
+attachment demand, query IVM and intermediate-replica DO alarm lifecycle. Schema
+migration, native SQL columns/WAL integration and further internal module extraction
+remain separate reviews. No compatibility migration or automatic namespace reset
+is introduced.
+
+Capacity-aware budget follow-up: distinguish a share of total capacity from a
+minimum free-space reserve. Avoid using a percentage of currently free space as a
+moving cache maximum: the cache's own growth would shrink its budget. Platform
+estimates are shared/advisory and may be incomplete; relative policies need an
+explicit byte fallback. Current GC policies use absolute max/target bytes and do
+not automatically tune from Runtime.capacity.
+
+Action-result investigation (November 2): the real two-tab deleted-project flow
+exposed delivery I/O delaying action dispatch/settlement, rather than a missing
+terminal result. Repeated per-demand coverage read transactions could interleave
+with long selection writes while holding the publication gate. Checks now share
+a read snapshot, reusing per-type proofs and refreshing them after a newly loaded
+superset. More significantly, delivery no longer writes a complete second witness
+generation and deletes the old generation on every wake. One target witness per
+selected record and the outstanding patch commit atomically; a pending patch is
+replayed before recapture. Unchanged witnesses are not rewritten. Final metadata
+can accompany the last data frame, avoiding a separate empty-frame storage read.
+Durable resume/lost-ack and snapshot-oracle tests remain in place, augmented with
+rejected action outcomes, a two-client multipart worker flow, and exact assertions
+that metadata-only updates write zero witnesses and a single changed row writes
+one witness even with overlapping subsets. Progress spans expose opaque operation
+and stream IDs, stages, positions and replay/ack progress, never parameters or
+resume secrets. Temporary browser internals probes were removed.
+
+The app-load failure during this investigation was separate: old development
+completed receipts still used invocationId. Their first expiry caused the current
+receipt codec to reject maintenance reads. A local database backup was taken and
+only those obsolete completed receipts were reset; object rows and pending intent
+were preserved. No library migration or compatibility path was introduced.
+
+Storage inspection now shares one chart across total, free-space and configured
+budget scales, uses schema colors, and highlights segments from the legend.
+It does not subtract logical payload totals from origin-wide physical usage to
+invent an Other category. Memory web runtimes report neither disk quota nor a
+fabricated tab memory limit. Browser free quota is labeled separately from device
+free space. Attachment eviction restores age × (size + small-object overhead)
+priority as a metadata Query IR; computed finite Top K uses bounded candidate
+pages in raw table execution. Native SQL computed ordering is future work.
