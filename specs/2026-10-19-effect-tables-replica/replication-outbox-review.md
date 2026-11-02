@@ -569,3 +569,74 @@ setPin/clearPin of one replaceable multi-root entity QueryDocument, old-versus-n
 graph retention while replacement is offline, and attachment-byte download policy.
 State-transition, recovery, cancellation and bounded-bookkeeping audits are
 implementation verification unless they expose a new user-visible policy choice.
+
+### Cached-proxy coherence audit and agreed offline defaults
+
+Cache invalidation reuses the existing Replica.invalidate API: delete affected
+coverage proofs, increment matching demand revisions and wake normal sync. It
+does not delete base rows, create an outbox entry, submit a write or run another
+read-back/reconciliation engine. Current granularity is object type, including
+all filters/windows of that type even when receipt keys are known. Missing or
+incomplete targets invalidate all types; explicitly empty complete targets leave
+unrelated cache data alone. Key-aware narrowing would need to account for query
+membership/order changes and is a later optimization.
+
+Failure/interruption tests reproduced indefinite warm-coverage reuse in a fixture
+that explicitly disabled polling. After discussion, this is a freshness-policy
+question, not a promise that an unknown outcome must be read-after-write
+consistent. Do not add another unknown-write invalidation/finalizer path to the
+proxy. Tests now demonstrate ordinary automatic fallback polling repairing an
+unknown, rejected or interrupted call without eagerly refreshing before returning
+the failure or resubmitting the action. Successful receipts keep their existing
+explicit coverage invalidation. No stricter polling-required guard was retained.
+
+Current refresh selection: native delivery when active; otherwise journal catch-up
+when supported, subset watch hints when available, and unwatched subset polling
+using backend override then Replica interval then 5 seconds. A real subset watcher
+takes precedence over its polling override. Foundry Users default to 60-second
+polling; Foundry metadata currently defaults to false. Explicit false without
+another refresh source currently permits a quiet snapshot.
+
+Follow-up proposal, not implemented: permit quiet caches with finite coverage
+freshness, independently of polling. A staleTimeMs/max-coverage-age policy would
+bound reuse since actual upstream validation, not since the last local cache hit.
+Expiry would make coverage stale without deleting rows or requiring background
+fetching; the next demand/read requiring fresh source data would reacquire it.
+Healthy watch/journal coverage can remain maintained without imposing periodic
+snapshot reloads. Keep this separate from demand idle retention and row/blob GC.
+TanStack Query provides the relevant separation: staleTime controls freshness,
+refetchInterval controls periodic IO, and gcTime controls unused cache retention.
+Its invalidateQueries also supports refetchType:none for marking stale without
+fetching. See its [defaults](https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults)
+and [invalidation reference](https://tanstack.com/query/latest/docs/framework/react/reference/classes/QueryClient).
+
+Tests cover complete keyed/type targets, omitted/incomplete/empty targets,
+unknown versus rejected versus interrupted submissions, and local invalidation
+failures. A successful receipt is preserved if invalidation fails; subsequent
+request reads retry invalidation and refuse to serve stale coverage until that
+step succeeds. Previously reviewed enqueue/replay staging remains per-action:
+only successful staged changes reach the overlay, failed replay retains previous
+and partial dependencies, and receipt persistence precedes mappings/read-back.
+The remaining state-transition checklist is not marked complete by these targeted
+coherence checks.
+
+Offline pinning defaults agreed with the user (implementation still pending):
+
+- setPin saves the newest desired multi-root entity query. Retain the last complete
+  pinned graph while replacement acquisition is incomplete/offline; atomically
+  switch retention when the new graph is ready. Repeated offline replacements
+  retain only the last complete graph plus the newest desired replacement, not
+  one historical graph per edit. This is retention protection, not an instruction
+  to freeze ordinary replicated row values.
+- clearPin releases that pin's retention, allowing ordinary age-based GC; neither
+  setPin nor clearPin immediately wipes all local replica data.
+- No automatic attachment-byte download by default; an explicit all-attachments
+  flag requests offline bytes. Selective byte/range/size policies are future work.
+
+Installation extraction is deferred to its own review. Current construction still
+returns LiveOntology views, so a simple file/package move would preserve coupling.
+A prospective native installation service should own Connect sessions, routes,
+partitioned Runtime/Replica acquisitions and their lifetimes; ontology would wrap
+those bindings with its typing/Promise/TanStack view. Installation transport stays
+in ontology-server, provider authentication stays in Connect, and ontology-aware
+acquisition must not move into the platform Runtime package.

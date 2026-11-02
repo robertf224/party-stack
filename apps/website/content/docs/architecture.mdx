@@ -49,8 +49,12 @@ does not turn durable write acceptance into request-only forwarding.
 
 Neither proxy role has a write-recovery outbox. It preserves the caller's operation
 ID; retry after a lost reply belongs to that caller and relies on upstream
-idempotency where available. Cached proxies invalidate affected read coverage
-after receiving a successful receipt.
+idempotency where available. Cached proxies invalidate coverage using receipt
+targets: all subsets of each named object type, even if individual keys are known.
+Missing or incomplete targets invalidate every type; explicitly empty targets
+invalidate none. Rows remain installed, and normal demand/sync reacquires coverage.
+Unknown outcomes and interrupted submissions do not promise an immediate refresh;
+the cache's normal watch/polling policy repairs those reads without retrying writes.
 
 Both roles compose in Durable Objects through `makeOntologyServer`. The Alchemy
 `OntologyDurableObject` convenience resource currently constructs owned servers.
